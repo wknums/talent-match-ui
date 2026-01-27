@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -58,64 +59,63 @@ export function ApplicationDetail({ applicationId, open, onClose }: ApplicationD
 
   return (
     <Sheet open={open} onOpenChange={onClose}>
-      <SheetContent side="right" className="w-full sm:max-w-3xl p-0">
-        <div className="h-full flex flex-col">
-          <SheetHeader className="px-6 pt-6 pb-4 border-b shrink-0">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1">
-                <SheetTitle className="text-2xl">{application.candidateName || application.candidateRef}</SheetTitle>
-                {application.candidateEmail && (
-                  <p className="text-sm text-muted-foreground mt-1">{application.candidateEmail}</p>
-                )}
-              </div>
-              <StatusBadge status={application.status} />
+      <SheetContent side="right" className="w-full sm:max-w-3xl p-0 flex flex-col">
+        <SheetHeader className="px-6 pt-6 pb-4 border-b shrink-0">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <SheetTitle className="text-2xl">{application.candidateName || application.candidateRef}</SheetTitle>
+              {application.candidateEmail && (
+                <p className="text-sm text-muted-foreground mt-1">{application.candidateEmail}</p>
+              )}
             </div>
-            {application.finalScore !== undefined && (
-              <div className="flex items-center gap-6 mt-4">
+            <StatusBadge status={application.status} />
+          </div>
+          {application.finalScore !== undefined && (
+            <div className="flex items-center gap-6 mt-4">
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Final Score</p>
+                <p className={cn('text-4xl font-mono font-bold', getScoreColor(application.finalScore))}>
+                  {application.finalScore.toFixed(1)}
+                </p>
+              </div>
+              {application.variance !== undefined && (
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Final Score</p>
-                  <p className={cn('text-4xl font-mono font-bold', getScoreColor(application.finalScore))}>
-                    {application.finalScore.toFixed(1)}
+                  <p className="text-sm text-muted-foreground mb-1">Variance</p>
+                  <p className={cn('text-2xl font-mono', application.variance > 15 && 'text-destructive font-bold')}>
+                    ±{application.variance.toFixed(1)}
                   </p>
                 </div>
-                {application.variance !== undefined && (
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Variance</p>
-                    <p className={cn('text-2xl font-mono', application.variance > 15 && 'text-destructive font-bold')}>
-                      ±{application.variance.toFixed(1)}
-                    </p>
-                  </div>
-                )}
-                {application.finalDecision && (
-                  <div>
-                    <p className="text-sm text-muted-foreground mb-1">Decision</p>
-                    <Badge
-                      variant={
-                        application.finalDecision === 'Eligible'
-                          ? 'default'
-                          : application.finalDecision === 'Excluded'
-                          ? 'secondary'
-                          : 'destructive'
-                      }
-                      className="text-base px-3 py-1"
-                    >
-                      {application.finalDecision}
-                    </Badge>
-                  </div>
-                )}
-              </div>
-            )}
-          </SheetHeader>
+              )}
+              {application.finalDecision && (
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Decision</p>
+                  <Badge
+                    variant={
+                      application.finalDecision === 'Eligible'
+                        ? 'default'
+                        : application.finalDecision === 'Excluded'
+                        ? 'secondary'
+                        : 'destructive'
+                    }
+                    className="text-base px-3 py-1"
+                  >
+                    {application.finalDecision}
+                  </Badge>
+                </div>
+              )}
+            </div>
+          )}
+        </SheetHeader>
 
-          <div className="flex-1 overflow-y-auto">
-            <div className="p-6 space-y-6 pb-8">
-              <Tabs defaultValue="overview">
-                <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="overview">Overview</TabsTrigger>
-                  <TabsTrigger value="runs">Runs ({scoringRuns.length})</TabsTrigger>
-                  <TabsTrigger value="documents">Documents</TabsTrigger>
-                  <TabsTrigger value="extraction">Extracted</TabsTrigger>
-                </TabsList>
+        <ScrollArea className="flex-1">
+          <div className="p-6 space-y-6">
+            <Tabs defaultValue="overview">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="runs">Runs ({scoringRuns.length})</TabsTrigger>
+                <TabsTrigger value="documents">Documents</TabsTrigger>
+                <TabsTrigger value="extraction">Extracted</TabsTrigger>
+              </TabsList>
 
                 <TabsContent value="overview" className="space-y-4 mt-6">
                   {aggregatedResult && (
@@ -284,9 +284,8 @@ export function ApplicationDetail({ applicationId, open, onClose }: ApplicationD
                 </TabsContent>
               </Tabs>
             </div>
-          </div>
-        </div>
-      </SheetContent>
-    </Sheet>
-  )
-}
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
+    )
+  }

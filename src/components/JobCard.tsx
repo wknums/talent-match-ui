@@ -21,6 +21,10 @@ export function JobCard({ job, onClick, onUpload, className }: JobCardProps) {
     : 0
 
   const isProcessing = job.status === 'Processing'
+  
+  const daysOpen = Math.floor(
+    (Date.now() - new Date(job.postingDate).getTime()) / (1000 * 60 * 60 * 24)
+  )
 
   return (
     <Card
@@ -41,7 +45,8 @@ export function JobCard({ job, onClick, onUpload, className }: JobCardProps) {
             <Briefcase size={24} className="text-primary mt-1" />
             <div className="flex-1 min-w-0">
               <CardTitle className="text-xl mb-1 truncate">{job.title}</CardTitle>
-              <p className="text-sm text-muted-foreground">{job.department}</p>
+              <p className="text-sm text-muted-foreground">{job.department} • {job.organization}</p>
+              <p className="text-xs text-muted-foreground mt-1">{daysOpen} days open</p>
             </div>
           </div>
           <StatusBadge status={job.status} />

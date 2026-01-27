@@ -49,6 +49,10 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const completionPercentage = stats.totalApplications > 0
     ? Math.round((stats.completed / stats.totalApplications) * 100)
     : 0
+    
+  const daysOpen = Math.floor(
+    (Date.now() - new Date(job.postingDate).getTime()) / (1000 * 60 * 60 * 24)
+  )
 
   const longlistApps = applications.filter(
     (a) => a.finalDecision === 'Eligible' && a.finalScore && a.finalScore >= job.currentVersion.longlistThreshold
@@ -99,7 +103,10 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
             <h1 className="text-3xl font-bold">{job.title}</h1>
             <StatusBadge status={job.status} />
           </div>
-          <p className="text-muted-foreground mt-1">{job.department}</p>
+          <p className="text-muted-foreground mt-1">{job.department} • {job.organization}</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Posted {new Date(job.postingDate).toLocaleDateString()} • {daysOpen} days open
+          </p>
         </div>
         <Button onClick={onUploadApplications}>
           <UploadSimple size={20} />

@@ -13,11 +13,11 @@ This system orchestrates sophisticated AI-powered scoring workflows, manages mas
 ## Essential Features
 
 **Job Creation & Configuration**
-- Functionality: Create jobs with specifications, define scoring rubrics with weighted categories, configure must-have requirements, set N scoring runs per application and aggregation strategies
-- Purpose: Establish versioned, auditable job configurations that drive consistent, reproducible scoring
+- Functionality: Create jobs with title, department, organization, posting date, specifications, define scoring rubrics with weighted categories, configure must-have requirements, set N scoring runs per application and aggregation strategies
+- Purpose: Establish versioned, auditable job configurations that drive consistent, reproducible scoring with comprehensive job metadata for tracking and filtering
 - Trigger: Recruiter clicks "Create Job" from jobs dashboard
-- Progression: Job details form → Upload job spec document → Define rubric categories with weights → Set must-have criteria → Configure runs (N=3 default) and aggregation (median default) → Set thresholds (longlist/shortlist) → Review and create → Job card appears with version 1.0
-- Success criteria: Job persisted with config version; all settings queryable; changes create new versions without affecting in-progress scoring
+- Progression: Job details form (title, department, organization, posting date) → Upload job spec document → Define rubric categories with weights → Set must-have criteria → Configure runs (N=3 default) and aggregation (median default) → Set thresholds (longlist/shortlist) → Review and create → Job card appears with version 1.0 showing days open
+- Success criteria: Job persisted with config version and metadata (organization, posting date); all settings queryable; changes create new versions without affecting in-progress scoring; job cards display organization and days since posting
 
 **Bulk Application Ingestion**
 - Functionality: Upload thousands of applications with multiple documents (CV, cover letter, portfolio), store originals with cryptographic hashes, queue for processing
@@ -48,11 +48,11 @@ This system orchestrates sophisticated AI-powered scoring workflows, manages mas
 - Success criteria: Lists update in real-time as scoring completes; drill-down shows complete audit trail; evidence citations link to document sections
 
 **Operational Dashboard & Monitoring**
-- Functionality: System-wide and per-job statistics showing queued/processing/completed/failed counts, throughput metrics, ETA, failure browser with retry controls
-- Purpose: Provide operational visibility and control for large-scale processing workflows
+- Functionality: System-wide and per-job statistics showing queued/processing/completed/failed counts, throughput metrics, ETA, failure browser with retry controls; filterable job view by department, organization, and job title
+- Purpose: Provide operational visibility and control for large-scale processing workflows with efficient job discovery across organizational boundaries
 - Trigger: Dashboard loads on login; auto-refreshes every 10 seconds
-- Progression: View system stats → Drill into job → See pipeline stages (extraction, scoring, aggregation) → Identify failures → Access DLQ → Review failure reason → Retry or annotate → Monitor retry progress
-- Success criteria: Stats accurate within 30 seconds; failures categorized by type; retry actions resume from checkpoint; completed work never duplicated
+- Progression: View system stats → Apply filters (department, organization, job title) → Drill into job → See job metadata (organization, posting date, days open) → See pipeline stages (extraction, scoring, aggregation) → Identify failures → Access DLQ → Review failure reason → Retry or annotate → Monitor retry progress
+- Success criteria: Stats accurate within 30 seconds; failures categorized by type; retry actions resume from checkpoint; completed work never duplicated; filters enable quick location of jobs across departments and organizations
 
 **Tamper-Evident Audit Trail**
 - Functionality: Immutable logging of all user actions (create job, upload, config changes) and system decisions (scores, aggregations) with correlation IDs

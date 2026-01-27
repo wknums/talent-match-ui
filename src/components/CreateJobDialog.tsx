@@ -26,6 +26,8 @@ interface CreateJobDialogProps {
 export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogProps) {
   const [title, setTitle] = useState('')
   const [department, setDepartment] = useState('')
+  const [organization, setOrganization] = useState('')
+  const [postingDate, setPostingDate] = useState(new Date().toISOString().split('T')[0])
   const [rubricCategories, setRubricCategories] = useState<RubricCategory[]>([
     { id: '1', name: '', description: '', weight: 0 },
   ])
@@ -71,8 +73,8 @@ export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogPro
   }
 
   const handleSubmit = async () => {
-    if (!title || !department) {
-      toast.error('Please fill in job title and department')
+    if (!title || !department || !organization) {
+      toast.error('Please fill in job title, department, and organization')
       return
     }
 
@@ -93,6 +95,8 @@ export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogPro
       await mockAPI.createJob({
         title,
         department,
+        organization,
+        postingDate,
         rubric: validCategories,
         mustHaves: mustHaves.filter((m) => m.criterion),
         runsPerApplication: parseInt(runsPerApplication),
@@ -115,6 +119,8 @@ export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogPro
   const resetForm = () => {
     setTitle('')
     setDepartment('')
+    setOrganization('')
+    setPostingDate(new Date().toISOString().split('T')[0])
     setRubricCategories([{ id: '1', name: '', description: '', weight: 0 }])
     setMustHaves([{ id: '1', criterion: '', description: '' }])
     setRunsPerApplication('3')
@@ -151,6 +157,24 @@ export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogPro
                 value={department}
                 onChange={(e) => setDepartment(e.target.value)}
                 placeholder="e.g., Engineering"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="organization">Organization</Label>
+              <Input
+                id="organization"
+                value={organization}
+                onChange={(e) => setOrganization(e.target.value)}
+                placeholder="e.g., TechCorp Solutions"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="postingDate">Posting Date</Label>
+              <Input
+                id="postingDate"
+                type="date"
+                value={postingDate}
+                onChange={(e) => setPostingDate(e.target.value)}
               />
             </div>
           </div>

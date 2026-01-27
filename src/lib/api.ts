@@ -21,6 +21,8 @@ const generateMockJobs = (): Job[] => {
       jobId: 'job-001',
       title: 'Senior Software Engineer',
       department: 'Engineering',
+      organization: 'TechCorp Solutions',
+      postingDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       createdBy: 'recruiter@company.com',
       createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       status: 'Processing',
@@ -63,6 +65,8 @@ const generateMockJobs = (): Job[] => {
       jobId: 'job-002',
       title: 'Product Manager',
       department: 'Product',
+      organization: 'TechCorp Solutions',
+      postingDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       createdBy: 'hiring.manager@company.com',
       createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       status: 'Active',
@@ -104,6 +108,8 @@ const generateMockJobs = (): Job[] => {
       jobId: 'job-003',
       title: 'UX Designer',
       department: 'Design',
+      organization: 'DesignHub Inc',
+      postingDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
       createdBy: 'design.lead@company.com',
       createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
       status: 'Active',
@@ -284,6 +290,8 @@ export const mockAPI = {
   async createJob(data: {
     title: string
     department: string
+    organization: string
+    postingDate: string
     rubric: RubricCategory[]
     mustHaves: MustHave[]
     runsPerApplication: number
@@ -296,6 +304,8 @@ export const mockAPI = {
       jobId: `job-${Date.now()}`,
       title: data.title,
       department: data.department,
+      organization: data.organization,
+      postingDate: data.postingDate,
       createdBy: 'current.user@company.com',
       createdAt: new Date().toISOString(),
       status: 'Draft',

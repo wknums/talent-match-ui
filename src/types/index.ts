@@ -33,6 +33,8 @@ export interface Job {
   jobId: string
   title: string
   department: string
+  organization: string
+  postingDate: string
   createdBy: string
   createdAt: string
   status: JobStatus
