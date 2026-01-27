@@ -10,17 +10,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
-import { ArrowRight, Warning } from '@phosphor-icons/react'
+import { ArrowRight, Warning, Pencil } from '@phosphor-icons/react'
 import type { Application } from '@/types'
 import { cn } from '@/lib/utils'
 
 interface ApplicationsTableProps {
   applications: Application[]
   onApplicationClick: (applicationId: string) => void
+  onStartManualReview?: (applicationId: string, jobId: string) => void
   className?: string
 }
 
-export function ApplicationsTable({ applications, onApplicationClick, className }: ApplicationsTableProps) {
+export function ApplicationsTable({ applications, onApplicationClick, onStartManualReview, className }: ApplicationsTableProps) {
   const [sortField, setSortField] = useState<'finalScore' | 'createdAt'>('createdAt')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
 
@@ -77,7 +78,7 @@ export function ApplicationsTable({ applications, onApplicationClick, className 
             >
               Submitted {sortField === 'createdAt' && (sortDirection === 'asc' ? '↑' : '↓')}
             </TableHead>
-            <TableHead className="w-[100px]"></TableHead>
+            <TableHead className="w-[180px]"></TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -143,16 +144,32 @@ export function ApplicationsTable({ applications, onApplicationClick, className 
                 </span>
               </TableCell>
               <TableCell>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onApplicationClick(app.applicationId)
-                  }}
-                >
-                  <ArrowRight size={16} />
-                </Button>
+                <div className="flex items-center gap-2">
+                  {(app.finalDecision === 'NeedsManualReview' || app.status === 'NeedsManualReview') && onStartManualReview && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onStartManualReview(app.applicationId, app.jobId)
+                      }}
+                      className="text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
+                    >
+                      <Pencil size={16} />
+                      Review
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onApplicationClick(app.applicationId)
+                    }}
+                  >
+                    <ArrowRight size={16} />
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}

@@ -20,11 +20,12 @@ interface JobDetailViewProps {
   onApplicationClick: (applicationId: string) => void
   onUploadApplications: () => void
   onEditJob: (job: Job) => void
+  onStartManualReview?: (applicationId: string, jobId: string) => void
 }
 
 type DrilldownType = 'longlist' | 'shortlist' | 'manual-review' | null
 
-export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadApplications, onEditJob }: JobDetailViewProps) {
+export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadApplications, onEditJob, onStartManualReview }: JobDetailViewProps) {
   const [job, setJob] = useState<Job | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(true)
@@ -261,19 +262,19 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
               </TabsTrigger>
             </TabsList>
             <TabsContent value="all" className="mt-6">
-              <ApplicationsTable applications={applications} onApplicationClick={onApplicationClick} />
+              <ApplicationsTable applications={applications} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
             </TabsContent>
             <TabsContent value="longlist" className="mt-6">
-              <ApplicationsTable applications={longlistApps} onApplicationClick={onApplicationClick} />
+              <ApplicationsTable applications={longlistApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
             </TabsContent>
             <TabsContent value="shortlist" className="mt-6">
-              <ApplicationsTable applications={shortlistApps} onApplicationClick={onApplicationClick} />
+              <ApplicationsTable applications={shortlistApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
             </TabsContent>
             <TabsContent value="excluded" className="mt-6">
-              <ApplicationsTable applications={excludedApps} onApplicationClick={onApplicationClick} />
+              <ApplicationsTable applications={excludedApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
             </TabsContent>
             <TabsContent value="review" className="mt-6">
-              <ApplicationsTable applications={manualReviewApps} onApplicationClick={onApplicationClick} />
+              <ApplicationsTable applications={manualReviewApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -290,7 +291,11 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
               onApplicationClick={(appId) => {
                 setDrilldownOpen(false)
                 onApplicationClick(appId)
-              }} 
+              }}
+              onStartManualReview={onStartManualReview ? (appId, jobId) => {
+                setDrilldownOpen(false)
+                onStartManualReview(appId, jobId)
+              } : undefined}
             />
           </div>
         </SheetContent>

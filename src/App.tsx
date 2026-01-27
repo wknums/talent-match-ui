@@ -42,8 +42,12 @@ function App() {
     setReviewJobId(null)
   }
 
-  const handleApplicationClick = (applicationId: string) => {
-    setSelectedApplicationId(applicationId)
+  const handleApplicationClick = (applicationId: string, forceManualReview?: boolean) => {
+    if (forceManualReview) {
+      setSelectedApplicationId(applicationId)
+    } else {
+      setSelectedApplicationId(applicationId)
+    }
   }
 
   const handleStartManualReview = (applicationId: string, jobId: string) => {
@@ -100,6 +104,7 @@ function App() {
             onApplicationClick={handleApplicationClick}
             onUploadApplications={() => handleUploadApplications(selectedJobId)}
             onEditJob={handleEditJob}
+            onStartManualReview={handleStartManualReview}
           />
         </div>
       )}
