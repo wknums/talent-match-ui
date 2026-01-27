@@ -31,6 +31,7 @@ export interface JobConfigVersion {
 
 export interface Job {
   jobId: string
+  jobCode: string
   title: string
   department: string
   organization: string

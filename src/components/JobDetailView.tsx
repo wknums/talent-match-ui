@@ -145,6 +145,7 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
             <h1 className="text-3xl font-bold">{job.title}</h1>
             <StatusBadge status={job.status} />
           </div>
+          <p className="text-sm font-mono text-accent font-semibold mt-1">{job.jobCode}</p>
           <p className="text-muted-foreground mt-1">{job.department} • {job.organization}</p>
           <p className="text-sm text-muted-foreground mt-1">
             Posted {new Date(job.postingDate).toLocaleDateString()} • {daysOpen} days open

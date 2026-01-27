@@ -29,6 +29,7 @@ import type { Job } from '@/types'
 
 export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: CreateJobDialogProps) {
   const [title, setTitle] = useState('')
+  const [jobCode, setJobCode] = useState('')
   const [department, setDepartment] = useState('')
   const [organization, setOrganization] = useState('')
   const [postingDate, setPostingDate] = useState(new Date().toISOString().split('T')[0])
@@ -51,6 +52,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   useEffect(() => {
     if (editingJob) {
       setTitle(editingJob.title)
+      setJobCode(editingJob.jobCode)
       setDepartment(editingJob.department)
       setOrganization(editingJob.organization)
       setPostingDate(editingJob.postingDate.split('T')[0])
@@ -195,8 +197,8 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
   }
 
   const handleSubmit = async () => {
-    if (!title || !department || !organization) {
-      toast.error('Please fill in job title, department, and organization')
+    if (!title || !department || !organization || !jobCode) {
+      toast.error('Please fill in job title, job code, department, and organization')
       return
     }
 
@@ -217,6 +219,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
       if (editingJob) {
         await mockAPI.updateJob(editingJob.jobId, {
           title,
+          jobCode,
           department,
           organization,
           postingDate,
@@ -233,6 +236,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
       } else {
         await mockAPI.createJob({
           title,
+          jobCode,
           department,
           organization,
           postingDate,
@@ -259,6 +263,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
 
   const resetForm = () => {
     setTitle('')
+    setJobCode('')
     setDepartment('')
     setOrganization('')
     setPostingDate(new Date().toISOString().split('T')[0])
@@ -378,6 +383,16 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="jobCode">Job Code</Label>
+                <Input
+                  id="jobCode"
+                  value={jobCode}
+                  onChange={(e) => setJobCode(e.target.value.toUpperCase())}
+                  placeholder="e.g., SSE-ENG-2024"
+                  className="font-mono"
+                />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="department">Department</Label>
                 <Input
                   id="department"
@@ -395,7 +410,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
                   placeholder="e.g., TechCorp Solutions"
                 />
               </div>
-              <div className="space-y-2">
+              <div className="space-y-2 col-span-2">
                 <Label htmlFor="postingDate">Posting Date</Label>
                 <Input
                   id="postingDate"

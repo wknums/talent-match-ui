@@ -44,7 +44,10 @@ export function JobCard({ job, onClick, onUpload, className }: JobCardProps) {
           <div className="flex items-start gap-3 flex-1">
             <Briefcase size={24} className="text-primary mt-1" />
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-xl mb-1 truncate">{job.title}</CardTitle>
+              <div className="flex items-center gap-2 mb-1">
+                <CardTitle className="text-xl truncate">{job.title}</CardTitle>
+              </div>
+              <p className="text-xs font-mono text-accent font-semibold mb-1">{job.jobCode}</p>
               <p className="text-sm text-muted-foreground">{job.department} • {job.organization}</p>
               <p className="text-xs text-muted-foreground mt-1">{daysOpen} days open</p>
             </div>

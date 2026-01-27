@@ -15,6 +15,13 @@ import type {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
+const generateJobCode = (title: string, department: string): string => {
+  const titlePart = title.split(' ').map(w => w[0]).join('').slice(0, 3).toUpperCase()
+  const deptPart = department.slice(0, 3).toUpperCase()
+  const randomPart = Math.random().toString(36).substring(2, 6).toUpperCase()
+  return `${titlePart}-${deptPart}-${randomPart}`
+}
+
 const calculateJobStats = (jobId: string, longlistThreshold: number, shortlistThreshold: number) => {
   const apps = generateMockApplications(jobId, 50)
   
@@ -55,6 +62,7 @@ const getDefaultJobs = (): Job[] => {
   return [
     {
       jobId: 'job-001',
+      jobCode: 'SSE-ENG-A1B2',
       title: 'Senior Software Engineer',
       department: 'Engineering',
       organization: 'TechCorp Solutions',
@@ -87,6 +95,7 @@ const getDefaultJobs = (): Job[] => {
     },
     {
       jobId: 'job-002',
+      jobCode: 'PM-PRO-C3D4',
       title: 'Product Manager',
       department: 'Product',
       organization: 'TechCorp Solutions',
@@ -118,6 +127,7 @@ const getDefaultJobs = (): Job[] => {
     },
     {
       jobId: 'job-003',
+      jobCode: 'UD-DES-E5F6',
       title: 'UX Designer',
       department: 'Design',
       organization: 'DesignHub Inc',
@@ -314,11 +324,14 @@ export const mockAPI = {
     shortlistThreshold: number
     specDocumentId?: string
     rubricDocumentId?: string
+    jobCode?: string
   }): Promise<Job> {
     await delay(500)
     const jobId = `job-${Date.now()}`
+    const jobCode = data.jobCode || generateJobCode(data.title, data.department)
     const newJob: Job = {
       jobId,
+      jobCode,
       title: data.title,
       department: data.department,
       organization: data.organization,
@@ -373,6 +386,7 @@ export const mockAPI = {
     shortlistThreshold: number
     specDocumentId?: string
     rubricDocumentId?: string
+    jobCode?: string
   }): Promise<Job> {
     await delay(500)
     const jobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
@@ -385,6 +399,7 @@ export const mockAPI = {
     const existingJob = jobs[jobIndex]
     const updatedJob: Job = {
       ...existingJob,
+      jobCode: data.jobCode || existingJob.jobCode,
       title: data.title,
       department: data.department,
       organization: data.organization,
