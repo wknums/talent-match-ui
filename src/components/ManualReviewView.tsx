@@ -287,13 +287,13 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       </div>
 
       <div className="container mx-auto px-6 py-6">
-        <div className="grid grid-cols-3 gap-6 h-[calc(100vh-180px)]">
-          <Card className="flex flex-col overflow-hidden">
+        <div className="grid grid-cols-3 gap-6" style={{ height: 'calc(100vh - 180px)' }}>
+          <Card className="flex flex-col h-full overflow-hidden">
             <CardHeader className="shrink-0">
               <CardTitle className="text-lg">Job Specification</CardTitle>
             </CardHeader>
-            <CardContent className="flex-1 min-h-0 p-0">
-              <ScrollArea className="h-full px-6 pb-6">
+            <CardContent className="flex-1 overflow-hidden p-0">
+              <ScrollArea className="h-full w-full px-6 pb-6">
                 <div className="space-y-4">
                   <div>
                     <h3 className="font-semibold mb-2">{job.title}</h3>
@@ -374,12 +374,12 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
             </CardContent>
           </Card>
 
-          <Card className="flex flex-col overflow-hidden">
+          <Card className="flex flex-col h-full overflow-hidden">
             <CardHeader className="shrink-0">
               <CardTitle className="text-lg">Scoring Rubric</CardTitle>
             </CardHeader>
-            <CardContent className="flex-1 min-h-0 p-0">
-              <ScrollArea className="h-full px-6 pb-6">
+            <CardContent className="flex-1 overflow-hidden p-0">
+              <ScrollArea className="h-full w-full px-6 pb-6">
                 <div className="space-y-4">
                   {job.currentVersion.rubric.map((category) => {
                     const score = reviewData.rubricScores[category.id] || {
@@ -453,12 +453,12 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
             </CardContent>
           </Card>
 
-          <Card className="flex flex-col overflow-hidden">
+          <Card className="flex flex-col h-full overflow-hidden">
             <CardHeader className="shrink-0">
               <CardTitle className="text-lg">Application</CardTitle>
             </CardHeader>
-            <CardContent className="flex-1 min-h-0 p-0">
-              <ScrollArea className="h-full px-6 pb-6">
+            <CardContent className="flex-1 overflow-hidden p-0">
+              <ScrollArea className="h-full w-full px-6 pb-6">
                 <div className="space-y-4">
                   <div>
                     <h3 className="font-semibold mb-1">
