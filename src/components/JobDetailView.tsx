@@ -31,6 +31,7 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const [loading, setLoading] = useState(true)
   const [drilldownOpen, setDrilldownOpen] = useState(false)
   const [drilldownType, setDrilldownType] = useState<DrilldownType>(null)
+  const [drilldownSnapshot, setDrilldownSnapshot] = useState<Application[]>([])
   const [uploadRubricOpen, setUploadRubricOpen] = useState(false)
   const [viewingDocument, setViewingDocument] = useState<'spec' | 'rubric' | null>(null)
 
@@ -79,11 +80,13 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
 
   const openDrilldown = (type: DrilldownType) => {
     setDrilldownType(type)
+    const snapshot = getDrilldownApplicationsForType(type)
+    setDrilldownSnapshot(snapshot)
     setDrilldownOpen(true)
   }
 
-  const getDrilldownApplications = () => {
-    switch (drilldownType) {
+  const getDrilldownApplicationsForType = (type: DrilldownType) => {
+    switch (type) {
       case 'longlist':
         return longlistApps
       case 'shortlist':
@@ -93,6 +96,10 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
       default:
         return []
     }
+  }
+
+  const getDrilldownApplications = () => {
+    return drilldownSnapshot
   }
 
   const getDrilldownTitle = () => {
