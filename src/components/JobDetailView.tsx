@@ -7,8 +7,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { ApplicationsTable } from '@/components/ApplicationsTable'
 import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
+import { UploadRubricDialog } from '@/components/UploadRubricDialog'
 import { ArrowLeft, UploadSimple, Funnel } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
+import { toast } from 'sonner'
 import type { Job, Application } from '@/types'
 
 interface JobDetailViewProps {
@@ -26,6 +28,7 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const [loading, setLoading] = useState(true)
   const [drilldownOpen, setDrilldownOpen] = useState(false)
   const [drilldownType, setDrilldownType] = useState<DrilldownType>(null)
+  const [uploadRubricOpen, setUploadRubricOpen] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -144,10 +147,16 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
             Posted {new Date(job.postingDate).toLocaleDateString()} • {daysOpen} days open
           </p>
         </div>
-        <Button onClick={onUploadApplications}>
-          <UploadSimple size={20} />
-          Upload Applications
-        </Button>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={() => setUploadRubricOpen(true)}>
+            <UploadSimple size={20} />
+            Upload Rubric
+          </Button>
+          <Button onClick={onUploadApplications}>
+            <UploadSimple size={20} />
+            Upload Applications
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -266,6 +275,16 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
           </div>
         </SheetContent>
       </Sheet>
+
+      <UploadRubricDialog
+        open={uploadRubricOpen}
+        jobId={jobId}
+        onClose={() => setUploadRubricOpen(false)}
+        onSuccess={(rubric) => {
+          toast.success(`Uploaded rubric with ${rubric.length} categories`)
+          setUploadRubricOpen(false)
+        }}
+      />
     </div>
   )
 }

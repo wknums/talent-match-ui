@@ -5,13 +5,16 @@ import { JobDetailView } from '@/components/JobDetailView'
 import { ApplicationDetail } from '@/components/ApplicationDetail'
 import { CreateJobDialog } from '@/components/CreateJobDialog'
 import { UploadApplicationsDialog } from '@/components/UploadApplicationsDialog'
+import { ManualReviewView } from '@/components/ManualReviewView'
 
-type View = 'dashboard' | 'job-detail'
+type View = 'dashboard' | 'job-detail' | 'manual-review'
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard')
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null)
+  const [reviewApplicationId, setReviewApplicationId] = useState<string | null>(null)
+  const [reviewJobId, setReviewJobId] = useState<string | null>(null)
   const [createJobDialogOpen, setCreateJobDialogOpen] = useState(false)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [uploadJobId, setUploadJobId] = useState<string | null>(null)
@@ -28,8 +31,20 @@ function App() {
     setRefreshKey((prev) => prev + 1)
   }
 
+  const handleBackToJobDetail = () => {
+    setCurrentView('job-detail')
+    setReviewApplicationId(null)
+    setReviewJobId(null)
+  }
+
   const handleApplicationClick = (applicationId: string) => {
     setSelectedApplicationId(applicationId)
+  }
+
+  const handleStartManualReview = (applicationId: string, jobId: string) => {
+    setReviewApplicationId(applicationId)
+    setReviewJobId(jobId)
+    setCurrentView('manual-review')
   }
 
   const handleUploadApplications = (jobId: string) => {
@@ -47,17 +62,19 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-8 py-6">
-        {currentView === 'dashboard' && (
+      {currentView === 'dashboard' && (
+        <div className="container mx-auto px-8 py-6">
           <DashboardView
             key={refreshKey}
             onJobClick={handleJobClick}
             onCreateJob={() => setCreateJobDialogOpen(true)}
             onUploadApplications={handleUploadApplications}
           />
-        )}
+        </div>
+      )}
 
-        {currentView === 'job-detail' && selectedJobId && (
+      {currentView === 'job-detail' && selectedJobId && (
+        <div className="container mx-auto px-8 py-6">
           <JobDetailView
             key={`${selectedJobId}-${refreshKey}`}
             jobId={selectedJobId}
@@ -65,13 +82,25 @@ function App() {
             onApplicationClick={handleApplicationClick}
             onUploadApplications={() => handleUploadApplications(selectedJobId)}
           />
-        )}
-      </div>
+        </div>
+      )}
+
+      {currentView === 'manual-review' && reviewApplicationId && reviewJobId && (
+        <ManualReviewView
+          applicationId={reviewApplicationId}
+          jobId={reviewJobId}
+          onBack={handleBackToJobDetail}
+        />
+      )}
 
       <ApplicationDetail
         applicationId={selectedApplicationId}
         open={selectedApplicationId !== null}
         onClose={() => setSelectedApplicationId(null)}
+        onStartManualReview={(appId, jobId) => {
+          setSelectedApplicationId(null)
+          handleStartManualReview(appId, jobId)
+        }}
       />
 
       <CreateJobDialog

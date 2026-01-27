@@ -40,6 +40,7 @@ export interface Job {
   status: JobStatus
   currentVersion: JobConfigVersion
   specDocumentId?: string
+  rubricDocumentId?: string
   stats?: JobStats
 }
 
@@ -180,4 +181,29 @@ export interface DLQItem {
   lastAttemptedAt: string
   canRetry: boolean
   notes?: string
+}
+
+export interface ManualReviewAuditEntry {
+  entryId: string
+  applicationId: string
+  reviewerId: string
+  reviewerName: string
+  timestamp: string
+  changeType: 'score_adjustment' | 'comment_added' | 'points_allocated'
+  categoryId?: string
+  categoryName?: string
+  previousValue?: number | string
+  newValue?: number | string
+  comment?: string
+}
+
+export interface ManualReviewData {
+  applicationId: string
+  jobId: string
+  rubricScores: Record<string, { points: number; maxPoints: number; comment: string }>
+  overallComment: string
+  adjustedFinalScore?: number
+  auditTrail: ManualReviewAuditEntry[]
+  lastModifiedAt: string
+  lastModifiedBy: string
 }

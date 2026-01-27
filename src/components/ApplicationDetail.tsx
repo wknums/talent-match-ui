@@ -5,8 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/StatusBadge'
-import { Quotes, File, CheckCircle, XCircle, ShieldCheck } from '@phosphor-icons/react'
+import { Quotes, File, CheckCircle, XCircle, ShieldCheck, Pencil } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
+import { Button } from '@/components/ui/button'
 import type { Application, ScoringRun, ExtractionArtifact, AggregatedResult } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -14,9 +15,10 @@ interface ApplicationDetailProps {
   applicationId: string | null
   open: boolean
   onClose: () => void
+  onStartManualReview?: (applicationId: string, jobId: string) => void
 }
 
-export function ApplicationDetail({ applicationId, open, onClose }: ApplicationDetailProps) {
+export function ApplicationDetail({ applicationId, open, onClose, onStartManualReview }: ApplicationDetailProps) {
   const [application, setApplication] = useState<Application | null>(null)
   const [scoringRuns, setScoringRuns] = useState<ScoringRun[]>([])
   const [extractionArtifact, setExtractionArtifact] = useState<ExtractionArtifact | null>(null)
@@ -68,7 +70,19 @@ export function ApplicationDetail({ applicationId, open, onClose }: ApplicationD
                 <p className="text-sm text-muted-foreground mt-1">{application.candidateEmail}</p>
               )}
             </div>
-            <StatusBadge status={application.status} />
+            <div className="flex items-center gap-2">
+              {onStartManualReview && (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => onStartManualReview(application.applicationId, application.jobId)}
+                >
+                  <Pencil size={16} />
+                  Manual Review
+                </Button>
+              )}
+              <StatusBadge status={application.status} />
+            </div>
           </div>
           {application.finalScore !== undefined && (
             <div className="flex items-center gap-6 mt-4">
