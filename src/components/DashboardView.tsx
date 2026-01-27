@@ -4,7 +4,7 @@ import { JobCard } from '@/components/JobCard'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Plus, ChartBar, Briefcase, Queue, Gear, Funnel, X } from '@phosphor-icons/react'
+import { Plus, ChartBar, Briefcase, Queue, Gear, Funnel, X, ArrowUp, ArrowDown } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
 import type { Job, SystemStats } from '@/types'
 
@@ -24,6 +24,9 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
   const [filterOrganization, setFilterOrganization] = useState<string>('all')
   const [filterTitle, setFilterTitle] = useState<string>('')
   const [showFilters, setShowFilters] = useState(false)
+  
+  const [sortBy, setSortBy] = useState<'title' | 'department' | 'organization' | 'postingDate' | 'applications'>('postingDate')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
     loadData()
@@ -32,8 +35,8 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
   }, [])
   
   useEffect(() => {
-    applyFilters()
-  }, [jobs, filterDepartment, filterOrganization, filterTitle])
+    applyFiltersAndSort()
+  }, [jobs, filterDepartment, filterOrganization, filterTitle, sortBy, sortOrder])
 
   const loadData = async () => {
     try {
@@ -48,7 +51,7 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
     }
   }
   
-  const applyFilters = () => {
+  const applyFiltersAndSort = () => {
     let filtered = [...jobs]
     
     if (filterDepartment !== 'all') {
@@ -65,7 +68,35 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
       )
     }
     
+    filtered.sort((a, b) => {
+      let comparison = 0
+      
+      switch (sortBy) {
+        case 'title':
+          comparison = a.title.localeCompare(b.title)
+          break
+        case 'department':
+          comparison = a.department.localeCompare(b.department)
+          break
+        case 'organization':
+          comparison = a.organization.localeCompare(b.organization)
+          break
+        case 'postingDate':
+          comparison = new Date(a.postingDate).getTime() - new Date(b.postingDate).getTime()
+          break
+        case 'applications':
+          comparison = (a.stats?.totalApplications || 0) - (b.stats?.totalApplications || 0)
+          break
+      }
+      
+      return sortOrder === 'asc' ? comparison : -comparison
+    })
+    
     setFilteredJobs(filtered)
+  }
+  
+  const toggleSortOrder = () => {
+    setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')
   }
   
   const clearFilters = () => {
@@ -152,7 +183,7 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
       
       {showFilters && (
         <div className="bg-card border border-border rounded-lg p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Job Title</label>
               <Input
@@ -188,6 +219,32 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          </div>
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center gap-4">
+              <label className="text-sm font-medium">Sort by:</label>
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="postingDate">Posting Date</SelectItem>
+                  <SelectItem value="title">Job Title</SelectItem>
+                  <SelectItem value="department">Department</SelectItem>
+                  <SelectItem value="organization">Organization</SelectItem>
+                  <SelectItem value="applications">Total Applications</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleSortOrder}
+                className="gap-2"
+              >
+                {sortOrder === 'asc' ? <ArrowUp size={16} /> : <ArrowDown size={16} />}
+                {sortOrder === 'asc' ? 'Ascending' : 'Descending'}
+              </Button>
             </div>
           </div>
         </div>
