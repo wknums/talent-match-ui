@@ -47,7 +47,7 @@ export function UploadRubricDialog({ open, jobId, onClose, onSuccess }: UploadRu
     setProcessing(true)
 
     try {
-      const prompt = window.spark.llmPrompt`You are analyzing a scoring rubric document for evaluating job applications. Extract the rubric categories and return them as JSON.
+      const prompt = (window.spark.llmPrompt as any)`You are analyzing a scoring rubric document for evaluating job applications. Extract the rubric categories and return them as JSON.
 
 Return ONLY a JSON object with this exact structure:
 {

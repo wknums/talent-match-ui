@@ -32,6 +32,9 @@ function App() {
   }
 
   const handleBackToJobDetail = () => {
+    if (reviewJobId) {
+      setSelectedJobId(reviewJobId)
+    }
     setCurrentView('job-detail')
     setReviewApplicationId(null)
     setReviewJobId(null)
@@ -44,6 +47,9 @@ function App() {
   const handleStartManualReview = (applicationId: string, jobId: string) => {
     setReviewApplicationId(applicationId)
     setReviewJobId(jobId)
+    if (!selectedJobId) {
+      setSelectedJobId(jobId)
+    }
     setCurrentView('manual-review')
   }
 

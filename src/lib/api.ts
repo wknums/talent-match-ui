@@ -15,6 +15,42 @@ import type {
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
+const calculateJobStats = (jobId: string, longlistThreshold: number, shortlistThreshold: number) => {
+  const apps = generateMockApplications(jobId, 50)
+  
+  const longlistCount = apps.filter(
+    a => a.finalDecision === 'Eligible' && a.finalScore && a.finalScore >= longlistThreshold
+  ).length
+  
+  const shortlistCount = apps.filter(
+    a => a.finalDecision === 'Eligible' && a.finalScore && a.finalScore >= shortlistThreshold
+  ).length
+  
+  const needsManualReview = apps.filter(
+    a => a.finalDecision === 'NeedsManualReview' || a.status === 'NeedsManualReview'
+  ).length
+  
+  const excludedCount = apps.filter(a => a.finalDecision === 'Excluded').length
+  const queued = apps.filter(a => a.status === 'Queued').length
+  const extracting = apps.filter(a => a.status === 'Extracting').length
+  const scoring = apps.filter(a => a.status === 'Scoring').length
+  const completed = apps.filter(a => a.status === 'Completed').length
+  const failed = apps.filter(a => a.status === 'ExtractionFailed' || a.status === 'ScoringFailed').length
+  
+  return {
+    totalApplications: apps.length,
+    queued,
+    extracting,
+    scoring,
+    completed,
+    failed,
+    needsManualReview,
+    longlistCount,
+    shortlistCount,
+    excludedCount,
+  }
+}
+
 const generateMockJobs = (): Job[] => {
   return [
     {
@@ -48,17 +84,8 @@ const generateMockJobs = (): Job[] => {
         varianceThreshold: 15,
         createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       },
-      stats: {
-        totalApplications: 342,
-        queued: 12,
-        extracting: 8,
-        scoring: 45,
-        completed: 265,
-        failed: 5,
-        needsManualReview: 7,
-        longlistCount: 89,
-        shortlistCount: 34,
-        excludedCount: 219,
+      get stats() {
+        return calculateJobStats(this.jobId, this.currentVersion.longlistThreshold, this.currentVersion.shortlistThreshold)
       },
     },
     {
@@ -91,17 +118,8 @@ const generateMockJobs = (): Job[] => {
         varianceThreshold: 12,
         createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       },
-      stats: {
-        totalApplications: 156,
-        queued: 78,
-        extracting: 23,
-        scoring: 31,
-        completed: 22,
-        failed: 1,
-        needsManualReview: 1,
-        longlistCount: 8,
-        shortlistCount: 3,
-        excludedCount: 14,
+      get stats() {
+        return calculateJobStats(this.jobId, this.currentVersion.longlistThreshold, this.currentVersion.shortlistThreshold)
       },
     },
     {
@@ -133,17 +151,8 @@ const generateMockJobs = (): Job[] => {
         varianceThreshold: 10,
         createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
       },
-      stats: {
-        totalApplications: 89,
-        queued: 62,
-        extracting: 15,
-        scoring: 8,
-        completed: 3,
-        failed: 1,
-        needsManualReview: 0,
-        longlistCount: 1,
-        shortlistCount: 0,
-        excludedCount: 2,
+      get stats() {
+        return calculateJobStats(this.jobId, this.currentVersion.longlistThreshold, this.currentVersion.shortlistThreshold)
       },
     },
   ]

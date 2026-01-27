@@ -65,7 +65,7 @@ export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogPro
     setProcessingFile(true)
 
     try {
-      const prompt = spark.llmPrompt`You are analyzing a job specification document. Extract the following information and return it as JSON:
+      const prompt = (window.spark.llmPrompt as any)`You are analyzing a job specification document. Extract the following information and return it as JSON:
 
 {
   "title": "job title",
@@ -97,7 +97,7 @@ ${file.name}
 
 Note: Since this is a simulated environment, I'll generate a realistic job spec based on the filename. In production, the actual file content would be extracted and analyzed.`
 
-      const response = await spark.llm(prompt, 'gpt-4o', true)
+      const response = await window.spark.llm(prompt, 'gpt-4o', true)
       const parsed = JSON.parse(response)
 
       setTitle(parsed.title || '')
