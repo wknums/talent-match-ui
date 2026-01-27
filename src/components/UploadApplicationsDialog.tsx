@@ -1,0 +1,220 @@
+import { useState, useCallback } from 'react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Progress } from '@/components/ui/progress'
+import { UploadSimple, File, CheckCircle, X } from '@phosphor-icons/react'
+import { mockAPI } from '@/lib/api'
+import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
+
+interface UploadApplicationsDialogProps {
+  open: boolean
+  jobId: string | null
+  jobTitle?: string
+  onClose: () => void
+  onSuccess?: () => void
+}
+
+export function UploadApplicationsDialog({
+  open,
+  jobId,
+  jobTitle,
+  onClose,
+  onSuccess,
+}: UploadApplicationsDialogProps) {
+  const [files, setFiles] = useState<File[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [dragActive, setDragActive] = useState(false)
+
+  const handleDrag = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true)
+    } else if (e.type === 'dragleave') {
+      setDragActive(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(
+      (file) => file.type === 'application/pdf' || file.type.startsWith('image/')
+    )
+    setFiles((prev) => [...prev, ...droppedFiles])
+  }, [])
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const selectedFiles = Array.from(e.target.files)
+      setFiles((prev) => [...prev, ...selectedFiles])
+    }
+  }
+
+  const removeFile = (index: number) => {
+    setFiles(files.filter((_, i) => i !== index))
+  }
+
+  const handleUpload = async () => {
+    if (!jobId || files.length === 0) return
+
+    setUploading(true)
+    setUploadProgress(0)
+
+    try {
+      const progressInterval = setInterval(() => {
+        setUploadProgress((prev) => Math.min(prev + 10, 90))
+      }, 200)
+
+      await mockAPI.uploadApplications(jobId, files)
+
+      clearInterval(progressInterval)
+      setUploadProgress(100)
+
+      toast.success(`Successfully uploaded ${files.length} application(s)`)
+      setTimeout(() => {
+        onSuccess?.()
+        onClose()
+        resetDialog()
+      }, 500)
+    } catch (error) {
+      toast.error('Failed to upload applications')
+      setUploadProgress(0)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const resetDialog = () => {
+    setFiles([])
+    setUploadProgress(0)
+    setDragActive(false)
+  }
+
+  const handleClose = () => {
+    if (!uploading) {
+      onClose()
+      resetDialog()
+    }
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleClose}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Upload Applications</DialogTitle>
+          <DialogDescription>
+            {jobTitle ? `Upload application documents for ${jobTitle}` : 'Upload application documents'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 mt-4">
+          <Card
+            className={cn(
+              'border-2 border-dashed transition-colors cursor-pointer',
+              dragActive && 'border-accent bg-accent/10',
+              !dragActive && 'border-muted hover:border-accent/50'
+            )}
+            onDragEnter={handleDrag}
+            onDragLeave={handleDrag}
+            onDragOver={handleDrag}
+            onDrop={handleDrop}
+          >
+            <CardContent className="p-12 text-center">
+              <input
+                type="file"
+                id="file-upload"
+                multiple
+                accept=".pdf,image/*"
+                onChange={handleFileInput}
+                className="hidden"
+              />
+              <label htmlFor="file-upload" className="cursor-pointer">
+                <div className="flex flex-col items-center gap-4">
+                  <UploadSimple size={48} className="text-accent" />
+                  <div>
+                    <p className="font-medium mb-1">Drop files here or click to browse</p>
+                    <p className="text-sm text-muted-foreground">
+                      Supports PDF and image files (PNG, JPG)
+                    </p>
+                  </div>
+                </div>
+              </label>
+            </CardContent>
+          </Card>
+
+          {files.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">{files.length} file(s) selected</p>
+              <div className="max-h-64 overflow-y-auto space-y-2">
+                {files.map((file, index) => (
+                  <Card key={index}>
+                    <CardContent className="p-3">
+                      <div className="flex items-center gap-3">
+                        <File size={24} className="text-accent" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{file.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {formatFileSize(file.size)}
+                          </p>
+                        </div>
+                        {!uploading && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeFile(index)}
+                          >
+                            <X size={16} />
+                          </Button>
+                        )}
+                        {uploading && uploadProgress === 100 && (
+                          <CheckCircle size={24} className="text-success" weight="fill" />
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {uploading && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Uploading...</span>
+                <span className="font-mono font-medium">{uploadProgress}%</span>
+              </div>
+              <Progress value={uploadProgress} className="h-2" />
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 mt-6">
+          <Button variant="outline" onClick={handleClose} disabled={uploading}>
+            Cancel
+          </Button>
+          <Button onClick={handleUpload} disabled={files.length === 0 || uploading}>
+            {uploading ? 'Uploading...' : `Upload ${files.length} file(s)`}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
