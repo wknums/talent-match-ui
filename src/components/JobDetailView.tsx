@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { ApplicationsTable } from '@/components/ApplicationsTable'
 import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -17,10 +18,14 @@ interface JobDetailViewProps {
   onUploadApplications: () => void
 }
 
+type DrilldownType = 'longlist' | 'shortlist' | 'manual-review' | null
+
 export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadApplications }: JobDetailViewProps) {
   const [job, setJob] = useState<Job | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(true)
+  const [drilldownOpen, setDrilldownOpen] = useState(false)
+  const [drilldownType, setDrilldownType] = useState<DrilldownType>(null)
 
   useEffect(() => {
     loadData()
@@ -64,6 +69,37 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const manualReviewApps = applications.filter(
     (a) => a.finalDecision === 'NeedsManualReview' || a.status === 'NeedsManualReview'
   )
+
+  const openDrilldown = (type: DrilldownType) => {
+    setDrilldownType(type)
+    setDrilldownOpen(true)
+  }
+
+  const getDrilldownApplications = () => {
+    switch (drilldownType) {
+      case 'longlist':
+        return longlistApps
+      case 'shortlist':
+        return shortlistApps
+      case 'manual-review':
+        return manualReviewApps
+      default:
+        return []
+    }
+  }
+
+  const getDrilldownTitle = () => {
+    switch (drilldownType) {
+      case 'longlist':
+        return 'Longlist Applications'
+      case 'shortlist':
+        return 'Shortlist Applications'
+      case 'manual-review':
+        return 'Applications Needing Manual Review'
+      default:
+        return 'Applications'
+    }
+  }
 
   const pipelineStages = [
     {
@@ -137,19 +173,28 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
             <p className="text-2xl font-mono font-bold">{stats.totalApplications}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card 
+          className="cursor-pointer transition-all duration-200 hover:shadow-lg hover:border-accent"
+          onClick={() => openDrilldown('longlist')}
+        >
           <CardContent className="p-4">
             <p className="text-sm text-muted-foreground mb-1">Longlist</p>
             <p className="text-2xl font-mono font-bold text-accent">{stats.longlistCount}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card 
+          className="cursor-pointer transition-all duration-200 hover:shadow-lg hover:border-success"
+          onClick={() => openDrilldown('shortlist')}
+        >
           <CardContent className="p-4">
             <p className="text-sm text-muted-foreground mb-1">Shortlist</p>
             <p className="text-2xl font-mono font-bold text-success">{stats.shortlistCount}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card 
+          className="cursor-pointer transition-all duration-200 hover:shadow-lg hover:border-destructive"
+          onClick={() => openDrilldown('manual-review')}
+        >
           <CardContent className="p-4">
             <p className="text-sm text-muted-foreground mb-1">Manual Review</p>
             <p className="text-2xl font-mono font-bold text-destructive">{stats.needsManualReview}</p>
@@ -204,6 +249,23 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
           </Tabs>
         </CardContent>
       </Card>
+
+      <Sheet open={drilldownOpen} onOpenChange={setDrilldownOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-4xl overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>{getDrilldownTitle()}</SheetTitle>
+          </SheetHeader>
+          <div className="mt-6">
+            <ApplicationsTable 
+              applications={getDrilldownApplications()} 
+              onApplicationClick={(appId) => {
+                setDrilldownOpen(false)
+                onApplicationClick(appId)
+              }} 
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
