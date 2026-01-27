@@ -293,8 +293,8 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
                 onApplicationClick(appId)
               }}
               onStartManualReview={onStartManualReview ? (appId, jobId) => {
-                setDrilldownOpen(false)
                 onStartManualReview(appId, jobId)
+                setDrilldownOpen(false)
               } : undefined}
             />
           </div>
