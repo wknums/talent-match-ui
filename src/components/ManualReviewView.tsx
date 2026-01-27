@@ -25,6 +25,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
   const [extractionArtifact, setExtractionArtifact] = useState<ExtractionArtifact | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [reviewData, setReviewData] = useState<ManualReviewData>({
     applicationId,
     jobId,
@@ -67,12 +68,24 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
   const loadData = async () => {
     setLoading(true)
+    setError(null)
     try {
       const [appData, jobData, artifactData] = await Promise.all([
         mockAPI.getApplication(applicationId),
         mockAPI.getJob(jobId),
         mockAPI.getExtractionArtifact(applicationId),
       ])
+      
+      if (!appData) {
+        setError(`Application ${applicationId} not found`)
+        return
+      }
+      
+      if (!jobData) {
+        setError(`Job ${jobId} not found`)
+        return
+      }
+      
       setApplication(appData)
       setJob(jobData)
       setExtractionArtifact(artifactData)
@@ -100,6 +113,8 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
           }
         })
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load data')
     } finally {
       setLoading(false)
     }
@@ -204,8 +219,37 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     }
   }
 
-  if (loading || !application || !job) {
+  if (loading) {
     return <div className="py-12 text-center">Loading...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="border-b bg-card sticky top-0 z-10">
+          <div className="container mx-auto px-6 py-4">
+            <div className="flex items-center gap-4">
+              <Button variant="ghost" size="sm" onClick={onBack}>
+                <ArrowLeft size={20} />
+              </Button>
+              <div>
+                <h1 className="text-xl font-bold">Manual Review</h1>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="container mx-auto px-6 py-12 text-center">
+          <p className="text-destructive text-lg">{error}</p>
+          <Button onClick={onBack} className="mt-4">
+            Go Back
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  if (!application || !job) {
+    return <div className="py-12 text-center">Data not available</div>
   }
 
   const totalScore = calculateTotalScore()

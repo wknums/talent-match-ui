@@ -466,8 +466,13 @@ export const mockAPI = {
 
   async getApplication(applicationId: string): Promise<Application | null> {
     await delay(300)
-    const apps = generateMockApplications('job-001', 50)
-    return apps.find((a) => a.applicationId === applicationId) || null
+    const jobs = await generateMockJobs()
+    for (const job of jobs) {
+      const apps = generateMockApplications(job.jobId, 50)
+      const found = apps.find((a) => a.applicationId === applicationId)
+      if (found) return found
+    }
+    return null
   },
 
   async getScoringRuns(applicationId: string): Promise<ScoringRun[]> {
