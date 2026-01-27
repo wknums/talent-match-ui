@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -22,9 +22,12 @@ interface CreateJobDialogProps {
   open: boolean
   onClose: () => void
   onSuccess?: () => void
+  editingJob?: Job | null
 }
 
-export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogProps) {
+import type { Job } from '@/types'
+
+export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: CreateJobDialogProps) {
   const [title, setTitle] = useState('')
   const [department, setDepartment] = useState('')
   const [organization, setOrganization] = useState('')
@@ -41,8 +44,24 @@ export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogPro
   const [shortlistThreshold, setShortlistThreshold] = useState('75')
   const [submitting, setSubmitting] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
+  const [uploadedSpecDocId, setUploadedSpecDocId] = useState<string | null>(null)
   const [processingFile, setProcessingFile] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editingJob) {
+      setTitle(editingJob.title)
+      setDepartment(editingJob.department)
+      setOrganization(editingJob.organization)
+      setPostingDate(editingJob.postingDate.split('T')[0])
+      setRubricCategories(editingJob.currentVersion.rubric)
+      setMustHaves(editingJob.currentVersion.mustHaves)
+      setRunsPerApplication(String(editingJob.currentVersion.runsPerApplication))
+      setAggregationStrategy(editingJob.currentVersion.aggregationStrategy)
+      setLonglistThreshold(String(editingJob.currentVersion.longlistThreshold))
+      setShortlistThreshold(String(editingJob.currentVersion.shortlistThreshold))
+    }
+  }, [editingJob])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -62,6 +81,7 @@ export function CreateJobDialog({ open, onClose, onSuccess }: CreateJobDialogPro
     }
 
     setUploadedFile(file)
+    setUploadedSpecDocId(`spec-doc-${Date.now()}-${file.name}`)
     setProcessingFile(true)
 
     try {
@@ -136,6 +156,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
 
   const removeUploadedFile = () => {
     setUploadedFile(null)
+    setUploadedSpecDocId(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -193,25 +214,44 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
 
     setSubmitting(true)
     try {
-      await mockAPI.createJob({
-        title,
-        department,
-        organization,
-        postingDate,
-        rubric: validCategories,
-        mustHaves: mustHaves.filter((m) => m.criterion),
-        runsPerApplication: parseInt(runsPerApplication),
-        aggregationStrategy,
-        longlistThreshold: parseFloat(longlistThreshold),
-        shortlistThreshold: parseFloat(shortlistThreshold),
-      })
+      if (editingJob) {
+        await mockAPI.updateJob(editingJob.jobId, {
+          title,
+          department,
+          organization,
+          postingDate,
+          rubric: validCategories,
+          mustHaves: mustHaves.filter((m) => m.criterion),
+          runsPerApplication: parseInt(runsPerApplication),
+          aggregationStrategy,
+          longlistThreshold: parseFloat(longlistThreshold),
+          shortlistThreshold: parseFloat(shortlistThreshold),
+          specDocumentId: uploadedSpecDocId || undefined,
+          rubricDocumentId: editingJob.rubricDocumentId,
+        })
+        toast.success('Job updated successfully')
+      } else {
+        await mockAPI.createJob({
+          title,
+          department,
+          organization,
+          postingDate,
+          rubric: validCategories,
+          mustHaves: mustHaves.filter((m) => m.criterion),
+          runsPerApplication: parseInt(runsPerApplication),
+          aggregationStrategy,
+          longlistThreshold: parseFloat(longlistThreshold),
+          shortlistThreshold: parseFloat(shortlistThreshold),
+          specDocumentId: uploadedSpecDocId || undefined,
+        })
+        toast.success('Job created successfully')
+      }
 
-      toast.success('Job created successfully')
       onSuccess?.()
       onClose()
       resetForm()
     } catch (error) {
-      toast.error('Failed to create job')
+      toast.error(editingJob ? 'Failed to update job' : 'Failed to create job')
     } finally {
       setSubmitting(false)
     }
@@ -229,6 +269,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
     setLonglistThreshold('60')
     setShortlistThreshold('75')
     setUploadedFile(null)
+    setUploadedSpecDocId(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -238,9 +279,12 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create New Job</DialogTitle>
+          <DialogTitle>{editingJob ? 'Edit Job' : 'Create New Job'}</DialogTitle>
           <DialogDescription>
-            Upload a job specification document or manually define job details, scoring rubric, and requirements
+            {editingJob 
+              ? 'Update job details, scoring rubric, and requirements'
+              : 'Upload a job specification document or manually define job details, scoring rubric, and requirements'
+            }
           </DialogDescription>
         </DialogHeader>
 
@@ -516,7 +560,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
             Cancel
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
-            {submitting ? 'Creating...' : 'Create Job'}
+            {submitting ? (editingJob ? 'Updating...' : 'Creating...') : (editingJob ? 'Update Job' : 'Create Job')}
           </Button>
         </div>
       </DialogContent>

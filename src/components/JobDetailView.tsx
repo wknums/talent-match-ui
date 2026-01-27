@@ -4,11 +4,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ApplicationsTable } from '@/components/ApplicationsTable'
 import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
 import { UploadRubricDialog } from '@/components/UploadRubricDialog'
-import { ArrowLeft, UploadSimple, Funnel } from '@phosphor-icons/react'
+import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
 import { toast } from 'sonner'
 import type { Job, Application } from '@/types'
@@ -18,17 +19,19 @@ interface JobDetailViewProps {
   onBack: () => void
   onApplicationClick: (applicationId: string) => void
   onUploadApplications: () => void
+  onEditJob: (job: Job) => void
 }
 
 type DrilldownType = 'longlist' | 'shortlist' | 'manual-review' | null
 
-export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadApplications }: JobDetailViewProps) {
+export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadApplications, onEditJob }: JobDetailViewProps) {
   const [job, setJob] = useState<Job | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(true)
   const [drilldownOpen, setDrilldownOpen] = useState(false)
   const [drilldownType, setDrilldownType] = useState<DrilldownType>(null)
   const [uploadRubricOpen, setUploadRubricOpen] = useState(false)
+  const [viewingDocument, setViewingDocument] = useState<'spec' | 'rubric' | null>(null)
 
   useEffect(() => {
     loadData()
@@ -148,6 +151,22 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Button variant="outline" onClick={() => onEditJob(job)}>
+            <PencilSimple size={20} />
+            Edit Job
+          </Button>
+          {job.specDocumentId && (
+            <Button variant="outline" onClick={() => setViewingDocument('spec')}>
+              <FileText size={20} />
+              View Job Spec
+            </Button>
+          )}
+          {job.rubricDocumentId && (
+            <Button variant="outline" onClick={() => setViewingDocument('rubric')}>
+              <FileText size={20} />
+              View Rubric
+            </Button>
+          )}
           <Button variant="outline" onClick={() => setUploadRubricOpen(true)}>
             <UploadSimple size={20} />
             Upload Rubric
@@ -280,11 +299,43 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
         open={uploadRubricOpen}
         jobId={jobId}
         onClose={() => setUploadRubricOpen(false)}
-        onSuccess={(rubric) => {
+        onSuccess={async (rubric) => {
+          const rubricDocId = `rubric-doc-${Date.now()}`
+          await mockAPI.updateJobRubric(jobId, rubricDocId)
           toast.success(`Uploaded rubric with ${rubric.length} categories`)
           setUploadRubricOpen(false)
+          loadData()
         }}
       />
+
+      <Dialog open={viewingDocument !== null} onOpenChange={() => setViewingDocument(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {viewingDocument === 'spec' ? 'Job Specification Document' : 'Scoring Rubric Document'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="mt-4 p-6 bg-muted rounded-lg">
+            <p className="text-sm text-muted-foreground mb-4">
+              Document ID: {viewingDocument === 'spec' ? job.specDocumentId : job.rubricDocumentId}
+            </p>
+            <div className="prose prose-sm max-w-none">
+              <p className="text-muted-foreground italic">
+                In a production environment, this would display the actual document content 
+                (PDF viewer, Markdown renderer, or DOCX preview). The document would be fetched 
+                from storage using the document ID.
+              </p>
+              <div className="mt-4 p-4 bg-background border border-border rounded">
+                <h3 className="font-semibold mb-2">Document Preview Placeholder</h3>
+                <p className="text-sm">
+                  The original {viewingDocument === 'spec' ? 'job specification' : 'scoring rubric'} document 
+                  would be rendered here in its original format.
+                </p>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

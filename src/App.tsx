@@ -6,6 +6,7 @@ import { ApplicationDetail } from '@/components/ApplicationDetail'
 import { CreateJobDialog } from '@/components/CreateJobDialog'
 import { UploadApplicationsDialog } from '@/components/UploadApplicationsDialog'
 import { ManualReviewView } from '@/components/ManualReviewView'
+import type { Job } from '@/types'
 
 type View = 'dashboard' | 'job-detail' | 'manual-review'
 
@@ -16,6 +17,7 @@ function App() {
   const [reviewApplicationId, setReviewApplicationId] = useState<string | null>(null)
   const [reviewJobId, setReviewJobId] = useState<string | null>(null)
   const [createJobDialogOpen, setCreateJobDialogOpen] = useState(false)
+  const [editingJob, setEditingJob] = useState<Job | null>(null)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
   const [uploadJobId, setUploadJobId] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -66,6 +68,16 @@ function App() {
     setRefreshKey((prev) => prev + 1)
   }
 
+  const handleEditJob = (job: Job) => {
+    setEditingJob(job)
+    setCreateJobDialogOpen(true)
+  }
+
+  const handleCloseCreateJobDialog = () => {
+    setCreateJobDialogOpen(false)
+    setEditingJob(null)
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {currentView === 'dashboard' && (
@@ -87,6 +99,7 @@ function App() {
             onBack={handleBackToDashboard}
             onApplicationClick={handleApplicationClick}
             onUploadApplications={() => handleUploadApplications(selectedJobId)}
+            onEditJob={handleEditJob}
           />
         </div>
       )}
@@ -111,8 +124,9 @@ function App() {
 
       <CreateJobDialog
         open={createJobDialogOpen}
-        onClose={() => setCreateJobDialogOpen(false)}
+        onClose={handleCloseCreateJobDialog}
         onSuccess={handleCreateJobSuccess}
+        editingJob={editingJob}
       />
 
       <UploadApplicationsDialog

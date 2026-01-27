@@ -51,7 +51,7 @@ const calculateJobStats = (jobId: string, longlistThreshold: number, shortlistTh
   }
 }
 
-const generateMockJobs = (): Job[] => {
+const getDefaultJobs = (): Job[] => {
   return [
     {
       jobId: 'job-001',
@@ -84,9 +84,6 @@ const generateMockJobs = (): Job[] => {
         varianceThreshold: 15,
         createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       },
-      get stats() {
-        return calculateJobStats(this.jobId, this.currentVersion.longlistThreshold, this.currentVersion.shortlistThreshold)
-      },
     },
     {
       jobId: 'job-002',
@@ -118,9 +115,6 @@ const generateMockJobs = (): Job[] => {
         varianceThreshold: 12,
         createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       },
-      get stats() {
-        return calculateJobStats(this.jobId, this.currentVersion.longlistThreshold, this.currentVersion.shortlistThreshold)
-      },
     },
     {
       jobId: 'job-003',
@@ -151,11 +145,19 @@ const generateMockJobs = (): Job[] => {
         varianceThreshold: 10,
         createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
       },
-      get stats() {
-        return calculateJobStats(this.jobId, this.currentVersion.longlistThreshold, this.currentVersion.shortlistThreshold)
-      },
     },
   ]
+}
+
+const generateMockJobs = async (): Promise<Job[]> => {
+  const storedJobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
+  
+  return storedJobs.map(job => ({
+    ...job,
+    get stats() {
+      return calculateJobStats(job.jobId, job.currentVersion.longlistThreshold, job.currentVersion.shortlistThreshold)
+    },
+  }))
 }
 
 const generateMockApplications = (jobId: string, count: number = 20): Application[] => {
@@ -273,9 +275,12 @@ const generateMockScoringRuns = (applicationId: string, count: number = 3): Scor
 export const mockAPI = {
   async getSystemStats(): Promise<SystemStats> {
     await delay(300)
+    const jobs = await generateMockJobs()
+    const activeJobs = jobs.filter(j => j.status === 'Active' || j.status === 'Processing').length
+    
     return {
-      totalJobs: 12,
-      activeJobs: 5,
+      totalJobs: jobs.length,
+      activeJobs,
       totalApplications: 4523,
       queuedApplications: 234,
       processingApplications: 156,
@@ -287,12 +292,12 @@ export const mockAPI = {
 
   async getJobs(): Promise<Job[]> {
     await delay(400)
-    return generateMockJobs()
+    return await generateMockJobs()
   },
 
   async getJob(jobId: string): Promise<Job | null> {
     await delay(200)
-    const jobs = generateMockJobs()
+    const jobs = await generateMockJobs()
     return jobs.find((j) => j.jobId === jobId) || null
   },
 
@@ -307,20 +312,25 @@ export const mockAPI = {
     aggregationStrategy: AggregationStrategy
     longlistThreshold: number
     shortlistThreshold: number
+    specDocumentId?: string
+    rubricDocumentId?: string
   }): Promise<Job> {
     await delay(500)
+    const jobId = `job-${Date.now()}`
     const newJob: Job = {
-      jobId: `job-${Date.now()}`,
+      jobId,
       title: data.title,
       department: data.department,
       organization: data.organization,
       postingDate: data.postingDate,
       createdBy: 'current.user@company.com',
       createdAt: new Date().toISOString(),
-      status: 'Draft',
+      status: 'Active',
+      specDocumentId: data.specDocumentId,
+      rubricDocumentId: data.rubricDocumentId,
       currentVersion: {
         versionId: `v1-${Date.now()}`,
-        jobId: `job-${Date.now()}`,
+        jobId,
         rubric: data.rubric,
         mustHaves: data.mustHaves,
         runsPerApplication: data.runsPerApplication,
@@ -343,7 +353,73 @@ export const mockAPI = {
         excludedCount: 0,
       },
     }
+    
+    const existingJobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
+    await window.spark.kv.set('jobs', [...existingJobs, newJob])
+    
     return newJob
+  },
+
+  async updateJob(jobId: string, data: {
+    title: string
+    department: string
+    organization: string
+    postingDate: string
+    rubric: RubricCategory[]
+    mustHaves: MustHave[]
+    runsPerApplication: number
+    aggregationStrategy: AggregationStrategy
+    longlistThreshold: number
+    shortlistThreshold: number
+    specDocumentId?: string
+    rubricDocumentId?: string
+  }): Promise<Job> {
+    await delay(500)
+    const jobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
+    const jobIndex = jobs.findIndex(j => j.jobId === jobId)
+    
+    if (jobIndex === -1) {
+      throw new Error('Job not found')
+    }
+    
+    const existingJob = jobs[jobIndex]
+    const updatedJob: Job = {
+      ...existingJob,
+      title: data.title,
+      department: data.department,
+      organization: data.organization,
+      postingDate: data.postingDate,
+      specDocumentId: data.specDocumentId,
+      rubricDocumentId: data.rubricDocumentId,
+      currentVersion: {
+        versionId: `v${Date.now()}`,
+        jobId,
+        rubric: data.rubric,
+        mustHaves: data.mustHaves,
+        runsPerApplication: data.runsPerApplication,
+        aggregationStrategy: data.aggregationStrategy,
+        longlistThreshold: data.longlistThreshold,
+        shortlistThreshold: data.shortlistThreshold,
+        varianceThreshold: 15,
+        createdAt: new Date().toISOString(),
+      },
+    }
+    
+    jobs[jobIndex] = updatedJob
+    await window.spark.kv.set('jobs', jobs)
+    
+    return updatedJob
+  },
+
+  async updateJobRubric(jobId: string, rubricDocumentId: string): Promise<void> {
+    await delay(300)
+    const jobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
+    const jobIndex = jobs.findIndex(j => j.jobId === jobId)
+    
+    if (jobIndex !== -1) {
+      jobs[jobIndex].rubricDocumentId = rubricDocumentId
+      await window.spark.kv.set('jobs', jobs)
+    }
   },
 
   async getApplications(jobId: string, filters?: {
