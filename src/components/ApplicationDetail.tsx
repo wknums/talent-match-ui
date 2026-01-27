@@ -3,7 +3,6 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Quotes, File, CheckCircle, XCircle, ShieldCheck } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
@@ -61,7 +60,7 @@ export function ApplicationDetail({ applicationId, open, onClose }: ApplicationD
     <Sheet open={open} onOpenChange={onClose}>
       <SheetContent side="right" className="w-full sm:max-w-3xl p-0">
         <div className="h-full flex flex-col">
-          <SheetHeader className="p-6 border-b">
+          <SheetHeader className="px-6 pt-6 pb-4 border-b shrink-0">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
                 <SheetTitle className="text-2xl">{application.candidateName || application.candidateRef}</SheetTitle>
@@ -108,8 +107,8 @@ export function ApplicationDetail({ applicationId, open, onClose }: ApplicationD
             )}
           </SheetHeader>
 
-          <ScrollArea className="flex-1">
-            <div className="p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto">
+            <div className="p-6 space-y-6 pb-8">
               <Tabs defaultValue="overview">
                 <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -285,7 +284,7 @@ export function ApplicationDetail({ applicationId, open, onClose }: ApplicationD
                 </TabsContent>
               </Tabs>
             </div>
-          </ScrollArea>
+          </div>
         </div>
       </SheetContent>
     </Sheet>
