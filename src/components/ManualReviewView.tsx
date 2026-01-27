@@ -7,7 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, FloppyDisk, ClockClockwise } from '@phosphor-icons/react'
+import { ArrowLeft, FloppyDisk } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -535,54 +535,6 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
             </CardContent>
           </Card>
         </div>
-
-        {reviewData.auditTrail.length > 0 && (
-          <Card className="mt-6">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <ClockClockwise size={20} />
-                Audit Trail
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-48">
-                <div className="space-y-2">
-                  {reviewData.auditTrail
-                    .slice()
-                    .reverse()
-                    .map((entry) => (
-                      <div
-                        key={entry.entryId}
-                        className="text-sm flex items-start gap-3 p-2 rounded hover:bg-muted/50"
-                      >
-                        <span className="text-xs text-muted-foreground font-mono min-w-[140px]">
-                          {new Date(entry.timestamp).toLocaleString()}
-                        </span>
-                        <div className="flex-1">
-                          <p>
-                            <span className="font-medium">{entry.reviewerName}</span>{' '}
-                            <span className="text-muted-foreground">
-                              {entry.changeType === 'points_allocated' &&
-                                `updated points for ${entry.categoryName}: ${entry.previousValue} → ${entry.newValue}`}
-                              {entry.changeType === 'comment_added' &&
-                                `added comment for ${entry.categoryName}`}
-                              {entry.changeType === 'score_adjustment' &&
-                                `adjusted score: ${entry.previousValue} → ${entry.newValue}`}
-                            </span>
-                          </p>
-                          {entry.comment && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              "{entry.comment}"
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-        )}
       </div>
     </div>
   )
