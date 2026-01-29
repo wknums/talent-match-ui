@@ -12,6 +12,13 @@ This system orchestrates sophisticated AI-powered scoring workflows, manages mas
 
 ## Essential Features
 
+**User Authentication & Role-Based Access**
+- Functionality: Simple username/password authentication with admin and recruiter roles; recruiters see only their department's jobs (admins see all); password management including self-service password change and admin-managed password resets; admin user created with initial password "adm1n99"
+- Purpose: Provide secure access control and personalized views for different departments while enabling password reset workflows and user management for initial demos (future: migrate to Entra ID/B2B)
+- Trigger: Application load or session timeout
+- Progression: Login screen → Enter credentials → Authenticate → Dashboard filtered by role/department → Access user menu for password management → Request password reset (recruiter) or manage users/reset passwords (admin) → Logout
+- Success criteria: Users can only access jobs from their department (recruiters) or all jobs (admin); password changes require current password verification; admin can create users, reset passwords, and approve/reject password reset requests; admin notified of pending reset requests; all password operations secure with hashed storage
+
 **Job Creation & Configuration**
 - Functionality: Create jobs with title, department, organization, posting date, specifications, define scoring rubrics with weighted categories, configure must-have requirements, set N scoring runs per application and aggregation strategies
 - Purpose: Establish versioned, auditable job configurations that drive consistent, reproducible scoring with comprehensive job metadata for tracking and filtering

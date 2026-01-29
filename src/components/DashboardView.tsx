@@ -6,15 +6,16 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Plus, ChartBar, Briefcase, Queue, Gear, Funnel, X, ArrowUp, ArrowDown } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
-import type { Job, SystemStats } from '@/types'
+import type { Job, SystemStats, User } from '@/types'
 
 interface DashboardViewProps {
   onJobClick: (jobId: string) => void
   onCreateJob: () => void
   onUploadApplications: (jobId: string) => void
+  currentUser?: User
 }
 
-export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }: DashboardViewProps) {
+export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, currentUser }: DashboardViewProps) {
   const [jobs, setJobs] = useState<Job[]>([])
   const [filteredJobs, setFilteredJobs] = useState<Job[]>([])
   const [systemStats, setSystemStats] = useState<SystemStats | null>(null)
@@ -36,7 +37,7 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
   
   useEffect(() => {
     applyFiltersAndSort()
-  }, [jobs, filterDepartment, filterOrganization, filterTitle, sortBy, sortOrder])
+  }, [jobs, filterDepartment, filterOrganization, filterTitle, sortBy, sortOrder, currentUser])
 
   const loadData = async () => {
     try {
@@ -44,7 +45,13 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications }:
         mockAPI.getJobs(),
         mockAPI.getSystemStats(),
       ])
-      setJobs(jobsData)
+      
+      let filteredData = jobsData
+      if (currentUser && currentUser.role === 'recruiter' && currentUser.department) {
+        filteredData = jobsData.filter(job => job.department === currentUser.department)
+      }
+      
+      setJobs(filteredData)
       setSystemStats(statsData)
     } finally {
       setLoading(false)

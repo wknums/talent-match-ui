@@ -208,3 +208,28 @@ export interface ManualReviewData {
   lastModifiedAt: string
   lastModifiedBy: string
 }
+
+export type UserRole = 'admin' | 'recruiter'
+
+export interface User {
+  userId: string
+  username: string
+  role: UserRole
+  department?: string
+  fullName: string
+  email?: string
+  createdAt: string
+  lastLogin?: string
+  passwordResetRequired?: boolean
+}
+
+export interface PasswordResetRequest {
+  requestId: string
+  userId: string
+  username: string
+  fullName: string
+  requestedAt: string
+  status: 'pending' | 'completed' | 'rejected'
+  resolvedAt?: string
+  resolvedBy?: string
+}
