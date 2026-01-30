@@ -1,7 +1,14 @@
-import { useEffect, useRef, useState, ReactNode } from 'react'
+import { useEffect, useRef, useState, ReactNode, createContext, useContext } from 'react'
 import { Dialog, DialogContent, DialogPortal } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { ArrowsOutCardinal } from '@phosphor-icons/react'
+import { ArrowsOutCardinal, X } from '@phosphor-icons/react'
+import { Button } from '@/components/ui/button'
+
+interface DraggableResizableDialogContextValue {
+  onClose?: () => void
+}
+
+const DraggableResizableDialogContext = createContext<DraggableResizableDialogContextValue>({})
 
 interface DraggableResizableDialogProps {
   open: boolean
@@ -32,6 +39,10 @@ export function DraggableResizableDialog({
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [resizeStart, setResizeStart] = useState({ x: 0, y: 0, width: 0, height: 0 })
   const [isInitialized, setIsInitialized] = useState(false)
+
+  const handleClose = () => {
+    onOpenChange?.(false)
+  }
 
   useEffect(() => {
     if (open && !isInitialized) {
@@ -146,9 +157,11 @@ export function DraggableResizableDialog({
             </div>
           </div>
           
-          <div className="h-full overflow-hidden flex flex-col">
-            {children}
-          </div>
+          <DraggableResizableDialogContext.Provider value={{ onClose: handleClose }}>
+            <div className="h-full overflow-hidden flex flex-col">
+              {children}
+            </div>
+          </DraggableResizableDialogContext.Provider>
 
           <div
             data-resize-handle
@@ -169,9 +182,21 @@ interface DraggableDialogHeaderProps {
 }
 
 export function DraggableDialogHeader({ children, className }: DraggableDialogHeaderProps) {
+  const { onClose } = useContext(DraggableResizableDialogContext)
+  
   return (
-    <div className={cn('px-6 pt-6 pb-4 border-b', className)}>
+    <div className={cn('px-6 pt-6 pb-4 border-b relative', className)}>
       {children}
+      {onClose && (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+          className="absolute top-4 right-4 h-8 w-8 p-0 hover:bg-muted"
+        >
+          <X size={18} />
+        </Button>
+      )}
     </div>
   )
 }
