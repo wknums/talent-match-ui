@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { UserPlus, Trash, Key, X, Check } from '@phosphor-icons/react'
+import { UserPlus, Trash, Key, X, Check, XCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import type { User, PasswordResetRequest } from '@/types'
 import { getAllUsers, createUser, deleteUser, resetUserPassword, getPasswordResetRequests, resolvePasswordResetRequest } from '@/lib/auth'
@@ -194,7 +194,17 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
       minHeight={500}
     >
       <DraggableDialogHeader>
-        <DialogTitle>User Management</DialogTitle>
+        <div className="flex items-center justify-between">
+          <DialogTitle>User Management</DialogTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClose}
+            className="h-8 w-8 p-0"
+          >
+            <XCircle size={20} />
+          </Button>
+        </div>
       </DraggableDialogHeader>
 
       <DraggableDialogBody className="px-6">
