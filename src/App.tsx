@@ -10,11 +10,12 @@ import { LoginForm } from '@/components/LoginForm'
 import { UserMenu } from '@/components/UserMenu'
 import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
 import { UserManagementDialog } from '@/components/UserManagementDialog'
+import { AnalyticsView } from '@/components/AnalyticsView'
 import type { Job, User } from '@/types'
 import { initializeAuth, login, logout, getCurrentUser, requestPasswordReset } from '@/lib/auth'
 import { toast } from 'sonner'
 
-type View = 'dashboard' | 'job-detail' | 'manual-review'
+type View = 'dashboard' | 'job-detail' | 'manual-review' | 'analytics'
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
@@ -148,16 +149,30 @@ function App() {
             <div>
               <h1 className="text-3xl font-bold">Talent Matching Platform</h1>
               <p className="text-muted-foreground mt-1">
-                {currentUser.role === 'admin' ? 'Administrator View' : `${currentUser.department || 'Recruiter'} Dashboard`}
+                {currentUser.role === 'admin' 
+                  ? 'Administrator View' 
+                  : currentUser.role === 'business_panel'
+                  ? 'Business Panel Member - Candidate Approval'
+                  : `${currentUser.department || 'Recruiter'} Dashboard`}
               </p>
             </div>
-            <UserMenu
-              user={currentUser}
-              onChangePassword={() => setChangePasswordOpen(true)}
-              onRequestPasswordReset={handleRequestPasswordReset}
-              onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
-              onLogout={handleLogout}
-            />
+            <div className="flex items-center gap-2">
+              {(currentUser.role === 'admin' || currentUser.role === 'recruiter') && (
+                <button
+                  onClick={() => setCurrentView('analytics')}
+                  className="px-4 py-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+                >
+                  View Analytics
+                </button>
+              )}
+              <UserMenu
+                user={currentUser}
+                onChangePassword={() => setChangePasswordOpen(true)}
+                onRequestPasswordReset={handleRequestPasswordReset}
+                onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+                onLogout={handleLogout}
+              />
+            </div>
           </div>
           <DashboardView
             key={refreshKey}
@@ -166,6 +181,27 @@ function App() {
             onUploadApplications={handleUploadApplications}
             currentUser={currentUser}
           />
+        </div>
+      )}
+
+      {currentView === 'analytics' && (
+        <div className="container mx-auto px-8 py-6">
+          <div className="flex justify-between items-center mb-6">
+            <button
+              onClick={() => setCurrentView('dashboard')}
+              className="px-4 py-2 text-sm font-medium text-primary hover:text-primary/80 transition-colors"
+            >
+              ← Back to Dashboard
+            </button>
+            <UserMenu
+              user={currentUser}
+              onChangePassword={() => setChangePasswordOpen(true)}
+              onRequestPasswordReset={handleRequestPasswordReset}
+              onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onLogout={handleLogout}
+            />
+          </div>
+          <AnalyticsView />
         </div>
       )}
 

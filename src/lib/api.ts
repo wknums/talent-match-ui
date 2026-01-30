@@ -595,4 +595,80 @@ export const mockAPI = {
       },
     ]
   },
+
+  async getRecruiterAnalytics(): Promise<import('@/types').RecruiterAnalytics[]> {
+    await delay(500)
+    return [
+      {
+        recruiterId: 'user-rec-001',
+        recruiterName: 'Sarah Johnson',
+        department: 'Engineering',
+        applicationsInQueue: 45,
+        manualReviewsPerformed: 23,
+        shortlistRecommendations: 18,
+        averageProcessingTime: 2.5,
+        activeJobs: 3,
+      },
+      {
+        recruiterId: 'user-rec-002',
+        recruiterName: 'Michael Chen',
+        department: 'Engineering',
+        applicationsInQueue: 32,
+        manualReviewsPerformed: 15,
+        shortlistRecommendations: 12,
+        averageProcessingTime: 3.1,
+        activeJobs: 2,
+      },
+      {
+        recruiterId: 'user-rec-003',
+        recruiterName: 'Emily Rodriguez',
+        department: 'Product',
+        applicationsInQueue: 28,
+        manualReviewsPerformed: 19,
+        shortlistRecommendations: 14,
+        averageProcessingTime: 2.8,
+        activeJobs: 2,
+      },
+      {
+        recruiterId: 'user-rec-004',
+        recruiterName: 'David Park',
+        department: 'Design',
+        applicationsInQueue: 15,
+        manualReviewsPerformed: 10,
+        shortlistRecommendations: 8,
+        averageProcessingTime: 2.2,
+        activeJobs: 1,
+      },
+      {
+        recruiterId: 'user-rec-005',
+        recruiterName: 'Lisa Thompson',
+        department: 'Product',
+        applicationsInQueue: 22,
+        manualReviewsPerformed: 12,
+        shortlistRecommendations: 9,
+        averageProcessingTime: 2.9,
+        activeJobs: 2,
+      },
+    ]
+  },
+
+  async getDepartmentAnalytics(): Promise<import('@/types').DepartmentAnalytics[]> {
+    await delay(500)
+    const recruiterData = await this.getRecruiterAnalytics()
+    
+    const departments = Array.from(new Set(recruiterData.map(r => r.department))) as string[]
+    
+    return departments.map(dept => {
+      const deptRecruiters = recruiterData.filter(r => r.department === dept)
+      return {
+        department: dept,
+        totalRecruiters: deptRecruiters.length,
+        applicationsInQueue: deptRecruiters.reduce((sum, r) => sum + r.applicationsInQueue, 0),
+        manualReviewsPerformed: deptRecruiters.reduce((sum, r) => sum + r.manualReviewsPerformed, 0),
+        shortlistRecommendations: deptRecruiters.reduce((sum, r) => sum + r.shortlistRecommendations, 0),
+        activeJobs: deptRecruiters.reduce((sum, r) => sum + r.activeJobs, 0),
+        recruiters: deptRecruiters,
+      }
+    })
+  },
 }

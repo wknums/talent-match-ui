@@ -209,7 +209,7 @@ export interface ManualReviewData {
   lastModifiedBy: string
 }
 
-export type UserRole = 'admin' | 'recruiter'
+export type UserRole = 'admin' | 'recruiter' | 'business_panel'
 
 export interface User {
   userId: string
@@ -221,6 +221,27 @@ export interface User {
   createdAt: string
   lastLogin?: string
   passwordResetRequired?: boolean
+}
+
+export interface RecruiterAnalytics {
+  recruiterId: string
+  recruiterName: string
+  department: string
+  applicationsInQueue: number
+  manualReviewsPerformed: number
+  shortlistRecommendations: number
+  averageProcessingTime?: number
+  activeJobs: number
+}
+
+export interface DepartmentAnalytics {
+  department: string
+  totalRecruiters: number
+  applicationsInQueue: number
+  manualReviewsPerformed: number
+  shortlistRecommendations: number
+  activeJobs: number
+  recruiters: RecruiterAnalytics[]
 }
 
 export interface PasswordResetRequest {

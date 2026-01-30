@@ -30,7 +30,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
     fullName: '',
     email: '',
     department: '',
-    role: 'recruiter' as 'admin' | 'recruiter',
+    role: 'recruiter' as 'admin' | 'recruiter' | 'business_panel',
     password: '',
   })
 
@@ -291,7 +291,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
                   <Label htmlFor="new-role">Role</Label>
                   <Select
                     value={newUser.role}
-                    onValueChange={(value: 'admin' | 'recruiter') => setNewUser({ ...newUser, role: value })}
+                    onValueChange={(value: 'admin' | 'recruiter' | 'business_panel') => setNewUser({ ...newUser, role: value })}
                     disabled={isLoading}
                   >
                     <SelectTrigger id="new-role">
@@ -299,6 +299,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="recruiter">Recruiter</SelectItem>
+                      <SelectItem value="business_panel">Business Panel Member</SelectItem>
                       <SelectItem value="admin">Admin</SelectItem>
                     </SelectContent>
                   </Select>
@@ -346,8 +347,8 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={user.role === 'admin' ? 'default' : 'secondary'}>
-                        {user.role}
+                      <Badge variant={user.role === 'admin' ? 'default' : user.role === 'business_panel' ? 'outline' : 'secondary'}>
+                        {user.role === 'business_panel' ? 'Business Panel' : user.role}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
