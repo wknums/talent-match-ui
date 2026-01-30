@@ -282,7 +282,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-[96rem] max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-[96rem] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{editingJob ? 'Edit Job' : 'Create New Job'}</DialogTitle>
           <DialogDescription>
