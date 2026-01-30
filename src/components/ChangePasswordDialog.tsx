@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+} from '@/components/DraggableResizableDialog'
+import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -59,14 +64,21 @@ export function ChangePasswordDialog({ open, onClose, onSuccess, userId }: Chang
   }
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>Change Password</DialogTitle>
-          <DialogDescription>
-            Enter your current password and choose a new one
-          </DialogDescription>
-        </DialogHeader>
+    <DraggableResizableDialog
+      open={open}
+      onOpenChange={onClose}
+      defaultWidth={500}
+      defaultHeight={450}
+      minWidth={400}
+      minHeight={350}
+    >
+      <DraggableDialogHeader>
+        <DialogTitle>Change Password</DialogTitle>
+        <DialogDescription>
+          Enter your current password and choose a new one
+        </DialogDescription>
+      </DraggableDialogHeader>
+      <DraggableDialogBody className="px-6">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="old-password">Current Password</Label>
@@ -110,7 +122,7 @@ export function ChangePasswordDialog({ open, onClose, onSuccess, userId }: Chang
             </Button>
           </div>
         </form>
-      </DialogContent>
-    </Dialog>
+      </DraggableDialogBody>
+    </DraggableResizableDialog>
   )
 }

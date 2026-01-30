@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+  DraggableDialogFooter,
+} from '@/components/DraggableResizableDialog'
+import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -281,19 +281,26 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
   }
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-[96rem] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{editingJob ? 'Edit Job' : 'Create New Job'}</DialogTitle>
-          <DialogDescription>
-            {editingJob 
-              ? 'Update job details, scoring rubric, and requirements'
-              : 'Upload a job specification document or manually define job details, scoring rubric, and requirements'
-            }
-          </DialogDescription>
-        </DialogHeader>
+    <DraggableResizableDialog
+      open={open}
+      onOpenChange={onClose}
+      defaultWidth={1200}
+      defaultHeight={700}
+      minWidth={800}
+      minHeight={500}
+    >
+      <DraggableDialogHeader>
+        <DialogTitle>{editingJob ? 'Edit Job' : 'Create New Job'}</DialogTitle>
+        <DialogDescription>
+          {editingJob 
+            ? 'Update job details, scoring rubric, and requirements'
+            : 'Upload a job specification document or manually define job details, scoring rubric, and requirements'
+          }
+        </DialogDescription>
+      </DraggableDialogHeader>
 
-        <Tabs defaultValue="manual" className="mt-4">
+      <DraggableDialogBody className="px-6">
+        <Tabs defaultValue="manual" className="h-full flex flex-col">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="upload">
               <UploadSimple size={16} className="mr-2" />
@@ -569,16 +576,16 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
             </div>
           </TabsContent>
         </Tabs>
+      </DraggableDialogBody>
 
-        <div className="flex justify-end gap-2 mt-6">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} disabled={submitting}>
-            {submitting ? (editingJob ? 'Updating...' : 'Creating...') : (editingJob ? 'Update Job' : 'Create Job')}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      <DraggableDialogFooter>
+        <Button variant="outline" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button onClick={handleSubmit} disabled={submitting}>
+          {submitting ? (editingJob ? 'Updating...' : 'Creating...') : (editingJob ? 'Update Job' : 'Create Job')}
+        </Button>
+      </DraggableDialogFooter>
+    </DraggableResizableDialog>
   )
 }

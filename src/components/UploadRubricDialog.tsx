@@ -1,12 +1,11 @@
 import { useState, useRef } from 'react'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from '@/components/ui/dialog'
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+  DraggableDialogFooter,
+} from '@/components/DraggableResizableDialog'
+import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { UploadSimple, File, X, Sparkle } from '@phosphor-icons/react'
@@ -123,15 +122,22 @@ Note: This is a simulated environment. Generate a realistic rubric based on the 
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Upload Scoring Rubric</DialogTitle>
-          <DialogDescription>
-            Upload a document containing the scoring rubric for this job position
-          </DialogDescription>
-        </DialogHeader>
+    <DraggableResizableDialog
+      open={open}
+      onOpenChange={handleClose}
+      defaultWidth={700}
+      defaultHeight={600}
+      minWidth={500}
+      minHeight={400}
+    >
+      <DraggableDialogHeader>
+        <DialogTitle>Upload Scoring Rubric</DialogTitle>
+        <DialogDescription>
+          Upload a document containing the scoring rubric for this job position
+        </DialogDescription>
+      </DraggableDialogHeader>
 
+      <DraggableDialogBody className="px-6">
         <div className="space-y-4">
           <div className="border-2 border-dashed border-border rounded-lg p-8">
             <input
@@ -212,16 +218,16 @@ Note: This is a simulated environment. Generate a realistic rubric based on the 
             </Card>
           )}
         </div>
+      </DraggableDialogBody>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={handleClose}>
-            Cancel
-          </Button>
-          <Button onClick={handleSubmit} disabled={!extractedRubric}>
-            Upload Rubric
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <DraggableDialogFooter>
+        <Button variant="outline" onClick={handleClose}>
+          Cancel
+        </Button>
+        <Button onClick={handleSubmit} disabled={!extractedRubric}>
+          Upload Rubric
+        </Button>
+      </DraggableDialogFooter>
+    </DraggableResizableDialog>
   )
 }

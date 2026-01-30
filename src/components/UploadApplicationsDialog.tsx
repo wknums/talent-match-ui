@@ -1,11 +1,11 @@
 import { useState, useCallback } from 'react'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+  DraggableDialogFooter,
+} from '@/components/DraggableResizableDialog'
+import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -116,16 +116,23 @@ export function UploadApplicationsDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Upload Applications</DialogTitle>
-          <DialogDescription>
-            {jobTitle ? `Upload application documents for ${jobTitle}` : 'Upload application documents'}
-          </DialogDescription>
-        </DialogHeader>
+    <DraggableResizableDialog
+      open={open}
+      onOpenChange={handleClose}
+      defaultWidth={700}
+      defaultHeight={600}
+      minWidth={500}
+      minHeight={400}
+    >
+      <DraggableDialogHeader>
+        <DialogTitle>Upload Applications</DialogTitle>
+        <DialogDescription>
+          {jobTitle ? `Upload application documents for ${jobTitle}` : 'Upload application documents'}
+        </DialogDescription>
+      </DraggableDialogHeader>
 
-        <div className="space-y-4 mt-4">
+      <DraggableDialogBody className="px-6">
+        <div className="space-y-4">
           <Card
             className={cn(
               'border-2 border-dashed transition-colors cursor-pointer',
@@ -205,16 +212,16 @@ export function UploadApplicationsDialog({
             </div>
           )}
         </div>
+      </DraggableDialogBody>
 
-        <div className="flex justify-end gap-2 mt-6">
-          <Button variant="outline" onClick={handleClose} disabled={uploading}>
-            Cancel
-          </Button>
-          <Button onClick={handleUpload} disabled={files.length === 0 || uploading}>
-            {uploading ? 'Uploading...' : `Upload ${files.length} file(s)`}
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
+      <DraggableDialogFooter>
+        <Button variant="outline" onClick={handleClose} disabled={uploading}>
+          Cancel
+        </Button>
+        <Button onClick={handleUpload} disabled={files.length === 0 || uploading}>
+          {uploading ? 'Uploading...' : `Upload ${files.length} file(s)`}
+        </Button>
+      </DraggableDialogFooter>
+    </DraggableResizableDialog>
   )
 }

@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+} from '@/components/DraggableResizableDialog'
+import { DialogTitle } from '@/components/ui/dialog'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -60,78 +64,83 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
   }
 
   return (
-    <Sheet open={open} onOpenChange={onClose}>
-      <SheetContent side="right" className="w-full sm:max-w-3xl p-0 flex flex-col">
-        <SheetHeader className="px-6 pt-6 pb-4 border-b shrink-0">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1">
-              <SheetTitle className="text-2xl">{application.candidateName || application.candidateRef}</SheetTitle>
-              {application.candidateEmail && (
-                <p className="text-sm text-muted-foreground mt-1">{application.candidateEmail}</p>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {onStartManualReview && (
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => onStartManualReview(application.applicationId, application.jobId)}
-                >
-                  <Pencil size={16} />
-                  Manual Review
-                </Button>
-              )}
-              <StatusBadge status={application.status} />
-            </div>
+    <DraggableResizableDialog
+      open={open}
+      onOpenChange={onClose}
+      defaultWidth={900}
+      defaultHeight={700}
+      minWidth={600}
+      minHeight={500}
+    >
+      <DraggableDialogHeader>
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <DialogTitle className="text-2xl">{application.candidateName || application.candidateRef}</DialogTitle>
+            {application.candidateEmail && (
+              <p className="text-sm text-muted-foreground mt-1">{application.candidateEmail}</p>
+            )}
           </div>
-          {application.finalScore !== undefined && (
-            <div className="flex items-center gap-6 mt-4">
+          <div className="flex items-center gap-2">
+            {onStartManualReview && (
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => onStartManualReview(application.applicationId, application.jobId)}
+              >
+                <Pencil size={16} />
+                Manual Review
+              </Button>
+            )}
+            <StatusBadge status={application.status} />
+          </div>
+        </div>
+        {application.finalScore !== undefined && (
+          <div className="flex items-center gap-6 mt-4">
+            <div>
+              <p className="text-sm text-muted-foreground mb-1">Final Score</p>
+              <p className={cn('text-4xl font-mono font-bold', getScoreColor(application.finalScore))}>
+                {application.finalScore.toFixed(1)}
+              </p>
+            </div>
+            {application.variance !== undefined && (
               <div>
-                <p className="text-sm text-muted-foreground mb-1">Final Score</p>
-                <p className={cn('text-4xl font-mono font-bold', getScoreColor(application.finalScore))}>
-                  {application.finalScore.toFixed(1)}
+                <p className="text-sm text-muted-foreground mb-1">Variance</p>
+                <p className={cn('text-2xl font-mono', application.variance > 15 && 'text-destructive font-bold')}>
+                  ±{application.variance.toFixed(1)}
                 </p>
               </div>
-              {application.variance !== undefined && (
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Variance</p>
-                  <p className={cn('text-2xl font-mono', application.variance > 15 && 'text-destructive font-bold')}>
-                    ±{application.variance.toFixed(1)}
-                  </p>
-                </div>
-              )}
-              {application.finalDecision && (
-                <div>
-                  <p className="text-sm text-muted-foreground mb-1">Decision</p>
-                  <Badge
-                    variant={
-                      application.finalDecision === 'Eligible'
-                        ? 'default'
-                        : application.finalDecision === 'Excluded'
-                        ? 'secondary'
-                        : 'destructive'
-                    }
-                    className="text-base px-3 py-1"
-                  >
-                    {application.finalDecision}
-                  </Badge>
-                </div>
-              )}
-            </div>
-          )}
-        </SheetHeader>
+            )}
+            {application.finalDecision && (
+              <div>
+                <p className="text-sm text-muted-foreground mb-1">Decision</p>
+                <Badge
+                  variant={
+                    application.finalDecision === 'Eligible'
+                      ? 'default'
+                      : application.finalDecision === 'Excluded'
+                      ? 'secondary'
+                      : 'destructive'
+                  }
+                  className="text-base px-3 py-1"
+                >
+                  {application.finalDecision}
+                </Badge>
+              </div>
+            )}
+          </div>
+        )}
+      </DraggableDialogHeader>
 
-        <ScrollArea className="flex-1">
-          <div className="p-6 space-y-6">
-            <Tabs defaultValue="overview">
-              <TabsList className="grid w-full grid-cols-4">
-                <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="runs">Runs ({scoringRuns.length})</TabsTrigger>
-                <TabsTrigger value="documents">Documents</TabsTrigger>
-                <TabsTrigger value="extraction">Extracted</TabsTrigger>
-              </TabsList>
+      <DraggableDialogBody className="px-6">
+        <Tabs defaultValue="overview">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="runs">Runs ({scoringRuns.length})</TabsTrigger>
+            <TabsTrigger value="documents">Documents</TabsTrigger>
+            <TabsTrigger value="extraction">Extracted</TabsTrigger>
+          </TabsList>
 
-                <TabsContent value="overview" className="space-y-4 mt-6">
+          <TabsContent value="overview" className="space-y-4 mt-6">
                   {aggregatedResult && (
                     <>
                       <Card>
@@ -297,9 +306,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                   )}
                 </TabsContent>
               </Tabs>
-            </div>
-          </ScrollArea>
-        </SheetContent>
-      </Sheet>
-    )
-  }
+          </DraggableDialogBody>
+        </DraggableResizableDialog>
+      )
+    }

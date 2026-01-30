@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+} from '@/components/DraggableResizableDialog'
+import { DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -180,12 +185,19 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
   }
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-[calc(100%-2rem)] sm:max-w-[96rem] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>User Management</DialogTitle>
-        </DialogHeader>
+    <DraggableResizableDialog
+      open={open}
+      onOpenChange={onClose}
+      defaultWidth={1200}
+      defaultHeight={700}
+      minWidth={800}
+      minHeight={500}
+    >
+      <DraggableDialogHeader>
+        <DialogTitle>User Management</DialogTitle>
+      </DraggableDialogHeader>
 
+      <DraggableDialogBody className="px-6">
         <div className="space-y-6">
           {resetRequests.length > 0 && (
             <div className="space-y-3">
@@ -411,7 +423,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
             </Table>
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </DraggableDialogBody>
+    </DraggableResizableDialog>
   )
 }
