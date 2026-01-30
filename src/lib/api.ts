@@ -226,7 +226,20 @@ const generateMockApplications = (jobId: string, count: number = 20): Applicatio
   }))
 }
 
-const generateMockScoringRuns = (applicationId: string, count: number = 3): ScoringRun[] => {
+const generateMockScoringRuns = (applicationId: string, rubricCategories: RubricCategory[], mustHaves: MustHave[], count: number = 3): ScoringRun[] => {
+  const subScores: Record<string, number> = {}
+  rubricCategories.forEach(cat => {
+    subScores[cat.name] = 65 + Math.random() * 30
+  })
+
+  const mustHaveDetails: Record<string, boolean> = {}
+  mustHaves.forEach(mh => {
+    mustHaveDetails[mh.criterion] = Math.random() > 0.2
+  })
+
+  const firstCategory = rubricCategories[0]?.name || 'Skills'
+  const secondCategory = rubricCategories[1]?.name || 'Experience'
+
   return Array.from({ length: count }, (_, i) => ({
     runId: `run-${applicationId}-${i + 1}`,
     applicationId,
@@ -235,41 +248,31 @@ const generateMockScoringRuns = (applicationId: string, count: number = 3): Scor
     modelDeploymentId: 'gpt-4o-deployment-001',
     promptVersionId: 'prompt-v2.3',
     overallScore: 70 + Math.random() * 25,
-    subScores: {
-      'Technical Skills': 75 + Math.random() * 20,
-      Experience: 68 + Math.random() * 25,
-      'Problem Solving': 72 + Math.random() * 23,
-      Communication: 80 + Math.random() * 15,
-      'Cultural Fit': 65 + Math.random() * 30,
-    },
+    subScores,
     mustHaveResult: {
-      passed: true,
-      missingCriteria: [],
-      details: {
-        "Bachelor's degree in Computer Science or related field": true,
-        '5+ years of professional software development experience': true,
-        'Proficiency in React and TypeScript': true,
-      },
+      passed: Object.values(mustHaveDetails).every(v => v),
+      missingCriteria: mustHaves.filter(mh => !mustHaveDetails[mh.criterion]).map(mh => mh.criterion),
+      details: mustHaveDetails,
     },
     evidenceCitations: [
       {
-        category: 'Technical Skills',
-        snippet: 'Extensive experience with React, TypeScript, and modern web development practices...',
+        category: firstCategory,
+        snippet: `Strong demonstration of ${firstCategory.toLowerCase()} through documented experience and achievements...`,
         section: 'Skills',
         confidence: 0.92,
       },
       {
-        category: 'Experience',
-        snippet: 'Led development of enterprise SaaS platform for 5 years at TechCorp...',
+        category: secondCategory,
+        snippet: `Excellent ${secondCategory.toLowerCase()} as evidenced by career progression and accomplishments...`,
         section: 'Work Experience',
         confidence: 0.88,
       },
     ],
-    rationale: 'Strong technical background with proven experience in modern web technologies. Demonstrates excellent problem-solving abilities through documented projects.',
+    rationale: 'Strong background with proven capabilities. Demonstrates excellent abilities through documented projects and achievements.',
     improvementRecommendations: [
       'Consider highlighting leadership experience more prominently',
       'Add specific metrics for project impact',
-      'Include more details about system architecture decisions',
+      'Include more details about key decisions and outcomes',
     ],
     createdAt: new Date(Date.now() - (3 - i) * 5 * 60 * 1000).toISOString(),
     durationMs: 12000 + Math.random() * 8000,
@@ -477,33 +480,67 @@ export const mockAPI = {
 
   async getScoringRuns(applicationId: string): Promise<ScoringRun[]> {
     await delay(400)
-    return generateMockScoringRuns(applicationId)
+    
+    const jobs = await generateMockJobs()
+    let job: Job | undefined
+    
+    for (const j of jobs) {
+      const apps = generateMockApplications(j.jobId, 50)
+      if (apps.find(a => a.applicationId === applicationId)) {
+        job = j
+        break
+      }
+    }
+    
+    if (!job) {
+      const defaultJob = jobs[0]
+      return generateMockScoringRuns(applicationId, defaultJob.currentVersion.rubric, defaultJob.currentVersion.mustHaves)
+    }
+    
+    return generateMockScoringRuns(applicationId, job.currentVersion.rubric, job.currentVersion.mustHaves)
   },
 
   async getAggregatedResult(applicationId: string): Promise<AggregatedResult | null> {
     await delay(300)
-    const runs = generateMockScoringRuns(applicationId)
+    
+    const jobs = await generateMockJobs()
+    let job: Job | undefined
+    
+    for (const j of jobs) {
+      const apps = generateMockApplications(j.jobId, 50)
+      if (apps.find(a => a.applicationId === applicationId)) {
+        job = j
+        break
+      }
+    }
+    
+    if (!job) {
+      const defaultJob = jobs[0]
+      job = defaultJob
+    }
+    
+    const runs = generateMockScoringRuns(applicationId, job.currentVersion.rubric, job.currentVersion.mustHaves)
     const scores = runs.map((r) => r.overallScore)
     const finalScore = scores.reduce((a, b) => a + b, 0) / scores.length
     const variance = Math.sqrt(scores.reduce((sum, s) => sum + Math.pow(s - finalScore, 2), 0) / scores.length)
 
+    const finalSubScores: Record<string, number> = {}
+    job.currentVersion.rubric.forEach(cat => {
+      const catScores = runs.map(r => r.subScores[cat.name] || 0)
+      finalSubScores[cat.name] = catScores.reduce((a, b) => a + b, 0) / catScores.length
+    })
+
     return {
       resultId: `result-${applicationId}`,
       applicationId,
-      versionId: 'v1-001',
+      versionId: job.currentVersion.versionId,
       finalScore,
-      finalSubScores: {
-        'Technical Skills': 78,
-        Experience: 72,
-        'Problem Solving': 75,
-        Communication: 82,
-        'Cultural Fit': 70,
-      },
+      finalSubScores,
       confidence: 0.85,
       variance,
       finalDecision: finalScore >= 75 ? 'Eligible' : finalScore >= 60 ? 'Eligible' : 'Excluded',
-      rationaleText: 'Consolidated assessment across 3 scoring runs shows consistent strong performance in technical skills and communication.',
-      recommendationsText: 'Focus on quantifying impact in future applications. Add more detail about architectural decisions and team leadership.',
+      rationaleText: `Consolidated assessment across ${runs.length} scoring runs shows consistent performance across evaluation criteria.`,
+      recommendationsText: 'Focus on quantifying impact in future applications. Add more detail about key decisions and team contributions.',
       allRuns: runs,
       createdAt: new Date().toISOString(),
     }
