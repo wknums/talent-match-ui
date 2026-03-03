@@ -9,6 +9,7 @@ import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { UploadSimple, File, X, Sparkle } from '@phosphor-icons/react'
+import { llm } from '@/lib/spark-client'
 import { toast } from 'sonner'
 import type { RubricCategory } from '@/types'
 
@@ -46,7 +47,7 @@ export function UploadRubricDialog({ open, jobId, onClose, onSuccess }: UploadRu
     setProcessing(true)
 
     try {
-      const prompt = (window.spark.llmPrompt as any)`You are analyzing a scoring rubric document for evaluating job applications. Extract the rubric categories and return them as JSON.
+      const prompt = `You are analyzing a scoring rubric document for evaluating job applications. Extract the rubric categories and return them as JSON.
 
 Return ONLY a JSON object with this exact structure:
 {
@@ -71,7 +72,7 @@ Document: ${file.name}
 
 Note: This is a simulated environment. Generate a realistic rubric based on the filename and common evaluation criteria.`
 
-      const response = await window.spark.llm(prompt, 'gpt-4o', true)
+      const response = await llm(prompt, 'gpt-4o', true)
       const parsed = JSON.parse(response)
 
       if (parsed.categories && Array.isArray(parsed.categories)) {

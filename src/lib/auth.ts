@@ -1,4 +1,5 @@
 import type { User, PasswordResetRequest } from '@/types'
+import { kv } from '@/lib/spark-client'
 
 const USERS_KEY = 'auth:users'
 const CURRENT_USER_KEY = 'auth:current-user'
@@ -28,7 +29,7 @@ interface StoredUser extends User {
 }
 
 export async function initializeAuth() {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY)
+  const users = await kv.get<StoredUser[]>(USERS_KEY)
   
   if (!users || users.length === 0) {
     const adminPasswordHash = await hashPassword(DEFAULT_PASSWORD)
@@ -36,12 +37,12 @@ export async function initializeAuth() {
       ...DEFAULT_ADMIN,
       passwordHash: adminPasswordHash,
     }
-    await spark.kv.set(USERS_KEY, [defaultAdmin])
+    await kv.set(USERS_KEY, [defaultAdmin])
   }
 }
 
 export async function login(username: string, password: string): Promise<User | null> {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY) || []
+  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
   const passwordHash = await hashPassword(password)
   
   const user = users.find(u => u.username === username && u.passwordHash === passwordHash)
@@ -58,8 +59,8 @@ export async function login(username: string, password: string): Promise<User | 
         ? { ...u, lastLogin: updatedUser.lastLogin } 
         : u
     )
-    await spark.kv.set(USERS_KEY, updatedUsers)
-    await spark.kv.set(CURRENT_USER_KEY, updatedUser)
+    await kv.set(USERS_KEY, updatedUsers)
+    await kv.set(CURRENT_USER_KEY, updatedUser)
     
     return updatedUser
   }
@@ -68,15 +69,15 @@ export async function login(username: string, password: string): Promise<User | 
 }
 
 export async function logout() {
-  await spark.kv.delete(CURRENT_USER_KEY)
+  await kv.delete(CURRENT_USER_KEY)
 }
 
 export async function getCurrentUser(): Promise<User | null> {
-  return await spark.kv.get<User>(CURRENT_USER_KEY) || null
+  return await kv.get<User>(CURRENT_USER_KEY) || null
 }
 
 export async function changePassword(userId: string, oldPassword: string, newPassword: string): Promise<boolean> {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY) || []
+  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
   const oldPasswordHash = await hashPassword(oldPassword)
   
   const userIndex = users.findIndex(u => u.userId === userId && u.passwordHash === oldPasswordHash)
@@ -89,12 +90,12 @@ export async function changePassword(userId: string, oldPassword: string, newPas
   users[userIndex].passwordHash = newPasswordHash
   users[userIndex].passwordResetRequired = false
   
-  await spark.kv.set(USERS_KEY, users)
+  await kv.set(USERS_KEY, users)
   return true
 }
 
 export async function createUser(user: Omit<User, 'userId' | 'createdAt' | 'lastLogin'>, password: string): Promise<User> {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY) || []
+  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
   
   const existingUser = users.find(u => u.username === user.username)
   if (existingUser) {
@@ -109,19 +110,19 @@ export async function createUser(user: Omit<User, 'userId' | 'createdAt' | 'last
     createdAt: new Date().toISOString(),
   }
   
-  await spark.kv.set(USERS_KEY, [...users, newUser])
+  await kv.set(USERS_KEY, [...users, newUser])
   
   const { passwordHash: _, ...userWithoutPassword } = newUser
   return userWithoutPassword
 }
 
 export async function getAllUsers(): Promise<User[]> {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY) || []
+  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
   return users.map(({ passwordHash, ...user }) => user)
 }
 
 export async function resetUserPassword(adminUserId: string, targetUserId: string, newPassword: string): Promise<boolean> {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY) || []
+  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
   
   const admin = users.find(u => u.userId === adminUserId && u.role === 'admin')
   if (!admin) {
@@ -137,19 +138,19 @@ export async function resetUserPassword(adminUserId: string, targetUserId: strin
   users[userIndex].passwordHash = newPasswordHash
   users[userIndex].passwordResetRequired = false
   
-  await spark.kv.set(USERS_KEY, users)
+  await kv.set(USERS_KEY, users)
   return true
 }
 
 export async function requestPasswordReset(userId: string): Promise<void> {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY) || []
+  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
   const user = users.find(u => u.userId === userId)
   
   if (!user) {
     throw new Error('User not found')
   }
   
-  const requests = await spark.kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
+  const requests = await kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
   
   const newRequest: PasswordResetRequest = {
     requestId: `reset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -160,11 +161,11 @@ export async function requestPasswordReset(userId: string): Promise<void> {
     status: 'pending',
   }
   
-  await spark.kv.set(RESET_REQUESTS_KEY, [...requests, newRequest])
+  await kv.set(RESET_REQUESTS_KEY, [...requests, newRequest])
 }
 
 export async function getPasswordResetRequests(): Promise<PasswordResetRequest[]> {
-  return await spark.kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
+  return await kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
 }
 
 export async function resolvePasswordResetRequest(
@@ -173,7 +174,7 @@ export async function resolvePasswordResetRequest(
   newPassword: string,
   status: 'completed' | 'rejected'
 ): Promise<boolean> {
-  const requests = await spark.kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
+  const requests = await kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
   const requestIndex = requests.findIndex(r => r.requestId === requestId)
   
   if (requestIndex === -1) {
@@ -191,12 +192,12 @@ export async function resolvePasswordResetRequest(
   requests[requestIndex].resolvedAt = new Date().toISOString()
   requests[requestIndex].resolvedBy = adminUserId
   
-  await spark.kv.set(RESET_REQUESTS_KEY, requests)
+  await kv.set(RESET_REQUESTS_KEY, requests)
   return true
 }
 
 export async function deleteUser(adminUserId: string, targetUserId: string): Promise<boolean> {
-  const users = await spark.kv.get<StoredUser[]>(USERS_KEY) || []
+  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
   
   const admin = users.find(u => u.userId === adminUserId && u.role === 'admin')
   if (!admin) {
@@ -208,6 +209,6 @@ export async function deleteUser(adminUserId: string, targetUserId: string): Pro
   }
   
   const filteredUsers = users.filter(u => u.userId !== targetUserId)
-  await spark.kv.set(USERS_KEY, filteredUsers)
+  await kv.set(USERS_KEY, filteredUsers)
   return true
 }

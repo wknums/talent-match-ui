@@ -10,8 +10,10 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-server
 *-dist
 *.local
+.data
 
 # Editor directories and files
 .vscode/*
@@ -25,10 +27,25 @@ dist-ssr
 *.sw?
 
 .env
+.env.*
+!.env.example
 **/agent-eval-report*
 packages
 pids
 .file-manifest
 .devcontainer/
 
+# Private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cert
+
+# Test coverage
+coverage/
+.nyc_output/
+
 .spark-workbench-id
+.spark-initial-sha

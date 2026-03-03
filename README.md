@@ -1,23 +1,113 @@
-# ✨ Welcome to Your Spark Template!
-You've just launched your brand-new Spark Template Codespace — everything’s fired up and ready for you to explore, build, and create with Spark!
+# Talent Matching Platform
 
-This template is your blank canvas. It comes with a minimal setup to help you get started quickly with Spark development.
+AI-powered CV/resume screening and scoring platform with configurable rubrics, multi-run scoring, and manual review workflow.
 
-🚀 What's Inside?
-- A clean, minimal Spark environment
-- Pre-configured for local development
-- Ready to scale with your ideas
-  
-🧠 What Can You Do?
+## Prerequisites
 
-Right now, this is just a starting point — the perfect place to begin building and testing your Spark applications.
+- **Node.js** 20.19+ or 22.12+
+- **npm** 10+
 
-🧹 Just Exploring?
-No problem! If you were just checking things out and don’t need to keep this code:
+## Quick Start
 
-- Simply delete your Spark.
-- Everything will be cleaned up — no traces left behind.
+```bash
+# Install dependencies
+npm install
 
-📄 License For Spark Template Resources 
+# Start both backend server and frontend dev server
+npm run dev
+```
 
-The Spark Template files and resources from GitHub are licensed under the terms of the MIT license, Copyright GitHub, Inc.
+This runs two processes concurrently:
+- **Backend API** on `http://localhost:3001`
+- **Vite frontend** on `http://localhost:5173`
+
+Open `http://localhost:5173` in your browser. Default login: `admin` / `adm1n99`
+
+## Available Scripts
+
+| Script | Description |
+|---|---|
+| `npm run dev` | Start backend + frontend together |
+| `npm run dev:client` | Start only the Vite frontend |
+| `npm run dev:server` | Start only the Express backend |
+| `npm run build` | Build frontend for production |
+| `npm run build:server` | Compile backend TypeScript |
+| `npm start` | Run compiled backend (after `build:server`) |
+| `npm run lint` | Run ESLint |
+
+## Storage Configuration
+
+The backend supports two storage providers, controlled by the `STORAGE_PROVIDER` environment variable in `.env`:
+
+### Local KV (default)
+
+```env
+STORAGE_PROVIDER=local
+```
+
+Data is persisted to `.data/kv-store.json` on disk. No external dependencies required.
+
+### Azure SQL
+
+```env
+STORAGE_PROVIDER=azuresql
+AZURE_SQL_CONNECTION_STRING=Server=your-server.database.windows.net;Database=your-db;User Id=your-user;Password=your-password;Encrypt=true
+```
+
+Requires `mssql` package (included as optional dependency). The server will create a `kv_store` table automatically on first run.
+
+## LLM Configuration (Optional)
+
+Document extraction features (uploading job specs and rubrics) require an LLM API key. Configure in `.env`:
+
+### OpenAI
+
+```env
+OPENAI_API_KEY=sk-...
+```
+
+### Azure OpenAI
+
+```env
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+```
+
+Without an LLM key configured, the app works fully - document extraction will show an error but manual entry of jobs/rubrics works.
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+| Variable | Default | Description |
+|---|---|---|
+| `STORAGE_PROVIDER` | `local` | `local` or `azuresql` |
+| `PORT` | `3001` | Backend server port |
+| `AZURE_SQL_CONNECTION_STRING` | - | Required when `STORAGE_PROVIDER=azuresql` |
+| `OPENAI_API_KEY` | - | OpenAI API key (option 1) |
+| `AZURE_OPENAI_API_KEY` | - | Azure OpenAI key (option 2) |
+| `AZURE_OPENAI_ENDPOINT` | - | Azure OpenAI endpoint URL |
+
+## Project Structure
+
+```
+server/                      # Express backend
+  index.ts                   # Server entry point
+  routes/
+    kv.ts                    # KV storage REST API
+    llm.ts                   # LLM proxy endpoint
+  storage/
+    types.ts                 # StorageProvider interface
+    factory.ts               # Provider factory (reads STORAGE_PROVIDER)
+    local-kv.ts              # File-backed KV store
+    azure-sql.ts             # Azure SQL KV store
+src/                         # React frontend
+  lib/
+    spark-client.ts          # KV + LLM client (calls backend API)
+    api.ts                   # Application API layer (mock data + KV)
+    auth.ts                  # Authentication (KV-backed)
+  components/                # UI components
+  types/                     # TypeScript type definitions
+.env.example                 # Environment variable template
+vite.config.ts               # Vite config with API proxy
+```

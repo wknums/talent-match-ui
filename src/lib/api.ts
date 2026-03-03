@@ -12,6 +12,7 @@ import type {
   MustHave,
   AggregationStrategy,
 } from '@/types'
+import { kv } from '@/lib/spark-client'
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -160,7 +161,7 @@ const getDefaultJobs = (): Job[] => {
 }
 
 const generateMockJobs = async (): Promise<Job[]> => {
-  const storedJobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
+  const storedJobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
   
   return storedJobs.map(job => ({
     ...job,
@@ -370,8 +371,8 @@ export const mockAPI = {
       },
     }
     
-    const existingJobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
-    await window.spark.kv.set('jobs', [...existingJobs, newJob])
+    const existingJobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
+    await kv.set('jobs', [...existingJobs, newJob])
     
     return newJob
   },
@@ -392,7 +393,7 @@ export const mockAPI = {
     jobCode?: string
   }): Promise<Job> {
     await delay(500)
-    const jobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
+    const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
     const jobIndex = jobs.findIndex(j => j.jobId === jobId)
     
     if (jobIndex === -1) {
@@ -424,19 +425,19 @@ export const mockAPI = {
     }
     
     jobs[jobIndex] = updatedJob
-    await window.spark.kv.set('jobs', jobs)
+    await kv.set('jobs', jobs)
     
     return updatedJob
   },
 
   async updateJobRubric(jobId: string, rubricDocumentId: string): Promise<void> {
     await delay(300)
-    const jobs = await window.spark.kv.get<Job[]>('jobs') || getDefaultJobs()
+    const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
     const jobIndex = jobs.findIndex(j => j.jobId === jobId)
     
     if (jobIndex !== -1) {
       jobs[jobIndex].rubricDocumentId = rubricDocumentId
-      await window.spark.kv.set('jobs', jobs)
+      await kv.set('jobs', jobs)
     }
   },
 

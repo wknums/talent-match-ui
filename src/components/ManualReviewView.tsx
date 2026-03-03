@@ -9,6 +9,8 @@ import { Separator } from '@/components/ui/separator'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft, FloppyDisk } from '@phosphor-icons/react'
 import { mockAPI } from '@/lib/api'
+import { kv } from '@/lib/spark-client'
+import { getCurrentUser } from '@/lib/auth'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { Application, Job, ExtractionArtifact, ManualReviewData, ManualReviewAuditEntry } from '@/types'
@@ -46,9 +48,9 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
   const loadUser = async () => {
     try {
-      const user = await window.spark.user()
+      const user = await getCurrentUser()
       if (user) {
-        setCurrentUser({ login: user.login, name: user.login })
+        setCurrentUser({ login: user.username, name: user.fullName })
       }
     } catch (error) {
       setCurrentUser({ login: 'reviewer', name: 'Reviewer' })
@@ -57,7 +59,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
   const loadSavedReview = async () => {
     try {
-      const saved = await window.spark.kv.get<ManualReviewData>(`manual-review-${applicationId}`)
+      const saved = await kv.get<ManualReviewData>(`manual-review-${applicationId}`)
       if (saved) {
         setReviewData(saved)
       }
@@ -210,7 +212,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
         adjustedFinalScore: finalScore,
       }
       
-      await window.spark.kv.set(`manual-review-${applicationId}`, dataToSave)
+      await kv.set(`manual-review-${applicationId}`, dataToSave)
       toast.success('Manual review saved successfully')
     } catch (error) {
       toast.error('Failed to save review')
