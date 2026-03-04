@@ -49,3 +49,6 @@ coverage/
 
 .spark-workbench-id
 .spark-initial-sha
+
+# Spec Kit - agent folder may contain credentials/auth tokens
+.github/
