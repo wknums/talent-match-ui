@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Plus, ChartBar, Briefcase, Queue, Gear, Funnel, X, ArrowUp, ArrowDown } from '@phosphor-icons/react'
-import { mockAPI } from '@/lib/api'
+import { api } from '@/lib/api'
+import { FailureQueueView } from '@/components/FailureQueueView'
 import type { Job, SystemStats, User } from '@/types'
 
 interface DashboardViewProps {
@@ -31,7 +32,7 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, c
 
   useEffect(() => {
     loadData()
-    const interval = setInterval(loadData, 10000)
+    const interval = setInterval(loadData, 30000)
     return () => clearInterval(interval)
   }, [])
   
@@ -42,8 +43,8 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, c
   const loadData = async () => {
     try {
       const [jobsData, statsData] = await Promise.all([
-        mockAPI.getJobs(),
-        mockAPI.getSystemStats(),
+        api.getJobs(),
+        api.getSystemStats(),
       ])
       
       let filteredData = jobsData
@@ -274,6 +275,16 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, c
           )}
         </div>
       </div>
+
+      {/* Failure Queue */}
+      <FailureQueueView className="mt-6" />
+
+      {/* Last updated timestamp */}
+      {systemStats && (
+        <div className="mt-4 text-xs text-muted-foreground text-right">
+          Last updated: {new Date().toLocaleTimeString()} (auto-refreshes every 30s)
+        </div>
+      )}
     </div>
   )
 }

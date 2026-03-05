@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { UploadSimple, File, CheckCircle, X } from '@phosphor-icons/react'
-import { mockAPI } from '@/lib/api'
+import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -77,7 +77,7 @@ export function UploadApplicationsDialog({
         setUploadProgress((prev) => Math.min(prev + 10, 90))
       }, 200)
 
-      await mockAPI.uploadApplications(jobId, files)
+      await api.uploadApplications(jobId, files)
 
       clearInterval(progressInterval)
       setUploadProgress(100)

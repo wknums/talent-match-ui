@@ -10,7 +10,7 @@ import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
 import { UploadRubricDialog } from '@/components/UploadRubricDialog'
 import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText } from '@phosphor-icons/react'
-import { mockAPI } from '@/lib/api'
+import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import type { Job, Application } from '@/types'
 
@@ -44,8 +44,8 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const loadData = async () => {
     try {
       const [jobData, appsData] = await Promise.all([
-        mockAPI.getJob(jobId),
-        mockAPI.getApplications(jobId),
+        api.getJob(jobId),
+        api.getApplications(jobId),
       ])
       if (jobData) setJob(jobData)
       setApplications(appsData)
@@ -314,7 +314,7 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
         onClose={() => setUploadRubricOpen(false)}
         onSuccess={async (rubric) => {
           const rubricDocId = `rubric-doc-${Date.now()}`
-          await mockAPI.updateJobRubric(jobId, rubricDocId)
+          await api.updateJobRubric(jobId, rubricDocId)
           toast.success(`Uploaded rubric with ${rubric.length} categories`)
           setUploadRubricOpen(false)
           loadData()

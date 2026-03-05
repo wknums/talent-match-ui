@@ -13,27 +13,8 @@ import type {
   AggregationStrategy,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
-import { realAPI } from '@/lib/api-real'
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
-
-// Detect API mode from server config
-let _apiMode: 'mock' | 'real' | null = null
-async function getApiMode(): Promise<'mock' | 'real'> {
-  if (_apiMode) return _apiMode
-  try {
-    const res = await fetch('/api/config')
-    if (res.ok) {
-      const data = await res.json()
-      _apiMode = data.apiMode || 'mock'
-    } else {
-      _apiMode = 'mock'
-    }
-  } catch {
-    _apiMode = 'mock'
-  }
-  return _apiMode!
-}
 
 const generateJobCode = (title: string, department: string): string => {
   const titlePart = title.split(' ').map(w => w[0]).join('').slice(0, 3).toUpperCase()
@@ -305,7 +286,7 @@ const generateMockScoringRuns = (applicationId: string, rubricCategories: Rubric
   }))
 }
 
-const mockAPI = {
+export const mockAPI = {
   async getSystemStats(): Promise<SystemStats> {
     await delay(300)
     const jobs = await generateMockJobs()
@@ -729,26 +710,3 @@ const mockAPI = {
     })
   },
 }
-
-// API factory: delegates to mock or real based on API_MODE
-function createApiProxy() {
-  return new Proxy({} as typeof mockAPI & typeof realAPI, {
-    get(_target, prop: string) {
-      return async (...args: any[]) => {
-        const mode = await getApiMode()
-        const impl = mode === 'real' ? realAPI : mockAPI
-        const fn = (impl as any)[prop]
-        if (typeof fn === 'function') {
-          return fn.apply(impl, args)
-        }
-        return undefined
-      }
-    },
-  })
-}
-
-export const api = createApiProxy()
-
-// Re-export for backwards compatibility
-export { mockAPI }
-export { realAPI }

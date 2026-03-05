@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Quotes, File, CheckCircle, XCircle, ShieldCheck, Pencil } from '@phosphor-icons/react'
-import { mockAPI } from '@/lib/api'
+import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import type { Application, ScoringRun, ExtractionArtifact, AggregatedResult } from '@/types'
 import { cn } from '@/lib/utils'
@@ -41,10 +41,10 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
     setLoading(true)
     try {
       const [appData, runsData, artifactData, resultData] = await Promise.all([
-        mockAPI.getApplication(applicationId),
-        mockAPI.getScoringRuns(applicationId),
-        mockAPI.getExtractionArtifact(applicationId),
-        mockAPI.getAggregatedResult(applicationId),
+        api.getApplication(applicationId),
+        api.getScoringRuns(applicationId),
+        api.getExtractionArtifact(applicationId),
+        api.getAggregatedResult(applicationId),
       ])
       setApplication(appData)
       setScoringRuns(runsData)

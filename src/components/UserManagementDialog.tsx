@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { UserPlus, Trash, Key, X, Check } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import type { User, PasswordResetRequest } from '@/types'
-import { getAllUsers, createUser, deleteUser, resetUserPassword, getPasswordResetRequests, resolvePasswordResetRequest } from '@/lib/auth'
+import { api } from '@/lib/api'
 
 interface UserManagementDialogProps {
   open: boolean
@@ -48,8 +48,8 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
   const loadData = async () => {
     try {
       const [usersData, requestsData] = await Promise.all([
-        getAllUsers(),
-        getPasswordResetRequests(),
+        api.getAllUsers(),
+        api.getPasswordResetRequests(),
       ])
       setUsers(usersData)
       setResetRequests(requestsData.filter(r => r.status === 'pending'))
@@ -73,13 +73,14 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
 
     setIsLoading(true)
     try {
-      await createUser({
-        username: newUser.username,
-        fullName: newUser.fullName,
-        email: newUser.email || undefined,
-        department: newUser.department || undefined,
-        role: newUser.role,
-      }, newUser.password)
+      await api.createUser(
+        newUser.username,
+        newUser.role,
+        newUser.department || '',
+        newUser.password,
+        newUser.fullName,
+        newUser.email || undefined,
+      )
 
       toast.success('User created successfully')
       setNewUser({
@@ -105,8 +106,8 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
     }
 
     try {
-      const success = await deleteUser(currentUserId, userId)
-      if (success) {
+      const success = await api.deleteUser(userId)
+      if (success !== undefined) {
         toast.success('User deleted successfully')
         await loadData()
       } else {
@@ -134,8 +135,8 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
     }
 
     try {
-      const success = await resetUserPassword(currentUserId, userId, newResetPassword)
-      if (success) {
+      const success = await api.resetUserPassword(userId, newResetPassword)
+      if (success !== undefined) {
         toast.success('Password reset successfully')
         setResetingUserId(null)
         setNewResetPassword('')
@@ -159,8 +160,8 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
       }
 
       try {
-        const success = await resolvePasswordResetRequest(requestId, currentUserId, password, 'completed')
-        if (success) {
+        const success = await api.resolvePasswordResetRequest(requestId, 'approve', password)
+        if (success !== undefined) {
           toast.success('Password reset completed')
           await loadData()
         } else {
@@ -171,8 +172,8 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
       }
     } else {
       try {
-        const success = await resolvePasswordResetRequest(requestId, currentUserId, '', 'rejected')
-        if (success) {
+        const success = await api.resolvePasswordResetRequest(requestId, 'reject')
+        if (success !== undefined) {
           toast.success('Reset request rejected')
           await loadData()
         } else {

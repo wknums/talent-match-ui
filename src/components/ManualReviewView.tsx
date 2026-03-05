@@ -8,9 +8,8 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft, FloppyDisk } from '@phosphor-icons/react'
-import { mockAPI } from '@/lib/api'
-import { kv } from '@/lib/spark-client'
-import { getCurrentUser } from '@/lib/auth'
+import { api } from '@/lib/api'
+import { getCurrentUser as authGetCurrentUser } from '@/lib/auth'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { Application, Job, ExtractionArtifact, ManualReviewData, ManualReviewAuditEntry } from '@/types'
@@ -48,7 +47,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
   const loadUser = async () => {
     try {
-      const user = await getCurrentUser()
+      const user = await authGetCurrentUser()
       if (user) {
         setCurrentUser({ login: user.username, name: user.fullName })
       }
@@ -59,7 +58,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
   const loadSavedReview = async () => {
     try {
-      const saved = await kv.get<ManualReviewData>(`manual-review-${applicationId}`)
+      const saved = await api.getManualReview(applicationId)
       if (saved) {
         setReviewData(saved)
       }
@@ -73,9 +72,9 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     setError(null)
     try {
       const [appData, jobData, artifactData] = await Promise.all([
-        mockAPI.getApplication(applicationId),
-        mockAPI.getJob(jobId),
-        mockAPI.getExtractionArtifact(applicationId),
+        api.getApplication(applicationId),
+        api.getJob(jobId),
+        api.getExtractionArtifact(applicationId),
       ])
       
       if (!appData) {
@@ -212,7 +211,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
         adjustedFinalScore: finalScore,
       }
       
-      await kv.set(`manual-review-${applicationId}`, dataToSave)
+      await api.saveManualReview(applicationId, dataToSave)
       toast.success('Manual review saved successfully')
     } catch (error) {
       toast.error('Failed to save review')
@@ -537,6 +536,38 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
             </CardContent>
           </Card>
         </div>
+
+        {/* Audit Trail */}
+        {reviewData.auditTrail.length > 0 && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="text-lg">Audit Trail</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                {[...reviewData.auditTrail].reverse().map((entry) => (
+                  <div key={entry.entryId} className="flex items-start gap-3 text-sm p-2 rounded bg-muted/30">
+                    <div className="text-xs text-muted-foreground whitespace-nowrap">
+                      {new Date(entry.timestamp).toLocaleString()}
+                    </div>
+                    <div className="flex-1">
+                      <span className="font-medium">{entry.reviewerName}</span>
+                      {entry.changeType === 'points_allocated' && (
+                        <span> adjusted <strong>{entry.categoryName}</strong> from {entry.previousValue ?? 0} → {entry.newValue}</span>
+                      )}
+                      {entry.changeType === 'comment_added' && (
+                        <span> added comment to <strong>{entry.categoryName || 'overall'}</strong></span>
+                      )}
+                      {entry.changeType === 'score_adjustment' && (
+                        <span> changed score for <strong>{entry.categoryName}</strong>: {entry.previousValue} → {entry.newValue}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )

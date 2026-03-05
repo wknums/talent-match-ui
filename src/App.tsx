@@ -12,7 +12,8 @@ import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
 import { UserManagementDialog } from '@/components/UserManagementDialog'
 import { AnalyticsView } from '@/components/AnalyticsView'
 import type { Job, User } from '@/types'
-import { initializeAuth, login, logout, getCurrentUser, requestPasswordReset } from '@/lib/auth'
+import { api } from '@/lib/api'
+import { initializeAuth, login as authLogin, logout as authLogout, getCurrentUser as authGetCurrentUser, requestPasswordReset } from '@/lib/auth'
 import { toast } from 'sonner'
 
 type View = 'dashboard' | 'job-detail' | 'manual-review' | 'analytics'
@@ -36,7 +37,8 @@ function App() {
   useEffect(() => {
     async function init() {
       await initializeAuth()
-      const user = await getCurrentUser()
+      // Try API client first, fall back to direct auth
+      const user = await api.getCurrentUser() || await authGetCurrentUser()
       setCurrentUser(user)
       setIsAuthInitialized(true)
     }
@@ -44,17 +46,31 @@ function App() {
   }, [])
 
   const handleLogin = async (username: string, password: string): Promise<boolean> => {
-    const user = await login(username, password)
-    if (user) {
-      setCurrentUser(user)
-      toast.success(`Welcome back, ${user.fullName}!`)
-      return true
+    try {
+      const user = await api.login(username, password)
+      if (user) {
+        setCurrentUser(user)
+        toast.success(`Welcome back, ${user.fullName}!`)
+        return true
+      }
+    } catch {
+      // Fall back to auth.ts login
+      const user = await authLogin(username, password)
+      if (user) {
+        setCurrentUser(user)
+        toast.success(`Welcome back, ${user.fullName}!`)
+        return true
+      }
     }
     return false
   }
 
   const handleLogout = async () => {
-    await logout()
+    try {
+      await api.logout()
+    } catch {
+      await authLogout()
+    }
     setCurrentUser(null)
     setCurrentView('dashboard')
     toast.success('Signed out successfully')

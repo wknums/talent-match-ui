@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Plus, X, UploadSimple, File, Sparkle } from '@phosphor-icons/react'
-import { mockAPI } from '@/lib/api'
+import { api } from '@/lib/api'
 import { llm } from '@/lib/spark-client'
 import { toast } from 'sonner'
 import type { RubricCategory, MustHave, AggregationStrategy } from '@/types'
@@ -218,7 +218,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
     setSubmitting(true)
     try {
       if (editingJob) {
-        await mockAPI.updateJob(editingJob.jobId, {
+        await api.updateJob(editingJob.jobId, {
           title,
           jobCode,
           department,
@@ -235,7 +235,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
         })
         toast.success('Job updated successfully')
       } else {
-        await mockAPI.createJob({
+        await api.createJob({
           title,
           jobCode,
           department,

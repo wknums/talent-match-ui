@@ -47,6 +47,11 @@ pids
 coverage/
 .nyc_output/
 
+# Build artifacts
+build/
+*.tmp
+Thumbs.db
+
 .spark-workbench-id
 .spark-initial-sha
 

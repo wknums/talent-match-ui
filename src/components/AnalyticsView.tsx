@@ -5,7 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { mockAPI } from '@/lib/api'
+import { api } from '@/lib/api'
 import type { RecruiterAnalytics, DepartmentAnalytics } from '@/types'
 import { Users, Clipboard, CheckCircle, Briefcase, TrendUp, Clock } from '@phosphor-icons/react'
 
@@ -20,8 +20,8 @@ export function AnalyticsView() {
       setLoading(true)
       try {
         const [recruiters, departments] = await Promise.all([
-          mockAPI.getRecruiterAnalytics(),
-          mockAPI.getDepartmentAnalytics(),
+          api.getRecruiterAnalytics(),
+          api.getDepartmentAnalytics(),
         ])
         setRecruiterData(recruiters)
         setDepartmentData(departments)
