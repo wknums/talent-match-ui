@@ -1,0 +1,73 @@
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<h4>User Management</h4>
+
+<button @onclick="() => showCreateForm = true" style="margin-bottom: 1rem; padding: 0.5rem 1rem;">Create User</button>
+
+@if (showCreateForm)
+{
+    <div style="border: 1px solid #ccc; padding: 1rem; margin-bottom: 1rem; border-radius: 8px;">
+        <h5>Create New User</h5>
+        <div style="display: grid; gap: 0.5rem; max-width: 400px;">
+            <input placeholder="Username" @bind="newUsername" />
+            <input placeholder="Full Name" @bind="newFullName" />
+            <input placeholder="Email" @bind="newEmail" />
+            <select @bind="newRole"><option value="recruiter">Recruiter</option><option value="admin">Admin</option></select>
+            <input placeholder="Department" @bind="newDepartment" />
+            <input type="password" placeholder="Password" @bind="newPassword" />
+            <div><button @onclick="CreateUser">Create</button> <button @onclick="() => showCreateForm = false">Cancel</button></div>
+        </div>
+    </div>
+}
+
+<table style="width: 100%; border-collapse: collapse;">
+    <thead>
+        <tr style="border-bottom: 2px solid #ccc;">
+            <th style="text-align: left; padding: 0.5rem;">Username</th>
+            <th style="text-align: left; padding: 0.5rem;">Role</th>
+            <th style="text-align: left; padding: 0.5rem;">Department</th>
+            <th style="text-align: left; padding: 0.5rem;">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var user in users)
+        {
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 0.5rem;">@user.Username</td>
+                <td style="padding: 0.5rem;">@user.Role</td>
+                <td style="padding: 0.5rem;">@user.Department</td>
+                <td style="padding: 0.5rem;">
+                    <button @onclick="() => DeleteUser(user.Id)">Delete</button>
+                    <button @onclick="() => ResetPassword(user.Id)">Reset Password</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+@code {
+    private List<UserInfo> users = new();
+    private bool showCreateForm;
+    private string newUsername = "", newFullName = "", newEmail = "", newRole = "recruiter", newDepartment = "", newPassword = "";
+
+    protected override async Task OnInitializedAsync() => users = await Api.GetUsersAsync();
+
+    private async Task CreateUser()
+    {
+        await Api.CreateUserAsync(newUsername, newRole, newDepartment, newPassword, newFullName, newEmail);
+        showCreateForm = false;
+        users = await Api.GetUsersAsync();
+    }
+
+    private async Task DeleteUser(string userId)
+    {
+        await Api.DeleteUserAsync(userId);
+        users = await Api.GetUsersAsync();
+    }
+
+    private async Task ResetPassword(string userId)
+    {
+        await Api.ResetUserPasswordAsync(userId, "TempPassword123!");
+    }
+}

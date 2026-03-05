@@ -1,0 +1,34 @@
+@using TalentMatch.Web.Client.Services
+
+<div style="display: flex; gap: 0.5rem; align-items: center;">
+    @foreach (var stage in stages)
+    {
+        <div style="flex: 1; text-align: center;">
+            <div style="background: #e0e0e0; border-radius: 4px; overflow: hidden; height: 24px;">
+                <div style="background: @stage.Color; height: 100%; width: @(stage.Percentage)%;"></div>
+            </div>
+            <div style="font-size: 0.75rem; margin-top: 4px;">@stage.Name (@stage.Count)</div>
+        </div>
+        @if (stage != stages.Last())
+        {
+            <span>→</span>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public List<ApplicationDto> Applications { get; set; } = new();
+
+    private List<StageInfo> stages => new()
+    {
+        new StageInfo("Extraction", Applications.Count(a => a.Status is "Queued" or "Extracting"), "#2196f3", Applications.Count),
+        new StageInfo("Scoring", Applications.Count(a => a.Status == "Scoring"), "#ff9800", Applications.Count),
+        new StageInfo("Aggregation", Applications.Count(a => a.Status == "Aggregating"), "#9c27b0", Applications.Count),
+        new StageInfo("Complete", Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", Applications.Count)
+    };
+
+    private record StageInfo(string Name, int Count, string Color, int Total)
+    {
+        public double Percentage => Total > 0 ? (double)Count / Total * 100 : 0;
+    }
+}

@@ -1,0 +1,45 @@
+@page "/login"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+
+<div class="login-container" style="max-width: 400px; margin: 100px auto; padding: 2rem;">
+    <h2>Talent Match Platform</h2>
+    <h4>Sign In</h4>
+    
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div style="color: red; margin-bottom: 1rem;">@errorMessage</div>
+    }
+
+    <div style="margin-bottom: 1rem;">
+        <label>Username</label>
+        <input type="text" @bind="username" style="width: 100%; padding: 0.5rem;" />
+    </div>
+    <div style="margin-bottom: 1rem;">
+        <label>Password</label>
+        <input type="password" @bind="password" style="width: 100%; padding: 0.5rem;" />
+    </div>
+    <button @onclick="HandleLogin" disabled="@isLoading" style="width: 100%; padding: 0.5rem;">
+        @(isLoading ? "Signing in..." : "Sign In")
+    </button>
+</div>
+
+@code {
+    private string username = "";
+    private string password = "";
+    private string? errorMessage;
+    private bool isLoading;
+
+    private async Task HandleLogin()
+    {
+        isLoading = true;
+        errorMessage = null;
+        var user = await Api.LoginAsync(username, password);
+        if (user != null)
+            Navigation.NavigateTo("/");
+        else
+            errorMessage = "Invalid username or password.";
+        isLoading = false;
+    }
+}

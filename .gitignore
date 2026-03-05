@@ -57,3 +57,20 @@ Thumbs.db
 
 # Spec Kit - agent folder may contain credentials/auth tokens
 .github/
+
+# .NET / Stack B
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+*.csproj.user
+*.sln.docstates
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild[Ll]og.*
+*.VisualState.xml
+TestResult.xml
+[Rr]esult*/

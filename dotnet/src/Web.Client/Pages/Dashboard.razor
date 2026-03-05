@@ -1,0 +1,112 @@
+@page "/"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<h3>Dashboard</h3>
+
+@if (stats != null)
+{
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 120px;">
+            <div style="font-size: 2rem; font-weight: bold;">@stats.TotalJobs</div>
+            <div>Total Jobs</div>
+        </div>
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 120px;">
+            <div style="font-size: 2rem; font-weight: bold;">@stats.TotalApplications</div>
+            <div>Applications</div>
+        </div>
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 120px;">
+            <div style="font-size: 2rem; font-weight: bold;">@stats.Queued</div>
+            <div>Queued</div>
+        </div>
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 120px;">
+            <div style="font-size: 2rem; font-weight: bold;">@stats.Completed</div>
+            <div>Completed</div>
+        </div>
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 120px;">
+            <div style="font-size: 2rem; font-weight: bold;">@stats.Failed</div>
+            <div>Failed</div>
+        </div>
+    </div>
+    <p style="font-size: 0.8rem; color: gray;">Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
+}
+
+<div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+    <select @bind="departmentFilter" style="padding: 0.5rem;">
+        <option value="">All Departments</option>
+        @foreach (var dept in departments)
+        {
+            <option value="@dept">@dept</option>
+        }
+    </select>
+    <button @onclick="LoadJobs">Filter</button>
+</div>
+
+<h4>Jobs</h4>
+@if (jobs.Any())
+{
+    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;">
+        @foreach (var job in filteredJobs)
+        {
+            <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; cursor: pointer;" @onclick="() => ViewJob(job.Id)">
+                <h5>@job.Title</h5>
+                <p>@job.Organisation — @job.Department</p>
+                <p style="font-size: 0.8rem; color: gray;">Posted @((DateTime.UtcNow - job.PostingDate).Days) days ago</p>
+                <span style="background: @(job.Status == "active" ? "#4caf50" : "#999"); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">@job.Status</span>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <p>No jobs found.</p>
+}
+
+@code {
+    private List<JobDto> jobs = new();
+    private SystemStatsDto? stats;
+    private DateTime lastUpdated;
+    private string departmentFilter = "";
+    private List<string> departments = new();
+    private System.Threading.Timer? refreshTimer;
+
+    private IEnumerable<JobDto> filteredJobs => string.IsNullOrEmpty(departmentFilter)
+        ? jobs : jobs.Where(j => j.Department == departmentFilter);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await LoadStats();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task LoadData()
+    {
+        await LoadJobs();
+        await LoadStats();
+    }
+
+    private async Task LoadJobs()
+    {
+        jobs = await Api.GetJobsAsync();
+        departments = jobs.Select(j => j.Department).Distinct().OrderBy(d => d).ToList();
+    }
+
+    private async Task LoadStats()
+    {
+        stats = await Api.GetSystemStatsAsync();
+        lastUpdated = DateTime.Now;
+    }
+
+    private void ViewJob(string jobId)
+    {
+        Navigation.NavigateTo($"/jobs/{jobId}");
+    }
+
+    public void Dispose() => refreshTimer?.Dispose();
+}

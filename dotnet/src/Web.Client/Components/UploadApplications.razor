@@ -1,0 +1,57 @@
+@using TalentMatch.Web.Client.Services
+@using Microsoft.AspNetCore.Components.Forms
+@inject ApiClient Api
+
+<div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px;">
+    <h4>Upload Applications</h4>
+    <p>Select PDF, DOCX, or MD files to upload.</p>
+    <InputFile OnChange="HandleFileSelection" multiple style="margin-bottom: 1rem;" />
+
+    @if (selectedFiles.Any())
+    {
+        <ul>
+            @foreach (var file in selectedFiles)
+            {
+                <li>@file.Name (@(file.Size / 1024) KB)</li>
+            }
+        </ul>
+        <button @onclick="UploadFiles" disabled="@isUploading">
+            @(isUploading ? "Uploading..." : $"Upload {selectedFiles.Count} file(s)")
+        </button>
+    }
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <p style="color: @(uploadSuccess ? "green" : "red"); margin-top: 1rem;">@statusMessage</p>
+    }
+</div>
+
+@code {
+    [Parameter] public string JobId { get; set; } = "";
+    [Parameter] public EventCallback OnUploaded { get; set; }
+
+    private List<IBrowserFile> selectedFiles = new();
+    private bool isUploading;
+    private string? statusMessage;
+    private bool uploadSuccess;
+
+    private void HandleFileSelection(InputFileChangeEventArgs e)
+    {
+        selectedFiles = e.GetMultipleFiles(100).ToList();
+    }
+
+    private async Task UploadFiles()
+    {
+        isUploading = true;
+        var content = new MultipartFormDataContent();
+        foreach (var file in selectedFiles)
+        {
+            var stream = file.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024);
+            content.Add(new StreamContent(stream), "files", file.Name);
+        }
+        uploadSuccess = await Api.UploadApplicationsAsync(JobId, content);
+        statusMessage = uploadSuccess ? $"{selectedFiles.Count} files uploaded successfully." : "Upload failed.";
+        isUploading = false;
+        if (uploadSuccess) await OnUploaded.InvokeAsync();
+    }
+}

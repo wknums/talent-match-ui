@@ -1,0 +1,88 @@
+@page "/jobs/{JobId}"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+
+<h3>Job Detail</h3>
+
+@if (job != null)
+{
+    <div style="margin-bottom: 1rem;">
+        <h4>@job.Title</h4>
+        <p>@job.Organisation — @job.Department | Status: @job.Status</p>
+    </div>
+
+    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist (@longlist.Count)</button>
+        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist (@shortlist.Count)</button>
+        <button @onclick="@(() => activeTab = "excluded")" style="@TabStyle("excluded")">Excluded (@excluded.Count)</button>
+    </div>
+
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr style="border-bottom: 2px solid #ccc;">
+                <th style="padding: 0.5rem; cursor: pointer;" @onclick="SortByScore">Score</th>
+                <th style="padding: 0.5rem;">Status</th>
+                <th style="padding: 0.5rem;">Decision</th>
+                <th style="padding: 0.5rem;">Variance</th>
+                <th style="padding: 0.5rem;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var app in currentList)
+            {
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 0.5rem;">@(app.FinalScore?.ToString("F1") ?? "—")</td>
+                    <td style="padding: 0.5rem;">@app.Status</td>
+                    <td style="padding: 0.5rem;">@(app.FinalDecision ?? "—")</td>
+                    <td style="padding: 0.5rem;">@(app.Variance?.ToString("F1") ?? "—")</td>
+                    <td style="padding: 0.5rem;">
+                        <button @onclick="@(() => Navigation.NavigateTo($"/applications/{app.Id}"))">View</button>
+                        @if (app.FinalDecision == "NeedsManualReview")
+                        {
+                            <button @onclick="@(() => Navigation.NavigateTo($"/manual-review/{app.Id}"))">Review</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+else
+{
+    <p>Loading...</p>
+}
+
+@code {
+    [Parameter] public string JobId { get; set; } = "";
+
+    private JobDto? job;
+    private List<ApplicationDto> allApps = new();
+    private string activeTab = "longlist";
+
+    private List<ApplicationDto> longlist => allApps.Where(a => a.FinalDecision == "Eligible").ToList();
+    private List<ApplicationDto> shortlist => allApps.Where(a => a.FinalScore >= 85).ToList();
+    private List<ApplicationDto> excluded => allApps.Where(a => a.FinalDecision == "Excluded").ToList();
+
+    private List<ApplicationDto> currentList => activeTab switch
+    {
+        "shortlist" => shortlist,
+        "excluded" => excluded,
+        _ => longlist
+    };
+
+    private string TabStyle(string tab) => activeTab == tab
+        ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;"
+        : "padding: 0.5rem 1rem;";
+
+    protected override async Task OnInitializedAsync()
+    {
+        job = await Api.GetJobAsync(JobId);
+        allApps = await Api.GetApplicationsAsync(JobId);
+    }
+
+    private void SortByScore()
+    {
+        allApps = allApps.OrderByDescending(a => a.FinalScore).ToList();
+    }
+}

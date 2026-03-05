@@ -111,3 +111,64 @@ src/                         # React frontend
 .env.example                 # Environment variable template
 vite.config.ts               # Vite config with API proxy
 ```
+
+---
+
+## Stack B — .NET / Blazor WASM
+
+The project includes a parallel .NET implementation using Clean Architecture in `dotnet/`.
+
+### Prerequisites
+
+- .NET 10 SDK or later
+- Node.js 22+ (for Stack A)
+
+### Running Stack B
+
+```bash
+cd dotnet
+dotnet restore TalentMatch.slnx
+dotnet build TalentMatch.slnx
+dotnet run --project src/Web.Server/TalentMatch.Web.Server.csproj
+```
+
+The API will be available at `https://localhost:5001` with Swagger UI at `/swagger`.
+
+### Running Tests
+
+```bash
+# Stack A tests
+npm test
+
+# Stack B tests
+cd dotnet
+dotnet test TalentMatch.slnx
+```
+
+### Project Structure (Stack B)
+
+```
+dotnet/
+├── src/
+│   ├── Domain/           # Core domain entities and interfaces
+│   ├── Application/      # MediatR handlers, validators, DTOs
+│   ├── Infrastructure/   # EF Core, repositories, services
+│   ├── Web.Server/       # ASP.NET Core API endpoints
+│   └── Web.Client/       # Blazor WASM frontend
+└── tests/
+    ├── Domain.Tests/
+    ├── Application.Tests/
+    ├── Infrastructure.Tests/
+    └── Web.Tests/
+```
+
+### Configuration
+
+Stack B uses `appsettings.json` for configuration:
+- `DatabaseProvider`: `sqlite` (default) or `sqlserver`
+- `ConnectionStrings:DefaultConnection`: Database connection string
+- `AzureOpenAI:Endpoint`: Azure OpenAI endpoint (for LLM features)
+
+### API Mode
+
+Stack A supports `API_MODE=mock|real` in `.env` to switch between mock and real API implementations.

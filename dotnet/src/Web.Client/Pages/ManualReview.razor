@@ -1,0 +1,88 @@
+@page "/manual-review/{ApplicationId}"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<h3>Manual Review</h3>
+
+<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; height: calc(100vh - 150px);">
+    @* Left Pane: Job Specification *@
+    <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
+        <h5>Job Specification</h5>
+        <p>Rubric categories and must-have criteria will appear here when a job is loaded.</p>
+    </div>
+
+    @* Centre Pane: Scoring Form *@
+    <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
+        <h5>Rubric Scoring</h5>
+        @if (review != null)
+        {
+            <div style="margin-bottom: 1rem;">
+                <label>Overall Comment</label>
+                <textarea @bind="overallComment" style="width: 100%; min-height: 100px;"></textarea>
+            </div>
+            <div style="margin-bottom: 1rem;">
+                <label>Adjusted Final Score</label>
+                <input type="number" @bind="adjustedScore" step="0.1" style="width: 100%;" />
+            </div>
+            <button @onclick="SaveReview" disabled="@isSaving">
+                @(isSaving ? "Saving..." : "Save Review")
+            </button>
+            @if (!string.IsNullOrEmpty(saveMessage))
+            {
+                <p style="color: green;">@saveMessage</p>
+            }
+        }
+        else
+        {
+            <p>Loading review data...</p>
+        }
+    </div>
+
+    @* Right Pane: Application Content *@
+    <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
+        <h5>Application Content</h5>
+        @if (extraction != null)
+        {
+            <pre style="white-space: pre-wrap;">@extraction.NormalisedText</pre>
+        }
+        else
+        {
+            <p>No extracted content available.</p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string ApplicationId { get; set; } = "";
+
+    private ManualReviewDto? review;
+    private ExtractionDto? extraction;
+    private string overallComment = "";
+    private double? adjustedScore;
+    private bool isSaving;
+    private string? saveMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        review = await Api.GetManualReviewAsync(ApplicationId);
+        extraction = await Api.GetExtractionAsync(ApplicationId);
+        if (review != null)
+        {
+            overallComment = review.OverallComment;
+            adjustedScore = review.AdjustedFinalScore;
+        }
+        else
+        {
+            review = new ManualReviewDto("{}", "", null, "[]");
+        }
+    }
+
+    private async Task SaveReview()
+    {
+        isSaving = true;
+        var reviewData = new ManualReviewDto(review!.RubricScoresJson, overallComment, adjustedScore, review.AuditTrailJson);
+        var success = await Api.SaveManualReviewAsync(ApplicationId, reviewData);
+        saveMessage = success ? "Review saved successfully." : "Failed to save review.";
+        isSaving = false;
+    }
+}
