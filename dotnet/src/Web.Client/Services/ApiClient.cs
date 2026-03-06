@@ -2,6 +2,16 @@ using System.Net.Http.Json;
 
 namespace TalentMatch.Web.Client.Services;
 
+public class ApiException : Exception
+{
+    public int StatusCode { get; }
+
+    public ApiException(string message, int statusCode) : base(message)
+    {
+        StatusCode = statusCode;
+    }
+}
+
 public class ApiClient
 {
     private readonly HttpClient _http;
@@ -9,6 +19,22 @@ public class ApiClient
     public ApiClient(HttpClient http)
     {
         _http = http;
+    }
+
+    private static async Task EnsureSuccessOrThrowAsync(HttpResponseMessage response, string fallbackMessage)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        string errorMessage = fallbackMessage;
+        try
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            if (!string.IsNullOrWhiteSpace(body))
+                errorMessage = body;
+        }
+        catch { /* use fallback */ }
+
+        throw new ApiException(errorMessage, (int)response.StatusCode);
     }
 
     // Auth
@@ -41,22 +67,22 @@ public class ApiClient
     public async Task<List<UserInfo>> GetUsersAsync()
         => await _http.GetFromJsonAsync<List<UserInfo>>("/api/users") ?? new();
 
-    public async Task<bool> CreateUserAsync(string username, string role, string department, string password, string fullName, string email)
+    public async Task CreateUserAsync(string username, string role, string department, string password, string fullName, string email)
     {
         var response = await _http.PostAsJsonAsync("/api/users", new { Username = username, Role = role, Department = department, Password = password, FullName = fullName, Email = email });
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to create user.");
     }
 
-    public async Task<bool> DeleteUserAsync(string userId)
+    public async Task DeleteUserAsync(string userId)
     {
         var response = await _http.DeleteAsync($"/api/users/{userId}");
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to delete user.");
     }
 
-    public async Task<bool> ResetUserPasswordAsync(string userId, string newPassword)
+    public async Task ResetUserPasswordAsync(string userId, string newPassword)
     {
         var response = await _http.PostAsJsonAsync($"/api/users/{userId}/reset-password", new { NewPassword = newPassword });
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to reset password.");
     }
 
     // Password Reset Requests
@@ -69,10 +95,10 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<bool> ResolveResetRequestAsync(string requestId, string action, string? newPassword = null)
+    public async Task ResolveResetRequestAsync(string requestId, string action, string? newPassword = null)
     {
         var response = await _http.PutAsJsonAsync($"/api/users/reset-requests/{requestId}", new { Action = action, NewPassword = newPassword });
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to resolve reset request.");
     }
 
     // Jobs

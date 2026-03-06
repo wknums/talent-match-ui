@@ -318,6 +318,15 @@
 
 - [x] T115 [US8] Create FailureQueue page in `dotnet/src/Web.Client/Pages/FailureQueue.razor`: display DLQ items with error details, failure reason, retry count, timestamps; "Retry" button calling `ApiClient.RetryDlqItemAsync()`; 30-second auto-refresh; add route `/failure-queue` and NavMenu link — reference: `src/components/FailureQueueView.tsx`
 
+### Bugfix: User Creation Error Handling & Login (FR-030, FR-031)
+
+- [x] T116 [US2] Fix `CreateUser()` in `dotnet/src/Web.Client/Components/UserManagement.razor`: check the boolean return value of `Api.CreateUserAsync()`; only close the form and clear fields on success; show a visible error message (e.g. `errorMessage` string rendered in red) on failure; add a success message (e.g. "User created successfully") that auto-clears after display — currently the return value is ignored and the form closes silently even when creation fails
+- [x] T117 [US2] Update `ApiClient.CreateUserAsync` in `dotnet/src/Web.Client/Services/ApiClient.cs`: change return type from `bool` to a result type or throw `HttpRequestException` on non-success status codes so the component can display the server error message (e.g. "Username already exists"); read the response body error message for 4xx/5xx responses and surface it to the caller
+- [x] T118 [US2] Add error handling to all other mutating methods in `UserManagement.razor` (`ConfirmDeleteUser`, `ConfirmResetPassword`, `ApproveRequest`, `RejectRequest`): check return values, display error/success feedback, and only update local state on success — apply the same pattern from T116
+- [x] T119 [US2] Add integration test in `dotnet/tests/Web.Tests/UserManagementIntegrationTests.cs`: test the full create user → verify user appears in GET /api/users response → login as new user → verify GET /api/auth/me returns the new user's data; use `WebApplicationFactory<Program>` with in-memory SQLite to test against real endpoints
+- [x] T120 [US2] Add unit test in `dotnet/tests/Application.Tests/PasswordHashConsistencyTests.cs`: verify that the SHA-256 hash produced by `CreateUserCommandHandler.HashPassword()` for a known password exactly matches the hash computed by the login comparison in `AuthEndpoints` (i.e. `Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(password)))`) — ensures create and login use identical hashing
+- [x] T121 [US2] Add bUnit component test in `dotnet/tests/Web.Tests/UserManagementTests.cs`: render `UserManagement.razor` with a mocked `ApiClient`; simulate creating a user where `CreateUserAsync` returns `false`; verify the error message is displayed and the form remains open; simulate creating a user where `CreateUserAsync` returns `true`; verify the user list is refreshed and the form closes with a success message
+
 **Checkpoint**: All Blazor WASM feature gaps addressed — UI feature parity with React frontend for US1–US8
 
 ---
@@ -340,7 +349,7 @@
 - **Stack B Web API (Phase 12)**: Depends on Phase 11
 - **Stack B Blazor (Phase 13)**: Depends on Phase 12
 - **Polish (Phase 14)**: Depends on all desired user stories being complete
-- **Blazor Feature Completion (Phase 15)**: Depends on Phase 13 (scaffolded components must exist); T103–T104 unblock all other Phase 15 tasks; T113 depends on T110 (upload wiring); T114 depends on T113 (manual review accessed from app detail)
+- **Blazor Feature Completion (Phase 15)**: Depends on Phase 13 (scaffolded components must exist); T103–T104 unblock all other Phase 15 tasks; T113 depends on T110 (upload wiring); T114 depends on T113 (manual review accessed from app detail); T116–T118 (bugfix) can start immediately (fix existing code); T119–T121 (tests) depend on T116–T117 (need fixed code to test against)
 
 ### User Story Dependencies
 

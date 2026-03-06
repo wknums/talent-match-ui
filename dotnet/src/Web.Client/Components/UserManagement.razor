@@ -4,6 +4,20 @@
 
 <h4>User Management</h4>
 
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div style="background: #c6f6d5; color: #22543d; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        @successMessage
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div style="background: #fed7d7; color: #9b2c2c; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        @errorMessage
+    </div>
+}
+
 <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
     <button @onclick="ShowUsersTab" style="@UsersTabStyle">Users</button>
     <button @onclick="LoadResetRequests" style="@RequestsTabStyle">Reset Requests (@resetRequests.Count)</button>
@@ -141,11 +155,19 @@ else
     private string resetNewPassword = "";
     private ResetRequestDto? requestToApprove;
     private string approveNewPassword = "";
+    private string? errorMessage;
+    private string? successMessage;
 
     private string UsersTabStyle => activeTab == "users" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
     private string RequestsTabStyle => activeTab == "requests" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
 
     private void ShowUsersTab() => activeTab = "users";
+
+    private void ClearMessages()
+    {
+        errorMessage = null;
+        successMessage = null;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -155,10 +177,19 @@ else
 
     private async Task CreateUser()
     {
-        await Api.CreateUserAsync(newUsername, newRole, newDepartment, newPassword, newFullName, newEmail);
-        showCreateForm = false;
-        newUsername = ""; newFullName = ""; newEmail = ""; newRole = "recruiter"; newDepartment = ""; newPassword = "";
-        users = await Api.GetUsersAsync();
+        ClearMessages();
+        try
+        {
+            await Api.CreateUserAsync(newUsername, newRole, newDepartment, newPassword, newFullName, newEmail);
+            showCreateForm = false;
+            newUsername = ""; newFullName = ""; newEmail = ""; newRole = "recruiter"; newDepartment = ""; newPassword = "";
+            users = await Api.GetUsersAsync();
+            successMessage = "User created successfully.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
     }
 
     private void ConfirmDelete(UserInfo user) => userToDelete = user;
@@ -167,9 +198,19 @@ else
     {
         if (userToDelete != null)
         {
-            await Api.DeleteUserAsync(userToDelete.Id);
-            userToDelete = null;
-            users = await Api.GetUsersAsync();
+            ClearMessages();
+            try
+            {
+                await Api.DeleteUserAsync(userToDelete.Id);
+                userToDelete = null;
+                users = await Api.GetUsersAsync();
+                successMessage = "User deleted successfully.";
+            }
+            catch (Exception ex)
+            {
+                userToDelete = null;
+                errorMessage = ex.Message;
+            }
         }
     }
 
@@ -183,9 +224,20 @@ else
     {
         if (userToReset != null && !string.IsNullOrWhiteSpace(resetNewPassword))
         {
-            await Api.ResetUserPasswordAsync(userToReset.Id, resetNewPassword);
-            userToReset = null;
-            resetNewPassword = "";
+            ClearMessages();
+            try
+            {
+                await Api.ResetUserPasswordAsync(userToReset.Id, resetNewPassword);
+                userToReset = null;
+                resetNewPassword = "";
+                successMessage = "Password reset successfully.";
+            }
+            catch (Exception ex)
+            {
+                userToReset = null;
+                resetNewPassword = "";
+                errorMessage = ex.Message;
+            }
         }
     }
 
@@ -205,15 +257,34 @@ else
     {
         if (requestToApprove != null && !string.IsNullOrWhiteSpace(approveNewPassword))
         {
-            await Api.ResolveResetRequestAsync(requestToApprove.Id, "approve", approveNewPassword);
-            requestToApprove = null;
-            resetRequests = await Api.GetResetRequestsAsync();
+            ClearMessages();
+            try
+            {
+                await Api.ResolveResetRequestAsync(requestToApprove.Id, "approve", approveNewPassword);
+                requestToApprove = null;
+                resetRequests = await Api.GetResetRequestsAsync();
+                successMessage = "Reset request approved.";
+            }
+            catch (Exception ex)
+            {
+                requestToApprove = null;
+                errorMessage = ex.Message;
+            }
         }
     }
 
     private async Task RejectRequest(string requestId)
     {
-        await Api.ResolveResetRequestAsync(requestId, "reject");
-        resetRequests = await Api.GetResetRequestsAsync();
+        ClearMessages();
+        try
+        {
+            await Api.ResolveResetRequestAsync(requestId, "reject");
+            resetRequests = await Api.GetResetRequestsAsync();
+            successMessage = "Reset request rejected.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
     }
 }

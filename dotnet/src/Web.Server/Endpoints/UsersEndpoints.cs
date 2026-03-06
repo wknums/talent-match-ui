@@ -18,9 +18,16 @@ public static class UsersEndpoints
 
         group.MapPost("/", async (CreateUserRequest request, ISender mediator) =>
         {
-            var user = await mediator.Send(new CreateUserCommand(
-                request.Username, request.Role, request.Department, request.Password, request.FullName, request.Email));
-            return Results.Created($"/api/users/{user.Id}", new { user.Id, user.Username, user.Role, user.Department });
+            try
+            {
+                var user = await mediator.Send(new CreateUserCommand(
+                    request.Username, request.Role, request.Department, request.Password, request.FullName, request.Email));
+                return Results.Created($"/api/users/{user.Id}", new { user.Id, user.Username, user.Role, user.Department });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.Conflict(ex.Message);
+            }
         });
 
         group.MapDelete("/{userId}", async (string userId, ISender mediator) =>
