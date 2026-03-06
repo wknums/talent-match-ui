@@ -1,6 +1,8 @@
 @page "/manual-review/{ApplicationId}"
 @using TalentMatch.Web.Client.Services
+@using System.Text.Json
 @inject ApiClient Api
+@inject NavigationManager Navigation
 
 <h3>Manual Review</h3>
 
@@ -8,7 +10,45 @@
     @* Left Pane: Job Specification *@
     <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
         <h5>Job Specification</h5>
-        <p>Rubric categories and must-have criteria will appear here when a job is loaded.</p>
+        @if (rubricCategories.Any())
+        {
+            <h6>Rubric Categories</h6>
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #ccc;">
+                        <th style="text-align: left; padding: 0.25rem;">Category</th>
+                        <th style="text-align: right; padding: 0.25rem;">Weight</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var cat in rubricCategories)
+                    {
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 0.25rem;">@cat.Name</td>
+                            <td style="text-align: right; padding: 0.25rem;">@cat.Weight.ToString("F2")</td>
+                        </tr>
+                        @if (!string.IsNullOrEmpty(cat.Description))
+                        {
+                            <tr><td colspan="2" style="padding: 0.1rem 0.25rem; font-size: 0.8rem; color: #666;">@cat.Description</td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        }
+        @if (mustHaveCriteria.Any())
+        {
+            <h6 style="margin-top: 1rem;">Must-Have Criteria</h6>
+            <ul style="padding-left: 1.5rem; font-size: 0.85rem;">
+                @foreach (var criterion in mustHaveCriteria)
+                {
+                    <li>@criterion</li>
+                }
+            </ul>
+        }
+        @if (!rubricCategories.Any() && !mustHaveCriteria.Any())
+        {
+            <p style="color: #666;">No rubric configuration available for this job.</p>
+        }
     </div>
 
     @* Centre Pane: Scoring Form *@
@@ -16,20 +56,46 @@
         <h5>Rubric Scoring</h5>
         @if (review != null)
         {
+            @if (rubricCategories.Any())
+            {
+                @foreach (var cat in rubricCategories)
+                {
+                    <div style="margin-bottom: 0.75rem;">
+                        <label style="font-weight: bold; display: block;">@cat.Name <span style="font-size: 0.8rem; color: #666;">(weight: @cat.Weight.ToString("F2"))</span></label>
+                        <input type="number" value="@GetCategoryScore(cat.Name)" @oninput="(e) => SetCategoryScore(cat.Name, e)" min="0" max="100" step="1" style="width: 100%; padding: 0.25rem;" />
+                    </div>
+                }
+            }
+
+            <div style="margin: 1rem 0; padding: 0.75rem; background: #f5f5f5; border-radius: 4px;">
+                <strong>Total Weighted Score: @CalculateWeightedScore().ToString("F1")</strong>
+            </div>
+
             <div style="margin-bottom: 1rem;">
-                <label>Overall Comment</label>
+                <label style="font-weight: bold; display: block;">Overall Comment</label>
                 <textarea @bind="overallComment" style="width: 100%; min-height: 100px;"></textarea>
             </div>
-            <div style="margin-bottom: 1rem;">
-                <label>Adjusted Final Score</label>
-                <input type="number" @bind="adjustedScore" step="0.1" style="width: 100%;" />
-            </div>
-            <button @onclick="SaveReview" disabled="@isSaving">
+            <button @onclick="SaveReview" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
                 @(isSaving ? "Saving..." : "Save Review")
             </button>
             @if (!string.IsNullOrEmpty(saveMessage))
             {
-                <p style="color: green;">@saveMessage</p>
+                <p style="color: green; margin-top: 0.5rem;">@saveMessage</p>
+            }
+
+            @* Audit Trail *@
+            @if (auditTrail.Any())
+            {
+                <h6 style="margin-top: 1.5rem;">Audit Trail</h6>
+                <div style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;">
+                    @foreach (var entry in auditTrail.OrderByDescending(a => a.Timestamp))
+                    {
+                        <div style="padding: 0.25rem 0; border-bottom: 1px solid #eee;">
+                            <strong>@entry.Reviewer</strong> changed <em>@entry.Category</em>: @entry.OldValue → @entry.NewValue
+                            <span style="color: #999; margin-left: 0.5rem;">@entry.Timestamp.ToString("yyyy-MM-dd HH:mm")</span>
+                        </div>
+                    }
+                </div>
             }
         }
         else
@@ -52,24 +118,61 @@
     </div>
 </div>
 
+<div style="margin-top: 1rem;">
+    <button @onclick="GoBack">← Back</button>
+</div>
+
 @code {
     [Parameter] public string ApplicationId { get; set; } = "";
 
     private ManualReviewDto? review;
     private ExtractionDto? extraction;
+    private ApplicationDto? application;
     private string overallComment = "";
-    private double? adjustedScore;
     private bool isSaving;
     private string? saveMessage;
+    private Dictionary<string, double> categoryScores = new();
+    private List<RubricCategory> rubricCategories = new();
+    private List<string> mustHaveCriteria = new();
+    private List<AuditEntry> auditTrail = new();
 
     protected override async Task OnInitializedAsync()
     {
+        application = await Api.GetApplicationAsync(ApplicationId);
         review = await Api.GetManualReviewAsync(ApplicationId);
         extraction = await Api.GetExtractionAsync(ApplicationId);
+
+        if (application != null)
+        {
+            var config = await Api.GetJobConfigAsync(application.JobId);
+            if (config != null)
+            {
+                if (!string.IsNullOrEmpty(config.RubricJson))
+                {
+                    try { rubricCategories = JsonSerializer.Deserialize<List<RubricCategory>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+                    catch { }
+                }
+                if (!string.IsNullOrEmpty(config.MustHaveCriteriaJson))
+                {
+                    try { mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHaveCriteriaJson) ?? new(); }
+                    catch { }
+                }
+            }
+        }
+
         if (review != null)
         {
             overallComment = review.OverallComment;
-            adjustedScore = review.AdjustedFinalScore;
+            if (!string.IsNullOrEmpty(review.RubricScoresJson))
+            {
+                try { categoryScores = JsonSerializer.Deserialize<Dictionary<string, double>>(review.RubricScoresJson) ?? new(); }
+                catch { }
+            }
+            if (!string.IsNullOrEmpty(review.AuditTrailJson))
+            {
+                try { auditTrail = JsonSerializer.Deserialize<List<AuditEntry>>(review.AuditTrailJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+                catch { }
+            }
         }
         else
         {
@@ -77,12 +180,55 @@
         }
     }
 
+    private double GetCategoryScore(string name) =>
+        categoryScores.TryGetValue(name, out var score) ? score : 0;
+
+    private void SetCategoryScore(string name, ChangeEventArgs e)
+    {
+        if (double.TryParse(e.Value?.ToString(), out var score))
+            categoryScores[name] = score;
+    }
+
+    private double CalculateWeightedScore()
+    {
+        double total = 0;
+        foreach (var cat in rubricCategories)
+        {
+            if (categoryScores.TryGetValue(cat.Name, out var score))
+                total += score * cat.Weight;
+        }
+        return total;
+    }
+
     private async Task SaveReview()
     {
         isSaving = true;
-        var reviewData = new ManualReviewDto(review!.RubricScoresJson, overallComment, adjustedScore, review.AuditTrailJson);
+        saveMessage = null;
+        var scoresJson = JsonSerializer.Serialize(categoryScores);
+        var adjustedScore = CalculateWeightedScore();
+        var reviewData = new ManualReviewDto(scoresJson, overallComment, adjustedScore, review!.AuditTrailJson);
         var success = await Api.SaveManualReviewAsync(ApplicationId, reviewData);
         saveMessage = success ? "Review saved successfully." : "Failed to save review.";
+        if (success)
+        {
+            review = await Api.GetManualReviewAsync(ApplicationId);
+            if (review != null && !string.IsNullOrEmpty(review.AuditTrailJson))
+            {
+                try { auditTrail = JsonSerializer.Deserialize<List<AuditEntry>>(review.AuditTrailJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+                catch { }
+            }
+        }
         isSaving = false;
     }
+
+    private void GoBack()
+    {
+        if (application != null)
+            Navigation.NavigateTo($"/applications/{ApplicationId}");
+        else
+            Navigation.NavigateTo("/");
+    }
+
+    private record RubricCategory(string Name, double Weight, string? Description);
+    private record AuditEntry(string Reviewer, DateTime Timestamp, string Category, string OldValue, string NewValue);
 }

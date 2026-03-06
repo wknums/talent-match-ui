@@ -1,0 +1,81 @@
+@page "/failure-queue"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@implements IDisposable
+
+<h3>Failure Queue</h3>
+
+<p style="font-size: 0.8rem; color: gray;">Auto-refreshes every 30 seconds. Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
+
+@if (items.Any())
+{
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr style="border-bottom: 2px solid #ccc;">
+                <th style="text-align: left; padding: 0.5rem;">Entity Type</th>
+                <th style="text-align: left; padding: 0.5rem;">Entity ID</th>
+                <th style="text-align: left; padding: 0.5rem;">Failure Reason</th>
+                <th style="text-align: left; padding: 0.5rem;">Retries</th>
+                <th style="text-align: left; padding: 0.5rem;">Created</th>
+                <th style="text-align: left; padding: 0.5rem;">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var item in items)
+            {
+                <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 0.5rem;">@item.EntityType</td>
+                    <td style="padding: 0.5rem; font-family: monospace; font-size: 0.85rem;">@item.EntityId</td>
+                    <td style="padding: 0.5rem; color: #e53e3e;">@item.FailureReason</td>
+                    <td style="padding: 0.5rem;">@item.RetryCount</td>
+                    <td style="padding: 0.5rem;">@item.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                    <td style="padding: 0.5rem;">
+                        <button @onclick="() => RetryItem(item.Id)" disabled="@retryingIds.Contains(item.Id)" style="padding: 0.25rem 0.5rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
+                            @(retryingIds.Contains(item.Id) ? "Retrying..." : "Retry")
+                        </button>
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+else
+{
+    <div style="text-align: center; padding: 2rem; color: #666;">
+        <p style="font-size: 1.5rem;">✓</p>
+        <p>No failed items in the queue.</p>
+    </div>
+}
+
+@code {
+    private List<DlqItemDto> items = new();
+    private HashSet<string> retryingIds = new();
+    private DateTime lastUpdated;
+    private System.Threading.Timer? refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadItems();
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await LoadItems();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+    }
+
+    private async Task LoadItems()
+    {
+        items = await Api.GetDlqItemsAsync();
+        lastUpdated = DateTime.Now;
+    }
+
+    private async Task RetryItem(string itemId)
+    {
+        retryingIds.Add(itemId);
+        await Api.RetryDlqItemAsync(itemId);
+        retryingIds.Remove(itemId);
+        await LoadItems();
+    }
+
+    public void Dispose() => refreshTimer?.Dispose();
+}

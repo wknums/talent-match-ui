@@ -227,6 +227,9 @@
 **Purpose**: Implement ASP.NET Core minimal API endpoints matching Stack A's API contracts and wire to MediatR handlers
 
 - [x] T074 Configure ASP.NET Core host in `dotnet/src/Web/Server/Program.cs`: register Entra ID authentication (Microsoft Identity), MediatR services, EF Core DbContext, CORS policy, and Swagger/OpenAPI generation
+- [x] T074a [FR-019] Wire Blazor WASM hosting in `dotnet/src/Web.Server/`: add `Microsoft.AspNetCore.Components.WebAssembly.Server` NuGet package to `TalentMatch.Web.Server.csproj`, add `app.UseBlazorFrameworkFiles()` and `app.UseStaticFiles()` middleware before auth in `Program.cs`, and add `app.MapFallbackToFile("index.html")` after all API endpoint mappings to serve the Blazor client at the root URL
+- [x] T074b [FR-020] Seed default admin user in `dotnet/src/Web.Server/Program.cs`: after `db.Database.Migrate()`, check if `Users` table is empty and insert admin user (username=`admin`, SHA-256 hash of `adm1n99`, role=`admin`, department=`all`) matching Stack A's `server/services/init-users.ts` behaviour
+- [x] T074c [FR-021] Configure Blazor WASM cookie auth in `dotnet/src/Web.Client/Program.cs`: add `CookieHandler` (`DelegatingHandler`) that sets `BrowserRequestCredentials.Include` on every request, register `HttpClient` via `IHttpClientFactory` with the handler, add `Microsoft.Extensions.Http` NuGet package; in `dotnet/src/Web.Server/Program.cs` set cookie options (`HttpOnly=true`, `SameSite=Strict`, `SecurePolicy=SameAsRequest`) and update CORS to `AllowCredentials()` with `SetIsOriginAllowed`
 - [x] T075 [P] Implement auth endpoints in `dotnet/src/Web/Server/Endpoints/AuthEndpoints.cs`: POST `/api/auth/login`, POST `/api/auth/logout`, GET `/api/auth/me`, POST `/api/auth/change-password` — each endpoint validates the request and sends the corresponding MediatR command/query
 - [x] T076 [P] Implement user management endpoints in `dotnet/src/Web/Server/Endpoints/UsersEndpoints.cs`: GET `/api/users`, POST `/api/users`, DELETE `/api/users/:userId`, POST `/api/users/:userId/reset-password`, GET/POST/PUT `/api/users/reset-requests` — admin-only endpoints enforced via authorization policy
 - [x] T077 [P] Implement job endpoints in `dotnet/src/Web/Server/Endpoints/JobsEndpoints.cs`: GET `/api/jobs` (department-filtered for recruiters), POST `/api/jobs`, GET `/api/jobs/:jobId`, PUT `/api/jobs/:jobId/config`, POST `/api/jobs/:jobId/process` — wired to MediatR handlers
@@ -272,6 +275,53 @@
 
 ---
 
+## Phase 15: Stack B — Blazor WASM Feature Completion
+
+**Purpose**: Complete Blazor WebAssembly UI integration and feature parity with React frontend — Phase 13 tasks created component scaffolding but left critical gaps in navigation wiring, feature completeness, and missing pages/dialogs
+
+**Audit Findings**: Blazor UI is ~40% feature-complete; many components exist but are orphaned from the UI. The React frontend (`src/components/`) serves as the reference implementation for all features below.
+
+### Navigation & User Profile (FR-022, FR-023 — Unblocks all features)
+
+- [x] T103 [US1/US2] Create UserMenu component in `dotnet/src/Web.Client/Components/UserMenu.razor`: display authenticated user name, role badge, and department in the layout header; provide logout button (calls `ApiClient.LogoutAsync()`), change password link (opens ChangePasswordDialog), and admin-only "Manage Users" link; wire into `MainLayout.razor` — reference: `src/components/UserMenu.tsx`
+- [x] T104 [US1] Update NavMenu in `dotnet/src/Web.Client/Layout/NavMenu.razor`: show/hide links based on auth state (hide Login when authenticated, show Failure Queue link for admins); add conditional navigation items matching the React `App.tsx` routing structure
+
+### User Management Completion (FR-024, FR-029)
+
+- [x] T105 [US2] Create ChangePasswordDialog component in `dotnet/src/Web.Client/Components/ChangePasswordDialog.razor`: current password, new password, confirm password fields; call `ApiClient.ChangePasswordAsync()`; display success/error feedback; closeable dialog — reference: `src/components/ChangePasswordDialog.tsx`
+- [x] T106 [US2] Wire UserManagement.razor as accessible page/dialog from UserMenu: add route (`/users`) or dialog trigger so admin users can reach user management from the UserMenu component created in T103
+- [x] T107 [US2] Add password reset request handling to `dotnet/src/Web.Client/Components/UserManagement.razor`: add a "Reset Requests" tab displaying pending requests from `ApiClient.GetResetRequestsAsync()`; approve button (with new password input) and reject button calling `ApiClient.ResolveResetRequestAsync()` — reference: `src/components/UserManagementDialog.tsx`
+
+### Job Creation Completion (FR-023, FR-028)
+
+- [x] T108 [US3] Wire CreateJobDialog into Dashboard: add "Create Job" button to `Dashboard.razor` that opens `CreateJobDialog.razor` as a dialog/modal; close dialog and refresh job list on success
+- [x] T109 [US3] Complete CreateJobDialog rubric management in `dotnet/src/Web.Client/Components/CreateJobDialog.razor`: add rubric category rows (add/remove with name, weight, description), weight inputs with sum-to-1.0 validation, must-have criteria list (add/remove), job specification file upload with LLM extraction via `ApiClient` — reference: `src/components/CreateJobDialog.tsx` and `src/components/UploadRubricDialog.tsx`
+
+### Application Upload Completion (FR-023)
+
+- [x] T110 [US4] Wire UploadApplications into JobDetail: add "Upload Applications" button to `JobDetail.razor` that opens `UploadApplications.razor` as a dialog; refresh application list on upload success
+- [x] T111 [US4] Enhance UploadApplications component in `dotnet/src/Web.Client/Components/UploadApplications.razor`: add drag-and-drop file zone, per-file upload progress indicators, improved inline validation error display — reference: `src/components/UploadApplicationsDialog.tsx`
+
+### Pipeline Visualization Integration (FR-023)
+
+- [x] T112 [US5/US8] Integrate PipelineVisualizer into JobDetail: render `PipelineVisualizer.razor` on `JobDetail.razor` with real pipeline stage counts from the API; update counts on auto-refresh — reference: `src/components/PipelineVisualizer.tsx` within `src/components/JobDetailView.tsx`
+
+### Application Detail Page (FR-025)
+
+- [x] T113 [US6] Create ApplicationDetail page in `dotnet/src/Web.Client/Pages/ApplicationDetail.razor`: display original documents with download links, extracted text from extraction artifact, all N individual scoring runs with per-category score breakdown and evidence citations, aggregated final decision with consolidated rationale and improvement tips, and a "Manual Review" navigation link for eligible/flagged applications — reference: `src/components/ApplicationDetail.tsx`
+
+### Manual Review Completion (FR-026)
+
+- [x] T114 [US7] Complete ManualReview per-category scoring in `dotnet/src/Web.Client/Pages/ManualReview.razor`: replace placeholder left pane with actual rubric categories and must-have criteria from the job configuration; add per-category point allocation input fields in the centre pane; implement live weighted score recalculation; display chronological audit trail entries (reviewer, timestamp, category, old → new value) — reference: `src/components/ManualReviewView.tsx`
+
+### Failure Queue View (FR-027)
+
+- [x] T115 [US8] Create FailureQueue page in `dotnet/src/Web.Client/Pages/FailureQueue.razor`: display DLQ items with error details, failure reason, retry count, timestamps; "Retry" button calling `ApiClient.RetryDlqItemAsync()`; 30-second auto-refresh; add route `/failure-queue` and NavMenu link — reference: `src/components/FailureQueueView.tsx`
+
+**Checkpoint**: All Blazor WASM feature gaps addressed — UI feature parity with React frontend for US1–US8
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -290,6 +340,7 @@
 - **Stack B Web API (Phase 12)**: Depends on Phase 11
 - **Stack B Blazor (Phase 13)**: Depends on Phase 12
 - **Polish (Phase 14)**: Depends on all desired user stories being complete
+- **Blazor Feature Completion (Phase 15)**: Depends on Phase 13 (scaffolded components must exist); T103–T104 unblock all other Phase 15 tasks; T113 depends on T110 (upload wiring); T114 depends on T113 (manual review accessed from app detail)
 
 ### User Story Dependencies
 

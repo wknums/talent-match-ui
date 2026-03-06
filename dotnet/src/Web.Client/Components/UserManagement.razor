@@ -1,8 +1,16 @@
+@page "/users"
 @using TalentMatch.Web.Client.Services
 @inject ApiClient Api
 
 <h4>User Management</h4>
 
+<div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+    <button @onclick="ShowUsersTab" style="@UsersTabStyle">Users</button>
+    <button @onclick="LoadResetRequests" style="@RequestsTabStyle">Reset Requests (@resetRequests.Count)</button>
+</div>
+
+@if (activeTab == "users")
+{
 <button @onclick="() => showCreateForm = true" style="margin-bottom: 1rem; padding: 0.5rem 1rem;">Create User</button>
 
 @if (showCreateForm)
@@ -38,36 +46,174 @@
                 <td style="padding: 0.5rem;">@user.Role</td>
                 <td style="padding: 0.5rem;">@user.Department</td>
                 <td style="padding: 0.5rem;">
-                    <button @onclick="() => DeleteUser(user.Id)">Delete</button>
-                    <button @onclick="() => ResetPassword(user.Id)">Reset Password</button>
+                    <button @onclick="() => ConfirmDelete(user)">Delete</button>
+                    <button @onclick="() => ShowResetDialog(user)">Reset Password</button>
                 </td>
             </tr>
         }
     </tbody>
 </table>
 
+@if (userToDelete != null)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 300px;">
+            <p>Are you sure you want to delete user <strong>@userToDelete.Username</strong>?</p>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button @onclick="() => userToDelete = null">Cancel</button>
+                <button @onclick="ConfirmDeleteUser" style="background: red; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">Delete</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (userToReset != null)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 300px;">
+            <h5>Reset Password for @userToReset.Username</h5>
+            <input type="password" placeholder="New Password" @bind="resetNewPassword" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem;" />
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button @onclick="() => userToReset = null">Cancel</button>
+                <button @onclick="ConfirmResetPassword" style="background: #3182ce; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">Reset</button>
+            </div>
+        </div>
+    </div>
+}
+}
+else
+{
+    @if (resetRequests.Any())
+    {
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 2px solid #ccc;">
+                    <th style="text-align: left; padding: 0.5rem;">User</th>
+                    <th style="text-align: left; padding: 0.5rem;">Reason</th>
+                    <th style="text-align: left; padding: 0.5rem;">Date</th>
+                    <th style="text-align: left; padding: 0.5rem;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var req in resetRequests)
+                {
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 0.5rem;">@req.Username</td>
+                        <td style="padding: 0.5rem;">@req.Reason</td>
+                        <td style="padding: 0.5rem;">@req.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td style="padding: 0.5rem;">
+                            <button @onclick="() => ShowApproveDialog(req)" style="background: #38a169; color: white; border: none; padding: 0.25rem 0.5rem; border-radius: 4px;">Approve</button>
+                            <button @onclick="() => RejectRequest(req.Id)" style="background: #e53e3e; color: white; border: none; padding: 0.25rem 0.5rem; border-radius: 4px;">Reject</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p>No pending reset requests.</p>
+    }
+
+    @if (requestToApprove != null)
+    {
+        <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+            <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 300px;">
+                <h5>Approve Reset for @requestToApprove.Username</h5>
+                <input type="password" placeholder="New Password" @bind="approveNewPassword" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem;" />
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button @onclick="() => requestToApprove = null">Cancel</button>
+                    <button @onclick="ApproveRequest" style="background: #38a169; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">Approve</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
 @code {
     private List<UserInfo> users = new();
+    private List<ResetRequestDto> resetRequests = new();
     private bool showCreateForm;
+    private string activeTab = "users";
     private string newUsername = "", newFullName = "", newEmail = "", newRole = "recruiter", newDepartment = "", newPassword = "";
+    private UserInfo? userToDelete;
+    private UserInfo? userToReset;
+    private string resetNewPassword = "";
+    private ResetRequestDto? requestToApprove;
+    private string approveNewPassword = "";
 
-    protected override async Task OnInitializedAsync() => users = await Api.GetUsersAsync();
+    private string UsersTabStyle => activeTab == "users" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
+    private string RequestsTabStyle => activeTab == "requests" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
+
+    private void ShowUsersTab() => activeTab = "users";
+
+    protected override async Task OnInitializedAsync()
+    {
+        users = await Api.GetUsersAsync();
+        resetRequests = await Api.GetResetRequestsAsync();
+    }
 
     private async Task CreateUser()
     {
         await Api.CreateUserAsync(newUsername, newRole, newDepartment, newPassword, newFullName, newEmail);
         showCreateForm = false;
+        newUsername = ""; newFullName = ""; newEmail = ""; newRole = "recruiter"; newDepartment = ""; newPassword = "";
         users = await Api.GetUsersAsync();
     }
 
-    private async Task DeleteUser(string userId)
+    private void ConfirmDelete(UserInfo user) => userToDelete = user;
+
+    private async Task ConfirmDeleteUser()
     {
-        await Api.DeleteUserAsync(userId);
-        users = await Api.GetUsersAsync();
+        if (userToDelete != null)
+        {
+            await Api.DeleteUserAsync(userToDelete.Id);
+            userToDelete = null;
+            users = await Api.GetUsersAsync();
+        }
     }
 
-    private async Task ResetPassword(string userId)
+    private void ShowResetDialog(UserInfo user)
     {
-        await Api.ResetUserPasswordAsync(userId, "TempPassword123!");
+        userToReset = user;
+        resetNewPassword = "";
+    }
+
+    private async Task ConfirmResetPassword()
+    {
+        if (userToReset != null && !string.IsNullOrWhiteSpace(resetNewPassword))
+        {
+            await Api.ResetUserPasswordAsync(userToReset.Id, resetNewPassword);
+            userToReset = null;
+            resetNewPassword = "";
+        }
+    }
+
+    private async Task LoadResetRequests()
+    {
+        activeTab = "requests";
+        resetRequests = await Api.GetResetRequestsAsync();
+    }
+
+    private void ShowApproveDialog(ResetRequestDto req)
+    {
+        requestToApprove = req;
+        approveNewPassword = "";
+    }
+
+    private async Task ApproveRequest()
+    {
+        if (requestToApprove != null && !string.IsNullOrWhiteSpace(approveNewPassword))
+        {
+            await Api.ResolveResetRequestAsync(requestToApprove.Id, "approve", approveNewPassword);
+            requestToApprove = null;
+            resetRequests = await Api.GetResetRequestsAsync();
+        }
+    }
+
+    private async Task RejectRequest(string requestId)
+    {
+        await Api.ResolveResetRequestAsync(requestId, "reject");
+        resetRequests = await Api.GetResetRequestsAsync();
     }
 }

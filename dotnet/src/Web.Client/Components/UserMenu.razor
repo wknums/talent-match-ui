@@ -1,0 +1,79 @@
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+
+<div style="display: flex; align-items: center; gap: 0.75rem;">
+    @if (currentUser != null)
+    {
+        <span style="font-size: 0.9rem;">@currentUser.FullName</span>
+        <span style="background: @(currentUser.Role == "admin" ? "#e53e3e" : "#3182ce"); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase;">@currentUser.Role</span>
+        <span style="font-size: 0.8rem; color: #666;">@currentUser.Department</span>
+
+        <div style="position: relative;">
+            <button @onclick="ToggleMenu" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">☰</button>
+            @if (showMenu)
+            {
+                <div style="position: absolute; right: 0; top: 100%; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 100; min-width: 180px;">
+                    <button @onclick="OpenChangePassword" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Change Password</button>
+                    @if (currentUser.Role == "admin")
+                    {
+                        <button @onclick="NavigateToUsers" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Manage Users</button>
+                    }
+                    <hr style="margin: 0;" />
+                    <button @onclick="HandleLogout" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer; color: red;">Logout</button>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@if (showChangePassword)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="CloseChangePassword">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 350px;" @onclick:stopPropagation>
+            <ChangePasswordDialog OnClose="CloseChangePassword" />
+        </div>
+    </div>
+}
+
+@code {
+    private UserInfo? currentUser;
+    private bool showMenu;
+    private bool showChangePassword;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUser = await Api.GetCurrentUserAsync();
+    }
+
+    private void ToggleMenu() => showMenu = !showMenu;
+
+    private void OpenChangePassword()
+    {
+        showMenu = false;
+        showChangePassword = true;
+    }
+
+    private void CloseChangePassword() => showChangePassword = false;
+
+    private void NavigateToUsers()
+    {
+        showMenu = false;
+        Navigation.NavigateTo("/users");
+    }
+
+    private async Task HandleLogout()
+    {
+        showMenu = false;
+        await Api.LogoutAsync();
+        Navigation.NavigateTo("/login", forceLoad: true);
+    }
+
+    [Parameter] public EventCallback<UserInfo?> OnUserLoaded { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && currentUser != null)
+            await OnUserLoaded.InvokeAsync(currentUser);
+    }
+}

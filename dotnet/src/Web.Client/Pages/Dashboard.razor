@@ -42,7 +42,17 @@
         }
     </select>
     <button @onclick="LoadJobs">Filter</button>
+    <button @onclick="() => showCreateJob = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Create Job</button>
 </div>
+
+@if (showCreateJob)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="() => showCreateJob = false">
+        <div @onclick:stopPropagation>
+            <CreateJobDialog OnCreated="OnJobCreated" OnCancel="() => showCreateJob = false" />
+        </div>
+    </div>
+}
 
 <h4>Jobs</h4>
 @if (jobs.Any())
@@ -71,6 +81,7 @@ else
     private string departmentFilter = "";
     private List<string> departments = new();
     private System.Threading.Timer? refreshTimer;
+    private bool showCreateJob;
 
     private IEnumerable<JobDto> filteredJobs => string.IsNullOrEmpty(departmentFilter)
         ? jobs : jobs.Where(j => j.Department == departmentFilter);
@@ -109,4 +120,10 @@ else
     }
 
     public void Dispose() => refreshTimer?.Dispose();
+
+    private async Task OnJobCreated()
+    {
+        showCreateJob = false;
+        await LoadJobs();
+    }
 }

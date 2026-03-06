@@ -2,21 +2,45 @@
 @using Microsoft.AspNetCore.Components.Forms
 @inject ApiClient Api
 
-<div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px;">
+<div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; background: white; min-width: 400px;">
     <h4>Upload Applications</h4>
-    <p>Select PDF, DOCX, or MD files to upload.</p>
-    <InputFile OnChange="HandleFileSelection" multiple style="margin-bottom: 1rem;" />
+    <p>Select PDF, DOCX, or MD files to upload (max 2 MB each).</p>
 
-    @if (selectedFiles.Any())
+    <div style="border: 2px dashed @(isDragOver ? "#3182ce" : "#ccc"); border-radius: 8px; padding: 2rem; text-align: center; margin-bottom: 1rem; background: @(isDragOver ? "#ebf8ff" : "transparent"); transition: all 0.2s;"
+         @ondragenter="() => isDragOver = true"
+         @ondragleave="() => isDragOver = false"
+         @ondragover:preventDefault>
+        <p style="margin: 0 0 0.5rem 0; font-size: 1.2rem;">📄</p>
+        <p style="margin: 0;">Drag & drop files here, or click to browse</p>
+        <InputFile OnChange="HandleFileSelection" multiple style="margin-top: 0.5rem;" accept=".pdf,.docx,.md" />
+    </div>
+
+    @if (fileEntries.Any())
     {
-        <ul>
-            @foreach (var file in selectedFiles)
+        <div style="margin-bottom: 1rem;">
+            @foreach (var entry in fileEntries)
             {
-                <li>@file.Name (@(file.Size / 1024) KB)</li>
+                <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-bottom: 1px solid #eee;">
+                    <span style="flex: 1;">@entry.File.Name</span>
+                    <span style="font-size: 0.8rem; color: #666;">@(entry.File.Size / 1024) KB</span>
+                    @if (!string.IsNullOrEmpty(entry.Error))
+                    {
+                        <span style="color: red; font-size: 0.8rem;">@entry.Error</span>
+                    }
+                    else if (entry.Uploaded)
+                    {
+                        <span style="color: green;">✓</span>
+                    }
+                    else if (isUploading)
+                    {
+                        <span style="color: #3182ce;">⏳</span>
+                    }
+                    <button @onclick="() => fileEntries.Remove(entry)" style="color: red; border: none; background: none; cursor: pointer;">✕</button>
+                </div>
             }
-        </ul>
-        <button @onclick="UploadFiles" disabled="@isUploading">
-            @(isUploading ? "Uploading..." : $"Upload {selectedFiles.Count} file(s)")
+        </div>
+        <button @onclick="UploadFiles" disabled="@(isUploading || !ValidFiles.Any())">
+            @(isUploading ? "Uploading..." : $"Upload {ValidFiles.Count()} file(s)")
         </button>
     }
 
@@ -30,28 +54,60 @@
     [Parameter] public string JobId { get; set; } = "";
     [Parameter] public EventCallback OnUploaded { get; set; }
 
-    private List<IBrowserFile> selectedFiles = new();
+    private List<FileEntry> fileEntries = new();
     private bool isUploading;
+    private bool isDragOver;
     private string? statusMessage;
     private bool uploadSuccess;
 
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".docx", ".md" };
+    private const long MaxFileSize = 2 * 1024 * 1024;
+
+    private IEnumerable<FileEntry> ValidFiles => fileEntries.Where(f => string.IsNullOrEmpty(f.Error));
+
     private void HandleFileSelection(InputFileChangeEventArgs e)
     {
-        selectedFiles = e.GetMultipleFiles(100).ToList();
+        isDragOver = false;
+        foreach (var file in e.GetMultipleFiles(100))
+        {
+            var entry = new FileEntry { File = file };
+            var ext = Path.GetExtension(file.Name);
+            if (!AllowedExtensions.Contains(ext))
+                entry.Error = $"Invalid type: {ext}";
+            else if (file.Size > MaxFileSize)
+                entry.Error = "File exceeds 2 MB limit";
+            fileEntries.Add(entry);
+        }
     }
 
     private async Task UploadFiles()
     {
         isUploading = true;
+        statusMessage = null;
         var content = new MultipartFormDataContent();
-        foreach (var file in selectedFiles)
+        foreach (var entry in ValidFiles)
         {
-            var stream = file.OpenReadStream(maxAllowedSize: 2 * 1024 * 1024);
-            content.Add(new StreamContent(stream), "files", file.Name);
+            var stream = entry.File.OpenReadStream(maxAllowedSize: MaxFileSize);
+            content.Add(new StreamContent(stream), "files", entry.File.Name);
         }
         uploadSuccess = await Api.UploadApplicationsAsync(JobId, content);
-        statusMessage = uploadSuccess ? $"{selectedFiles.Count} files uploaded successfully." : "Upload failed.";
+        if (uploadSuccess)
+        {
+            foreach (var entry in ValidFiles) entry.Uploaded = true;
+            statusMessage = $"{ValidFiles.Count()} files uploaded successfully.";
+            await OnUploaded.InvokeAsync();
+        }
+        else
+        {
+            statusMessage = "Upload failed.";
+        }
         isUploading = false;
-        if (uploadSuccess) await OnUploaded.InvokeAsync();
+    }
+
+    private class FileEntry
+    {
+        public IBrowserFile File { get; set; } = default!;
+        public string? Error { get; set; }
+        public bool Uploaded { get; set; }
     }
 }

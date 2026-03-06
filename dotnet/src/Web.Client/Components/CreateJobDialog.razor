@@ -1,22 +1,72 @@
 @using TalentMatch.Web.Client.Services
+@using System.Text.Json
 @inject ApiClient Api
 
-<div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; max-width: 600px;">
+<div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; max-width: 700px; background: white;">
     <h4>Create New Job</h4>
     <div style="display: grid; gap: 0.5rem;">
         <input placeholder="Job Title" @bind="title" />
         <input placeholder="Department" @bind="department" />
         <input placeholder="Organisation" @bind="organisation" />
         <input type="date" @bind="postingDate" />
-        <input type="number" placeholder="Scoring Runs (default 3)" @bind="scoringRunCount" />
-        <select @bind="aggregationStrategy">
-            <option value="median">Median</option><option value="mean">Mean</option><option value="weighted">Weighted</option>
-        </select>
-        <input type="number" placeholder="Longlist Threshold" @bind="longlistThreshold" step="0.1" />
-        <input type="number" placeholder="Shortlist Threshold" @bind="shortlistThreshold" step="0.1" />
-        <input type="number" placeholder="Variance Threshold" @bind="varianceThreshold" step="0.1" />
-        <div>
-            <button @onclick="Submit">Create Job</button>
+
+        <h5 style="margin-top: 1rem;">Rubric Categories</h5>
+        @for (int i = 0; i < rubricCategories.Count; i++)
+        {
+            var idx = i;
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input placeholder="Category Name" value="@rubricCategories[idx].Name" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Name = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                <input type="number" placeholder="Weight" value="@rubricCategories[idx].Weight" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Weight = double.TryParse(e.Value?.ToString(), out var w) ? w : 0 }" step="0.05" style="width: 80px;" />
+                <input placeholder="Description" value="@rubricCategories[idx].Description" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Description = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                <button @onclick="() => rubricCategories.RemoveAt(idx)" style="color: red;">✕</button>
+            </div>
+        }
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <button @onclick="AddCategory" style="padding: 0.25rem 0.5rem;">+ Add Category</button>
+            <span style="font-size: 0.8rem; color: @(Math.Abs(WeightSum - 1.0) < 0.001 ? "green" : "red");">
+                Weight sum: @WeightSum.ToString("F2") @(Math.Abs(WeightSum - 1.0) < 0.001 ? "✓" : "(must equal 1.0)")
+            </span>
+        </div>
+
+        <h5 style="margin-top: 1rem;">Must-Have Criteria</h5>
+        @for (int i = 0; i < mustHaveCriteria.Count; i++)
+        {
+            var idx = i;
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input value="@mustHaveCriteria[idx]" @oninput="(e) => mustHaveCriteria[idx] = e.Value?.ToString() ?? string.Empty" style="flex: 1;" />
+                <button @onclick="() => mustHaveCriteria.RemoveAt(idx)" style="color: red;">✕</button>
+            </div>
+        }
+        <button @onclick="() => mustHaveCriteria.Add(string.Empty)" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Criterion</button>
+
+        <h5 style="margin-top: 1rem;">Scoring Configuration</h5>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+            <div>
+                <label style="font-size: 0.85rem;">Scoring Runs</label>
+                <input type="number" @bind="scoringRunCount" style="width: 100%;" />
+            </div>
+            <div>
+                <label style="font-size: 0.85rem;">Aggregation Strategy</label>
+                <select @bind="aggregationStrategy" style="width: 100%;">
+                    <option value="median">Median</option><option value="mean">Mean</option><option value="weighted">Weighted</option>
+                </select>
+            </div>
+            <div>
+                <label style="font-size: 0.85rem;">Longlist Threshold</label>
+                <input type="number" @bind="longlistThreshold" step="0.1" style="width: 100%;" />
+            </div>
+            <div>
+                <label style="font-size: 0.85rem;">Shortlist Threshold</label>
+                <input type="number" @bind="shortlistThreshold" step="0.1" style="width: 100%;" />
+            </div>
+            <div>
+                <label style="font-size: 0.85rem;">Variance Threshold</label>
+                <input type="number" @bind="varianceThreshold" step="0.1" style="width: 100%;" />
+            </div>
+        </div>
+
+        <div style="margin-top: 1rem;">
+            <button @onclick="Submit" disabled="@(!CanSubmit)">Create Job</button>
             <button @onclick="() => OnCancel.InvokeAsync()">Cancel</button>
         </div>
     </div>
@@ -37,13 +87,29 @@
     private double longlistThreshold = 70, shortlistThreshold = 85, varianceThreshold = 15;
     private string? message;
     private bool success;
+    private List<RubricCategoryInput> rubricCategories = new();
+    private List<string> mustHaveCriteria = new();
+
+    private double WeightSum => rubricCategories.Sum(c => c.Weight);
+    private bool CanSubmit => !string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(department);
+
+    private void AddCategory() => rubricCategories.Add(new("", 0, ""));
 
     private async Task Submit()
     {
+        var rubricJson = rubricCategories.Any()
+            ? JsonSerializer.Serialize(rubricCategories.Where(c => !string.IsNullOrWhiteSpace(c.Name)).Select(c => new { c.Name, c.Weight, c.Description }))
+            : null;
+        var mustHaveJson = mustHaveCriteria.Any(c => !string.IsNullOrWhiteSpace(c))
+            ? JsonSerializer.Serialize(mustHaveCriteria.Where(c => !string.IsNullOrWhiteSpace(c)))
+            : null;
+
         var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
-            null, null, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold));
+            rubricJson, mustHaveJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold));
         success = result;
         message = result ? "Job created successfully!" : "Failed to create job.";
         if (result) await OnCreated.InvokeAsync();
     }
+
+    private record RubricCategoryInput(string Name, double Weight, string Description);
 }

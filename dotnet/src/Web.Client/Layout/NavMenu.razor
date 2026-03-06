@@ -1,4 +1,7 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
+﻿@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">TalentMatch</a>
         <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
@@ -9,23 +12,48 @@
 
 <div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
     <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Dashboard
-            </NavLink>
-        </div>
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="login">
-                <span class="bi bi-person-fill-nav-menu" aria-hidden="true"></span> Login
-            </NavLink>
-        </div>
+        @if (currentUser != null)
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                    <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Dashboard
+                </NavLink>
+            </div>
+            @if (currentUser.Role == "admin")
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="users">
+                        <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Users
+                    </NavLink>
+                </div>
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="failure-queue">
+                        <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Failure Queue
+                    </NavLink>
+                </div>
+            }
+        }
+        else
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="login">
+                    <span class="bi bi-person-fill-nav-menu" aria-hidden="true"></span> Login
+                </NavLink>
+            </div>
+        }
     </nav>
 </div>
 
 @code {
     private bool collapseNavMenu = true;
+    private UserInfo? currentUser;
 
     private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUser = await Api.GetCurrentUserAsync();
+    }
 
     private void ToggleNavMenu()
     {

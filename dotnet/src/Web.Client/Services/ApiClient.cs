@@ -59,6 +59,22 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    // Password Reset Requests
+    public async Task<List<ResetRequestDto>> GetResetRequestsAsync()
+        => await _http.GetFromJsonAsync<List<ResetRequestDto>>("/api/users/reset-requests") ?? new();
+
+    public async Task<bool> SubmitResetRequestAsync(string reason)
+    {
+        var response = await _http.PostAsJsonAsync("/api/users/reset-requests", new { Reason = reason });
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> ResolveResetRequestAsync(string requestId, string action, string? newPassword = null)
+    {
+        var response = await _http.PutAsJsonAsync($"/api/users/reset-requests/{requestId}", new { Action = action, NewPassword = newPassword });
+        return response.IsSuccessStatusCode;
+    }
+
     // Jobs
     public async Task<List<JobDto>> GetJobsAsync()
         => await _http.GetFromJsonAsync<List<JobDto>>("/api/jobs") ?? new();
@@ -82,6 +98,12 @@ public class ApiClient
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/process", null);
         return response.IsSuccessStatusCode;
+    }
+
+    public async Task<JobConfigDto?> GetJobConfigAsync(string jobId)
+    {
+        try { return await _http.GetFromJsonAsync<JobConfigDto>($"/api/jobs/{jobId}/config"); }
+        catch { return null; }
     }
 
     // Applications
@@ -150,3 +172,5 @@ public record ManualReviewDto(string RubricScoresJson, string OverallComment, do
 public record SystemStatsDto(int Queued, int Extracting, int Scoring, int Aggregating, int Completed, int NeedsManualReview, int Failed, int TotalJobs, int TotalApplications);
 public record DlqItemDto(string Id, string EntityType, string EntityId, string FailureReason, int RetryCount, DateTime CreatedAt);
 public record AuditEventDto(string Id, string Actor, string EventType, string EntityType, string EntityId, DateTime Timestamp, string CorrelationId);
+public record ResetRequestDto(string Id, string UserId, string Username, string Reason, string Status, DateTime CreatedAt);
+public record JobConfigDto(string? RubricJson, string? MustHaveCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);

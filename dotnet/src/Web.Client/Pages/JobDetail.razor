@@ -10,6 +10,17 @@
     <div style="margin-bottom: 1rem;">
         <h4>@job.Title</h4>
         <p>@job.Organisation — @job.Department | Status: @job.Status</p>
+        <div style="display: flex; gap: 0.5rem;">
+            <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Upload Applications</button>
+            <button @onclick="ProcessJob" disabled="@isProcessing" style="padding: 0.5rem 1rem;">
+                @(isProcessing ? "Processing..." : "Process Applications")
+            </button>
+        </div>
+    </div>
+
+    <div style="margin-bottom: 1.5rem;">
+        <h5>Pipeline Status</h5>
+        <PipelineVisualizer Applications="allApps" />
     </div>
 
     <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
@@ -21,7 +32,7 @@
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ccc;">
-                <th style="padding: 0.5rem; cursor: pointer;" @onclick="SortByScore">Score</th>
+                <th style="padding: 0.5rem; cursor: pointer;" @onclick="SortByScore">Score ↕</th>
                 <th style="padding: 0.5rem;">Status</th>
                 <th style="padding: 0.5rem;">Decision</th>
                 <th style="padding: 0.5rem;">Variance</th>
@@ -53,12 +64,24 @@ else
     <p>Loading...</p>
 }
 
+@if (showUpload)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="() => showUpload = false">
+        <div @onclick:stopPropagation>
+            <UploadApplications JobId="@JobId" OnUploaded="OnUploadCompleted" />
+        </div>
+    </div>
+}
+
 @code {
     [Parameter] public string JobId { get; set; } = "";
 
     private JobDto? job;
     private List<ApplicationDto> allApps = new();
     private string activeTab = "longlist";
+    private bool showUpload;
+    private bool isProcessing;
+    private bool sortAscending;
 
     private List<ApplicationDto> longlist => allApps.Where(a => a.FinalDecision == "Eligible").ToList();
     private List<ApplicationDto> shortlist => allApps.Where(a => a.FinalScore >= 85).ToList();
@@ -83,6 +106,23 @@ else
 
     private void SortByScore()
     {
-        allApps = allApps.OrderByDescending(a => a.FinalScore).ToList();
+        sortAscending = !sortAscending;
+        allApps = sortAscending
+            ? allApps.OrderBy(a => a.FinalScore).ToList()
+            : allApps.OrderByDescending(a => a.FinalScore).ToList();
+    }
+
+    private async Task OnUploadCompleted()
+    {
+        showUpload = false;
+        allApps = await Api.GetApplicationsAsync(JobId);
+    }
+
+    private async Task ProcessJob()
+    {
+        isProcessing = true;
+        await Api.ProcessJobAsync(JobId);
+        isProcessing = false;
+        allApps = await Api.GetApplicationsAsync(JobId);
     }
 }
