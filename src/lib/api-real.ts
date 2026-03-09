@@ -11,6 +11,8 @@ import type {
   ManualReviewData,
   User,
   PasswordResetRequest,
+  ScoringPrompt,
+  PromptTestRun,
 } from '@/types'
 
 const API_BASE = '/api'
@@ -112,6 +114,20 @@ export const realAPI = {
     }
   },
 
+  async extractJobSpec(fileName: string, content: string, mimeType: string): Promise<any> {
+    return fetchJSON(`${API_BASE}/jobs/extract-spec`, {
+      method: 'POST',
+      body: JSON.stringify({ fileName, content, mimeType }),
+    })
+  },
+
+  async extractRubric(fileName: string, content: string, mimeType: string): Promise<any> {
+    return fetchJSON(`${API_BASE}/jobs/extract-rubric`, {
+      method: 'POST',
+      body: JSON.stringify({ fileName, content, mimeType }),
+    })
+  },
+
   async createJob(data: {
     title: string
     department: string
@@ -119,6 +135,8 @@ export const realAPI = {
     postingDate: string
     rubric: import('@/types').RubricCategory[]
     mustHaves: import('@/types').MustHave[]
+    desiredCriteria?: import('@/types').DesiredCriteria[]
+    jobDescription?: string
     runsPerApplication: number
     aggregationStrategy: import('@/types').AggregationStrategy
     longlistThreshold: number
@@ -140,6 +158,8 @@ export const realAPI = {
     postingDate: string
     rubric: import('@/types').RubricCategory[]
     mustHaves: import('@/types').MustHave[]
+    desiredCriteria?: import('@/types').DesiredCriteria[]
+    jobDescription?: string
     runsPerApplication: number
     aggregationStrategy: import('@/types').AggregationStrategy
     longlistThreshold: number
@@ -302,5 +322,66 @@ export const realAPI = {
   // Pipeline
   async processJob(jobId: string): Promise<void> {
     await fetchJSON(`${API_BASE}/jobs/${jobId}/process`, { method: 'POST' })
+  },
+
+  // Scoring Prompts (US3a)
+  async getPrompts(jobId: string): Promise<ScoringPrompt[]> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts`)
+  },
+
+  async createPrompt(jobId: string, data: { promptText: string; source: string; generationMetadata?: Record<string, any> }): Promise<ScoringPrompt> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  async getPrompt(jobId: string, promptId: string): Promise<ScoringPrompt> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}`)
+  },
+
+  async editPrompt(jobId: string, promptId: string, data: { promptText: string }): Promise<ScoringPrompt> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    })
+  },
+
+  async activatePrompt(jobId: string, promptId: string): Promise<ScoringPrompt> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/activate`, { method: 'POST' })
+  },
+
+  async ratePrompt(jobId: string, promptId: string, data: { rating: number; comments?: string }): Promise<ScoringPrompt> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/rate`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  async generatePrompt(jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/generate`, { method: 'POST' })
+  },
+
+  async approvePromptForProduction(jobId: string, promptId: string): Promise<ScoringPrompt> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/approve-production`, { method: 'POST' })
+  },
+
+  async createTestRun(jobId: string, promptId: string, files: Array<{ fileName: string; content: string; mimeType: string; sizeBytes: number }>): Promise<PromptTestRun> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs`, {
+      method: 'POST',
+      body: JSON.stringify({ files }),
+    })
+  },
+
+  async getTestRuns(jobId: string, promptId: string): Promise<PromptTestRun[]> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs`)
+  },
+
+  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun & { applications?: Application[] }> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}`)
+  },
+
+  async approveTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}/approve`, { method: 'POST' })
   },
 }

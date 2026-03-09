@@ -20,7 +20,7 @@ public class CreateJobCommandTests
 
         var handler = new CreateJobCommandHandler(_jobRepoMock.Object);
         var command = new CreateJobCommand("Software Engineer", "Engineering", "TechCo", DateTime.Today,
-            null, null, 3, "median", 70, 85, 15);
+            null, null, null, 3, "median", 70, 85, 15, null);
 
         var result = await handler.Handle(command, CancellationToken.None);
 

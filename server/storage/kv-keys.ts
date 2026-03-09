@@ -35,3 +35,12 @@ export function appResultKey(applicationId: string): string {
 export function appManualReviewKey(applicationId: string): string {
   return `app:${applicationId}:manual-review`;
 }
+
+// Scoring prompt management keys
+export function promptsKey(jobId: string): string {
+  return `job:${jobId}:prompts`;
+}
+
+export function promptTestRunKey(testRunId: string): string {
+  return `prompt-test-run:${testRunId}`;
+}

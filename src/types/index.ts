@@ -16,11 +16,18 @@ export interface MustHave {
   description: string
 }
 
+export interface DesiredCriteria {
+  id: string
+  qualification: string
+  description: string
+}
+
 export interface JobConfigVersion {
   versionId: string
   jobId: string
   rubric: RubricCategory[]
   mustHaves: MustHave[]
+  desiredCriteria: DesiredCriteria[]
   runsPerApplication: number
   aggregationStrategy: AggregationStrategy
   longlistThreshold: number
@@ -40,6 +47,7 @@ export interface Job {
   createdAt: string
   status: JobStatus
   currentVersion: JobConfigVersion
+  jobDescription?: string
   specDocumentId?: string
   rubricDocumentId?: string
   stats?: JobStats
@@ -83,6 +91,7 @@ export interface Application {
   finalDecision?: Decision
   variance?: number
   flagged?: boolean
+  testRunId?: string
 }
 
 export interface ExtractionArtifact {
@@ -253,4 +262,36 @@ export interface PasswordResetRequest {
   status: 'pending' | 'completed' | 'rejected'
   resolvedAt?: string
   resolvedBy?: string
+}
+
+// US3a: Scoring Prompt Management
+export type PromptStatus = 'draft' | 'active' | 'inactive' | 'production-approved'
+export type PromptSource = 'manual' | 'imported' | 'generated'
+export type TestRunStatus = 'pending_review' | 'approved' | 'rejected'
+
+export interface ScoringPrompt {
+  promptId: string
+  jobId: string
+  versionNumber: number
+  promptText: string
+  status: PromptStatus
+  createdAt: string
+  lastModifiedAt: string
+  author: string
+  rating?: number
+  comments?: string
+  source: PromptSource
+  generationMetadata?: Record<string, any>
+}
+
+export interface PromptTestRun {
+  testRunId: string
+  jobId: string
+  promptId: string
+  status: TestRunStatus
+  applicationIds: string[]
+  createdAt: string
+  completedAt?: string
+  reviewedBy?: string
+  reviewNotes?: string
 }

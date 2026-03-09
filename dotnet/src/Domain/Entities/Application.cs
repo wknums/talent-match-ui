@@ -10,9 +10,11 @@ public class Application
     public double? Variance { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public string? TestRunId { get; set; }
     
     // Navigation properties
     public Job? Job { get; set; }
+    public PromptTestRun? PromptTestRun { get; set; }
     public ICollection<ApplicationDocument> Documents { get; set; } = new List<ApplicationDocument>();
     public ICollection<ScoringRun> ScoringRuns { get; set; } = new List<ScoringRun>();
     public AggregatedResult? AggregatedResult { get; set; }

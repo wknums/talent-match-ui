@@ -7,6 +7,7 @@ public class JobConfigVersion
     public int VersionNumber { get; set; } = 1;
     public string RubricJson { get; set; } = "[]"; // JSON array of RubricCategory
     public string MustHaveCriteriaJson { get; set; } = "[]";
+    public string DesiredCriteriaJson { get; set; } = "[]"; // JSON array of { qualification, description }
     public int ScoringRunCount { get; set; } = 3;
     public string AggregationStrategy { get; set; } = "median"; // median, mean, weighted
     public double LonglistThreshold { get; set; } = 70;

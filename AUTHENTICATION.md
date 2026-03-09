@@ -8,7 +8,7 @@ The Talent Matching Platform now includes a simple username/password authenticat
 
 On first launch, the system creates a default admin account:
 - **Username**: `admin`
-- **Password**: `adm1n99`
+- **Password**: ``adm1n99
 
 **Important**: Change this password immediately after first login.
 

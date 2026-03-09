@@ -11,6 +11,7 @@ import { createApplicationsRouter } from './routes/applications.js'
 import { createStatsRouter } from './routes/stats.js'
 import { createAuditRouter } from './routes/audit.js'
 import { createDLQRouter } from './routes/dlq.js'
+import { createPromptsRouter } from './routes/prompts.js'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { initializeUsers } from './services/init-users.js'
@@ -71,6 +72,7 @@ async function main() {
   const applicationsRouter = createApplicationsRouter(storage)
   app.use('/api/users', authMiddleware, createUsersRouter(storage))
   app.use('/api/jobs', authMiddleware, createJobsRouter(storage))
+  app.use('/api/jobs', authMiddleware, createPromptsRouter(storage))
   app.use('/api', authMiddleware, applicationsRouter)
   app.use('/api/stats', authMiddleware, createStatsRouter(storage))
   app.use('/api/audit', authMiddleware, createAuditRouter(storage))

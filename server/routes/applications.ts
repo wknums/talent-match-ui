@@ -136,6 +136,12 @@ export function createApplicationsRouter(storage: StorageProvider) {
 
       let filtered = enrichedApps
 
+      // Exclude test-case applications from production lists by default (FR-038)
+      const includeTestCases = req.query.includeTestCases === 'true'
+      if (!includeTestCases) {
+        filtered = filtered.filter(a => !a.testRunId)
+      }
+
       // Filter by status
       if (status) {
         filtered = filtered.filter(a => a.status === status)

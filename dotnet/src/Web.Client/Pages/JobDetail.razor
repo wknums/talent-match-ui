@@ -12,9 +12,14 @@
         <p>@job.Organisation — @job.Department | Status: @job.Status</p>
         <div style="display: flex; gap: 0.5rem;">
             <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Upload Applications</button>
-            <button @onclick="ProcessJob" disabled="@isProcessing" style="padding: 0.5rem 1rem;">
+            <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">Manage Prompts</button>
+            <button @onclick="ProcessJob" disabled="@(isProcessing || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
                 @(isProcessing ? "Processing..." : "Process Applications")
             </button>
+            @if (!hasProductionApprovedPrompt)
+            {
+                <span style="color: #e53e3e; font-size: 0.85rem; align-self: center;">⚠️ Production-approved prompt required</span>
+            }
         </div>
     </div>
 
@@ -73,6 +78,15 @@ else
     </div>
 }
 
+@if (showPrompts)
+{
+    <div style="margin-bottom: 1.5rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; background: #fafafa;">
+        <PromptManagement JobId="@JobId" HasApprovedRubric="hasApprovedRubric" OnPromptStatusChange="OnPromptStatusChanged" />
+        <hr style="margin: 1rem 0;" />
+        <PromptTestRunner JobId="@JobId" ActivePrompt="activePrompt" OnPromptStatusChange="OnPromptStatusChanged" />
+    </div>
+}
+
 @code {
     [Parameter] public string JobId { get; set; } = "";
 
@@ -80,8 +94,12 @@ else
     private List<ApplicationDto> allApps = new();
     private string activeTab = "longlist";
     private bool showUpload;
+    private bool showPrompts;
     private bool isProcessing;
     private bool sortAscending;
+    private bool hasProductionApprovedPrompt;
+    private bool hasApprovedRubric;
+    private ScoringPromptDto? activePrompt;
 
     private List<ApplicationDto> longlist => allApps.Where(a => a.FinalDecision == "Eligible").ToList();
     private List<ApplicationDto> shortlist => allApps.Where(a => a.FinalScore >= 85).ToList();
@@ -102,6 +120,23 @@ else
     {
         job = await Api.GetJobAsync(JobId);
         allApps = await Api.GetApplicationsAsync(JobId);
+        await LoadPromptStatus();
+    }
+
+    private async Task LoadPromptStatus()
+    {
+        var config = await Api.GetJobConfigAsync(JobId);
+        hasApprovedRubric = config?.RubricJson != null;
+
+        var prompts = await Api.GetPromptsAsync(JobId);
+        hasProductionApprovedPrompt = prompts.Any(p => p.Status == "production-approved");
+        activePrompt = prompts.FirstOrDefault(p => p.Status == "active" || p.Status == "production-approved");
+    }
+
+    private async Task OnPromptStatusChanged()
+    {
+        await LoadPromptStatus();
+        StateHasChanged();
     }
 
     private void SortByScore()

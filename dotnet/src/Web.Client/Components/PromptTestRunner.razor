@@ -1,0 +1,155 @@
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<div>
+    <h5>Prompt Test Workflow</h5>
+
+    @if (ActivePrompt == null)
+    {
+        <p style="color: #888;">Activate a prompt first to enable testing.</p>
+    }
+    else
+    {
+        <div style="margin-bottom: 1rem;">
+            <p>Testing prompt: v@(ActivePrompt.VersionNumber) (@ActivePrompt.Status)</p>
+
+            @if (!showUpload)
+            {
+                <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
+                    📤 Upload Test Applications
+                </button>
+            }
+            else
+            {
+                <div style="border: 2px dashed #ccc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                    <InputFile OnChange="OnFilesSelected" multiple />
+                    <button @onclick="SubmitTestFiles" disabled="@isUploading" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
+                        @(isUploading ? "Uploading..." : "Start Test Run")
+                    </button>
+                    <button @onclick="() => showUpload = false" style="margin-left: 0.5rem; padding: 0.5rem 1rem;">Cancel</button>
+                </div>
+            }
+        </div>
+
+        <!-- Test runs list -->
+        @if (testRuns.Any())
+        {
+            <h6>Test Runs</h6>
+            @foreach (var run in testRuns)
+            {
+                <div style="border: 1px solid #eee; padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Test Run: @run.Id[..8]... | Apps: @GetAppCount(run.ApplicationIdsJson)</span>
+                        <span style="@TestRunStatusStyle(run.Status)">@run.Status</span>
+                    </div>
+                    @if (run.Status == "approved" && ActivePrompt.Status != "production-approved")
+                    {
+                        <button @onclick="ApproveForProduction" style="margin-top: 0.5rem; padding: 0.5rem 1rem; background: #38a169; color: white; border: none; border-radius: 4px;">
+                            ✅ Approve for Production
+                        </button>
+                    }
+                    @if (run.Status == "pending_review")
+                    {
+                        <button @onclick="() => ApproveTestRun(run.Id)" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
+                            Approve Test Run
+                        </button>
+                    }
+                </div>
+            }
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string JobId { get; set; } = "";
+    [Parameter] public ScoringPromptDto? ActivePrompt { get; set; }
+    [Parameter] public EventCallback OnPromptStatusChange { get; set; }
+
+    private List<PromptTestRunDto> testRuns = new();
+    private bool showUpload;
+    private bool isUploading;
+    private List<IBrowserFile> selectedFiles = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ActivePrompt != null)
+        {
+            testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+        }
+        else
+        {
+            testRuns = new();
+        }
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        selectedFiles = e.GetMultipleFiles(20).ToList();
+    }
+
+    private async Task SubmitTestFiles()
+    {
+        if (ActivePrompt == null || !selectedFiles.Any()) return;
+        isUploading = true;
+        StateHasChanged();
+        try
+        {
+            var files = new List<object>();
+            foreach (var file in selectedFiles)
+            {
+                using var stream = file.OpenReadStream(50 * 1024 * 1024);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                files.Add(new
+                {
+                    FileName = file.Name,
+                    Content = Convert.ToBase64String(ms.ToArray()),
+                    MimeType = file.ContentType,
+                    SizeBytes = file.Size
+                });
+            }
+            await Api.CreateTestRunAsync(JobId, ActivePrompt.Id, files);
+            showUpload = false;
+            selectedFiles.Clear();
+            testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+
+    private async Task ApproveTestRun(string testRunId)
+    {
+        if (ActivePrompt == null) return;
+        await Api.ApproveTestRunAsync(JobId, ActivePrompt.Id, testRunId);
+        testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+    }
+
+    private async Task ApproveForProduction()
+    {
+        if (ActivePrompt == null) return;
+        await Api.ApprovePromptForProductionAsync(JobId, ActivePrompt.Id);
+        await OnPromptStatusChange.InvokeAsync();
+    }
+
+    private int GetAppCount(string applicationIdsJson)
+    {
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<string[]>(applicationIdsJson)?.Length ?? 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private string TestRunStatusStyle(string status) => status switch
+    {
+        "pending_review" => "padding: 2px 8px; background: #fefcbf; color: #744210; border-radius: 4px;",
+        "approved" => "padding: 2px 8px; background: #c6f6d5; color: #22543d; border-radius: 4px;",
+        "rejected" => "padding: 2px 8px; background: #fed7d7; color: #822727; border-radius: 4px;",
+        _ => "padding: 2px 8px; background: #eee; border-radius: 4px;"
+    };
+}

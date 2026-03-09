@@ -19,6 +19,8 @@ public class AppDbContext : DbContext
     public DbSet<FailureQueueItem> FailureQueueItems => Set<FailureQueueItem>();
     public DbSet<ProcessingEvent> ProcessingEvents => Set<ProcessingEvent>();
     public DbSet<PasswordResetRequest> PasswordResetRequests => Set<PasswordResetRequest>();
+    public DbSet<ScoringPrompt> ScoringPrompts => Set<ScoringPrompt>();
+    public DbSet<PromptTestRun> PromptTestRuns => Set<PromptTestRun>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -64,6 +66,7 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.AggregatedResult).WithOne(x => x.Application).HasForeignKey<AggregatedResult>(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.ManualReview).WithOne(x => x.Application).HasForeignKey<ManualReviewData>(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Extraction).WithOne(x => x.Application).HasForeignKey<ExtractionArtifact>(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.TestRunId);
         });
 
         // ApplicationDocument
@@ -125,6 +128,28 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Status).HasMaxLength(20);
+        });
+
+        // ScoringPrompt
+        modelBuilder.Entity<ScoringPrompt>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.PromptText).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Source).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Author).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.JobId, x.Status });
+            e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.TestRuns).WithOne(x => x.Prompt).HasForeignKey(x => x.PromptId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // PromptTestRun
+        modelBuilder.Entity<PromptTestRun>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Status).HasMaxLength(30).IsRequired();
+            e.HasIndex(x => x.PromptId);
+            e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.NoAction);
         });
     }
 }

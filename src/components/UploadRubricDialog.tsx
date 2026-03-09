@@ -8,75 +8,68 @@ import {
 import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { UploadSimple, File, X, Sparkle } from '@phosphor-icons/react'
-import { llm } from '@/lib/spark-client'
+import { UploadSimple, File, X, Sparkle, WarningCircle } from '@phosphor-icons/react'
+import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import type { RubricCategory } from '@/types'
 
 interface UploadRubricDialogProps {
   open: boolean
   jobId: string | null
+  jobTitle?: string
   onClose: () => void
   onSuccess?: (rubric: RubricCategory[]) => void
 }
 
-export function UploadRubricDialog({ open, jobId, onClose, onSuccess }: UploadRubricDialogProps) {
+export function UploadRubricDialog({ open, jobId, jobTitle, onClose, onSuccess }: UploadRubricDialogProps) {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [processing, setProcessing] = useState(false)
   const [extractedRubric, setExtractedRubric] = useState<RubricCategory[] | null>(null)
+  const [titleMismatch, setTitleMismatch] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    const validTypes = [
-      'application/pdf',
-      'text/markdown',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    ]
-    const validExtensions = ['.pdf', '.md', '.docx']
+    const validExtensions = ['.pdf', '.jpg', '.jpeg', '.md', '.txt', '.docx']
     const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
 
-    if (!validTypes.includes(file.type) && !validExtensions.includes(fileExtension)) {
-      toast.error('Please upload a PDF, Markdown (.md), or DOCX file')
+    if (!validExtensions.includes(fileExtension)) {
+      toast.error('Please upload a PDF, JPG, Markdown (.md), TXT, or DOCX file')
       return
     }
 
     setUploadedFile(file)
     setProcessing(true)
+    setTitleMismatch(null)
 
     try {
-      const prompt = `You are analyzing a scoring rubric document for evaluating job applications. Extract the rubric categories and return them as JSON.
+      const reader = new FileReader()
+      const base64Content = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string
+          resolve(result.split(',')[1] || result)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
 
-Return ONLY a JSON object with this exact structure:
-{
-  "categories": [
-    {
-      "name": "category name",
-      "description": "what to evaluate in this category",
-      "weight": 0.25,
-      "maxPoints": 100
-    }
-  ]
-}
+      const extracted = await api.extractRubric(file.name, base64Content, file.type)
 
-Important rules:
-- Extract 3-8 rubric categories
-- Weights MUST sum to exactly 1.0
-- Each category should have clear evaluation criteria
-- If point values are specified, use them; otherwise default to 100
-- Return ONLY the JSON object, no additional text
+      // Check title mismatch
+      if (extracted.title && jobTitle && extracted.title.toLowerCase() !== jobTitle.toLowerCase()) {
+        setTitleMismatch(
+          `The rubric document title "${extracted.title}" does not match the job title "${jobTitle}". Please correct and re-upload the rubric document. The existing rubric will be discarded.`
+        )
+        setUploadedFile(null)
+        setExtractedRubric(null)
+        if (fileInputRef.current) fileInputRef.current.value = ''
+        return
+      }
 
-Document: ${file.name}
-
-Note: This is a simulated environment. Generate a realistic rubric based on the filename and common evaluation criteria.`
-
-      const response = await llm(prompt, 'gpt-4o', true)
-      const parsed = JSON.parse(response)
-
-      if (parsed.categories && Array.isArray(parsed.categories)) {
-        const rubric: RubricCategory[] = parsed.categories.map((c: any, i: number) => ({
+      if (extracted.categories && Array.isArray(extracted.categories)) {
+        const rubric: RubricCategory[] = extracted.categories.map((c: any, i: number) => ({
           id: `rubric-${Date.now()}-${i}`,
           name: c.name || '',
           description: c.description || '',
@@ -104,6 +97,7 @@ Note: This is a simulated environment. Generate a realistic rubric based on the 
   const removeFile = () => {
     setUploadedFile(null)
     setExtractedRubric(null)
+    setTitleMismatch(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -144,7 +138,7 @@ Note: This is a simulated environment. Generate a realistic rubric based on the 
             <input
               ref={fileInputRef}
               type="file"
-              accept=".pdf,.md,.docx,application/pdf,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              accept=".pdf,.jpg,.jpeg,.md,.txt,.docx"
               onChange={handleFileSelect}
               className="hidden"
               id="rubric-upload"
@@ -157,7 +151,7 @@ Note: This is a simulated environment. Generate a realistic rubric based on the 
                 <div>
                   <p className="text-sm font-medium mb-1">Upload Rubric Document</p>
                   <p className="text-xs text-muted-foreground">
-                    Supported formats: PDF, Markdown (.md), DOCX
+                    Supported formats: PDF, JPG, Markdown (.md), TXT, DOCX
                   </p>
                 </div>
                 <Button
@@ -199,6 +193,13 @@ Note: This is a simulated environment. Generate a realistic rubric based on the 
               </div>
             )}
           </div>
+
+          {titleMismatch && (
+            <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+              <WarningCircle size={20} className="shrink-0 mt-0.5" />
+              <p>{titleMismatch}</p>
+            </div>
+          )}
 
           {extractedRubric && (
             <Card className="p-4 bg-muted/50">

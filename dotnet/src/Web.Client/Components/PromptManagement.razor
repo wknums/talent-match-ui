@@ -1,0 +1,222 @@
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<div>
+    <h4>Scoring Prompt Management</h4>
+
+    @if (!HasApprovedRubric)
+    {
+        <div style="padding: 1rem; background: #fef3cd; border-radius: 4px; margin-bottom: 1rem;">
+            ⚠️ Job must have an approved rubric before managing prompts (FR-033)
+        </div>
+    }
+    else
+    {
+        <!-- Creation controls -->
+        <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+            <button @onclick="StartManualCreate" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">✏️ Write Manually</button>
+            <button @onclick="StartFileImport" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">📄 Import File</button>
+            <button @onclick="GenerateFromRubric" disabled="@isGenerating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;">
+                @(isGenerating ? "Generating..." : "⚡ Generate from Rubric")
+            </button>
+        </div>
+
+        <!-- Editor (shown when creating/editing) -->
+        @if (showEditor)
+        {
+            <div style="margin-bottom: 1rem;">
+                <textarea @bind="editorText" rows="10" style="width: 100%; padding: 0.5rem; font-family: monospace;"></textarea>
+                <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                    <button @onclick="SavePrompt" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #38a169; color: white; border: none; border-radius: 4px;">
+                        @(isSaving ? "Saving..." : "Save Prompt")
+                    </button>
+                    <button @onclick="() => showEditor = false" style="padding: 0.5rem 1rem;">Cancel</button>
+                </div>
+            </div>
+        }
+
+        <!-- Prompt list -->
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 2px solid #ccc;">
+                    <th style="padding: 0.5rem;">Version</th>
+                    <th style="padding: 0.5rem;">Status</th>
+                    <th style="padding: 0.5rem;">Source</th>
+                    <th style="padding: 0.5rem;">Rating</th>
+                    <th style="padding: 0.5rem;">Created</th>
+                    <th style="padding: 0.5rem;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var prompt in prompts)
+                {
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 0.5rem;">v@(prompt.VersionNumber)</td>
+                        <td style="padding: 0.5rem;">
+                            <span style="@StatusStyle(prompt.Status)">@prompt.Status</span>
+                        </td>
+                        <td style="padding: 0.5rem;">@prompt.Source</td>
+                        <td style="padding: 0.5rem;">@(prompt.Rating.HasValue ? $"⭐ {prompt.Rating}/5" : "—")</td>
+                        <td style="padding: 0.5rem;">@prompt.CreatedAt.ToString("g")</td>
+                        <td style="padding: 0.5rem; display: flex; gap: 0.25rem;">
+                            <button @onclick="() => EditPrompt(prompt)" title="Edit">✏️</button>
+                            @if (prompt.Status != "active" && prompt.Status != "production-approved")
+                            {
+                                <button @onclick="() => ActivatePrompt(prompt)" title="Activate">▶️</button>
+                            }
+                            @if (prompt.Status == "active")
+                            {
+                                <button @onclick="() => ShowRating(prompt)" title="Rate">⭐</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <!-- Rating dialog -->
+        @if (ratingPrompt != null)
+        {
+            <div style="margin-top: 1rem; padding: 1rem; border: 1px solid #ccc; border-radius: 4px;">
+                <h5>Rate Prompt v@(ratingPrompt.VersionNumber)</h5>
+                <div style="margin-bottom: 0.5rem;">
+                    Rating (0-5): <input type="number" @bind="ratingValue" min="0" max="5" style="width: 60px;" />
+                </div>
+                <div style="margin-bottom: 0.5rem;">
+                    Comments: <textarea @bind="ratingComments" rows="2" style="width: 100%;"></textarea>
+                </div>
+                <button @onclick="SubmitRating" style="padding: 0.5rem 1rem;">Save Rating</button>
+                <button @onclick="() => ratingPrompt = null" style="padding: 0.5rem 1rem;">Cancel</button>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string JobId { get; set; } = "";
+    [Parameter] public bool HasApprovedRubric { get; set; }
+    [Parameter] public EventCallback OnPromptStatusChange { get; set; }
+
+    private List<ScoringPromptDto> prompts = new();
+    private bool showEditor;
+    private string editorText = "";
+    private string editorSource = "manual";
+    private string? editingPromptId;
+    private bool isSaving;
+    private bool isGenerating;
+    private ScoringPromptDto? ratingPrompt;
+    private int ratingValue;
+    private string ratingComments = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPrompts();
+    }
+
+    private async Task LoadPrompts()
+    {
+        prompts = await Api.GetPromptsAsync(JobId);
+    }
+
+    private void StartManualCreate()
+    {
+        editorText = "";
+        editorSource = "manual";
+        editingPromptId = null;
+        showEditor = true;
+    }
+
+    private void StartFileImport()
+    {
+        editorText = "// Paste imported prompt content here";
+        editorSource = "imported";
+        editingPromptId = null;
+        showEditor = true;
+    }
+
+    private async Task GenerateFromRubric()
+    {
+        isGenerating = true;
+        StateHasChanged();
+        try
+        {
+            var result = await Api.GeneratePromptAsync(JobId);
+            if (result != null)
+            {
+                editorText = result.PromptText;
+                editorSource = "generated";
+                editingPromptId = null;
+                showEditor = true;
+            }
+        }
+        finally
+        {
+            isGenerating = false;
+        }
+    }
+
+    private async Task SavePrompt()
+    {
+        isSaving = true;
+        StateHasChanged();
+        try
+        {
+            if (editingPromptId != null)
+            {
+                await Api.EditPromptAsync(JobId, editingPromptId, editorText);
+            }
+            else
+            {
+                await Api.CreatePromptAsync(JobId, editorText, editorSource);
+            }
+            showEditor = false;
+            await LoadPrompts();
+            await OnPromptStatusChange.InvokeAsync();
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void EditPrompt(ScoringPromptDto prompt)
+    {
+        editorText = prompt.PromptText;
+        editorSource = prompt.Source;
+        editingPromptId = prompt.Id;
+        showEditor = true;
+    }
+
+    private async Task ActivatePrompt(ScoringPromptDto prompt)
+    {
+        await Api.ActivatePromptAsync(JobId, prompt.Id);
+        await LoadPrompts();
+        await OnPromptStatusChange.InvokeAsync();
+    }
+
+    private void ShowRating(ScoringPromptDto prompt)
+    {
+        ratingPrompt = prompt;
+        ratingValue = prompt.Rating ?? 0;
+        ratingComments = prompt.Comments ?? "";
+    }
+
+    private async Task SubmitRating()
+    {
+        if (ratingPrompt != null)
+        {
+            await Api.RatePromptAsync(JobId, ratingPrompt.Id, ratingValue, ratingComments);
+            ratingPrompt = null;
+            await LoadPrompts();
+        }
+    }
+
+    private string StatusStyle(string status) => status switch
+    {
+        "draft" => "padding: 2px 8px; background: #e2e8f0; border-radius: 4px;",
+        "active" => "padding: 2px 8px; background: #bee3f8; color: #2b6cb0; border-radius: 4px;",
+        "inactive" => "padding: 2px 8px; background: #fefcbf; color: #744210; border-radius: 4px;",
+        "production-approved" => "padding: 2px 8px; background: #c6f6d5; color: #22543d; border-radius: 4px;",
+        _ => "padding: 2px 8px; background: #eee; border-radius: 4px;"
+    };
+}

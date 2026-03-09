@@ -84,9 +84,39 @@ extract_plan_field() {
     local field_pattern="$1"
     local plan_file="$2"
     [ -f "$plan_file" ] || return 0
-    local escaped
-    escaped=$(printf '%s' "$field_pattern" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
-    grep -E "^\*\*${escaped}\*\*: .+" "$plan_file" 2>/dev/null | head -1 | sed "s/^\*\*${escaped}\*\*: //" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v -E '^(NEEDS CLARIFICATION|N/A)$' || true
+
+    # Use awk for robust extraction — handles multi-line values and avoids
+    # sed escaping issues that caused "No match" errors with complex plan fields.
+    # Reads across continuation lines (lines starting with - or whitespace after
+    # the initial **Field**: value line) and joins them with " | ".
+    local value
+    value=$(awk -v field="$field_pattern" '
+        BEGIN { found=0; val="" }
+        # Match the bold field line: **Field**: value
+        $0 ~ "^\\*\\*" field "\\*\\*:[[:space:]]*" {
+            # Strip the **Field**: prefix
+            sub("^\\*\\*" field "\\*\\*:[[:space:]]*", "")
+            val = $0
+            found = 1
+            next
+        }
+        # If we already matched, collect continuation lines (start with - or whitespace)
+        found == 1 && /^[[:space:]]*-[[:space:]]/ {
+            line = $0
+            sub(/^[[:space:]]*-[[:space:]]*/, "", line)
+            val = val " | " line
+            next
+        }
+        # Stop collecting on any non-continuation line
+        found == 1 { exit }
+        END {
+            # Trim leading/trailing whitespace
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", val)
+            if (val != "" && val != "NEEDS CLARIFICATION" && val != "N/A") print val
+        }
+    ' "$plan_file" 2>/dev/null) || true
+
+    echo "$value"
 }
 
 parse_plan_data() {

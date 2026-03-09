@@ -126,6 +126,20 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<ExtractSpecResult?> ExtractJobSpecAsync(string fileName, string content, string mimeType)
+    {
+        var response = await _http.PostAsJsonAsync("/api/jobs/extract-spec", new { FileName = fileName, Content = content, MimeType = mimeType });
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<ExtractSpecResult>();
+    }
+
+    public async Task<ExtractRubricResult?> ExtractRubricAsync(string fileName, string content, string mimeType)
+    {
+        var response = await _http.PostAsJsonAsync("/api/jobs/extract-rubric", new { FileName = fileName, Content = content, MimeType = mimeType });
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<ExtractRubricResult>();
+    }
+
     public async Task<JobConfigDto?> GetJobConfigAsync(string jobId)
     {
         try { return await _http.GetFromJsonAsync<JobConfigDto>($"/api/jobs/{jobId}/config"); }
@@ -183,13 +197,75 @@ public class ApiClient
 
     public async Task<List<AuditEventDto>> GetAuditEventsAsync(string? entityType = null, string? eventType = null)
         => await _http.GetFromJsonAsync<List<AuditEventDto>>($"/api/audit?entityType={entityType}&eventType={eventType}") ?? new();
+
+    // Scoring Prompts
+    public async Task<List<ScoringPromptDto>> GetPromptsAsync(string jobId)
+        => await _http.GetFromJsonAsync<List<ScoringPromptDto>>($"/api/jobs/{jobId}/prompts") ?? new();
+
+    public async Task<ScoringPromptDto?> CreatePromptAsync(string jobId, string promptText, string source, string? generationMetadataJson = null)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts", new CreatePromptRequest(promptText, source, generationMetadataJson));
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
+    }
+
+    public async Task<ScoringPromptDto?> EditPromptAsync(string jobId, string promptId, string promptText)
+    {
+        var response = await _http.PutAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}", new { PromptText = promptText });
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
+    }
+
+    public async Task<bool> ActivatePromptAsync(string jobId, string promptId)
+    {
+        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/activate", null);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<bool> RatePromptAsync(string jobId, string promptId, int rating, string? comments = null)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/rate", new { Rating = rating, Comments = comments });
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<GeneratePromptResult?> GeneratePromptAsync(string jobId)
+    {
+        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/generate", null);
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<GeneratePromptResult>();
+    }
+
+    public async Task<bool> ApprovePromptForProductionAsync(string jobId, string promptId)
+    {
+        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/approve-production", null);
+        return response.IsSuccessStatusCode;
+    }
+
+    public async Task<PromptTestRunDto?> CreateTestRunAsync(string jobId, string promptId, object files)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs", new { Files = files });
+        if (!response.IsSuccessStatusCode) return null;
+        return await response.Content.ReadFromJsonAsync<PromptTestRunDto>();
+    }
+
+    public async Task<List<PromptTestRunDto>> GetTestRunsAsync(string jobId, string promptId)
+        => await _http.GetFromJsonAsync<List<PromptTestRunDto>>($"/api/jobs/{jobId}/prompts/{promptId}/test-runs") ?? new();
+
+    public async Task<PromptTestRunDto?> GetTestRunAsync(string jobId, string promptId, string testRunId)
+        => await _http.GetFromJsonAsync<PromptTestRunDto>($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}");
+
+    public async Task<bool> ApproveTestRunAsync(string jobId, string promptId, string testRunId)
+    {
+        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/approve", null);
+        return response.IsSuccessStatusCode;
+    }
 }
 
 // DTOs
 public record UserInfo(string Id, string Username, string Role, string Department, string FullName, string Email, DateTime? LastLogin = null);
-public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, DateTime CreatedAt);
-public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHaveCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);
-public record UpdateConfigDto(string? RubricJson, string? MustHaveCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);
+public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, DateTime CreatedAt);
+public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription);
+public record UpdateConfigDto(string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);
 public record ApplicationDto(string Id, string JobId, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt);
 public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);
@@ -199,4 +275,13 @@ public record SystemStatsDto(int Queued, int Extracting, int Scoring, int Aggreg
 public record DlqItemDto(string Id, string EntityType, string EntityId, string FailureReason, int RetryCount, DateTime CreatedAt);
 public record AuditEventDto(string Id, string Actor, string EventType, string EntityType, string EntityId, DateTime Timestamp, string CorrelationId);
 public record ResetRequestDto(string Id, string UserId, string Username, string Reason, string Status, DateTime CreatedAt);
-public record JobConfigDto(string? RubricJson, string? MustHaveCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);
+public record JobConfigDto(string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);
+public record ExtractSpecResult(string? Title, string? Department, string? Organisation, string? JobDescription, List<MustHaveItem>? MustHaves, List<DesiredCriterionItem>? DesiredCriteria, List<RubricCategoryItem>? Rubric);
+public record ExtractRubricResult(string? Title, List<RubricCategoryItem>? Categories);
+public record MustHaveItem(string Criterion, string? Description);
+public record DesiredCriterionItem(string Qualification, string? Description);
+public record RubricCategoryItem(string Name, double Weight, string? Description);
+public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson);
+public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes);
+public record CreatePromptRequest(string PromptText, string Source, string? GenerationMetadataJson);
+public record GeneratePromptResult(string PromptText, string? GenerationMetadataJson);

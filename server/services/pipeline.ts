@@ -6,6 +6,7 @@ import { createAuditService } from './audit.js'
 import { runExtraction } from '../workers/extraction.js'
 import { runScoring } from '../workers/scoring.js'
 import { runAggregation } from '../workers/aggregation.js'
+import { getProductionApprovedPromptId } from './prompt-helpers.js'
 import type { Application, Job, DLQItem } from '../../src/types/index.js'
 
 const MAX_RETRIES = 3
@@ -39,13 +40,18 @@ export function createPipelineOrchestrator(storage: StorageProvider) {
         await withRetry(() => runExtraction(storage, applicationId, jobId))
         await audit.appendEvent('system', 'pipeline.extraction.completed', 'Application', applicationId, { jobId }, correlationId)
 
-        // Step 2: Scoring
+        // Step 2: Scoring — enforce production-approved prompt gate (FR-032/FR-040)
         const jobs = await getArray<Job>(storage, JOBS)
         const job = jobs.find(j => j.jobId === jobId)
         const runCount = job?.currentVersion?.runsPerApplication || 3
 
-        await audit.appendEvent('system', 'pipeline.scoring.started', 'Application', applicationId, { jobId, runCount }, correlationId)
-        await withRetry(() => runScoring(storage, applicationId, jobId, runCount))
+        const promptVersionId = await getProductionApprovedPromptId(storage, jobId)
+        if (!promptVersionId) {
+          throw new Error('No production-approved prompt exists for this job. Approve a prompt before scoring (FR-032).')
+        }
+
+        await audit.appendEvent('system', 'pipeline.scoring.started', 'Application', applicationId, { jobId, runCount, promptVersionId }, correlationId)
+        await withRetry(() => runScoring(storage, applicationId, jobId, runCount, promptVersionId))
         await audit.appendEvent('system', 'pipeline.scoring.completed', 'Application', applicationId, { jobId }, correlationId)
 
         // Step 3: Aggregation

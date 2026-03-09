@@ -10,7 +10,10 @@ import type {
   ProcessingEvent,
   RubricCategory,
   MustHave,
+  DesiredCriteria,
   AggregationStrategy,
+  ScoringPrompt,
+  PromptTestRun,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
 import { realAPI } from '@/lib/api-real'
@@ -105,6 +108,7 @@ const getDefaultJobs = (): Job[] => {
           { id: 'm2', criterion: '5+ years of professional software development experience', description: 'Experience requirement' },
           { id: 'm3', criterion: 'Proficiency in React and TypeScript', description: 'Technical requirement' },
         ],
+        desiredCriteria: [],
         runsPerApplication: 3,
         aggregationStrategy: 'median',
         longlistThreshold: 60,
@@ -137,6 +141,7 @@ const getDefaultJobs = (): Job[] => {
           { id: 'm1', criterion: '3+ years of product management experience', description: 'Experience requirement' },
           { id: 'm2', criterion: 'Experience with B2B SaaS products', description: 'Industry requirement' },
         ],
+        desiredCriteria: [],
         runsPerApplication: 3,
         aggregationStrategy: 'median',
         longlistThreshold: 65,
@@ -168,6 +173,7 @@ const getDefaultJobs = (): Job[] => {
           { id: 'm1', criterion: 'Portfolio demonstrating UX process', description: 'Portfolio requirement' },
           { id: 'm2', criterion: 'Experience with Figma or similar tools', description: 'Technical requirement' },
         ],
+        desiredCriteria: [],
         runsPerApplication: 3,
         aggregationStrategy: 'median',
         longlistThreshold: 70,
@@ -323,6 +329,39 @@ const mockAPI = {
     }
   },
 
+  async extractJobSpec(_fileName: string, _content: string, _mimeType: string): Promise<any> {
+    await delay(800)
+    return {
+      title: 'Senior Software Engineer',
+      department: 'Engineering',
+      organization: 'TechCorp Solutions',
+      jobDescription: 'We are seeking a Senior Software Engineer to join our Engineering team.',
+      mustHaves: [
+        { criterion: 'Bachelor\'s degree in Computer Science', description: 'Educational requirement' },
+        { criterion: '5+ years of professional experience', description: 'Experience requirement' },
+      ],
+      desiredCriteria: [
+        { qualification: 'Experience with cloud platforms (AWS, Azure)', description: 'Cloud experience preferred' },
+        { qualification: 'Open-source contributions', description: 'Community involvement' },
+      ],
+      rubric: [],
+    }
+  },
+
+  async extractRubric(_fileName: string, _content: string, _mimeType: string): Promise<any> {
+    await delay(800)
+    return {
+      title: 'Senior Software Engineer',
+      categories: [
+        { name: 'Technical Skills', description: 'Programming languages, frameworks, tools', weight: 0.35 },
+        { name: 'Experience', description: 'Years and relevant projects', weight: 0.25 },
+        { name: 'Problem Solving', description: 'Analytical thinking', weight: 0.20 },
+        { name: 'Communication', description: 'Written and verbal skills', weight: 0.10 },
+        { name: 'Cultural Fit', description: 'Company values alignment', weight: 0.10 },
+      ],
+    }
+  },
+
   async getJobs(): Promise<Job[]> {
     await delay(400)
     return await generateMockJobs()
@@ -341,6 +380,8 @@ const mockAPI = {
     postingDate: string
     rubric: RubricCategory[]
     mustHaves: MustHave[]
+    desiredCriteria?: DesiredCriteria[]
+    jobDescription?: string
     runsPerApplication: number
     aggregationStrategy: AggregationStrategy
     longlistThreshold: number
@@ -364,11 +405,13 @@ const mockAPI = {
       status: 'Active',
       specDocumentId: data.specDocumentId,
       rubricDocumentId: data.rubricDocumentId,
+      jobDescription: data.jobDescription,
       currentVersion: {
         versionId: `v1-${Date.now()}`,
         jobId,
         rubric: data.rubric,
         mustHaves: data.mustHaves,
+        desiredCriteria: data.desiredCriteria || [],
         runsPerApplication: data.runsPerApplication,
         aggregationStrategy: data.aggregationStrategy,
         longlistThreshold: data.longlistThreshold,
@@ -403,6 +446,8 @@ const mockAPI = {
     postingDate: string
     rubric: RubricCategory[]
     mustHaves: MustHave[]
+    desiredCriteria?: DesiredCriteria[]
+    jobDescription?: string
     runsPerApplication: number
     aggregationStrategy: AggregationStrategy
     longlistThreshold: number
@@ -429,11 +474,13 @@ const mockAPI = {
       postingDate: data.postingDate,
       specDocumentId: data.specDocumentId,
       rubricDocumentId: data.rubricDocumentId,
+      jobDescription: data.jobDescription,
       currentVersion: {
         versionId: `v${Date.now()}`,
         jobId,
         rubric: data.rubric,
         mustHaves: data.mustHaves,
+        desiredCriteria: data.desiredCriteria || [],
         runsPerApplication: data.runsPerApplication,
         aggregationStrategy: data.aggregationStrategy,
         longlistThreshold: data.longlistThreshold,
@@ -727,6 +774,169 @@ const mockAPI = {
         recruiters: deptRecruiters,
       }
     })
+  },
+
+  // Scoring Prompts (US3a)
+  async getPrompts(jobId: string): Promise<ScoringPrompt[]> {
+    await delay(300)
+    return [
+      {
+        promptId: `mock-prompt-${jobId}-1`,
+        jobId,
+        versionNumber: 1,
+        promptText: 'Evaluate the candidate based on the provided rubric categories...',
+        status: 'draft',
+        createdAt: new Date().toISOString(),
+        lastModifiedAt: new Date().toISOString(),
+        author: 'admin',
+        rating: 4,
+        comments: 'Initial draft prompt',
+        source: 'manual',
+      },
+    ]
+  },
+
+  async createPrompt(jobId: string, data: { promptText: string; source: string; generationMetadata?: Record<string, any> }): Promise<ScoringPrompt> {
+    await delay(500)
+    return {
+      promptId: `mock-prompt-${Date.now()}`,
+      jobId,
+      versionNumber: 1,
+      promptText: data.promptText,
+      status: 'draft',
+      createdAt: new Date().toISOString(),
+      lastModifiedAt: new Date().toISOString(),
+      author: 'admin',
+      source: data.source as ScoringPrompt['source'],
+      generationMetadata: data.generationMetadata,
+    }
+  },
+
+  async getPrompt(jobId: string, promptId: string): Promise<ScoringPrompt> {
+    await delay(200)
+    return {
+      promptId,
+      jobId,
+      versionNumber: 1,
+      promptText: 'Mock prompt text...',
+      status: 'draft',
+      createdAt: new Date().toISOString(),
+      lastModifiedAt: new Date().toISOString(),
+      author: 'admin',
+      source: 'manual',
+    }
+  },
+
+  async editPrompt(jobId: string, promptId: string, data: { promptText: string }): Promise<ScoringPrompt> {
+    await delay(500)
+    return {
+      promptId: `mock-prompt-${Date.now()}`,
+      jobId,
+      versionNumber: 2,
+      promptText: data.promptText,
+      status: 'draft',
+      createdAt: new Date().toISOString(),
+      lastModifiedAt: new Date().toISOString(),
+      author: 'admin',
+      source: 'manual',
+    }
+  },
+
+  async activatePrompt(jobId: string, promptId: string): Promise<ScoringPrompt> {
+    await delay(300)
+    return {
+      promptId,
+      jobId,
+      versionNumber: 1,
+      promptText: 'Activated prompt...',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      lastModifiedAt: new Date().toISOString(),
+      author: 'admin',
+      source: 'manual',
+    }
+  },
+
+  async ratePrompt(jobId: string, promptId: string, data: { rating: number; comments?: string }): Promise<ScoringPrompt> {
+    await delay(300)
+    return {
+      promptId,
+      jobId,
+      versionNumber: 1,
+      promptText: 'Rated prompt...',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      lastModifiedAt: new Date().toISOString(),
+      author: 'admin',
+      rating: data.rating,
+      comments: data.comments,
+      source: 'manual',
+    }
+  },
+
+  async generatePrompt(jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
+    await delay(2000)
+    return {
+      promptText: `You are evaluating a candidate for a position. Score each rubric category from 0-100 based on evidence from their documents. Provide specific citations and improvement recommendations.`,
+      generationMetadata: { source: 'mock', timestamp: new Date().toISOString() },
+    }
+  },
+
+  async approvePromptForProduction(jobId: string, promptId: string): Promise<ScoringPrompt> {
+    await delay(500)
+    return {
+      promptId,
+      jobId,
+      versionNumber: 1,
+      promptText: 'Production-approved prompt...',
+      status: 'production-approved',
+      createdAt: new Date().toISOString(),
+      lastModifiedAt: new Date().toISOString(),
+      author: 'admin',
+      source: 'manual',
+    }
+  },
+
+  async createTestRun(jobId: string, promptId: string, files: Array<{ fileName: string; content: string; mimeType: string; sizeBytes: number }>): Promise<PromptTestRun> {
+    await delay(1000)
+    return {
+      testRunId: `mock-test-run-${Date.now()}`,
+      jobId,
+      promptId,
+      status: 'pending_review',
+      applicationIds: files.map((_, i) => `mock-test-app-${i}`),
+      createdAt: new Date().toISOString(),
+    }
+  },
+
+  async getTestRuns(jobId: string, promptId: string): Promise<PromptTestRun[]> {
+    await delay(300)
+    return []
+  },
+
+  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun & { applications?: Application[] }> {
+    await delay(300)
+    return {
+      testRunId,
+      jobId,
+      promptId,
+      status: 'pending_review',
+      applicationIds: [],
+      createdAt: new Date().toISOString(),
+    }
+  },
+
+  async approveTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun> {
+    await delay(500)
+    return {
+      testRunId,
+      jobId,
+      promptId,
+      status: 'approved',
+      applicationIds: [],
+      createdAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+    }
   },
 }
 

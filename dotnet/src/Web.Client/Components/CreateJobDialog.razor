@@ -1,14 +1,52 @@
 @using TalentMatch.Web.Client.Services
 @using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
 @inject ApiClient Api
 
 <div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; max-width: 700px; background: white;">
     <h4>Create New Job</h4>
-    <div style="display: grid; gap: 0.5rem;">
+
+    @* Tab selector *@
+    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <button @onclick="() => activeTab = Tab.Upload" style="font-weight: @(activeTab == Tab.Upload ? "bold" : "normal");">Upload Spec</button>
+        <button @onclick="() => activeTab = Tab.Manual" style="font-weight: @(activeTab == Tab.Manual ? "bold" : "normal");">Manual Entry</button>
+    </div>
+
+    @if (activeTab == Tab.Upload)
+    {
+        <div style="display: grid; gap: 0.5rem;">
+            <h5>Upload Job Specification</h5>
+            <p style="font-size: 0.85rem; color: #666;">Supported formats: PDF, JPG, Markdown, TXT, DOCX</p>
+            <InputFile OnChange="HandleSpecFileSelected" accept=".pdf,.jpg,.jpeg,.md,.txt,.docx" />
+            @if (processingSpec)
+            {
+                <p style="color: blue;">⏳ Extracting job spec...</p>
+            }
+
+            <h5 style="margin-top: 1rem;">Upload Rubric (optional)</h5>
+            <p style="font-size: 0.85rem; color: #666;">Upload a separate rubric document if not included in the spec.</p>
+            <InputFile OnChange="HandleRubricFileSelected" accept=".pdf,.jpg,.jpeg,.md,.txt,.docx" />
+            @if (processingRubric)
+            {
+                <p style="color: blue;">⏳ Extracting rubric...</p>
+            }
+            @if (rubricTitleMismatch)
+            {
+                <p style="color: #c57600;">⚠️ Warning: The rubric appears to be for a different job title. Please verify it matches the uploaded spec.</p>
+            }
+        </div>
+    }
+
+    <div style="display: grid; gap: 0.5rem; margin-top: 1rem;">
         <input placeholder="Job Title" @bind="title" />
         <input placeholder="Department" @bind="department" />
         <input placeholder="Organisation" @bind="organisation" />
         <input type="date" @bind="postingDate" />
+
+        <div>
+            <label style="font-size: 0.85rem;">Job Description</label>
+            <textarea @bind="jobDescription" rows="4" placeholder="Describe the role and responsibilities..." style="width: 100%;"></textarea>
+        </div>
 
         <h5 style="margin-top: 1rem;">Rubric Categories</h5>
         @for (int i = 0; i < rubricCategories.Count; i++)
@@ -37,7 +75,19 @@
                 <button @onclick="() => mustHaveCriteria.RemoveAt(idx)" style="color: red;">✕</button>
             </div>
         }
-        <button @onclick="() => mustHaveCriteria.Add(string.Empty)" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Criterion</button>
+        <button @onclick="() => mustHaveCriteria.Add(string.Empty)" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Must-Have</button>
+
+        <h5 style="margin-top: 1rem;">Desired Criteria</h5>
+        @for (int i = 0; i < desiredCriteria.Count; i++)
+        {
+            var idx = i;
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <input placeholder="Qualification" value="@desiredCriteria[idx].Qualification" @oninput="(e) => desiredCriteria[idx] = desiredCriteria[idx] with { Qualification = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                <input placeholder="Description" value="@desiredCriteria[idx].Description" @oninput="(e) => desiredCriteria[idx] = desiredCriteria[idx] with { Description = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                <button @onclick="() => desiredCriteria.RemoveAt(idx)" style="color: red;">✕</button>
+            </div>
+        }
+        <button @onclick="() => desiredCriteria.Add(new DesiredCriterionInput(string.Empty, string.Empty))" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Desired Criterion</button>
 
         <h5 style="margin-top: 1rem;">Scoring Configuration</h5>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
@@ -80,20 +130,150 @@
     [Parameter] public EventCallback OnCreated { get; set; }
     [Parameter] public EventCallback OnCancel { get; set; }
 
-    private string title = "", department = "", organisation = "";
+    private enum Tab { Upload, Manual }
+    private Tab activeTab = Tab.Upload;
+
+    private string title = "", department = "", organisation = "", jobDescription = "";
     private DateTime postingDate = DateTime.Today;
     private int scoringRunCount = 3;
     private string aggregationStrategy = "median";
     private double longlistThreshold = 70, shortlistThreshold = 85, varianceThreshold = 15;
     private string? message;
     private bool success;
+    private bool processingSpec, processingRubric, rubricTitleMismatch;
     private List<RubricCategoryInput> rubricCategories = new();
     private List<string> mustHaveCriteria = new();
+    private List<DesiredCriterionInput> desiredCriteria = new();
 
     private double WeightSum => rubricCategories.Sum(c => c.Weight);
     private bool CanSubmit => !string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(department);
 
     private void AddCategory() => rubricCategories.Add(new("", 0, ""));
+
+    private async Task HandleSpecFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        processingSpec = true;
+        message = null;
+        StateHasChanged();
+
+        try
+        {
+            // Read file as base64
+            var buffer = new byte[file.Size];
+            await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadExactlyAsync(buffer);
+            var base64Content = Convert.ToBase64String(buffer);
+
+            var result = await Api.ExtractJobSpecAsync(file.Name, base64Content, file.ContentType);
+            if (result != null)
+            {
+                if (!string.IsNullOrWhiteSpace(result.Title)) title = result.Title;
+                if (!string.IsNullOrWhiteSpace(result.Department)) department = result.Department;
+                if (!string.IsNullOrWhiteSpace(result.Organisation)) organisation = result.Organisation;
+                if (!string.IsNullOrWhiteSpace(result.JobDescription)) jobDescription = result.JobDescription;
+
+                if (result.MustHaves?.Any() == true)
+                    mustHaveCriteria = result.MustHaves.Select(m => m.Criterion).ToList();
+
+                if (result.DesiredCriteria?.Any() == true)
+                    desiredCriteria = result.DesiredCriteria.Select(d => new DesiredCriterionInput(d.Qualification, d.Description ?? "")).ToList();
+
+                if (result.Rubric?.Any() == true)
+                {
+                    rubricCategories = result.Rubric.Select(r => new RubricCategoryInput(r.Name, r.Weight, r.Description ?? "")).ToList();
+                }
+                else if (!rubricCategories.Any())
+                {
+                    // Auto-generate draft rubric: 60% to must-haves, 40% to desired criteria
+                    AutoGenerateDraftRubric();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            message = $"Failed to extract spec: {ex.Message}";
+            success = false;
+        }
+        finally
+        {
+            processingSpec = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task HandleRubricFileSelected(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file == null) return;
+
+        processingRubric = true;
+        rubricTitleMismatch = false;
+        message = null;
+        StateHasChanged();
+
+        try
+        {
+            var buffer = new byte[file.Size];
+            await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadExactlyAsync(buffer);
+            var base64Content = Convert.ToBase64String(buffer);
+
+            var result = await Api.ExtractRubricAsync(file.Name, base64Content, file.ContentType);
+            if (result != null)
+            {
+                if (!string.IsNullOrWhiteSpace(result.Title) && !string.IsNullOrWhiteSpace(title)
+                    && !string.Equals(result.Title, title, StringComparison.OrdinalIgnoreCase))
+                {
+                    rubricTitleMismatch = true;
+                }
+
+                if (result.Categories?.Any() == true)
+                {
+                    rubricCategories = result.Categories.Select(c => new RubricCategoryInput(c.Name, c.Weight, c.Description ?? "")).ToList();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            message = $"Failed to extract rubric: {ex.Message}";
+            success = false;
+        }
+        finally
+        {
+            processingRubric = false;
+            StateHasChanged();
+        }
+    }
+
+    private void AutoGenerateDraftRubric()
+    {
+        var categories = new List<RubricCategoryInput>();
+        var mustHaveCount = mustHaveCriteria.Count(c => !string.IsNullOrWhiteSpace(c));
+        var desiredCount = desiredCriteria.Count(c => !string.IsNullOrWhiteSpace(c.Qualification));
+        var totalCount = mustHaveCount + desiredCount;
+        if (totalCount == 0) return;
+
+        var mustHavePool = 0.6;
+        var desiredPool = 0.4;
+
+        foreach (var criterion in mustHaveCriteria.Where(c => !string.IsNullOrWhiteSpace(c)))
+        {
+            categories.Add(new RubricCategoryInput(criterion, mustHaveCount > 0 ? mustHavePool / mustHaveCount : 0, "Must-have requirement"));
+        }
+
+        foreach (var criterion in desiredCriteria.Where(c => !string.IsNullOrWhiteSpace(c.Qualification)))
+        {
+            categories.Add(new RubricCategoryInput(criterion.Qualification, desiredCount > 0 ? desiredPool / desiredCount : 0, criterion.Description));
+        }
+
+        // Normalize weights to sum to 1.0
+        var sum = categories.Sum(c => c.Weight);
+        if (sum > 0)
+            categories = categories.Select(c => c with { Weight = Math.Round(c.Weight / sum, 4) }).ToList();
+
+        rubricCategories = categories;
+    }
 
     private async Task Submit()
     {
@@ -103,13 +283,18 @@
         var mustHaveJson = mustHaveCriteria.Any(c => !string.IsNullOrWhiteSpace(c))
             ? JsonSerializer.Serialize(mustHaveCriteria.Where(c => !string.IsNullOrWhiteSpace(c)))
             : null;
+        var desiredJson = desiredCriteria.Any(c => !string.IsNullOrWhiteSpace(c.Qualification))
+            ? JsonSerializer.Serialize(desiredCriteria.Where(c => !string.IsNullOrWhiteSpace(c.Qualification)).Select(c => new { c.Qualification, c.Description }))
+            : null;
 
         var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
-            rubricJson, mustHaveJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold));
+            rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold,
+            string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription));
         success = result;
         message = result ? "Job created successfully!" : "Failed to create job.";
         if (result) await OnCreated.InvokeAsync();
     }
 
     private record RubricCategoryInput(string Name, double Weight, string Description);
+    private record DesiredCriterionInput(string Qualification, string Description);
 }

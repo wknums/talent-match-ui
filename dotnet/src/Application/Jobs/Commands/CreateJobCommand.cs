@@ -11,11 +11,13 @@ public record CreateJobCommand(
     DateTime PostingDate,
     string? RubricJson,
     string? MustHaveCriteriaJson,
+    string? DesiredCriteriaJson,
     int ScoringRunCount,
     string AggregationStrategy,
     double LonglistThreshold,
     double ShortlistThreshold,
-    double VarianceThreshold
+    double VarianceThreshold,
+    string? JobDescription
 ) : IRequest<Job>;
 
 public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
@@ -36,7 +38,8 @@ public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
             Department = request.Department,
             Organisation = request.Organisation,
             PostingDate = request.PostingDate,
-            Status = "active"
+            Status = "active",
+            JobDescription = request.JobDescription
         };
 
         var configVersion = new JobConfigVersion
@@ -45,6 +48,7 @@ public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
             VersionNumber = 1,
             RubricJson = request.RubricJson ?? "[]",
             MustHaveCriteriaJson = request.MustHaveCriteriaJson ?? "[]",
+            DesiredCriteriaJson = request.DesiredCriteriaJson ?? "[]",
             ScoringRunCount = request.ScoringRunCount > 0 ? request.ScoringRunCount : 3,
             AggregationStrategy = request.AggregationStrategy ?? "median",
             LonglistThreshold = request.LonglistThreshold,

@@ -1,16 +1,16 @@
 # Tasks: Talent Matching Platform
 
 **Input**: Design documents from `/specs/001-talent-matching-platform/`
-**Prerequisites**: plan.md ✅, spec.md ✅, research.md (empty), data-model.md (not created), contracts/ (not created)
+**Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, contracts/ ✅ (api-stack-a.md, api-stack-b.md)
 
 **Tests**: Not explicitly requested in the feature specification. Testing infrastructure and minimum-coverage tests are included as part of the Polish phase per Milestone D of the plan.
 
-**Organization**: Tasks are grouped by user story (US1–US8) to enable independent implementation and testing. Stack B (Blazor/.NET Clean Architecture) tasks are organized by implementation milestone (E1–E4) as a separate parallel track.
+**Organization**: Tasks are grouped by user story (US1–US8, including US3a) to enable independent implementation and testing. Stack B (Blazor/.NET Clean Architecture) tasks are integrated alongside Stack A tasks within each user story phase.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
-- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
+- **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3, US3a)
 - Include exact file paths in descriptions
 
 ## Path Conventions
@@ -88,24 +88,136 @@
 
 ## Phase 5: User Story 3 — Recruiter creates a job with rubric and scoring config (Priority: P2)
 
-**Goal**: Recruiter fills in job details (title, department, organisation, posting date), uploads or specifies a scoring rubric with weighted categories, sets must-have criteria, and configures scoring runs and aggregation strategy.
+**Goal**: Recruiter fills in job details (title, department, organisation, posting date), optionally
+uploads a job specification document and/or a separate rubric document, reviews/approves or manually
+defines a scoring rubric with weighted categories, sets must-have criteria and desired criteria, and
+configures scoring runs and aggregation strategy. Document extraction uses the external API at
+`AWR_SEQ_API_ENDPOINT`. Supported document types: pdf, jpg, md, txt, docx.
 
-**Independent Test**: Create a job end-to-end → job card appears on dashboard with correct title, department, organisation, and days since posting.
+**Independent Test**: Create a job end-to-end → job card appears on dashboard with correct title,
+department, organisation, and days since posting. Upload a job spec → verify fields auto-populated
+including desired criteria. Upload a rubric doc with mismatched title → verify warning is shown.
 
 ### Implementation for User Story 3
 
 - [x] T023 [P] [US3] Create job CRUD API routes in `server/routes/jobs.ts`: GET `/api/jobs` (list all jobs from `jobs` KV, filtered by requester's department for recruiters), POST `/api/jobs` (create job with title, department, organisation, posting date, status, and initial config version; append to `jobs` KV and create `job:{jobId}:versions`), GET `/api/jobs/:jobId` (return job with computed stats — application counts by status)
-- [x] T024 [P] [US3] Create job configuration versioning route in `server/routes/jobs.ts`: PUT `/api/jobs/:jobId/config` (create a new `JobConfigVersion` with rubric categories, must-have criteria, scoring run count, aggregation strategy, longlist/shortlist thresholds, and variance threshold; append to `job:{jobId}:versions` without affecting in-progress scoring on previous versions)
+- [x] T024 [P] [US3] Create job configuration versioning route in `server/routes/jobs.ts`: PUT `/api/jobs/:jobId/config` (create a new `JobConfigVersion` with rubric categories, must-have criteria, desired criteria, scoring run count, aggregation strategy, longlist/shortlist thresholds, and variance threshold; append to `job:{jobId}:versions` without affecting in-progress scoring on previous versions)
 - [x] T025 [US3] Implement real API job functions in `src/lib/api-real.ts`: `getJobs()`, `getJob(jobId)`, `createJob(jobData)`, `updateJobConfig(jobId, configData)` calling the server routes from T023–T024
 - [x] T026 [US3] Update `src/components/CreateJobDialog.tsx` to use the `api` client for job creation; submit all fields (title, department, organisation, posting date) plus initial configuration (rubric, must-haves, scoring runs, aggregation strategy, thresholds); refresh dashboard on success
 - [x] T027 [US3] Update `src/components/UploadRubricDialog.tsx` to extract rubric categories via POST `/api/llm` proxy, validate that weights sum to 1.0, present categories for user confirmation, and save via `api.updateJobConfig()` on confirmation
 - [x] T028 [US3] Update `src/components/JobCard.tsx` to display the organisation name alongside the department and calculate/display days since posting from the `postingDate` field
+- [x] T122 [P] [US3] Add `DesiredCriteria` interface to `src/types/index.ts` (with `id`, `qualification`, `description` fields) and add `desiredCriteria` array field to `JobConfigVersion` type; add optional `jobDescription` field to `Job` type
+- [x] T123 [P] [US3] Update `server/routes/jobs.ts` POST `/api/jobs` and PUT `/api/jobs/:jobId/config` routes to accept and persist `desiredCriteria` and `jobDescription` fields alongside existing must-haves
+- [x] T124 [P] [US3] Add `POST /api/jobs/extract-spec` route in `server/routes/jobs.ts` that accepts a multipart file upload (pdf, jpg, md, txt, docx), forwards the document to the external API at `AWR_SEQ_API_ENDPOINT` for extraction, and returns extracted job metadata (title, description, department, organisation, must-haves, desired criteria, and optionally rubric categories with weights)
+- [x] T125 [P] [US3] Add `POST /api/jobs/extract-rubric` route in `server/routes/jobs.ts` that accepts a multipart rubric document upload (pdf, jpg, md, txt, docx), forwards to `AWR_SEQ_API_ENDPOINT`, and returns extracted job title and rubric categories with weights summing to 1.0
+- [x] T126 [US3] Update `src/components/CreateJobDialog.tsx`: expand accepted file types to include `.jpg`, `.jpeg`, `.txt`; replace internal `llm()` calls with `POST /api/jobs/extract-spec` API calls; add desired criteria section (add/remove items with qualification and description); add separate rubric document upload button calling `POST /api/jobs/extract-rubric`; implement job title mismatch warning for rubric documents; implement auto-generation of draft rubric when no rubric found in spec and no separate rubric uploaded (60% weight to must-haves); include `desiredCriteria` and `jobDescription` in job submission payload
+- [x] T127 [US3] Update `src/components/UploadRubricDialog.tsx`: expand accepted file types to include `.jpg`, `.jpeg`, `.txt`; replace `llm()` calls with `POST /api/jobs/extract-rubric` API call; add `jobTitle` prop for mismatch detection; display warning when extracted rubric job title differs from provided job title advising user to correct and re-upload
+- [x] T128 [P] [US3] Update `src/lib/api-real.ts` and `src/lib/api-mock.ts` to add `extractJobSpec(file)` and `extractRubric(file)` functions calling the new extraction endpoints; update `createJob()` and `updateJobConfig()` to include `desiredCriteria` and `jobDescription` fields
+- [x] T129 [P] [US3] Update `.NET` `JobConfigVersion` entity in `dotnet/src/Domain/Entities/JobConfigVersion.cs` to add `DesiredCriteriaJson` string property; update `Job` entity to add optional `JobDescription` property; generate EF Core migration
+- [x] T130 [US3] Update `.NET` `CreateJobCommand`, `CreateJobDto`, `CreateJobRequest`, `UpdateConfigDto`, `UpdateJobConfigRequest` and `JobsEndpoints.cs` to accept and persist `desiredCriteria` and `jobDescription` fields
+- [x] T131 [US3] Update `dotnet/src/Web.Client/Components/CreateJobDialog.razor`: add file upload capability for job specification documents (pdf, jpg, md, txt, docx) with `AWR_SEQ_API_ENDPOINT` extraction via backend proxy; add separate rubric document upload with job title mismatch warning; add desired criteria section; implement auto-generated draft rubric when no rubric found
 
-**Checkpoint**: Jobs can be created with full rubric and scoring configuration; job cards display on dashboard
+**Checkpoint**: Jobs can be created with full rubric and scoring configuration including document upload with extraction via AWR_SEQ_API_ENDPOINT, desired criteria, and rubric mismatch warnings; job cards display on dashboard
 
 ---
 
-## Phase 6: User Story 4 — Recruiter uploads applications in bulk (Priority: P2)
+## Phase 6: User Story 3a — Recruiter creates, tests, and approves a scoring prompt (Priority: P1)
+
+**Goal**: After a job is created with an approved rubric (US3), the recruiter creates, tests, and
+approves a scoring prompt before production scoring can begin. Prompts are versioned, rated, and
+must pass a test-and-review workflow to be approved for production. This is a hard prerequisite for
+the scoring pipeline (US5) — production scoring MUST NOT proceed without an approved prompt.
+
+**Independent Test**: Create a job with rubric → generate a draft prompt via API → edit, save, and
+activate the prompt → upload 3 test applications → verify they are scored and flagged as test cases →
+perform manual review on each → approve the prompt for production → verify production scoring can
+proceed and test-case results do not appear in production ranked lists.
+
+**Dependencies**: Requires US3 (job with rubric must exist). Required by US5 (pipeline gating).
+
+### Setup for User Story 3a
+
+- [x] T132 [P] [US3a] Add ScoringPrompt and PromptTestRun interfaces plus PromptStatus, PromptSource, and TestRunStatus enums to `src/types/index.ts` per data-model.md: ScoringPrompt (promptId, jobId, versionNumber, promptText, status, createdAt, lastModifiedAt, author, rating, comments, source, generationMetadata), PromptTestRun (testRunId, jobId, promptId, status, applicationIds, createdAt, completedAt, reviewedBy, reviewNotes); add optional `testRunId?: string` field to Application interface
+- [x] T133 [P] [US3a] Add KV key patterns for prompts in `server/storage/kv-keys.ts`: `job:{jobId}:prompts` (ScoringPrompt[]) and `prompt-test-run:{testRunId}` (PromptTestRun) key generators; export helper functions `promptsKey(jobId)` and `promptTestRunKey(testRunId)`
+
+### Stack A Server Routes for User Story 3a
+
+- [x] T134 [US3a] Create prompt CRUD routes in `server/routes/prompts.ts`: GET `/api/jobs/:jobId/prompts` (list all prompt revisions from `job:{jobId}:prompts` KV sorted by versionNumber desc), POST `/api/jobs/:jobId/prompts` (create new prompt with auto-incremented versionNumber, status=draft, source from request body; validate job exists and has approved rubric per FR-033), GET `/api/jobs/:jobId/prompts/:promptId` (return single prompt revision), PUT `/api/jobs/:jobId/prompts/:promptId` (create a NEW revision with incremented versionNumber and updated promptText; original remains unchanged per FR-035)
+- [x] T135 [US3a] Add prompt activation and rating routes in `server/routes/prompts.ts`: POST `/api/jobs/:jobId/prompts/:promptId/activate` (set this prompt to status=active, set any previously active prompt for this job to status=inactive in a single operation per FR-036; record state transition in audit trail), POST `/api/jobs/:jobId/prompts/:promptId/rate` (accept rating integer 0-5 and optional comments string; persist against the specific revision per FR-037)
+- [x] T136 [US3a] Add prompt generation route in `server/routes/prompts.ts`: POST `/api/jobs/:jobId/prompts/generate` — read the job's approved rubric (categories, weights, must-haves, desired criteria) from `job:{jobId}:versions` KV, construct a system prompt instructing the AI to produce a structured scoring prompt based on the rubric, call `AWRSEQAPI_ENDPOINT/assess/passthrough` with the rubric context (reusing the existing passthrough pattern from `server/routes/jobs.ts` extract-spec/extract-rubric), return `{ promptText, generationMetadata }` per FR-034
+- [x] T137 [US3a] Add prompt test run routes in `server/routes/prompts.ts`: POST `/api/jobs/:jobId/prompts/:promptId/test-runs` (accept file uploads like US4 upload flow — validate types/sizes, compute SHA-256 fingerprints, create Application records with `testRunId` set, create PromptTestRun linking applications to prompt revision, trigger pipeline for test applications), GET `/api/jobs/:jobId/prompts/:promptId/test-runs` (list test runs for prompt), GET `/api/jobs/:jobId/prompts/:promptId/test-runs/:testRunId` (return test run with application details and statuses)
+- [x] T138 [US3a] Add test run approval and production approval routes in `server/routes/prompts.ts`: POST `/api/jobs/:jobId/prompts/:promptId/test-runs/:testRunId/approve` (verify ALL test applications have completed manual review without score changes per FR-039; set test run status to `approved`; record in audit), POST `/api/jobs/:jobId/prompts/:promptId/approve-production` (verify a PromptTestRun for this prompt has status=approved per FR-040; set prompt status to `production-approved`; deactivate any previously production-approved prompt for this job; record in audit)
+- [x] T139 [US3a] Register prompt routes in `server/index.ts`: mount `createPromptsRouter(storage)` under protected routes; ensure authentication middleware is applied
+
+### Stack A API Client for User Story 3a
+
+- [x] T140 [P] [US3a] Add prompt API functions to `src/lib/api-real.ts`: `getPrompts(jobId)`, `createPrompt(jobId, { promptText, source, generationMetadata })`, `getPrompt(jobId, promptId)`, `editPrompt(jobId, promptId, { promptText })`, `activatePrompt(jobId, promptId)`, `ratePrompt(jobId, promptId, { rating, comments })`, `generatePrompt(jobId)`, `approvePromptForProduction(jobId, promptId)`, `createTestRun(jobId, promptId, files)`, `getTestRuns(jobId, promptId)`, `getTestRun(jobId, promptId, testRunId)`, `approveTestRun(jobId, promptId, testRunId)` — all calling the server routes from T134–T138
+- [x] T141 [P] [US3a] Add mock prompt data generators and functions to `src/lib/api-mock.ts` for mock API mode: `generateMockPrompts()` producing sample prompt revisions with varying statuses, versions, and ratings; implement all prompt API functions with mock data behaviour matching the real API signatures
+
+### Stack A UI Components for User Story 3a
+
+- [x] T142 [US3a] Create `src/components/PromptManagement.tsx` component with prompt revision list, create/edit/import controls, and lifecycle management: display a dropdown/list of all prompt revisions for the job (version number, creation date, status badge, rating stars) fetched via `api.getPrompts(jobId)`; provide three creation methods — "Write Manually" (opens text editor), "Import File" (file upload that loads content into editor), "Generate from Rubric" (calls `api.generatePrompt(jobId)` and loads result into editor for review); save button creates a new revision via `api.createPrompt()` or `api.editPrompt()`; "Activate" button calls `api.activatePrompt()` with confirmation of deactivating previous; rating input (0-5 stars) and comments textarea that save via `api.ratePrompt()`; display production approval status prominently
+- [x] T143 [US3a] Add prompt testing workflow to `src/components/PromptManagement.tsx` (or create a child `PromptTestWorkflow.tsx` component): "Test Prompt" button (enabled only when a prompt is active) opens a file upload interface for test applications using the same drag-and-drop pattern as `UploadApplicationsDialog.tsx`; display test run status with application list showing scoring progress; link each test application to ManualReviewView (US7) for review; show "Approve for Production" button (enabled only when all test cases have completed manual review without score changes per FR-039); on approval, call `api.approveTestRun()` then `api.approvePromptForProduction()` with success/error feedback
+- [x] T144 [US3a] Integrate PromptManagement into `src/components/JobDetailView.tsx`: add a "Prompt Management" tab or section that renders the PromptManagement component; disable all prompt controls with explanatory message when the job has no approved rubric (FR-033); show warning banner when no production-approved prompt exists for the job; display current prompt status (draft/active/production-approved) in job header area
+
+### Stack A Pipeline Integration for User Story 3a
+
+- [x] T145 [US3a] Update `server/services/pipeline.ts` to enforce prompt production approval gate: before starting scoring for a job, query `job:{jobId}:prompts` KV for a prompt with status=`production-approved`; if none exists, reject processing with a clear error message per FR-032/FR-040; pass the production-approved promptId to the scoring worker
+- [x] T146 [US3a] Update scoring worker in `server/workers/scoring.ts` to record `promptVersionId` field in each ScoringRun from the production-approved prompt's promptId; ensure test-run scoring also records the prompt version
+- [x] T147 [US3a] Update GET `/api/jobs/:jobId/applications` in `server/routes/applications.ts` to exclude applications where `testRunId` is not null from production list results by default (FR-038); add optional `includeTestCases=true` query parameter to override for prompt testing views
+- [x] T148 [US3a] Update `src/components/JobDetailView.tsx` process applications button: disable "Process Applications" when no production-approved prompt exists; show tooltip/message explaining that a prompt must be approved for production before scoring can begin (FR-032)
+
+### Stack A Audit Trail for User Story 3a
+
+- [x] T149 [P] [US3a] Add prompt lifecycle audit events throughout `server/routes/prompts.ts`: call audit service (`server/services/audit.ts`) to log events for `prompt.created`, `prompt.edited`, `prompt.activated`, `prompt.deactivated`, `prompt.rated`, `prompt.generated`, `prompt.test-run.created`, `prompt.test-run.approved`, `prompt.production-approved` — each event includes actor (userId), timestamp, entityType (`scoring_prompt` or `prompt_test_run`), entityId, and event-specific payload (FR-041)
+
+### Stack B Domain Layer for User Story 3a
+
+- [x] T150 [P] [US3a] Create `ScoringPrompt` entity in `dotnet/src/Domain/Entities/ScoringPrompt.cs` with properties: Id (Guid, PK), JobId (Guid, FK → Job), VersionNumber (int), PromptText (string, required), Status (PromptStatus enum), CreatedAt (DateTime), LastModifiedAt (DateTime), Author (string, userId), Rating (int?, nullable, 0-5), Comments (string?, nullable), Source (PromptSource enum), GenerationMetadataJson (string?, nullable for raw API response); add navigation property to Job
+- [x] T151 [P] [US3a] Create `PromptTestRun` entity in `dotnet/src/Domain/Entities/PromptTestRun.cs` with properties: Id (Guid, PK), JobId (Guid, FK → Job), PromptId (Guid, FK → ScoringPrompt), Status (TestRunStatus enum), ApplicationIdsJson (string, serialized string[]), CreatedAt (DateTime), CompletedAt (DateTime?, nullable), ReviewedBy (string?, nullable userId), ReviewNotes (string?, nullable); add navigation properties
+- [x] T152 [P] [US3a] Create prompt-related enums in `dotnet/src/Domain/Enums/`: `PromptStatus.cs` (Draft, Active, Inactive, ProductionApproved), `PromptSource.cs` (Manual, Imported, Generated), `TestRunStatus.cs` (PendingReview, Approved, Rejected)
+- [x] T153 [P] [US3a] Create repository interfaces in `dotnet/src/Domain/Interfaces/`: `IScoringPromptRepository.cs` (GetByJobIdAsync, GetByIdAsync, AddAsync, UpdateAsync, GetActiveForJobAsync, GetProductionApprovedForJobAsync) and `IPromptTestRunRepository.cs` (GetByPromptIdAsync, GetByIdAsync, AddAsync, UpdateAsync)
+- [x] T154 [US3a] Add optional `TestRunId` (Guid?, nullable FK → PromptTestRun) property to `Application` entity in `dotnet/src/Domain/Entities/Application.cs`; add navigation property to PromptTestRun
+
+### Stack B Infrastructure for User Story 3a
+
+- [x] T155 [US3a] Update `AppDbContext.cs` in `dotnet/src/Infrastructure/Persistence/`: add `DbSet<ScoringPrompt> ScoringPrompts` and `DbSet<PromptTestRun> PromptTestRuns`; add entity type configurations including indexes IX_ScoringPrompts_JobId_Status (composite on JobId + Status for single-active-per-job queries), IX_PromptTestRuns_PromptId, IX_Applications_TestRunId; configure Job → ScoringPrompts cascade delete; configure ScoringPrompt → PromptTestRuns cascade delete
+- [x] T156 [US3a] Generate EF Core migration `AddScoringPromptsAndTestRuns` in `dotnet/src/Infrastructure/Persistence/Migrations/`: add ScoringPrompts table, PromptTestRuns table, and Applications.TestRunId nullable column with FK constraint per contracts/api-stack-b.md migration plan
+- [x] T157 [P] [US3a] Implement `ScoringPromptRepository.cs` in `dotnet/src/Infrastructure/Persistence/Repositories/` implementing `IScoringPromptRepository`: GetByJobIdAsync (ordered by VersionNumber desc), GetActiveForJobAsync (single prompt with Status=Active for job), GetProductionApprovedForJobAsync, transactional activation (set new to Active, previous to Inactive)
+- [x] T158 [P] [US3a] Implement `PromptTestRunRepository.cs` in `dotnet/src/Infrastructure/Persistence/Repositories/` implementing `IPromptTestRunRepository`: GetByPromptIdAsync, GetByIdAsync with application details join, AddAsync, UpdateAsync
+
+### Stack B Application Layer for User Story 3a
+
+- [x] T159 [P] [US3a] Implement prompt commands in `dotnet/src/Application/Prompts/Commands/`: `CreatePromptCommand.cs` (validate job has approved rubric, auto-increment version per job, set status=draft), `EditPromptCommand.cs` (create new revision with incremented version, preserve original per FR-035), `ActivatePromptCommand.cs` (set active, deactivate previous in transaction per FR-036, record audit event), `RatePromptCommand.cs` (validate rating 0-5, persist rating and comments per FR-037) — each with FluentValidation validators and MediatR handler
+- [x] T160 [P] [US3a] Implement prompt generation command in `dotnet/src/Application/Prompts/Commands/GeneratePromptCommand.cs`: read job's approved rubric via IJobRepository, construct prompt-generation payload with rubric categories/weights/must-haves/desired criteria, call LlmProxyService to send to external API (matching Stack A's passthrough pattern), return generated prompt text and metadata per FR-034
+- [x] T161 [P] [US3a] Implement production approval command in `dotnet/src/Application/Prompts/Commands/ApprovePromptForProductionCommand.cs`: verify a PromptTestRun for the prompt has status=Approved (FR-040), set prompt status to ProductionApproved, deactivate any previously production-approved prompt for the job, record audit event
+- [x] T162 [P] [US3a] Implement prompt test run commands in `dotnet/src/Application/Prompts/Commands/`: `CreatePromptTestRunCommand.cs` (accept file uploads, create Application records with TestRunId, create PromptTestRun entity, trigger scoring pipeline for test applications), `ApprovePromptTestRunCommand.cs` (verify ALL test applications completed manual review without score changes per FR-039, set status=Approved, record audit)
+- [x] T163 [P] [US3a] Implement prompt queries in `dotnet/src/Application/Prompts/Queries/`: `GetPromptsQuery.cs` (list all revisions for job ordered by version desc), `GetPromptQuery.cs` (single prompt by ID), `GetPromptTestRunsQuery.cs` (list test runs for prompt with application status details), `GetPromptTestRunQuery.cs` (single test run with full application details)
+- [x] T164 [US3a] Update `GetApplicationsQuery.cs` in `dotnet/src/Application/Applications/Queries/` to filter out applications where TestRunId is not null from production list results by default (FR-038); accept optional includeTestCases parameter
+
+### Stack B Web API Endpoints for User Story 3a
+
+- [x] T165 [US3a] Create `PromptEndpoints.cs` in `dotnet/src/Web.Server/Endpoints/` with all prompt management endpoints per contracts/api-stack-b.md: GET `/api/jobs/{jobId}/prompts` → GetPromptsQuery, POST `/api/jobs/{jobId}/prompts` → CreatePromptCommand, GET `/api/jobs/{jobId}/prompts/{promptId}` → GetPromptQuery, PUT `/api/jobs/{jobId}/prompts/{promptId}` → EditPromptCommand, POST `/api/jobs/{jobId}/prompts/{promptId}/activate` → ActivatePromptCommand, POST `/api/jobs/{jobId}/prompts/{promptId}/rate` → RatePromptCommand, POST `/api/jobs/{jobId}/prompts/generate` → GeneratePromptCommand, POST `/api/jobs/{jobId}/prompts/{promptId}/approve-production` → ApprovePromptForProductionCommand
+- [x] T166 [US3a] Add prompt test run endpoints to `PromptEndpoints.cs` (or create `PromptTestRunEndpoints.cs`) in `dotnet/src/Web.Server/Endpoints/`: POST `/api/jobs/{jobId}/prompts/{promptId}/test-runs` → CreatePromptTestRunCommand, GET `/api/jobs/{jobId}/prompts/{promptId}/test-runs` → GetPromptTestRunsQuery, GET `/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}` → GetPromptTestRunQuery, POST `/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/approve` → ApprovePromptTestRunCommand — all with Authenticated authorization
+- [x] T167 [US3a] Register prompt and test run endpoint groups in `dotnet/src/Web.Server/Program.cs`: call `app.MapPromptEndpoints()` (and `app.MapPromptTestRunEndpoints()` if separate) after existing endpoint registrations; ensure OpenAPI/Swagger documentation includes all new endpoints
+
+### Stack B Blazor Client for User Story 3a
+
+- [x] T168 [P] [US3a] Add prompt API methods to `dotnet/src/Web.Client/Services/ApiClient.cs`: GetPromptsAsync(jobId), CreatePromptAsync(jobId, promptText, source, metadata), EditPromptAsync(jobId, promptId, promptText), ActivatePromptAsync(jobId, promptId), RatePromptAsync(jobId, promptId, rating, comments), GeneratePromptAsync(jobId), ApprovePromptForProductionAsync(jobId, promptId), CreateTestRunAsync(jobId, promptId, files), GetTestRunsAsync(jobId, promptId), GetTestRunAsync(jobId, promptId, testRunId), ApproveTestRunAsync(jobId, promptId, testRunId) — typed request/response models matching the API contracts
+- [x] T169 [US3a] Create `PromptManagement.razor` component in `dotnet/src/Web.Client/Components/`: prompt revision dropdown/list (version number, creation date, status badge, rating display), three creation methods (manual authoring textarea, file import with content loading, "Generate from Rubric" button calling GeneratePromptAsync), save/edit buttons, activate/deactivate toggle, rating input (0-5 integer or star selector), comments textarea, production approval status indicator — reference: Stack A `src/components/PromptManagement.tsx` behaviour
+- [x] T170 [US3a] Create `PromptTestRunner.razor` component in `dotnet/src/Web.Client/Components/`: file upload zone for test applications (reuse UploadApplications patterns), test run status display with application list showing scoring progress, link to ManualReview.razor for each test application, "Approve for Production" button enabled only when test run has status=Approved and all test applications reviewed without changes — reference: Stack A prompt test workflow
+- [x] T171 [US3a] Integrate prompt management into `dotnet/src/Web.Client/Pages/JobDetail.razor`: add "Prompt Management" section or tab embedding PromptManagement.razor and PromptTestRunner.razor components; disable all prompt controls with message when job has no approved rubric (FR-033); show warning banner when no production-approved prompt exists; gate "Process Applications" button on production-approved prompt status (FR-032)
+
+### Stack B Audit and Pipeline Integration for User Story 3a
+
+- [x] T172 [P] [US3a] Add ProcessingEvent audit recording to all prompt command handlers (T159–T162): log events via IProcessingEventRepository for `prompt.created`, `prompt.edited`, `prompt.activated`, `prompt.deactivated`, `prompt.rated`, `prompt.generated`, `prompt.test-run.created`, `prompt.test-run.approved`, `prompt.production-approved` with actor, timestamp, entityType, entityId, and event payload (FR-041)
+- [x] T173 [US3a] Update `ProcessJobCommand.cs` in `dotnet/src/Application/Jobs/Commands/` (or equivalent pipeline trigger): before starting scoring, query IScoringPromptRepository for a production-approved prompt for the job; reject with clear error if none exists (FR-032/FR-040); pass promptId to scoring logic for recording in ScoringRun.PromptVersionId
+
+**Checkpoint**: Prompt management is fully functional in both stacks — prompts can be created (manual/import/generate), versioned, activated, rated, tested with real applications, and approved for production. Production scoring is gated on prompt approval. Test-case results are excluded from production ranked lists.
+
+---
+
+## Phase 7: User Story 4 — Recruiter uploads applications in bulk (Priority: P2)
 
 **Goal**: Recruiter selects an active job and uploads document files (drag-and-drop or bulk select). Each file is validated, fingerprinted, stored, and queued for processing.
 
@@ -123,7 +235,7 @@
 
 ---
 
-## Phase 7: User Story 5 — AI scoring pipeline runs and results are visible (Priority: P2)
+## Phase 8: User Story 5 — AI scoring pipeline runs and results are visible (Priority: P2)
 
 **Goal**: Queued applications are extracted to normalised text, scored N times by AI with evidence and must-have evaluation, then aggregated into a final decision (Eligible / Excluded / Needs Manual Review).
 
@@ -144,7 +256,7 @@
 
 ---
 
-## Phase 8: User Story 6 — Recruiter views ranked lists and drills into application detail (Priority: P2)
+## Phase 9: User Story 6 — Recruiter views ranked lists and drills into application detail (Priority: P2)
 
 **Goal**: Job detail view shows longlist, shortlist, and exclusions in separate tabs with sortable columns and filters. Clicking a candidate opens a full drill-down showing documents, extracted text, all N scoring runs, evidence, and final decision.
 
@@ -163,7 +275,7 @@
 
 ---
 
-## Phase 9: User Story 7 — Recruiter performs a manual review (Priority: P3)
+## Phase 10: User Story 7 — Recruiter performs a manual review (Priority: P3)
 
 **Goal**: Three-pane manual review interface (job specification left, rubric scoring form centre, application content right). Recruiter allocates points per category, adds comments, saves the review, and every change is recorded in an immutable audit trail.
 
@@ -182,7 +294,7 @@
 
 ---
 
-## Phase 10: User Story 8 — Admin/recruiter monitors the processing pipeline (Priority: P3)
+## Phase 11: User Story 8 — Admin/recruiter monitors the processing pipeline (Priority: P3)
 
 **Goal**: Dashboard shows system-wide stats (queued, processing, completed, failed), filterable job list, pipeline visualiser per job, and failure queue browser with retry controls. Stats auto-refresh within 30 seconds.
 
@@ -202,7 +314,7 @@
 
 ---
 
-## Phase 11: Stack B — Solution Scaffold & Domain Layer (Milestone E1 + E2)
+## Phase 12: Stack B — Solution Scaffold & Domain Layer (Milestone E1 + E2)
 
 **Purpose**: Scaffold the .NET Clean Architecture solution structure and implement domain entities, value objects, repository interfaces, EF Core persistence, and MediatR application layer
 
@@ -222,7 +334,7 @@
 
 ---
 
-## Phase 12: Stack B — Web API Endpoints (Milestone E3)
+## Phase 13: Stack B — Web API Endpoints (Milestone E3)
 
 **Purpose**: Implement ASP.NET Core minimal API endpoints matching Stack A's API contracts and wire to MediatR handlers
 
@@ -239,7 +351,7 @@
 
 ---
 
-## Phase 13: Stack B — Blazor WASM Frontend (Milestone E4)
+## Phase 14: Stack B — Blazor WASM Frontend (Milestone E4)
 
 **Purpose**: Implement Blazor WebAssembly pages and components matching Stack A's UI for all user stories (US1–US8)
 
@@ -257,7 +369,7 @@
 
 ---
 
-## Phase 14: Polish & Cross-Cutting Concerns
+## Phase 15: Polish & Cross-Cutting Concerns
 
 **Purpose**: Testing infrastructure, performance optimisation, security hardening, and documentation
 
@@ -275,7 +387,7 @@
 
 ---
 
-## Phase 15: Stack B — Blazor WASM Feature Completion
+## Phase 16: Stack B — Blazor WASM Feature Completion
 
 **Purpose**: Complete Blazor WebAssembly UI integration and feature parity with React frontend — Phase 13 tasks created component scaffolding but left critical gaps in navigation wiring, feature completeness, and missing pages/dialogs
 
@@ -340,24 +452,26 @@
 - **US1 (Phase 3)**: Depends on Foundational — first MVP story
 - **US2 (Phase 4)**: Depends on Foundational — can run in **parallel with US1** (different routes and components)
 - **US3 (Phase 5)**: Depends on Foundational — can run in **parallel with US1 and US2**
-- **US4 (Phase 6)**: Depends on **US3** (jobs must exist before uploading applications)
-- **US5 (Phase 7)**: Depends on **US4** (applications must be uploaded before pipeline runs)
-- **US6 (Phase 8)**: Depends on **US5** (scored applications needed for ranked lists)
-- **US7 (Phase 9)**: Depends on **US6** (application detail view provides navigation to manual review)
-- **US8 (Phase 10)**: Depends on **US5** (pipeline monitoring requires real pipeline data); can run in **parallel with US6 and US7**
-- **Stack B Foundation (Phase 11)**: Can start after Phase 2 — **independent of Stack A user stories**
-- **Stack B Web API (Phase 12)**: Depends on Phase 11
-- **Stack B Blazor (Phase 13)**: Depends on Phase 12
-- **Polish (Phase 14)**: Depends on all desired user stories being complete
-- **Blazor Feature Completion (Phase 15)**: Depends on Phase 13 (scaffolded components must exist); T103–T104 unblock all other Phase 15 tasks; T113 depends on T110 (upload wiring); T114 depends on T113 (manual review accessed from app detail); T116–T118 (bugfix) can start immediately (fix existing code); T119–T121 (tests) depend on T116–T117 (need fixed code to test against)
+- **US3a (Phase 6)**: Depends on **US3** (job with approved rubric must exist); **BLOCKS US5** (production scoring requires approved prompt)
+- **US4 (Phase 7)**: Depends on **US3** (jobs must exist before uploading applications)
+- **US5 (Phase 8)**: Depends on **US3a** (production-approved prompt required) AND **US4** (applications must be uploaded)
+- **US6 (Phase 9)**: Depends on **US5** (scored applications needed for ranked lists)
+- **US7 (Phase 10)**: Depends on **US6** (application detail view provides navigation to manual review); also serves **US3a** (test case review uses same manual review interface)
+- **US8 (Phase 11)**: Depends on **US5** (pipeline monitoring requires real pipeline data); can run in **parallel with US6 and US7**
+- **Stack B Foundation (Phase 12)**: Can start after Phase 2 — **independent of Stack A user stories**
+- **Stack B Web API (Phase 13)**: Depends on Phase 12
+- **Stack B Blazor (Phase 14)**: Depends on Phase 13
+- **Polish (Phase 15)**: Depends on all desired user stories being complete
+- **Blazor Feature Completion (Phase 16)**: Depends on Phase 14 (scaffolded components must exist)
 
 ### User Story Dependencies
 
 - **US1 (P1)**: Can start after Foundational — No dependencies on other stories
 - **US2 (P1)**: Can start after Foundational — Independent of US1 (different routes and components)
 - **US3 (P2)**: Can start after Foundational — Independent of US1/US2
-- **US4 (P2)**: Depends on **US3** (needs jobs to exist to upload applications against)
-- **US5 (P2)**: Depends on **US4** (needs uploaded applications to process through pipeline)
+- **US3a (P1)**: Depends on **US3** (needs job with approved rubric); **BLOCKS US5** (pipeline cannot score without approved prompt)
+- **US4 (P2)**: Depends on **US3** (needs jobs to exist to upload applications against); can run in **parallel with US3a**
+- **US5 (P2)**: Depends on **US3a** (approved prompt required) AND **US4** (uploaded applications required)
 - **US6 (P2)**: Depends on **US5** (needs scored/aggregated applications for ranked lists)
 - **US7 (P3)**: Depends on **US6** (manual review is accessed from the application detail drill-down)
 - **US8 (P3)**: Depends on **US5** (needs real pipeline data); can run in parallel with US6/US7
@@ -374,16 +488,23 @@
 **Stack A stories that can start simultaneously (after Foundational):**
 - US1, US2, and US3 have zero inter-dependencies — all three can begin in parallel
 
+**After US3 completes, US3a and US4 can run in parallel:**
+- US3a (prompt management) and US4 (application upload) have no mutual dependency
+- Both depend only on US3 (job creation)
+
 **Stack A stories that can run in parallel (later phases):**
 - US7 and US8 can start in parallel once US5/US6 are complete (no mutual dependency)
 
 **Stack B is fully independent of Stack A user stories:**
-- Phases 11–13 (Stack B) can run concurrently with Phases 3–10 (Stack A)
+- Phases 12–14 (Stack B) can run concurrently with Phases 3–11 (Stack A)
 - Both stacks share spec.md acceptance scenarios as the cross-stack contract
+- US3a Stack B tasks (T150–T173) can run in parallel with Stack A US3a tasks (T132–T149) since they target different codebases
 
 **Within each story, tasks marked [P] can execute simultaneously:**
 - Server routes on different files (e.g., T017 and T018 in US2)
 - Domain entities, value objects, and enums in Stack B (T062, T063, T064)
+- US3a setup tasks T132 and T133 can run in parallel
+- US3a Stack B domain tasks T150, T151, T152, T153 can all run in parallel
 
 ---
 
@@ -407,20 +528,41 @@ Task T016: "Implement department-filtered dashboard" (needs T015)
 # Three developers can work on these simultaneously:
 Developer A — US1: T011-T016 (auth routes + login + dashboard)
 Developer B — US2: T017-T022 (user management routes + dialogs)
-Developer C — US3: T023-T028 (job routes + create job dialog)
+Developer C — US3: T023-T028, T122-T131 (job routes + create job dialog)
 
 # No shared files or blocking dependencies between these three stories
 ```
 
-## Parallel Example: Stack A + Stack B
+## Parallel Example: US3a + US4 (after US3)
+
+```text
+# After US3 completes, these two stories can start in parallel:
+Developer A — US3a: T132-T149 (Stack A prompt management, then T150-T173 for Stack B)
+Developer B — US4:  T029-T033 (application upload routes + UI)
+
+# US3a and US4 share no files and have no mutual dependency
+# Both depend only on US3 (job creation) being complete
+```
+
+## Parallel Example: US3a Stack A + Stack B
+
+```text
+# Within US3a, Stack A and Stack B tasks target completely different codebases:
+Developer A — Stack A: T132-T149 (types, server routes, API client, React UI)
+Developer B — Stack B: T150-T173 (domain entities, EF Core, MediatR, Blazor UI)
+
+# Both developers work independently — shared spec.md acceptance scenarios as contract
+```
+
+## Parallel Example: Stack A + Stack B (full project)
 
 ```text
 # After Foundational phase (Phase 2) completes:
-Team A: Stack A user stories (Phases 3–10)
-Team B: Stack B scaffold and implementation (Phases 11–13)
+Team A: Stack A user stories (Phases 3–11)
+Team B: Stack B scaffold and implementation (Phases 12–14, 16)
 
 # Both teams work independently using shared spec.md as contract
-# Both stacks implement the same API endpoint contracts from plan.md
+# Both stacks implement the same API endpoint contracts from contracts/
 ```
 
 ---
@@ -441,12 +583,13 @@ Team B: Stack B scaffold and implementation (Phases 11–13)
 2. Add US1 (Auth + Dashboard) → Test independently → Deploy/Demo **(MVP!)**
 3. Add US2 (User Management) → Test independently → Demo admin workflow
 4. Add US3 (Job Creation) → Test independently → Demo job setup with rubric
-5. Add US4 (Bulk Upload) → Test independently → Demo document ingestion
-6. Add US5 (AI Pipeline) → Test independently → Demo core value proposition
-7. Add US6 (Ranked Lists) → Test independently → Demo recruiter decision view
-8. Add US7 (Manual Review) → Test independently → Demo defensibility workflow
-9. Add US8 (Pipeline Monitoring) → Test independently → Full operational dashboard
-10. Each story adds value without breaking previous stories
+5. Add US3a (Prompt Management) → Test independently → Demo prompt lifecycle & approval gate
+6. Add US4 (Bulk Upload) → Test independently → Demo document ingestion
+7. Add US5 (AI Pipeline) → Test independently → Demo core value proposition
+8. Add US6 (Ranked Lists) → Test independently → Demo recruiter decision view
+9. Add US7 (Manual Review) → Test independently → Demo defensibility workflow
+10. Add US8 (Pipeline Monitoring) → Test independently → Full operational dashboard
+11. Each story adds value without breaking previous stories
 
 ### Parallel Team Strategy
 
@@ -454,13 +597,13 @@ With multiple developers:
 
 1. Team completes Setup + Foundational together
 2. Once Foundational is done:
-   - Developer A: US1 (Auth) → US4 (Upload) → US5 (Pipeline)
-   - Developer B: US2 (Users) → US3 (Jobs) → US6 (Lists)
-   - Developer C: Stack B scaffold (Phases 11–13)
+   - Developer A: US1 (Auth) → US3a (Prompts) → US5 (Pipeline)
+   - Developer B: US2 (Users) → US3 (Jobs) → US4 (Upload)
+   - Developer C: Stack B scaffold (Phases 12–14, 16)
 3. After US5/US6 complete:
    - Developer A: US7 (Manual Review)
    - Developer B: US8 (Monitoring)
-4. All: Polish (Phase 14)
+4. All: Polish (Phase 15)
 
 ---
 
@@ -471,7 +614,10 @@ With multiple developers:
 - Stack A (React/Express) is the primary implementation — the working prototype
 - Stack B (.NET/Blazor) is a parallel track targeting a specific customer requirement
 - Both stacks share spec.md acceptance scenarios as cross-stack contracts
+- Both stacks implement API contracts defined in `contracts/api-stack-a.md` and `contracts/api-stack-b.md`
 - Existing components (LoginForm, DashboardView, etc.) are UPDATED, not recreated from scratch
+- US3a (Prompt Management) is the primary new feature — tasks T132–T173 cover both stacks
+- US3a is a hard prerequisite for US5 (scoring pipeline) — production scoring is gated on prompt approval
 - `src/lib/auth.ts` client-side auth logic is replaced by `server/routes/auth.ts` server-side implementation
 - `src/lib/api.ts` mock functions are preserved in `src/lib/api-mock.ts`; real API mode is added alongside
 - The `API_MODE` environment variable controls whether the app uses mock data or real KV-backed persistence

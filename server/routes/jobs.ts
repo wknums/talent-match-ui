@@ -7,6 +7,8 @@ import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
 import { createAuditService } from '../services/audit.js'
 import type { Job, JobConfigVersion, Application } from '../../src/types/index.js'
 
+const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
+
 export function createJobsRouter(storage: StorageProvider) {
   const router = Router()
   const audit = createAuditService(storage)
@@ -51,7 +53,7 @@ export function createJobsRouter(storage: StorageProvider) {
   // POST /api/jobs - create job
   router.post('/', async (req: AuthenticatedRequest, res, next) => {
     try {
-      const { title, department, organization, postingDate, rubric, mustHaves, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, specDocumentId, rubricDocumentId, jobCode } = req.body
+      const { title, department, organization, postingDate, rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, specDocumentId, rubricDocumentId, jobCode, jobDescription } = req.body
 
       if (!title || !department) {
         return res.status(400).json({ error: 'Validation Error', message: 'title and department are required' })
@@ -69,6 +71,7 @@ export function createJobsRouter(storage: StorageProvider) {
         jobId,
         rubric: rubric || [],
         mustHaves: mustHaves || [],
+        desiredCriteria: desiredCriteria || [],
         runsPerApplication: runsPerApplication || 3,
         aggregationStrategy: aggregationStrategy || 'median',
         longlistThreshold: longlistThreshold || 60,
@@ -88,6 +91,7 @@ export function createJobsRouter(storage: StorageProvider) {
         createdAt: new Date().toISOString(),
         status: 'Active',
         currentVersion: config,
+        jobDescription: jobDescription || undefined,
         specDocumentId,
         rubricDocumentId,
         stats: {
@@ -105,6 +109,78 @@ export function createJobsRouter(storage: StorageProvider) {
       await audit.appendEvent(req.user?.username || 'unknown', 'job.created', 'Job', jobId, { title, department })
 
       res.status(201).json(newJob)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/jobs/extract-spec - extract job metadata from uploaded spec document via AWR_SEQ_API_ENDPOINT
+  router.post('/extract-spec', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!AWR_SEQ_API_ENDPOINT) {
+        return res.status(503).json({ error: 'Configuration Error', message: 'AWR_SEQ_API_ENDPOINT is not configured' })
+      }
+
+      const { fileName, content, mimeType } = req.body
+      if (!fileName || !content) {
+        return res.status(400).json({ error: 'Validation Error', message: 'fileName and content are required' })
+      }
+
+      const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.md', '.txt', '.docx']
+      const ext = fileName.toLowerCase().slice(fileName.lastIndexOf('.'))
+      if (!allowedExtensions.includes(ext)) {
+        return res.status(400).json({ error: 'Validation Error', message: `Unsupported file type: ${ext}. Supported: pdf, jpg, md, txt, docx` })
+      }
+
+      const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/extract-spec`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName, content, mimeType }),
+      })
+
+      if (!extractionResponse.ok) {
+        const errorText = await extractionResponse.text()
+        return res.status(extractionResponse.status).json({ error: 'Extraction Failed', message: errorText })
+      }
+
+      const extracted = await extractionResponse.json()
+      res.json(extracted)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/jobs/extract-rubric - extract rubric from uploaded rubric document via AWR_SEQ_API_ENDPOINT
+  router.post('/extract-rubric', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      if (!AWR_SEQ_API_ENDPOINT) {
+        return res.status(503).json({ error: 'Configuration Error', message: 'AWR_SEQ_API_ENDPOINT is not configured' })
+      }
+
+      const { fileName, content, mimeType } = req.body
+      if (!fileName || !content) {
+        return res.status(400).json({ error: 'Validation Error', message: 'fileName and content are required' })
+      }
+
+      const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.md', '.txt', '.docx']
+      const ext = fileName.toLowerCase().slice(fileName.lastIndexOf('.'))
+      if (!allowedExtensions.includes(ext)) {
+        return res.status(400).json({ error: 'Validation Error', message: `Unsupported file type: ${ext}. Supported: pdf, jpg, md, txt, docx` })
+      }
+
+      const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/extract-rubric`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileName, content, mimeType }),
+      })
+
+      if (!extractionResponse.ok) {
+        const errorText = await extractionResponse.text()
+        return res.status(extractionResponse.status).json({ error: 'Extraction Failed', message: errorText })
+      }
+
+      const extracted = await extractionResponse.json()
+      res.json(extracted)
     } catch (err) {
       next(err)
     }
@@ -150,7 +226,7 @@ export function createJobsRouter(storage: StorageProvider) {
   router.put('/:jobId/config', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const { rubric, mustHaves, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold } = req.body
+      const { rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold } = req.body
 
       const jobs = await getArray<Job>(storage, JOBS)
       const jobIndex = jobs.findIndex(j => j.jobId === jobId)
@@ -163,6 +239,7 @@ export function createJobsRouter(storage: StorageProvider) {
         jobId,
         rubric: rubric || jobs[jobIndex].currentVersion.rubric,
         mustHaves: mustHaves || jobs[jobIndex].currentVersion.mustHaves,
+        desiredCriteria: desiredCriteria || jobs[jobIndex].currentVersion.desiredCriteria || [],
         runsPerApplication: runsPerApplication || jobs[jobIndex].currentVersion.runsPerApplication,
         aggregationStrategy: aggregationStrategy || jobs[jobIndex].currentVersion.aggregationStrategy,
         longlistThreshold: longlistThreshold ?? jobs[jobIndex].currentVersion.longlistThreshold,

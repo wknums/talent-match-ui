@@ -13,11 +13,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Plus, X, UploadSimple, File, Sparkle } from '@phosphor-icons/react'
+import { Plus, X, UploadSimple, File, Sparkle, WarningCircle } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
-import { llm } from '@/lib/spark-client'
 import { toast } from 'sonner'
-import type { RubricCategory, MustHave, AggregationStrategy } from '@/types'
+import type { RubricCategory, MustHave, DesiredCriteria, AggregationStrategy } from '@/types'
 
 interface CreateJobDialogProps {
   open: boolean
@@ -40,6 +39,8 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   const [mustHaves, setMustHaves] = useState<MustHave[]>([
     { id: '1', criterion: '', description: '' },
   ])
+  const [desiredCriteria, setDesiredCriteria] = useState<DesiredCriteria[]>([])
+  const [jobDescription, setJobDescription] = useState('')
   const [runsPerApplication, setRunsPerApplication] = useState('3')
   const [aggregationStrategy, setAggregationStrategy] = useState<AggregationStrategy>('median')
   const [longlistThreshold, setLonglistThreshold] = useState('60')
@@ -48,7 +49,11 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [uploadedSpecDocId, setUploadedSpecDocId] = useState<string | null>(null)
   const [processingFile, setProcessingFile] = useState(false)
+  const [rubricUploadedFile, setRubricUploadedFile] = useState<File | null>(null)
+  const [processingRubric, setProcessingRubric] = useState(false)
+  const [rubricTitleMismatch, setRubricTitleMismatch] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const rubricFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (editingJob) {
@@ -59,6 +64,8 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
       setPostingDate(editingJob.postingDate.split('T')[0])
       setRubricCategories(editingJob.currentVersion.rubric)
       setMustHaves(editingJob.currentVersion.mustHaves)
+      setDesiredCriteria(editingJob.currentVersion.desiredCriteria || [])
+      setJobDescription(editingJob.jobDescription || '')
       setRunsPerApplication(String(editingJob.currentVersion.runsPerApplication))
       setAggregationStrategy(editingJob.currentVersion.aggregationStrategy)
       setLonglistThreshold(String(editingJob.currentVersion.longlistThreshold))
@@ -70,16 +77,11 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
     const file = e.target.files?.[0]
     if (!file) return
 
-    const validTypes = [
-      'application/pdf',
-      'text/markdown',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    ]
-    const validExtensions = ['.pdf', '.md', '.docx']
+    const validExtensions = ['.pdf', '.jpg', '.jpeg', '.md', '.txt', '.docx']
     const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
 
-    if (!validTypes.includes(file.type) && !validExtensions.includes(fileExtension)) {
-      toast.error('Please upload a PDF, Markdown (.md), or DOCX file')
+    if (!validExtensions.includes(fileExtension)) {
+      toast.error('Please upload a PDF, JPG, Markdown (.md), TXT, or DOCX file')
       return
     }
 
@@ -88,64 +90,96 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
     setProcessingFile(true)
 
     try {
-      const prompt = `You are analyzing a job specification document. Extract the following information and return it as JSON:
+      const reader = new FileReader()
+      const base64Content = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string
+          resolve(result.split(',')[1] || result)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
 
-{
-  "title": "job title",
-  "department": "department name",
-  "organization": "organization name (if mentioned, otherwise use 'Not Specified')",
-  "rubric": [
-    {
-      "name": "category name",
-      "description": "what to evaluate",
-      "weight": 0.25
-    }
-  ],
-  "mustHaves": [
-    {
-      "criterion": "requirement description",
-      "description": "additional context"
-    }
-  ]
-}
+      const extracted = await api.extractJobSpec(file.name, base64Content, file.type)
 
-Important:
-- Rubric weights MUST sum to exactly 1.0
-- Include 3-5 rubric categories that cover the key evaluation areas
-- Must-haves should be clear, specific requirements
-- If any field is unclear, make reasonable inferences based on the job description
+      setTitle(extracted.title || '')
+      setDepartment(extracted.department || '')
+      setOrganization(extracted.organization && extracted.organization !== 'Not Specified' ? extracted.organization : '')
+      setJobDescription(extracted.jobDescription || '')
 
-Document content:
-${file.name}
+      if (extracted.mustHaves && Array.isArray(extracted.mustHaves)) {
+        setMustHaves(
+          extracted.mustHaves.map((m: any, i: number) => ({
+            id: String(i + 1),
+            criterion: m.criterion || '',
+            description: m.description || '',
+          }))
+        )
+      }
 
-Note: Since this is a simulated environment, I'll generate a realistic job spec based on the filename. In production, the actual file content would be extracted and analyzed.`
+      if (extracted.desiredCriteria && Array.isArray(extracted.desiredCriteria)) {
+        setDesiredCriteria(
+          extracted.desiredCriteria.map((d: any, i: number) => ({
+            id: String(i + 1),
+            qualification: d.qualification || '',
+            description: d.description || '',
+          }))
+        )
+      }
 
-      const response = await llm(prompt, 'gpt-4o', true)
-      const parsed = JSON.parse(response)
-
-      setTitle(parsed.title || '')
-      setDepartment(parsed.department || '')
-      setOrganization(parsed.organization !== 'Not Specified' ? parsed.organization : '')
-
-      if (parsed.rubric && Array.isArray(parsed.rubric)) {
+      if (extracted.rubric && Array.isArray(extracted.rubric) && extracted.rubric.length > 0) {
         setRubricCategories(
-          parsed.rubric.map((r: any, i: number) => ({
+          extracted.rubric.map((r: any, i: number) => ({
             id: String(i + 1),
             name: r.name || '',
             description: r.description || '',
             weight: r.weight || 0,
           }))
         )
-      }
+      } else if (!rubricUploadedFile) {
+        // Auto-generate draft rubric: 60% weight to must-haves
+        const mhItems = (extracted.mustHaves || []).filter((m: any) => m.criterion)
+        const dcItems = (extracted.desiredCriteria || []).filter((d: any) => d.qualification)
+        const draftCategories: RubricCategory[] = []
+        const mustHaveWeight = 0.6
+        const desiredWeight = 0.4
 
-      if (parsed.mustHaves && Array.isArray(parsed.mustHaves)) {
-        setMustHaves(
-          parsed.mustHaves.map((m: any, i: number) => ({
-            id: String(i + 1),
-            criterion: m.criterion || '',
-            description: m.description || '',
-          }))
-        )
+        if (mhItems.length > 0) {
+          const perMh = mustHaveWeight / mhItems.length
+          mhItems.forEach((m: any, i: number) => {
+            draftCategories.push({
+              id: `draft-mh-${i}`,
+              name: m.criterion,
+              description: m.description || 'Must-have requirement',
+              weight: Math.round(perMh * 100) / 100,
+            })
+          })
+        }
+
+        if (dcItems.length > 0) {
+          const perDc = (mhItems.length > 0 ? desiredWeight : 1.0) / dcItems.length
+          dcItems.forEach((d: any, i: number) => {
+            draftCategories.push({
+              id: `draft-dc-${i}`,
+              name: d.qualification,
+              description: d.description || 'Desired qualification',
+              weight: Math.round(perDc * 100) / 100,
+            })
+          })
+        }
+
+        // Normalize weights to sum to 1.0
+        if (draftCategories.length > 0) {
+          const total = draftCategories.reduce((s, c) => s + c.weight, 0)
+          if (total > 0) {
+            draftCategories.forEach(c => c.weight = Math.round((c.weight / total) * 100) / 100)
+            // Fix rounding error on last item
+            const sum = draftCategories.reduce((s, c) => s + c.weight, 0)
+            draftCategories[draftCategories.length - 1].weight += Math.round((1.0 - sum) * 100) / 100
+          }
+          setRubricCategories(draftCategories)
+          toast.info('Draft rubric generated from requirements. Review and adjust weights.')
+        }
       }
 
       toast.success('Job specification extracted successfully')
@@ -157,11 +191,82 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
     }
   }
 
+  const handleRubricFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const validExtensions = ['.pdf', '.jpg', '.jpeg', '.md', '.txt', '.docx']
+    const fileExtension = file.name.toLowerCase().slice(file.name.lastIndexOf('.'))
+
+    if (!validExtensions.includes(fileExtension)) {
+      toast.error('Please upload a PDF, JPG, Markdown (.md), TXT, or DOCX file')
+      return
+    }
+
+    setRubricUploadedFile(file)
+    setProcessingRubric(true)
+    setRubricTitleMismatch(null)
+
+    try {
+      const reader = new FileReader()
+      const base64Content = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => {
+          const result = reader.result as string
+          resolve(result.split(',')[1] || result)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+
+      const extracted = await api.extractRubric(file.name, base64Content, file.type)
+
+      // Check title mismatch
+      if (extracted.title && title && extracted.title.toLowerCase() !== title.toLowerCase()) {
+        setRubricTitleMismatch(
+          `The rubric document title "${extracted.title}" does not match the job title "${title}". Please correct and re-upload the rubric document. The existing rubric will be discarded.`
+        )
+        setRubricUploadedFile(null)
+        if (rubricFileInputRef.current) rubricFileInputRef.current.value = ''
+        return
+      }
+
+      if (extracted.categories && Array.isArray(extracted.categories)) {
+        const rubric: RubricCategory[] = extracted.categories.map((c: any, i: number) => ({
+          id: `rubric-${Date.now()}-${i}`,
+          name: c.name || '',
+          description: c.description || '',
+          weight: c.weight || 0,
+        }))
+
+        const totalWeight = rubric.reduce((sum, c) => sum + c.weight, 0)
+        if (Math.abs(totalWeight - 1.0) > 0.01) {
+          rubric.forEach(c => c.weight = c.weight / totalWeight)
+        }
+
+        setRubricCategories(rubric)
+        toast.success('Rubric extracted from document successfully')
+      }
+    } catch (error) {
+      toast.error('Failed to process rubric document.')
+      console.error('Error processing rubric file:', error)
+    } finally {
+      setProcessingRubric(false)
+    }
+  }
+
   const removeUploadedFile = () => {
     setUploadedFile(null)
     setUploadedSpecDocId(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
+    }
+  }
+
+  const removeRubricFile = () => {
+    setRubricUploadedFile(null)
+    setRubricTitleMismatch(null)
+    if (rubricFileInputRef.current) {
+      rubricFileInputRef.current.value = ''
     }
   }
 
@@ -197,6 +302,21 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
     setMustHaves(mustHaves.map((m) => (m.id === id ? { ...m, [field]: value } : m)))
   }
 
+  const addDesiredCriterion = () => {
+    setDesiredCriteria([
+      ...desiredCriteria,
+      { id: Date.now().toString(), qualification: '', description: '' },
+    ])
+  }
+
+  const removeDesiredCriterion = (id: string) => {
+    setDesiredCriteria(desiredCriteria.filter((d) => d.id !== id))
+  }
+
+  const updateDesiredCriterion = (id: string, field: keyof DesiredCriteria, value: string) => {
+    setDesiredCriteria(desiredCriteria.map((d) => (d.id === id ? { ...d, [field]: value } : d)))
+  }
+
   const handleSubmit = async () => {
     if (!title || !department || !organization || !jobCode) {
       toast.error('Please fill in job title, job code, department, and organization')
@@ -226,6 +346,8 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
           postingDate,
           rubric: validCategories,
           mustHaves: mustHaves.filter((m) => m.criterion),
+          desiredCriteria: desiredCriteria.filter((d) => d.qualification),
+          jobDescription: jobDescription || undefined,
           runsPerApplication: parseInt(runsPerApplication),
           aggregationStrategy,
           longlistThreshold: parseFloat(longlistThreshold),
@@ -243,6 +365,8 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
           postingDate,
           rubric: validCategories,
           mustHaves: mustHaves.filter((m) => m.criterion),
+          desiredCriteria: desiredCriteria.filter((d) => d.qualification),
+          jobDescription: jobDescription || undefined,
           runsPerApplication: parseInt(runsPerApplication),
           aggregationStrategy,
           longlistThreshold: parseFloat(longlistThreshold),
@@ -267,17 +391,24 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
     setJobCode('')
     setDepartment('')
     setOrganization('')
+    setJobDescription('')
     setPostingDate(new Date().toISOString().split('T')[0])
     setRubricCategories([{ id: '1', name: '', description: '', weight: 0 }])
     setMustHaves([{ id: '1', criterion: '', description: '' }])
+    setDesiredCriteria([])
     setRunsPerApplication('3')
     setAggregationStrategy('median')
     setLonglistThreshold('60')
     setShortlistThreshold('75')
     setUploadedFile(null)
     setUploadedSpecDocId(null)
+    setRubricUploadedFile(null)
+    setRubricTitleMismatch(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
+    }
+    if (rubricFileInputRef.current) {
+      rubricFileInputRef.current.value = ''
     }
   }
 
@@ -315,7 +446,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.md,.docx,application/pdf,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                accept=".pdf,.jpg,.jpeg,.md,.txt,.docx"
                 onChange={handleFileSelect}
                 className="hidden"
                 id="job-spec-upload"
@@ -328,7 +459,7 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
                   <div>
                     <p className="text-sm font-medium mb-1">Upload Job Specification</p>
                     <p className="text-xs text-muted-foreground">
-                      Supported formats: PDF, Markdown (.md), DOCX
+                      Supported formats: PDF, JPG, Markdown (.md), TXT, DOCX
                     </p>
                   </div>
                   <Button
@@ -371,6 +502,72 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
                 </div>
               )}
             </div>
+
+            <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
+              <input
+                ref={rubricFileInputRef}
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.md,.txt,.docx"
+                onChange={handleRubricFileSelect}
+                className="hidden"
+                id="rubric-upload"
+              />
+              {!rubricUploadedFile ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-medium mb-1">Upload Rubric Document (Optional)</p>
+                    <p className="text-xs text-muted-foreground">
+                      Separately upload a scoring rubric if not included in the job specification
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => rubricFileInputRef.current?.click()}
+                    disabled={processingRubric}
+                  >
+                    <UploadSimple size={16} />
+                    Choose Rubric File
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-center gap-3">
+                    <File size={24} className="text-accent" />
+                    <div className="text-left">
+                      <p className="text-sm font-medium">{rubricUploadedFile.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {(rubricUploadedFile.size / 1024).toFixed(1)} KB
+                      </p>
+                    </div>
+                  </div>
+                  {processingRubric && (
+                    <div className="flex items-center justify-center gap-2 text-sm text-accent">
+                      <Sparkle size={16} className="animate-pulse" />
+                      Extracting rubric...
+                    </div>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={removeRubricFile}
+                    disabled={processingRubric}
+                  >
+                    <X size={16} />
+                    Remove
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {rubricTitleMismatch && (
+              <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+                <WarningCircle size={20} className="shrink-0 mt-0.5" />
+                <p>{rubricTitleMismatch}</p>
+              </div>
+            )}
 
             {uploadedFile && !processingFile && (
               <p className="text-sm text-muted-foreground text-center">
@@ -425,6 +622,16 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
                   type="date"
                   value={postingDate}
                   onChange={(e) => setPostingDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2 col-span-2">
+                <Label htmlFor="jobDescription">Job Description</Label>
+                <Textarea
+                  id="jobDescription"
+                  value={jobDescription}
+                  onChange={(e) => setJobDescription(e.target.value)}
+                  placeholder="Job description (extracted from spec or enter manually)"
+                  rows={3}
                 />
               </div>
             </div>
@@ -514,6 +721,41 @@ Note: Since this is a simulated environment, I'll generate a realistic job spec 
                         size="sm"
                         onClick={() => removeMustHave(mustHave.id)}
                         disabled={mustHaves.length === 1}
+                        className="mt-7"
+                      >
+                        <X size={16} />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>Desired Criteria</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addDesiredCriterion}>
+                  <Plus size={16} />
+                  Add Criterion
+                </Button>
+              </div>
+              {desiredCriteria.map((criterion) => (
+                <Card key={criterion.id}>
+                  <CardContent className="p-4">
+                    <div className="flex gap-2">
+                      <div className="flex-1 space-y-2">
+                        <Label>Qualification</Label>
+                        <Input
+                          value={criterion.qualification}
+                          onChange={(e) => updateDesiredCriterion(criterion.id, 'qualification', e.target.value)}
+                          placeholder="e.g., Experience with cloud platforms"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeDesiredCriterion(criterion.id)}
                         className="mt-7"
                       >
                         <X size={16} />

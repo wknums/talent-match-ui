@@ -9,6 +9,7 @@ public class Job
     public string Organisation { get; set; } = string.Empty;
     public DateTime PostingDate { get; set; }
     public string Status { get; set; } = "active"; // active, closed, draft
+    public string? JobDescription { get; set; }
     public string? CurrentConfigVersionId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

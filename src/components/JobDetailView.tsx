@@ -9,10 +9,12 @@ import { ApplicationsTable } from '@/components/ApplicationsTable'
 import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
 import { UploadRubricDialog } from '@/components/UploadRubricDialog'
-import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText } from '@phosphor-icons/react'
+import { PromptManagement } from '@/components/PromptManagement'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText, Lightning } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
-import type { Job, Application } from '@/types'
+import type { Job, Application, ScoringPrompt } from '@/types'
 
 interface JobDetailViewProps {
   jobId: string
@@ -34,6 +36,8 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const [drilldownSnapshot, setDrilldownSnapshot] = useState<Application[]>([])
   const [uploadRubricOpen, setUploadRubricOpen] = useState(false)
   const [viewingDocument, setViewingDocument] = useState<'spec' | 'rubric' | null>(null)
+  const [promptManagementOpen, setPromptManagementOpen] = useState(false)
+  const [productionApprovedPrompt, setProductionApprovedPrompt] = useState<ScoringPrompt | null>(null)
 
   useEffect(() => {
     loadData()
@@ -49,6 +53,15 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
       ])
       if (jobData) setJob(jobData)
       setApplications(appsData)
+
+      // Load production-approved prompt
+      try {
+        const prompts = await api.getPrompts(jobId)
+        const approved = prompts.find((p) => p.status === 'production-approved') ?? null
+        setProductionApprovedPrompt(approved)
+      } catch {
+        // Non-critical — leave as null
+      }
     } finally {
       setLoading(false)
     }
@@ -180,10 +193,30 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
             <UploadSimple size={20} />
             Upload Rubric
           </Button>
-          <Button onClick={onUploadApplications}>
-            <UploadSimple size={20} />
-            Upload Applications
+          <Button variant="outline" onClick={() => setPromptManagementOpen(true)}>
+            <Lightning size={20} />
+            Prompt Management
           </Button>
+          {productionApprovedPrompt ? (
+            <Button onClick={onUploadApplications}>
+              <UploadSimple size={20} />
+              Upload Applications
+            </Button>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span tabIndex={0}>
+                  <Button disabled>
+                    <UploadSimple size={20} />
+                    Upload Applications
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                A production-approved prompt is required before processing applications (FR-032)
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
       </div>
 
@@ -347,6 +380,19 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
               </div>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={promptManagementOpen} onOpenChange={setPromptManagementOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Scoring Prompt Management</DialogTitle>
+          </DialogHeader>
+          <PromptManagement
+            jobId={jobId}
+            hasApprovedRubric={!!job.rubricDocumentId}
+            onPromptStatusChange={() => loadData()}
+          />
         </DialogContent>
       </Dialog>
     </div>

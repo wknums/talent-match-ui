@@ -9,6 +9,7 @@ export async function runScoring(
   applicationId: string,
   jobId: string,
   runCount: number = 3,
+  promptVersionId?: string,
 ): Promise<ScoringRun[]> {
   const jobs = await getArray<Job>(storage, JOBS)
   const job = jobs.find(j => j.jobId === jobId)
@@ -39,7 +40,7 @@ export async function runScoring(
       versionId: config?.versionId || 'unknown',
       runIndex: i + 1,
       modelDeploymentId: 'gpt-4o-deployment-001',
-      promptVersionId: 'prompt-v2.3',
+      promptVersionId: promptVersionId || 'prompt-v2.3',
       overallScore,
       subScores,
       mustHaveResult: {
