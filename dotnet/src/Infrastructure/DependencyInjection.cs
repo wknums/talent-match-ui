@@ -32,7 +32,10 @@ public static class DependencyInjection
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IProcessingEventRepository, ProcessingEventRepository>();
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();
+        services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
+        services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddHttpClient<ILlmProxyService, LlmProxyService>();
         services.AddHttpContextAccessor();
 
         return services;

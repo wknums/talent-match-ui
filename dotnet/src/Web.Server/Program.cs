@@ -34,6 +34,7 @@ builder.Services.AddAuthorization(options =>
 });
 
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddHttpClient();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new() { Title = "TalentMatch API", Version = "v1" });
@@ -96,6 +97,7 @@ app.MapJobsEndpoints();
 app.MapApplicationsEndpoints();
 app.MapStatsEndpoints();
 app.MapDlqEndpoints();
+app.MapPromptEndpoints();
 
 app.MapFallbackToFile("index.html");
 

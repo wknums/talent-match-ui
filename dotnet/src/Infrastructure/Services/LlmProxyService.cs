@@ -1,13 +1,9 @@
 using System.Net.Http.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using TalentMatch.Application.Common.Interfaces;
 
 namespace TalentMatch.Infrastructure.Services;
-
-public interface ILlmProxyService
-{
-    Task<string> SendPromptAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default);
-}
 
 public class LlmProxyService : ILlmProxyService
 {

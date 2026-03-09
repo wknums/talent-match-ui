@@ -11,7 +11,8 @@ public record GetApplicationsQuery(
     string? SortOrder,
     double? VarianceMin,
     int Page,
-    int PageSize
+    int PageSize,
+    bool IncludeTestCases = false
 ) : IRequest<IReadOnlyList<Domain.Entities.Application>>;
 
 public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery, IReadOnlyList<Domain.Entities.Application>>
@@ -26,6 +27,13 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
     public async Task<IReadOnlyList<Domain.Entities.Application>> Handle(GetApplicationsQuery request, CancellationToken cancellationToken)
     {
         var apps = await _applicationRepository.GetByJobIdAsync(request.JobId, cancellationToken);
+
+        // FR-038: Filter out test run applications from production results unless explicitly requested
+        if (!request.IncludeTestCases)
+        {
+            apps = apps.Where(a => a.TestRunId == null).ToList();
+        }
+
         return apps;
     }
 }
