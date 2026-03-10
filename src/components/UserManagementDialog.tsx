@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
-import { UserPlus, Trash, Key, X, Check } from '@phosphor-icons/react'
+import { UserPlus, Trash, Key, X, Check, Pencil } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import type { User, PasswordResetRequest } from '@/types'
 import { api } from '@/lib/api'
@@ -29,6 +29,13 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
   const [isLoading, setIsLoading] = useState(false)
   const [resetingUserId, setResetingUserId] = useState<string | null>(null)
   const [newResetPassword, setNewResetPassword] = useState('')
+
+  // Edit user state (T005)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [editForm, setEditForm] = useState({ fullName: '', email: '', role: '', department: '' })
+  const [editDepartments, setEditDepartments] = useState<string[]>([])
+  const [editDeptInput, setEditDeptInput] = useState('')
+  const [isEditLoading, setIsEditLoading] = useState(false)
 
   const [newUser, setNewUser] = useState({
     username: '',
@@ -149,6 +156,74 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
     }
   }
 
+  // Edit user handlers (T005)
+  const handleEditUser = (user: User) => {
+    setEditingUser(user)
+    const depts = user.department ? user.department.split(',').filter(d => d.trim()) : []
+    setEditDepartments(depts)
+    setEditDeptInput('')
+    setEditForm({
+      fullName: user.fullName,
+      email: user.email ?? '',
+      role: user.role,
+      department: user.department ?? '',
+    })
+    setShowCreateForm(false)
+  }
+
+  const handleCancelEdit = () => {
+    setEditingUser(null)
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editingUser) return
+
+    if (!editForm.fullName.trim()) {
+      toast.error('Full name is required')
+      return
+    }
+    if (!editForm.email.trim()) {
+      toast.error('Email is required')
+      return
+    }
+
+    setIsEditLoading(true)
+    try {
+      const department = editDepartments.join(',')
+      await api.updateUser(editingUser.userId, editForm.fullName, editForm.email, editForm.role, department)
+      toast.success('User updated successfully')
+      setEditingUser(null)
+      await loadData()
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to update user')
+    } finally {
+      setIsEditLoading(false)
+    }
+  }
+
+  // Tag-style department input handlers (T008)
+  const handleAddDepartment = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const dept = editDeptInput.trim()
+      if (!dept) return
+      if (dept.includes(',')) {
+        toast.error('Department names cannot contain commas')
+        return
+      }
+      if (editDepartments.includes(dept)) {
+        toast.error('Department already added')
+        return
+      }
+      setEditDepartments([...editDepartments, dept])
+      setEditDeptInput('')
+    }
+  }
+
+  const handleRemoveDepartment = (dept: string) => {
+    setEditDepartments(editDepartments.filter(d => d !== dept))
+  }
+
   const handleResolveResetRequest = async (requestId: string, userId: string, approve: boolean) => {
     if (approve) {
       const password = prompt('Enter new password for user:')
@@ -254,13 +329,13 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
 
           <div className="flex justify-between items-center">
             <h3 className="text-sm font-medium">Users</h3>
-            <Button onClick={() => setShowCreateForm(!showCreateForm)}>
+            <Button onClick={() => setShowCreateForm(!showCreateForm)} disabled={!!editingUser}>
               <UserPlus size={16} />
               Add User
             </Button>
           </div>
 
-          {showCreateForm && (
+          {showCreateForm && !editingUser && (
             <form onSubmit={handleCreateUser} className="border rounded-lg p-4 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -339,6 +414,86 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
             </form>
           )}
 
+          {editingUser && (
+            <div className="border rounded-lg p-4 space-y-4">
+              <h4 className="font-medium">Edit User: {editingUser.username}</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-fullname">Full Name *</Label>
+                  <Input
+                    id="edit-fullname"
+                    value={editForm.fullName}
+                    onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })}
+                    disabled={isEditLoading}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-email">Email *</Label>
+                  <Input
+                    id="edit-email"
+                    type="email"
+                    value={editForm.email}
+                    onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+                    disabled={isEditLoading}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-role">Role</Label>
+                  <Select
+                    value={editForm.role}
+                    onValueChange={(value) => setEditForm({ ...editForm, role: value })}
+                    disabled={isEditLoading || editingUser.userId === currentUserId}
+                  >
+                    <SelectTrigger id="edit-role">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="recruiter">Recruiter</SelectItem>
+                      <SelectItem value="business_panel">Business Panel Member</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {editingUser.userId === currentUserId && (
+                    <p className="text-xs text-muted-foreground">You cannot change your own role</p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>Departments</Label>
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {editDepartments.map((dept) => (
+                      <Badge key={dept} variant="secondary" className="gap-1">
+                        {dept}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveDepartment(dept)}
+                          className="ml-1 hover:text-destructive"
+                          disabled={isEditLoading}
+                        >
+                          <X size={12} />
+                        </button>
+                      </Badge>
+                    ))}
+                  </div>
+                  <Input
+                    placeholder="Type a department and press Enter"
+                    value={editDeptInput}
+                    onChange={(e) => setEditDeptInput(e.target.value)}
+                    onKeyDown={handleAddDepartment}
+                    disabled={isEditLoading}
+                  />
+                </div>
+              </div>
+              <div className="flex gap-3 justify-end">
+                <Button type="button" variant="outline" onClick={handleCancelEdit} disabled={isEditLoading}>
+                  Cancel
+                </Button>
+                <Button onClick={handleSaveEdit} disabled={isEditLoading}>
+                  {isEditLoading ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </div>
+            </div>
+          )}
+
           <div className="border rounded-lg overflow-hidden">
             <Table>
               <TableHeader>
@@ -365,7 +520,13 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {user.department || '—'}
+                      {user.department && user.department.includes(',')
+                        ? user.department.split(',').map((d) => (
+                            <Badge key={d} variant="outline" className="mr-1 mb-1">
+                              {d.trim()}
+                            </Badge>
+                          ))
+                        : user.department || '—'}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {user.lastLogin ? new Date(user.lastLogin).toLocaleDateString() : 'Never'}
@@ -397,6 +558,14 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
                           </div>
                         ) : (
                           <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleEditUser(user)}
+                              disabled={isEditLoading}
+                            >
+                              <Pencil size={16} />
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"

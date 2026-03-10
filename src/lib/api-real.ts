@@ -72,6 +72,13 @@ export const realAPI = {
     })
   },
 
+  async updateUser(userId: string, fullName: string, email: string, role: string, department: string): Promise<User> {
+    return fetchJSON(`${API_BASE}/users/${userId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ fullName, email, role, department }),
+    })
+  },
+
   async deleteUser(userId: string): Promise<void> {
     await fetchJSON(`${API_BASE}/users/${userId}`, { method: 'DELETE' })
   },

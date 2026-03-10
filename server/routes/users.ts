@@ -76,6 +76,60 @@ export function createUsersRouter(storage: StorageProvider) {
     }
   })
 
+  // PUT /api/users/:userId - admin: update user
+  router.put('/:userId', requireRole('admin'), async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { userId } = req.params
+      const { fullName, email, role, department } = req.body
+
+      // Validate required fields
+      if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Full name is required' })
+      }
+      if (!email || typeof email !== 'string' || !email.trim()) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Email is required' })
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(email)) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Email must be a valid email address' })
+      }
+      const validRoles = ['admin', 'recruiter', 'business_panel']
+      if (!role || !validRoles.includes(role)) {
+        return res.status(400).json({ error: 'Validation Error', message: "Role must be 'admin', 'recruiter', or 'business_panel'" })
+      }
+
+      const users = await getArray<StoredUser>(storage, AUTH_USERS)
+      const userIndex = users.findIndex(u => u.userId === userId)
+      if (userIndex === -1) {
+        return res.status(404).json({ error: 'Not Found', message: 'User not found' })
+      }
+
+      // Check email uniqueness across other users
+      const emailConflict = users.find(u => u.userId !== userId && u.email?.toLowerCase() === email.toLowerCase())
+      if (emailConflict) {
+        return res.status(409).json({ error: 'Conflict', message: `Email '${email}' is already in use by another user.` })
+      }
+
+      // Self-role-change prevention: silently preserve existing role
+      const effectiveRole = req.user?.userId === userId ? users[userIndex].role : role
+
+      const updatedUsers = users.map(u =>
+        u.userId === userId
+          ? { ...u, fullName: fullName.trim(), email: email.trim(), role: effectiveRole, department: department ?? u.department }
+          : u
+      )
+      await setArray(storage, AUTH_USERS, updatedUsers)
+
+      await audit.appendEvent(req.user!.username, 'user.updated', 'User', userId, { fullName, email, role: effectiveRole, department })
+
+      const updated = updatedUsers.find(u => u.userId === userId)!
+      const { passwordHash, ...safeUser } = updated
+      res.json(safeUser)
+    } catch (err) {
+      next(err)
+    }
+  })
+
   // DELETE /api/users/:userId - admin: delete user
   router.delete('/:userId', requireRole('admin'), async (req: AuthenticatedRequest, res, next) => {
     try {
