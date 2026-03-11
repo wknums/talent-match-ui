@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace TalentMatch.Web.Client.Services;
 
@@ -15,6 +16,7 @@ public class ApiException : Exception
 public class ApiClient
 {
     private readonly HttpClient _http;
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public ApiClient(HttpClient http)
     {
@@ -85,6 +87,12 @@ public class ApiClient
         await EnsureSuccessOrThrowAsync(response, "Failed to reset password.");
     }
 
+    public async Task UpdateUserAsync(string userId, string fullName, string email, string role, string department)
+    {
+        var response = await _http.PutAsJsonAsync($"/api/users/{userId}", new { FullName = fullName, Email = email, Role = role, Department = department });
+        await EnsureSuccessOrThrowAsync(response, "Failed to update user.");
+    }
+
     // Password Reset Requests
     public async Task<List<ResetRequestDto>> GetResetRequestsAsync()
         => await _http.GetFromJsonAsync<List<ResetRequestDto>>("/api/users/reset-requests") ?? new();
@@ -102,8 +110,8 @@ public class ApiClient
     }
 
     // Jobs
-    public async Task<List<JobDto>> GetJobsAsync()
-        => await _http.GetFromJsonAsync<List<JobDto>>("/api/jobs") ?? new();
+    public async Task<List<JobSummaryDto>> GetJobsAsync()
+        => await _http.GetFromJsonAsync<List<JobSummaryDto>>("/api/jobs", JsonOptions) ?? new();
 
     public async Task<JobDto?> GetJobAsync(string jobId)
         => await _http.GetFromJsonAsync<JobDto>($"/api/jobs/{jobId}");
@@ -114,10 +122,10 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<bool> UpdateJobConfigAsync(string jobId, UpdateConfigDto config)
+    public async Task UpdateJobConfigAsync(string jobId, UpdateConfigDto config)
     {
         var response = await _http.PutAsJsonAsync($"/api/jobs/{jobId}/config", config);
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to update job configuration.");
     }
 
     public async Task<bool> ProcessJobAsync(string jobId)
@@ -126,17 +134,31 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<bool> DeleteJobAsync(string jobId)
+    {
+        var response = await _http.DeleteAsync($"/api/jobs/{jobId}");
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task<ExtractSpecResult?> ExtractJobSpecAsync(string fileName, string content, string mimeType)
     {
         var response = await _http.PostAsJsonAsync("/api/jobs/extract-spec", new { FileName = fileName, Content = content, MimeType = mimeType });
-        if (!response.IsSuccessStatusCode) return null;
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            throw new HttpRequestException($"Extraction failed ({(int)response.StatusCode}): {errorBody}");
+        }
         return await response.Content.ReadFromJsonAsync<ExtractSpecResult>();
     }
 
     public async Task<ExtractRubricResult?> ExtractRubricAsync(string fileName, string content, string mimeType)
     {
         var response = await _http.PostAsJsonAsync("/api/jobs/extract-rubric", new { FileName = fileName, Content = content, MimeType = mimeType });
-        if (!response.IsSuccessStatusCode) return null;
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            throw new HttpRequestException($"Rubric extraction failed ({(int)response.StatusCode}): {errorBody}");
+        }
         return await response.Content.ReadFromJsonAsync<ExtractRubricResult>();
     }
 
@@ -263,7 +285,8 @@ public class ApiClient
 
 // DTOs
 public record UserInfo(string Id, string Username, string Role, string Department, string FullName, string Email, DateTime? LastLogin = null);
-public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, DateTime CreatedAt);
+public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt);
+public record JobSummaryDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt, string CreatedByName, int TotalApplications, int CompletedApplications);
 public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription);
 public record UpdateConfigDto(string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);
 public record ApplicationDto(string Id, string JobId, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt);

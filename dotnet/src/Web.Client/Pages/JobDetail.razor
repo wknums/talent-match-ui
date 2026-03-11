@@ -16,6 +16,11 @@
             <button @onclick="ProcessJob" disabled="@(isProcessing || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
                 @(isProcessing ? "Processing..." : "Process Applications")
             </button>
+            <button @onclick="() => showEditDialog = true" aria-label="Edit job configuration" style="padding: 0.5rem 1rem; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer;">✏️ Edit Job</button>
+            @if (isAdmin)
+            {
+                <button @onclick="OpenDeleteDialog" style="padding: 0.5rem 1rem; background: #dc2626; color: white; border: none; border-radius: 4px;">Delete Job</button>
+            }
             @if (!hasProductionApprovedPrompt)
             {
                 <span style="color: #e53e3e; font-size: 0.85rem; align-self: center;">⚠️ Production-approved prompt required</span>
@@ -87,6 +92,31 @@ else
     </div>
 }
 
+@if (showDeleteDialog)
+{
+    <ConfirmDeleteJobDialog Visible="true"
+                            JobTitle="@(job?.Title ?? "")"
+                            ApplicationCount="@(allApps.Count)"
+                            OnConfirm="ConfirmDelete"
+                            OnCancel="CancelDelete" />
+}
+
+@if (showEditDialog)
+{
+    <CreateJobDialog Visible="true"
+                     EditingJob="job"
+                     EditingConfig="jobConfig"
+                     OnUpdated="OnEditCompleted"
+                     OnCancel="() => showEditDialog = false" />
+}
+
+@if (!string.IsNullOrEmpty(deleteError))
+{
+    <div style="padding: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; margin-bottom: 1rem;">
+        @deleteError
+    </div>
+}
+
 @code {
     [Parameter] public string JobId { get; set; } = "";
 
@@ -99,7 +129,12 @@ else
     private bool sortAscending;
     private bool hasProductionApprovedPrompt;
     private bool hasApprovedRubric;
+    private bool isAdmin;
+    private bool showDeleteDialog;
+    private bool showEditDialog;
+    private string? deleteError;
     private ScoringPromptDto? activePrompt;
+    private JobConfigDto? jobConfig;
 
     private List<ApplicationDto> longlist => allApps.Where(a => a.FinalDecision == "Eligible").ToList();
     private List<ApplicationDto> shortlist => allApps.Where(a => a.FinalScore >= 85).ToList();
@@ -118,6 +153,9 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        var currentUser = await Api.GetCurrentUserAsync();
+        isAdmin = currentUser?.Role == "admin";
+
         job = await Api.GetJobAsync(JobId);
         allApps = await Api.GetApplicationsAsync(JobId);
         await LoadPromptStatus();
@@ -126,6 +164,7 @@ else
     private async Task LoadPromptStatus()
     {
         var config = await Api.GetJobConfigAsync(JobId);
+        jobConfig = config;
         hasApprovedRubric = config?.RubricJson != null;
 
         var prompts = await Api.GetPromptsAsync(JobId);
@@ -159,5 +198,39 @@ else
         await Api.ProcessJobAsync(JobId);
         isProcessing = false;
         allApps = await Api.GetApplicationsAsync(JobId);
+    }
+
+    private void OpenDeleteDialog()
+    {
+        showDeleteDialog = true;
+        deleteError = null;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        showDeleteDialog = false;
+        var success = await Api.DeleteJobAsync(JobId);
+        if (success)
+        {
+            Navigation.NavigateTo("/");
+        }
+        else
+        {
+            deleteError = "Failed to delete job. Please try again.";
+        }
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteDialog = false;
+    }
+
+    private async Task OnEditCompleted()
+    {
+        showEditDialog = false;
+        job = await Api.GetJobAsync(JobId);
+        allApps = await Api.GetApplicationsAsync(JobId);
+        await LoadPromptStatus();
+        StateHasChanged();
     }
 }

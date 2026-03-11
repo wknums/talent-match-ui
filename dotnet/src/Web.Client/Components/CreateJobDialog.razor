@@ -3,42 +3,107 @@
 @using Microsoft.AspNetCore.Components.Forms
 @inject ApiClient Api
 
-<div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; max-width: 700px; background: white;">
-    <h4>Create New Job</h4>
+@if (Visible)
+{
+    <div class="dialog-backdrop"
+         @onclick="HandleBackdropClick"
+         @onmousemove="OnMouseMove"
+         @onmouseup="OnMouseUp">
+        <div class="dialog-window"
+             role="dialog"
+             aria-modal="true"
+             style="left: @(posX)px; top: @(posY)px; width: @(width)px; height: @(height)px;"
+             @onclick:stopPropagation="true">
+            @* Drag handle (title bar) *@
+            <div class="dialog-header"
+                 @onmousedown="OnHeaderMouseDown">
+                <h4 style="margin: 0;">@(IsEditMode ? "Edit Job Configuration" : "Create New Job")</h4>
+                <button class="dialog-close-btn" aria-label="Close dialog" @onclick="HandleCancel">✕</button>
+            </div>
 
-    @* Tab selector *@
-    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-        <button @onclick="() => activeTab = Tab.Upload" style="font-weight: @(activeTab == Tab.Upload ? "bold" : "normal");">Upload Spec</button>
-        <button @onclick="() => activeTab = Tab.Manual" style="font-weight: @(activeTab == Tab.Manual ? "bold" : "normal");">Manual Entry</button>
-    </div>
+            @* Scrollable body *@
+            <div class="dialog-body">
 
-    @if (activeTab == Tab.Upload)
-    {
-        <div style="display: grid; gap: 0.5rem;">
-            <h5>Upload Job Specification</h5>
-            <p style="font-size: 0.85rem; color: #666;">Supported formats: PDF, JPG, Markdown, TXT, DOCX</p>
-            <InputFile OnChange="HandleSpecFileSelected" accept=".pdf,.jpg,.jpeg,.md,.txt,.docx" />
-            @if (processingSpec)
-            {
-                <p style="color: blue;">⏳ Extracting job spec...</p>
-            }
+                @* Tab selector — hidden in edit mode *@
+                @if (!IsEditMode)
+                {
+                <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+                    <button @onclick="() => activeTab = Tab.Upload" style="font-weight: @(activeTab == Tab.Upload ? "bold" : "normal");">Upload Spec</button>
+                    <button @onclick="() => activeTab = Tab.Manual" style="font-weight: @(activeTab == Tab.Manual ? "bold" : "normal");">Manual Entry</button>
+                </div>
+                }
 
-            <h5 style="margin-top: 1rem;">Upload Rubric (optional)</h5>
-            <p style="font-size: 0.85rem; color: #666;">Upload a separate rubric document if not included in the spec.</p>
-            <InputFile OnChange="HandleRubricFileSelected" accept=".pdf,.jpg,.jpeg,.md,.txt,.docx" />
-            @if (processingRubric)
-            {
-                <p style="color: blue;">⏳ Extracting rubric...</p>
-            }
-            @if (rubricTitleMismatch)
-            {
-                <p style="color: #c57600;">⚠️ Warning: The rubric appears to be for a different job title. Please verify it matches the uploaded spec.</p>
-            }
-        </div>
-    }
+                @if (activeTab == Tab.Upload && !IsEditMode)
+                {
+                    <div style="display: grid; gap: 0.5rem;">
+                        <h5>Upload Job Specification</h5>
+                        <p style="font-size: 0.85rem; color: #666;">Supported formats: PDF, JPG, Markdown, TXT, DOCX</p>
+                        <InputFile OnChange="HandleSpecFileSelected" accept=".pdf,.jpg,.jpeg,.md,.txt,.docx" disabled="@processingSpec" />
+                        @if (processingSpec)
+                        {
+                            <div style="display: flex; align-items: center; gap: 0.5rem; color: #2563eb; padding: 0.5rem; background: #eff6ff; border-radius: 4px;">
+                                <span style="animation: pulse 1.5s ease-in-out infinite;">✨</span>
+                                <span>Extracting job specification with AI... This may take a moment.</span>
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(specExtractionError))
+                        {
+                            <div style="padding: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; font-size: 0.85rem;">
+                                ❌ @specExtractionError
+                            </div>
+                        }
+
+                        <h5 style="margin-top: 1rem;">Upload Rubric (optional)</h5>
+                        <p style="font-size: 0.85rem; color: #666;">Upload a separate rubric document if not included in the spec.</p>
+                        <InputFile OnChange="HandleRubricFileSelected" accept=".pdf,.jpg,.jpeg,.md,.txt,.docx" disabled="@processingRubric" />
+                        @if (processingRubric)
+                        {
+                            <div style="display: flex; align-items: center; gap: 0.5rem; color: #2563eb; padding: 0.5rem; background: #eff6ff; border-radius: 4px;">
+                                <span style="animation: pulse 1.5s ease-in-out infinite;">✨</span>
+                                <span>Extracting rubric with AI... This may take a moment.</span>
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(rubricExtractionError))
+                        {
+                            <div style="padding: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; font-size: 0.85rem;">
+                                ❌ @rubricExtractionError
+                            </div>
+                        }
+                        @if (rubricTitleMismatch)
+                        {
+                            <p style="color: #c57600;">⚠️ Warning: The rubric appears to be for a different job title. Please verify it matches the uploaded spec.</p>
+                        }
+                    </div>
+                }
 
     <div style="display: grid; gap: 0.5rem; margin-top: 1rem;">
-        <input placeholder="Job Title" @bind="title" />
+        @if (IsEditMode)
+        {
+            <div style="background: #f3f4f6; padding: 1rem; border-radius: 6px; margin-bottom: 1rem; border: 1px solid #e5e7eb;">
+                <h5 style="margin: 0 0 0.5rem;">Job Details (read-only)</h5>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 0.25rem 1rem; font-size: 0.9rem;">
+                    <strong>Title:</strong> <span>@title</span>
+                    @if (!string.IsNullOrEmpty(EditingJob?.JobCode))
+                    {
+                        <strong>Job Code:</strong> <span>@EditingJob.JobCode</span>
+                    }
+                    <strong>Department:</strong> <span>@department</span>
+                    <strong>Organisation:</strong> <span>@organisation</span>
+                    <strong>Posting Date:</strong> <span>@postingDate.ToString("yyyy-MM-dd")</span>
+                    @if (!string.IsNullOrEmpty(jobDescription))
+                    {
+                        <strong>Description:</strong> <span>@jobDescription</span>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+        <input placeholder="Job Title" @bind="title" @oninput="OnTitleInput" />
+        @if (validationErrors.ContainsKey("title"))
+        {
+            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["title"]</span>
+        }
         <input placeholder="Department" @bind="department" />
         <input placeholder="Organisation" @bind="organisation" />
         <input type="date" @bind="postingDate" />
@@ -47,6 +112,7 @@
             <label style="font-size: 0.85rem;">Job Description</label>
             <textarea @bind="jobDescription" rows="4" placeholder="Describe the role and responsibilities..." style="width: 100%;"></textarea>
         </div>
+        }
 
         <h5 style="margin-top: 1rem;">Rubric Categories</h5>
         @for (int i = 0; i < rubricCategories.Count; i++)
@@ -54,17 +120,25 @@
             var idx = i;
             <div style="display: flex; gap: 0.5rem; align-items: center;">
                 <input placeholder="Category Name" value="@rubricCategories[idx].Name" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Name = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
-                <input type="number" placeholder="Weight" value="@rubricCategories[idx].Weight" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Weight = double.TryParse(e.Value?.ToString(), out var w) ? w : 0 }" step="0.05" style="width: 80px;" />
+                <input type="number" placeholder="Weight" value="@rubricCategories[idx].Weight" @oninput="(e) => OnWeightInput(idx, e)" step="0.05" style="width: 80px;" />
                 <input placeholder="Description" value="@rubricCategories[idx].Description" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Description = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
-                <button @onclick="() => rubricCategories.RemoveAt(idx)" style="color: red;">✕</button>
+                <button @onclick="() => RemoveCategory(idx)" style="color: red;">✕</button>
             </div>
         }
         <div style="display: flex; gap: 0.5rem; align-items: center;">
             <button @onclick="AddCategory" style="padding: 0.25rem 0.5rem;">+ Add Category</button>
-            <span style="font-size: 0.8rem; color: @(Math.Abs(WeightSum - 1.0) < 0.001 ? "green" : "red");">
+            <span style="font-size: 0.8rem; color: @(validationErrors.ContainsKey("rubricWeights") ? "#dc2626" : Math.Abs(WeightSum - 1.0) < 0.001 ? "green" : "red");">
                 Weight sum: @WeightSum.ToString("F2") @(Math.Abs(WeightSum - 1.0) < 0.001 ? "✓" : "(must equal 1.0)")
             </span>
         </div>
+        @if (validationErrors.ContainsKey("rubric"))
+        {
+            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["rubric"]</span>
+        }
+        @if (validationErrors.ContainsKey("rubricWeights"))
+        {
+            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["rubricWeights"]</span>
+        }
 
         <h5 style="margin-top: 1rem;">Must-Have Criteria</h5>
         @for (int i = 0; i < mustHaveCriteria.Count; i++)
@@ -115,23 +189,54 @@
             </div>
         </div>
 
-        <div style="margin-top: 1rem;">
-            <button @onclick="Submit" disabled="@(!CanSubmit)">Create Job</button>
-            <button @onclick="() => OnCancel.InvokeAsync()">Cancel</button>
+        <div style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
+            <button @onclick="HandleCancel">Cancel</button>
+            <button @onclick="Submit" disabled="@((!CanSubmit && !IsEditMode) || isSaving)">@(IsEditMode ? "Update Configuration" : "Create Job")</button>
         </div>
     </div>
     @if (!string.IsNullOrEmpty(message))
     {
-        <p style="color: @(success ? "green" : "red");">@message</p>
+        @if (success)
+        {
+            <p style="color: green; padding: 0 1.5rem 1rem;">@message</p>
+        }
+        else
+        {
+            <div style="background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; padding: 0.75rem 1rem; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; margin: 0.5rem 0;">
+                <span>@message</span>
+                <button @onclick="() => message = null" style="background: none; border: none; color: #991b1b; cursor: pointer; font-size: 1.1rem;">✕</button>
+            </div>
+        }
     }
-</div>
+
+            </div>@* end dialog-body *@
+
+            @* Resize handle *@
+            <div class="dialog-resize-handle"
+                 @onmousedown="OnResizeMouseDown"></div>
+        </div>
+    </div>
+}
 
 @code {
+    [Parameter] public bool Visible { get; set; }
     [Parameter] public EventCallback OnCreated { get; set; }
     [Parameter] public EventCallback OnCancel { get; set; }
+    [Parameter] public JobDto? EditingJob { get; set; }
+    [Parameter] public JobConfigDto? EditingConfig { get; set; }
+    [Parameter] public EventCallback OnUpdated { get; set; }
+
+    private bool IsEditMode => EditingJob != null;
 
     private enum Tab { Upload, Manual }
     private Tab activeTab = Tab.Upload;
+
+    // Drag & resize state
+    private int posX = 200, posY = 50, width = 750, height = 600;
+    private const int MinWidth = 500, MinHeight = 400;
+    private bool isDragging, isResizing;
+    private double dragStartX, dragStartY;
+    private int dragOrigX, dragOrigY, resizeOrigW, resizeOrigH;
 
     private string title = "", department = "", organisation = "", jobDescription = "";
     private DateTime postingDate = DateTime.Today;
@@ -141,14 +246,144 @@
     private string? message;
     private bool success;
     private bool processingSpec, processingRubric, rubricTitleMismatch;
+    private string? specExtractionError, rubricExtractionError;
     private List<RubricCategoryInput> rubricCategories = new();
     private List<string> mustHaveCriteria = new();
     private List<DesiredCriterionInput> desiredCriteria = new();
+    private bool _populated;
+    private bool isSaving;
+    private Dictionary<string, string> validationErrors = new();
+
+    protected override void OnParametersSet()
+    {
+        if (IsEditMode && EditingConfig != null && !_populated)
+        {
+            // Populate config fields
+            scoringRunCount = EditingConfig.ScoringRunCount;
+            aggregationStrategy = EditingConfig.AggregationStrategy ?? "median";
+            longlistThreshold = EditingConfig.LonglistThreshold;
+            shortlistThreshold = EditingConfig.ShortlistThreshold;
+            varianceThreshold = EditingConfig.VarianceThreshold;
+
+            // Deserialize rubric categories
+            if (!string.IsNullOrEmpty(EditingConfig.RubricJson))
+            {
+                try
+                {
+                    var rubricItems = JsonSerializer.Deserialize<List<RubricCategoryInput>>(EditingConfig.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    rubricCategories = rubricItems ?? new();
+                }
+                catch { rubricCategories = new(); }
+            }
+            else { rubricCategories = new(); }
+
+            // Deserialize must-have criteria
+            if (!string.IsNullOrEmpty(EditingConfig.MustHaveCriteriaJson))
+            {
+                try
+                {
+                    var items = JsonSerializer.Deserialize<List<string>>(EditingConfig.MustHaveCriteriaJson);
+                    mustHaveCriteria = items ?? new();
+                }
+                catch { mustHaveCriteria = new(); }
+            }
+            else { mustHaveCriteria = new(); }
+
+            // Deserialize desired criteria
+            if (!string.IsNullOrEmpty(EditingConfig.DesiredCriteriaJson))
+            {
+                try
+                {
+                    var items = JsonSerializer.Deserialize<List<DesiredCriterionInput>>(EditingConfig.DesiredCriteriaJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    desiredCriteria = items ?? new();
+                }
+                catch { desiredCriteria = new(); }
+            }
+            else { desiredCriteria = new(); }
+
+            // Populate read-only metadata from EditingJob
+            title = EditingJob!.Title ?? "";
+            department = EditingJob.Department ?? "";
+            organisation = EditingJob.Organisation ?? "";
+            postingDate = EditingJob.PostingDate;
+            jobDescription = EditingJob.JobDescription ?? "";
+
+            _populated = true;
+            activeTab = Tab.Manual;
+        }
+    }
 
     private double WeightSum => rubricCategories.Sum(c => c.Weight);
-    private bool CanSubmit => !string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(department);
+    private bool CanSubmit => !string.IsNullOrWhiteSpace(title);
 
-    private void AddCategory() => rubricCategories.Add(new("", 0, ""));
+    private void AddCategory()
+    {
+        rubricCategories.Add(new("", 0, ""));
+        validationErrors.Remove("rubric");
+    }
+
+    private void RemoveCategory(int idx)
+    {
+        rubricCategories.RemoveAt(idx);
+        validationErrors.Remove("rubric");
+        validationErrors.Remove("rubricWeights");
+    }
+
+    private void OnWeightInput(int idx, ChangeEventArgs e)
+    {
+        rubricCategories[idx] = rubricCategories[idx] with { Weight = double.TryParse(e.Value?.ToString(), out var w) ? w : 0 };
+        validationErrors.Remove("rubricWeights");
+    }
+
+    private void OnTitleInput(ChangeEventArgs e)
+    {
+        title = e.Value?.ToString() ?? "";
+        validationErrors.Remove("title");
+    }
+
+    private bool Validate()
+    {
+        validationErrors = new();
+
+        if (!IsEditMode && string.IsNullOrWhiteSpace(title))
+            validationErrors["title"] = "Title is required";
+
+        if (!rubricCategories.Any(c => !string.IsNullOrWhiteSpace(c.Name) && c.Weight > 0))
+            validationErrors["rubric"] = "At least one rubric category with a name and weight is required";
+
+        if (rubricCategories.Any())
+        {
+            var weightSum = rubricCategories.Sum(c => c.Weight);
+            if (Math.Abs(weightSum - 1.0) > 0.01)
+                validationErrors["rubricWeights"] = $"Rubric weights must sum to 1.0 (currently {weightSum:F2})";
+        }
+
+        return validationErrors.Count == 0;
+    }
+
+    private void HandleBackdropClick()
+    {
+        ResetForm();
+        OnCancel.InvokeAsync();
+    }
+
+    private void OnHeaderMouseDown(MouseEventArgs e)
+    {
+        isDragging = true;
+        dragStartX = e.ClientX;
+        dragStartY = e.ClientY;
+        dragOrigX = posX;
+        dragOrigY = posY;
+    }
+
+    private void OnResizeMouseDown(MouseEventArgs e)
+    {
+        isResizing = true;
+        dragStartX = e.ClientX;
+        dragStartY = e.ClientY;
+        resizeOrigW = width;
+        resizeOrigH = height;
+    }
 
     private async Task HandleSpecFileSelected(InputFileChangeEventArgs e)
     {
@@ -157,7 +392,8 @@
 
         processingSpec = true;
         message = null;
-        StateHasChanged();
+        specExtractionError = null;
+        StateHasChanged();;
 
         try
         {
@@ -193,7 +429,8 @@
         }
         catch (Exception ex)
         {
-            message = $"Failed to extract spec: {ex.Message}";
+            specExtractionError = $"Failed to extract spec: {ex.Message}";
+            message = specExtractionError;
             success = false;
         }
         finally
@@ -210,6 +447,7 @@
 
         processingRubric = true;
         rubricTitleMismatch = false;
+        rubricExtractionError = null;
         message = null;
         StateHasChanged();
 
@@ -236,7 +474,8 @@
         }
         catch (Exception ex)
         {
-            message = $"Failed to extract rubric: {ex.Message}";
+            rubricExtractionError = $"Failed to extract rubric: {ex.Message}";
+            message = rubricExtractionError;
             success = false;
         }
         finally
@@ -277,6 +516,8 @@
 
     private async Task Submit()
     {
+        if (!Validate()) return;
+
         var rubricJson = rubricCategories.Any()
             ? JsonSerializer.Serialize(rubricCategories.Where(c => !string.IsNullOrWhiteSpace(c.Name)).Select(c => new { c.Name, c.Weight, c.Description }))
             : null;
@@ -287,14 +528,181 @@
             ? JsonSerializer.Serialize(desiredCriteria.Where(c => !string.IsNullOrWhiteSpace(c.Qualification)).Select(c => new { c.Qualification, c.Description }))
             : null;
 
-        var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
-            rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold,
-            string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription));
-        success = result;
-        message = result ? "Job created successfully!" : "Failed to create job.";
-        if (result) await OnCreated.InvokeAsync();
+        if (IsEditMode)
+        {
+            isSaving = true;
+            try
+            {
+                await Api.UpdateJobConfigAsync(EditingJob!.Id, new UpdateConfigDto(rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold));
+                success = true;
+                message = "Configuration updated!";
+                await OnUpdated.InvokeAsync();
+                ResetForm();
+            }
+            catch (ApiException ex)
+            {
+                message = $"Failed to save: {ex.Message}";
+                success = false;
+            }
+            catch (Exception)
+            {
+                message = "An unexpected error occurred. Please try again.";
+                success = false;
+            }
+            finally
+            {
+                isSaving = false;
+            }
+        }
+        else
+        {
+            var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
+                rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold,
+                string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription));
+            success = result;
+            message = result ? "Job created successfully!" : "Failed to create job.";
+            if (result)
+            {
+                await OnCreated.InvokeAsync();
+                ResetForm();
+            }
+        }
+    }
+
+    private void ResetForm()
+    {
+        title = "";
+        department = "";
+        organisation = "";
+        jobDescription = "";
+        postingDate = DateTime.Today;
+        scoringRunCount = 3;
+        aggregationStrategy = "median";
+        longlistThreshold = 70;
+        shortlistThreshold = 85;
+        varianceThreshold = 15;
+        rubricCategories = new();
+        mustHaveCriteria = new();
+        desiredCriteria = new();
+        _populated = false;
+        message = null;
+        success = false;
+        activeTab = Tab.Upload;
+        validationErrors = new();
+        isSaving = false;
+    }
+
+    private async Task HandleCancel()
+    {
+        ResetForm();
+        await OnCancel.InvokeAsync();
     }
 
     private record RubricCategoryInput(string Name, double Weight, string Description);
     private record DesiredCriterionInput(string Qualification, string Description);
+
+    private void OnMouseMove(MouseEventArgs e)
+    {
+        if (isDragging)
+        {
+            posX = dragOrigX + (int)(e.ClientX - dragStartX);
+            posY = dragOrigY + (int)(e.ClientY - dragStartY);
+            if (posX < 0) posX = 0;
+            if (posY < 0) posY = 0;
+        }
+        else if (isResizing)
+        {
+            var newW = resizeOrigW + (int)(e.ClientX - dragStartX);
+            var newH = resizeOrigH + (int)(e.ClientY - dragStartY);
+            width = Math.Max(MinWidth, newW);
+            height = Math.Max(MinHeight, newH);
+        }
+    }
+
+    private void OnMouseUp(MouseEventArgs e)
+    {
+        isDragging = false;
+        isResizing = false;
+    }
 }
+
+<style>
+    .dialog-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        background: rgba(0, 0, 0, 0.5);
+    }
+
+    .dialog-window {
+        position: fixed;
+        z-index: 51;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        overflow: hidden;
+    }
+
+    .dialog-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.75rem 1.5rem;
+        border-bottom: 1px solid #e5e7eb;
+        cursor: grab;
+        user-select: none;
+        background: #f9fafb;
+        flex-shrink: 0;
+    }
+
+    .dialog-header:active {
+        cursor: grabbing;
+    }
+
+    .dialog-close-btn {
+        background: none;
+        border: none;
+        font-size: 1.25rem;
+        cursor: pointer;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+    }
+
+    .dialog-close-btn:hover {
+        background: #e5e7eb;
+    }
+
+    .dialog-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 1.5rem;
+        min-height: 0;
+    }
+
+    .dialog-resize-handle {
+        position: absolute;
+        bottom: 0;
+        right: 0;
+        width: 16px;
+        height: 16px;
+        cursor: nwse-resize;
+    }
+
+    .dialog-resize-handle::after {
+        content: '';
+        position: absolute;
+        bottom: 3px;
+        right: 3px;
+        width: 10px;
+        height: 10px;
+        border-right: 2px solid #9ca3af;
+        border-bottom: 2px solid #9ca3af;
+    }
+
+    .dialog-resize-handle:hover::after {
+        border-color: #6b7280;
+    }
+</style>
