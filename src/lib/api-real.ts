@@ -317,13 +317,13 @@ export const realAPI = {
     return result.events
   },
 
-  // Analytics (pass-through for now)
+  // Analytics
   async getRecruiterAnalytics(): Promise<import('@/types').RecruiterAnalytics[]> {
-    return []
+    return fetchJSON(`${API_BASE}/stats/recruiters`)
   },
 
   async getDepartmentAnalytics(): Promise<import('@/types').DepartmentAnalytics[]> {
-    return []
+    return fetchJSON(`${API_BASE}/stats/departments`)
   },
 
   // Pipeline

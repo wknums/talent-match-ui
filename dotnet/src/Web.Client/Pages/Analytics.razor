@@ -1,0 +1,219 @@
+@page "/analytics"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+
+<div style="margin-bottom: 1rem;">
+    <a href="/" style="color: #3182ce; text-decoration: none; font-size: 0.9rem;">← Back to Dashboard</a>
+</div>
+
+<h3>Recruiter Analytics</h3>
+
+@if (isLoading)
+{
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
+        @for (int i = 0; i < 4; i++)
+        {
+            <div style="padding: 1rem; border: 1px solid #e2e8f0; border-radius: 8px; min-width: 160px; background: #f7fafc;">
+                <div style="height: 2rem; width: 60px; background: #e2e8f0; border-radius: 4px; margin-bottom: 0.5rem;"></div>
+                <div style="height: 1rem; width: 120px; background: #e2e8f0; border-radius: 4px;"></div>
+            </div>
+        }
+    </div>
+    <div style="height: 2rem; width: 200px; background: #e2e8f0; border-radius: 4px; margin-bottom: 1rem;"></div>
+    <div style="height: 200px; background: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px;"></div>
+}
+else
+{
+    @* Summary Stat Cards *@
+    <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 160px;">
+            <div style="font-size: 2rem; font-weight: bold;">@totalAppsInQueue</div>
+            <div>Applications in Queue</div>
+        </div>
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 160px;">
+            <div style="font-size: 2rem; font-weight: bold;">@totalManualReviews</div>
+            <div>Manual Reviews</div>
+        </div>
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 160px;">
+            <div style="font-size: 2rem; font-weight: bold;">@totalShortlistRecs</div>
+            <div>Shortlist Recommendations</div>
+        </div>
+        <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 160px;">
+            <div style="font-size: 2rem; font-weight: bold;">@totalActiveJobs</div>
+            <div>Active Jobs</div>
+        </div>
+    </div>
+
+    @* Tab Navigation *@
+    <div style="display: flex; gap: 0; margin-bottom: 1rem; border-bottom: 2px solid #e2e8f0;">
+        <button @onclick="() => activeTab = Tab.ByRecruiter"
+                style="padding: 0.5rem 1rem; border: none; cursor: pointer; font-weight: @(activeTab == Tab.ByRecruiter ? "bold" : "normal"); border-bottom: 2px solid @(activeTab == Tab.ByRecruiter ? "#3182ce" : "transparent"); background: none; color: @(activeTab == Tab.ByRecruiter ? "#3182ce" : "#555");">
+            By Recruiter
+        </button>
+        <button @onclick="SwitchToDepartmentTab"
+                style="padding: 0.5rem 1rem; border: none; cursor: pointer; font-weight: @(activeTab == Tab.ByDepartment ? "bold" : "normal"); border-bottom: 2px solid @(activeTab == Tab.ByDepartment ? "#3182ce" : "transparent"); background: none; color: @(activeTab == Tab.ByDepartment ? "#3182ce" : "#555");">
+            By Department
+        </button>
+    </div>
+
+    @if (activeTab == Tab.ByRecruiter)
+    {
+        @* Department Filter *@
+        <div style="margin-bottom: 1rem;">
+            <select @bind="selectedDepartment" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
+                <option value="">All Departments</option>
+                @foreach (var dept in departments)
+                {
+                    <option value="@dept">@dept</option>
+                }
+            </select>
+        </div>
+
+        @if (filteredRecruiters.Any())
+        {
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr style="background: #f7fafc; text-align: left;">
+                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0;">Recruiter</th>
+                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0;">Department</th>
+                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; text-align: right;">In Queue</th>
+                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; text-align: right;">Reviews</th>
+                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; text-align: right;">Shortlisted</th>
+                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; text-align: right;">Active Jobs</th>
+                        <th style="padding: 0.75rem; border-bottom: 2px solid #e2e8f0; text-align: right;">Avg. Time (hrs)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in filteredRecruiters)
+                    {
+                        <tr style="border-bottom: 1px solid #e2e8f0;">
+                            <td style="padding: 0.75rem;">@r.RecruiterName</td>
+                            <td style="padding: 0.75rem;">@r.Department</td>
+                            <td style="padding: 0.75rem; text-align: right;">@r.ApplicationsInQueue</td>
+                            <td style="padding: 0.75rem; text-align: right;">@r.ManualReviewsPerformed</td>
+                            <td style="padding: 0.75rem; text-align: right;">@r.ShortlistRecommendations</td>
+                            <td style="padding: 0.75rem; text-align: right;">@r.ActiveJobs</td>
+                            <td style="padding: 0.75rem; text-align: right;">@FormatAvgTime(r.AverageProcessingTime)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+        else
+        {
+            <p style="color: #888; font-style: italic; padding: 2rem; text-align: center;">No recruiters found.</p>
+        }
+    }
+    else
+    {
+        @if (departmentData.Any())
+        {
+            @foreach (var dept in departmentData)
+            {
+                <div style="border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                    <h4 style="margin: 0 0 0.5rem 0;">@dept.Department</h4>
+                    <div style="display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap;">
+                        <div style="font-size: 0.9rem;"><strong>@dept.ApplicationsInQueue</strong> In Queue</div>
+                        <div style="font-size: 0.9rem;"><strong>@dept.ManualReviewsPerformed</strong> Reviews</div>
+                        <div style="font-size: 0.9rem;"><strong>@dept.ShortlistRecommendations</strong> Shortlisted</div>
+                        <div style="font-size: 0.9rem;"><strong>@dept.ActiveJobs</strong> Active Jobs</div>
+                    </div>
+                    @if (dept.Recruiters.Any())
+                    {
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                            <thead>
+                                <tr style="background: #f7fafc; text-align: left;">
+                                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0;">Recruiter</th>
+                                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: right;">In Queue</th>
+                                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: right;">Reviews</th>
+                                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: right;">Shortlisted</th>
+                                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: right;">Active Jobs</th>
+                                    <th style="padding: 0.5rem; border-bottom: 1px solid #e2e8f0; text-align: right;">Avg. Time</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in dept.Recruiters)
+                                {
+                                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                                        <td style="padding: 0.5rem;">@r.RecruiterName</td>
+                                        <td style="padding: 0.5rem; text-align: right;">@r.ApplicationsInQueue</td>
+                                        <td style="padding: 0.5rem; text-align: right;">@r.ManualReviewsPerformed</td>
+                                        <td style="padding: 0.5rem; text-align: right;">@r.ShortlistRecommendations</td>
+                                        <td style="padding: 0.5rem; text-align: right;">@r.ActiveJobs</td>
+                                        <td style="padding: 0.5rem; text-align: right;">@FormatAvgTime(r.AverageProcessingTime)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    else
+                    {
+                        <p style="color: #888; font-size: 0.85rem; font-style: italic;">No recruiters in this department.</p>
+                    }
+                </div>
+            }
+        }
+        else
+        {
+            <p style="color: #888; font-style: italic; padding: 2rem; text-align: center;">No department data available.</p>
+        }
+    }
+}
+
+@code {
+    private enum Tab { ByRecruiter, ByDepartment }
+
+    private bool isLoading = true;
+    private Tab activeTab = Tab.ByRecruiter;
+    private string selectedDepartment = "";
+    private List<RecruiterAnalyticsDto> recruiterData = new();
+    private List<DepartmentAnalyticsDto> departmentData = new();
+    private List<string> departments = new();
+
+    private int totalAppsInQueue => recruiterData.Sum(r => r.ApplicationsInQueue);
+    private int totalManualReviews => recruiterData.Sum(r => r.ManualReviewsPerformed);
+    private int totalShortlistRecs => recruiterData.Sum(r => r.ShortlistRecommendations);
+    private int totalActiveJobs => recruiterData.Sum(r => r.ActiveJobs);
+
+    private IEnumerable<RecruiterAnalyticsDto> filteredRecruiters =>
+        string.IsNullOrEmpty(selectedDepartment)
+            ? recruiterData
+            : recruiterData.Where(r => r.Department == selectedDepartment);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            recruiterData = await Api.GetRecruiterAnalyticsAsync();
+            departments = recruiterData.Select(r => r.Department).Distinct().OrderBy(d => d).ToList();
+        }
+        catch
+        {
+            recruiterData = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task SwitchToDepartmentTab()
+    {
+        activeTab = Tab.ByDepartment;
+        if (!departmentData.Any())
+        {
+            try
+            {
+                departmentData = await Api.GetDepartmentAnalyticsAsync();
+            }
+            catch
+            {
+                departmentData = new();
+            }
+        }
+    }
+
+    private static string FormatAvgTime(double? avgTime) =>
+        avgTime.HasValue ? $"{avgTime.Value:F1}" : "—";
+}

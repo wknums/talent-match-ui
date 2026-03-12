@@ -98,6 +98,7 @@ app.MapApplicationsEndpoints();
 app.MapStatsEndpoints();
 app.MapDlqEndpoints();
 app.MapPromptEndpoints();
+app.MapAnalyticsEndpoints();
 
 app.MapFallbackToFile("index.html");
 

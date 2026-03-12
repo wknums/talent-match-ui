@@ -208,6 +208,12 @@ public class ApiClient
     public async Task<SystemStatsDto?> GetSystemStatsAsync()
         => await _http.GetFromJsonAsync<SystemStatsDto>("/api/stats");
 
+    public async Task<List<RecruiterAnalyticsDto>> GetRecruiterAnalyticsAsync()
+        => await _http.GetFromJsonAsync<List<RecruiterAnalyticsDto>>("/api/stats/recruiters") ?? new();
+
+    public async Task<List<DepartmentAnalyticsDto>> GetDepartmentAnalyticsAsync()
+        => await _http.GetFromJsonAsync<List<DepartmentAnalyticsDto>>("/api/stats/departments") ?? new();
+
     public async Task<List<DlqItemDto>> GetDlqItemsAsync()
         => await _http.GetFromJsonAsync<List<DlqItemDto>>("/api/dlq") ?? new();
 
@@ -308,3 +314,5 @@ public record ScoringPromptDto(string Id, string JobId, int VersionNumber, strin
 public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes);
 public record CreatePromptRequest(string PromptText, string Source, string? GenerationMetadataJson);
 public record GeneratePromptResult(string PromptText, string? GenerationMetadataJson);
+public record RecruiterAnalyticsDto(string RecruiterId, string RecruiterName, string Department, int ApplicationsInQueue, int ManualReviewsPerformed, int ShortlistRecommendations, double? AverageProcessingTime, int ActiveJobs);
+public record DepartmentAnalyticsDto(string Department, int TotalRecruiters, int ApplicationsInQueue, int ManualReviewsPerformed, int ShortlistRecommendations, int ActiveJobs, List<RecruiterAnalyticsDto> Recruiters);

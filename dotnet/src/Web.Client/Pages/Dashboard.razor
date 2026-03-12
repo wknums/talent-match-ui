@@ -43,51 +43,101 @@
     </select>
     <button @onclick="LoadJobs">Filter</button>
     <button @onclick="() => showCreateJob = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Create Job</button>
+    @if (canViewAnalytics)
+    {
+        <button @onclick='() => Navigation.NavigateTo("/analytics")' style="padding: 0.5rem 1rem; background: #38a169; color: white; border: none; border-radius: 4px;">View Analytics</button>
+    }
 </div>
 
 @if (showCreateJob)
 {
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="() => showCreateJob = false">
-        <div @onclick:stopPropagation>
-            <CreateJobDialog OnCreated="OnJobCreated" OnCancel="() => showCreateJob = false" />
-        </div>
-    </div>
+    <CreateJobDialog Visible="true" OnCreated="OnJobCreated" OnCancel="() => showCreateJob = false" />
 }
 
 <h4>Jobs</h4>
-@if (jobs.Any())
+@if (!string.IsNullOrEmpty(jobLoadError))
+{
+    <div style="padding: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; margin-bottom: 1rem;">
+        Failed to load jobs: @jobLoadError
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(deleteError))
+{
+    <div style="padding: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; margin-bottom: 1rem;">
+        @deleteError
+    </div>
+}
+
+@if (filteredJobs.Any())
 {
     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem;">
         @foreach (var job in filteredJobs)
         {
-            <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; cursor: pointer;" @onclick="() => ViewJob(job.Id)">
-                <h5>@job.Title</h5>
-                <p>@job.Organisation — @job.Department</p>
-                <p style="font-size: 0.8rem; color: gray;">Posted @((DateTime.UtcNow - job.PostingDate).Days) days ago</p>
+            <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; cursor: pointer; position: relative;" @onclick="() => ViewJob(job.Id)">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <h5 style="margin: 0;">@job.Title</h5>
+                    @if (isAdmin)
+                    {
+                        <button @onclick="(e) => OpenDeleteDialog(e, job)" @onclick:stopPropagation="true"
+                                style="background: none; border: none; cursor: pointer; font-size: 1.1rem; padding: 0.25rem; color: #dc2626;"
+                                title="Delete job">🗑️</button>
+                    }
+                </div>
+                <p style="margin: 0.25rem 0;">@job.Organisation — @job.Department</p>
+                <p style="font-size: 0.8rem; color: gray; margin: 0.25rem 0;">Posted @((DateTime.UtcNow - job.PostingDate).Days) days ago</p>
+                <p style="font-size: 0.8rem; color: gray; margin: 0.25rem 0;">Created @job.CreatedAt.ToString("MMM d, yyyy") by @job.CreatedByName</p>
+                @if (job.TotalApplications > 0)
+                {
+                    <p style="font-size: 0.8rem; color: #555; margin: 0.25rem 0;">@job.CompletedApplications / @job.TotalApplications completed</p>
+                }
+                else
+                {
+                    <p style="font-size: 0.8rem; color: #999; margin: 0.25rem 0;">0 applications</p>
+                }
                 <span style="background: @(job.Status == "active" ? "#4caf50" : "#999"); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">@job.Status</span>
             </div>
         }
     </div>
 }
-else
+else if (string.IsNullOrEmpty(jobLoadError))
 {
     <p>No jobs found.</p>
 }
 
+@if (showDeleteDialog)
+{
+    <ConfirmDeleteJobDialog Visible="true"
+                            JobTitle="@(jobToDelete?.Title ?? "")"
+                            ApplicationCount="@(jobToDelete?.TotalApplications ?? 0)"
+                            OnConfirm="ConfirmDelete"
+                            OnCancel="CancelDelete" />
+}
+
 @code {
-    private List<JobDto> jobs = new();
+    private List<JobSummaryDto> jobs = new();
     private SystemStatsDto? stats;
     private DateTime lastUpdated;
     private string departmentFilter = "";
     private List<string> departments = new();
     private System.Threading.Timer? refreshTimer;
     private bool showCreateJob;
+    private string? jobLoadError;
+    private string? deleteError;
+    private bool isAdmin;
+    private bool canViewAnalytics;
+    private bool showDeleteDialog;
+    private JobSummaryDto? jobToDelete;
 
-    private IEnumerable<JobDto> filteredJobs => string.IsNullOrEmpty(departmentFilter)
+    private IEnumerable<JobSummaryDto> filteredJobs => string.IsNullOrEmpty(departmentFilter)
         ? jobs : jobs.Where(j => j.Department == departmentFilter);
 
     protected override async Task OnInitializedAsync()
     {
+        var currentUser = await Api.GetCurrentUserAsync();
+        isAdmin = currentUser?.Role == "admin";
+        canViewAnalytics = currentUser?.Role == "admin" || currentUser?.Role == "recruiter";
+
         await LoadData();
         refreshTimer = new System.Threading.Timer(async _ =>
         {
@@ -104,8 +154,17 @@ else
 
     private async Task LoadJobs()
     {
-        jobs = await Api.GetJobsAsync();
-        departments = jobs.Select(j => j.Department).Distinct().OrderBy(d => d).ToList();
+        try
+        {
+            jobLoadError = null;
+            jobs = await Api.GetJobsAsync();
+            departments = jobs.Select(j => j.Department).Distinct().OrderBy(d => d).ToList();
+        }
+        catch (Exception ex)
+        {
+            jobLoadError = ex.Message;
+            jobs = new();
+        }
     }
 
     private async Task LoadStats()
@@ -117,6 +176,45 @@ else
     private void ViewJob(string jobId)
     {
         Navigation.NavigateTo($"/jobs/{jobId}");
+    }
+
+    private void OpenDeleteDialog(MouseEventArgs e, JobSummaryDto job)
+    {
+        jobToDelete = job;
+        showDeleteDialog = true;
+        deleteError = null;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (jobToDelete == null) return;
+
+        var deletedJob = jobToDelete;
+        showDeleteDialog = false;
+        jobToDelete = null;
+
+        // Optimistic removal
+        jobs.Remove(deletedJob);
+        StateHasChanged();
+
+        var success = await Api.DeleteJobAsync(deletedJob.Id);
+        if (!success)
+        {
+            // Rollback
+            jobs.Add(deletedJob);
+            deleteError = $"Failed to delete job \"{deletedJob.Title}\". Please try again.";
+        }
+        else
+        {
+            deleteError = null;
+            await LoadStats();
+        }
+    }
+
+    private void CancelDelete()
+    {
+        showDeleteDialog = false;
+        jobToDelete = null;
     }
 
     public void Dispose() => refreshTimer?.Dispose();
