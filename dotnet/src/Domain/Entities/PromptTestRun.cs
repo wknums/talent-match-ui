@@ -5,7 +5,7 @@ public class PromptTestRun
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string JobId { get; set; } = string.Empty;
     public string PromptId { get; set; } = string.Empty;
-    public string Status { get; set; } = "pending_review"; // pending_review, approved, rejected
+    public string Status { get; set; } = "pending_scoring"; // pending_scoring, scoring, pending_review, approved, rejected
     public string ApplicationIdsJson { get; set; } = "[]";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? CompletedAt { get; set; }

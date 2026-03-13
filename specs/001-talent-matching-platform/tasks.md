@@ -218,6 +218,42 @@ defaults to "Approved". Verify raw extraction response is stored when AI generat
 
 ---
 
+## Phase 8: US3a — Auto-Trigger Test Scoring (FR-038/FR-048) (Priority: P1) 🎯
+
+**Goal**: After test-application upload completes, the system automatically triggers the scoring pipeline for each test application using the prompt under test — bypassing the production-approved prompt gate. The test-run status transitions through `pending_scoring` → `scoring` → `pending_review` as processing completes. No separate user action is required (FR-048).
+
+**Independent Test**: Create a job with rubric → approve rubric → create + activate a prompt (NOT production-approved) → create a test run with 2 example CVs → verify test-run status transitions `pending_scoring` → `scoring` → `pending_review` automatically → verify each test application has real LLM scoring runs → verify test applications are excluded from production ranked lists.
+
+**Prerequisites**: Phases 1–7 complete (scoring worker already calls passthrough); prompt exists for the job; `AWR_SEQ_API_ENDPOINT` configured.
+
+### Stack A — Status Enum & Pipeline Override
+
+- [x] T058 [P] [US3a] Update `TestRunStatus` type in `src/types/index.ts` to add `pending_scoring` and `scoring` values: change from `'pending_review' | 'approved' | 'rejected'` to `'pending_scoring' | 'scoring' | 'pending_review' | 'approved' | 'rejected'`
+
+- [x] T059 [P] [US3a] Add optional `promptVersionId` parameter to `processApplication()` in `server/services/pipeline.ts`: update the function signature to `processApplication(applicationId: string, jobId: string, promptVersionIdOverride?: string)`. When `promptVersionIdOverride` is provided, use it directly instead of calling `getProductionApprovedPromptId()` — this bypasses the production-approved gate for test scoring. When not provided, retain the existing production-approved lookup and gate enforcement (FR-032). Pass the resolved `promptVersionId` to `runScoring()` as before
+
+- [x] T060 [US3a] Wire auto-trigger scoring in the `POST /:jobId/prompts/:promptId/test-runs` handler in `server/routes/prompts.ts`: after creating all test applications and the `PromptTestRun` record, (1) set initial test-run status to `pending_scoring` instead of `pending_review`, (2) respond to the HTTP request with the test run (status `pending_scoring`) immediately, (3) after sending the response, fire-and-forget: update test-run status to `scoring`, call `processApplication(applicationId, jobId, promptId)` for each test application (using the pipeline orchestrator with the `promptVersionId` override from T059), update test-run status to `pending_review` when all applications complete, log errors if any application fails but don't fail the entire run. Import `createPipelineOrchestrator` from `../services/pipeline.js` and instantiate with the same `storage` provider
+
+### Stack B — Domain & Command Handler
+
+- [x] T061 [P] [US3a] Update `PromptTestRun` entity in `dotnet/src/Domain/Entities/PromptTestRun.cs`: change the default `Status` value from `"pending_review"` to `"pending_scoring"` and update the comment to document all valid values: `// pending_scoring, scoring, pending_review, approved, rejected`
+
+- [x] T062 [US3a] Wire auto-trigger scoring in `CreatePromptTestRunCommand` handler in `dotnet/src/Application/Prompts/Commands/CreatePromptTestRunCommand.cs`: (1) inject `IMediator` (for dispatching `ScoreApplicationCommand`) and `IJobRepository` (for loading run count from job config), (2) set test-run initial status to `"pending_scoring"`, (3) after creating all applications and persisting the test run, update status to `"scoring"` and save, (4) for each application, dispatch `ScoreApplicationCommand` with `applicationId`, `jobId`, `runCount` from job config, and the test prompt's `promptId` as `promptVersionId` — this bypasses the production-approved gate because `ScoreApplicationCommand` loads the prompt directly by ID, (5) after all applications are scored, update test-run status to `"pending_review"` and save, (6) wrap scoring dispatch in try/catch per application so one failure doesn't block others; log failures but allow partial completion
+
+### Both Stacks — Validation
+
+- [ ] T063 [P] [US3a] Validate Stack A auto-trigger end-to-end: create a job → approve rubric → create + activate a scoring prompt (NOT production-approved) → POST test-run with 2 example CVs → verify HTTP response has status `pending_scoring` → poll test-run GET endpoint → verify status transitions to `scoring` then `pending_review` → GET scoring runs for each test application → verify real LLM scores (not empty/zero) → verify test applications have `testRunId` set and are excluded from production list queries
+
+- [ ] T064 [P] [US3a] Validate Stack B auto-trigger end-to-end: same verification against Stack B API — POST test-run → verify status lifecycle `pending_scoring` → `scoring` → `pending_review` → verify scoring runs created with real LLM output → verify test applications excluded from production results
+
+- [ ] T065 [US3a] Verify fire-and-forget behavior in both stacks: confirm the test-run creation HTTP response returns promptly (< 2 seconds) with status `pending_scoring` even when scoring takes longer — the scoring pipeline runs asynchronously after the response is sent. Verify that a failed scoring for one application does not prevent other test applications from being scored
+
+- [ ] T066 [US3a] Run quickstart.md validation for US3a test-scoring workflow: execute the prompt testing flow from quickstart.md — create prompt → test with example CVs → verify automatic scoring → review test results via manual review interface → verify scores are real LLM output
+
+**Checkpoint**: FR-038 and FR-048 are fully implemented — test-run creation automatically triggers the scoring pipeline in both stacks; status transitions are visible; no manual trigger needed; the prompt under test does NOT need production-approved status for test scoring
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -225,10 +261,11 @@ defaults to "Approved". Verify raw extraction response is stored when AI generat
 - **Setup (Phase 1)**: No dependencies — can start immediately ✅ COMPLETE
 - **Foundational (Phase 2)**: Depends on Setup completion — **BLOCKS all user stories** ✅ COMPLETE
 - **US3 Core (Phase 3)**: Depends on Foundational — core job creation ✅ COMPLETE
-- **US3 Rubric Approval (Phase 4)**: Depends on Phase 3 — rubric approval workflow ⬜ PENDING
+- **US3 Rubric Approval (Phase 4)**: Depends on Phase 3 — rubric approval workflow ✅ COMPLETE
 - **US3 Polish (Phase 5)**: Depends on Phase 4 — US3 final validation ⬜ PENDING
-- **US5 Scoring Worker (Phase 6)**: Depends on US3a (approved prompt) + US4 (uploaded applications); can start in parallel with Phase 4/5 since it modifies different files ⬜ PENDING
+- **US5 Scoring Worker (Phase 6)**: Depends on US3a (approved prompt) + US4 (uploaded applications); can start in parallel with Phase 4/5 since it modifies different files ✅ COMPLETE
 - **US5 Scoring Polish (Phase 7)**: Depends on Phase 6 — scoring validation ⬜ PENDING
+- **US3a Auto-Trigger (Phase 8)**: Depends on Phase 6 (scoring worker must exist); modifies different files from Phase 7 so can run in parallel ⬜ PENDING
 
 ### User Story Dependencies
 
@@ -236,7 +273,8 @@ defaults to "Approved". Verify raw extraction response is stored when AI generat
 - **US3a (P1)**: Depends on **US3** (job with **approved** rubric must exist); blocked until Phase 4 completes
 - **US4 (P2)**: Depends on **US3** (jobs must exist before uploading applications)
 - **US5 (P2)**: Depends on **US3a** (production-approved prompt required) AND **US4** (uploaded applications)
-- **FR-045/046/047 (this task list)**: Implementation can proceed once US3a and US4 exist in codebase; end-to-end testing requires a running `AWR_SEQ_API_ENDPOINT`
+- **FR-045/046/047 (Phase 6)**: ✅ COMPLETE — scoring worker calls passthrough in both stacks
+- **FR-038/048 (Phase 8)**: Depends on Phase 6 (scoring worker + pipeline must exist); auto-trigger wiring is the main new work
 
 ### Within Phase 4 (Rubric Approval)
 
@@ -256,6 +294,14 @@ defaults to "Approved". Verify raw extraction response is stored when AI generat
 - **Stack A and Stack B are fully independent** — can run in parallel
 - Phase 7 validation tasks (T054–T057) depend on Phase 6 completion but are independent of each other
 
+### Within Phase 8 (Auto-Trigger Scoring)
+
+- **Stack A**: T058 (types) + T059 (pipeline) are parallel — different files, no dependency
+- **Stack A**: T060 depends on BOTH T058 and T059 — uses new status values and pipeline override
+- **Stack B**: T061 (entity) → T062 (command handler) — strict sequential
+- **Stack A and Stack B are fully independent** — can run in parallel
+- Phase 8 validation tasks (T063–T066) depend on implementation completion
+
 ### Parallel Opportunities
 
 **Phase 6 — Stack A vs Stack B (fully independent):**
@@ -267,6 +313,31 @@ defaults to "Approved". Verify raw extraction response is stored when AI generat
 - T054 + T055 can run in parallel (Stack A vs Stack B validation)
 - T056 depends on both stacks working
 - T057 can run in parallel with T054/T055
+
+**Phase 8 — Stack A vs Stack B (fully independent):**
+- Stack A: T058 + T059 (parallel, different files) → T060 (depends on both)
+- Stack B: T061 → T062 (sequential chain, 2 files)
+- Stack A and Stack B chains can execute simultaneously
+- Phase 8 validation: T063 + T064 (parallel, different stacks) → T065 → T066
+
+---
+
+## Parallel Example: Phase 8 (Auto-Trigger Scoring)
+
+```text
+# Two developers can work on Stack A and Stack B simultaneously:
+
+Developer A — Stack A:
+  T058 + T059 (parallel: types + pipeline) → T060 (routes wiring)
+
+Developer B — Stack B:
+  T061 (domain entity) → T062 (command handler)
+
+# Validation after both complete:
+  T063 + T064 (parallel: Stack A + Stack B validation) → T065 → T066
+
+# No shared files between stacks
+```
 
 ---
 
@@ -302,41 +373,43 @@ Developer B — Stack B:
 
 ## Implementation Strategy
 
-### MVP First — Scoring Worker (Phase 6)
+### MVP First — Auto-Trigger Scoring (Phase 8)
 
-1. Phases 1–3 already complete ✅
-2. Phase 4 (Rubric Approval) may proceed in parallel — different files
-3. **Phase 6** is the core deliverable for FR-045/046/047:
-   - Stack A T049: Single file rewrite — highest impact, fastest path to real scoring
-   - Stack B T050–T053: Four-file chain following Clean Architecture
-4. **STOP and VALIDATE** (Phase 7): End-to-end scoring with real LLM calls
+1. Phases 1–6 already complete ✅ (scoring worker calls passthrough)
+2. **Phase 8** is the core deliverable for FR-038/FR-048:
+   - Stack A: T058 (types) + T059 (pipeline override) → T060 (route wiring) — 3 files
+   - Stack B: T061 (entity) → T062 (command handler) — 2 files
+3. **STOP and VALIDATE** (T063–T066): End-to-end auto-trigger with status transitions
 
 ### Incremental Delivery
 
-1. T049: Stack A scoring worker rewrite — immediate value, replaces synthetic scores
-2. T050–T051: Stack B service layer — builds foundation for scoring command
-3. T052: Stack B command handler — core scoring logic in application layer
-4. T053: Stack B endpoint wiring — connects API trigger to scoring pipeline
-5. T054–T057: Validation — confirm real scoring across both stacks
+1. T058 + T059: Stack A types and pipeline override — enables scoring without production gate
+2. T060: Stack A route wiring — fires scoring automatically after test-run creation
+3. T061: Stack B domain update — aligns initial status to `pending_scoring`
+4. T062: Stack B command handler — fires scoring from within CreatePromptTestRunCommand
+5. T063–T066: Validation — end-to-end auto-trigger in both stacks
 
 ### Suggested Execution Order (Single Developer)
 
-1. Start with Stack A (T049) — one file, high impact, validates passthrough contract
-2. Stack B interface (T050) — fast, extends existing interface
-3. Stack B implementation (T051) — implements the HTTP call
-4. Stack B command (T052) — core application logic
-5. Stack B endpoint (T053) — wires everything together
-6. Validation (T054 → T055 → T056 → T057)
+1. Start with Stack A types (T058) — trivial, unblocks T060
+2. Stack A pipeline override (T059) — adds parameter, no behavior change for existing callers
+3. Stack A route wiring (T060) — main auto-trigger logic, highest complexity
+4. Stack B domain (T061) — trivial default change
+5. Stack B command handler (T062) — main .NET auto-trigger logic
+6. Validation (T063 → T064 → T065 → T066)
 
 ---
 
 ## Notes
 
 - [P] tasks = different files, no dependencies — can run in parallel
-- [US3] / [US5] labels for story traceability
-- FR-046 (test runs use real scoring) requires no separate implementation — it's automatically satisfied by making `runScoring()` use real LLM calls, since test runs and production runs share the same scoring function
-- The scoring prompt's `{{JOB_SPEC_TEXT}}` and `{{CANDIDATE_CV_TEXT}}` placeholders are resolved at scoring time — not stored pre-resolved — because each candidate has different CV text
+- [US3] / [US3a] / [US5] labels for story traceability
+- FR-045/046/047 are already satisfied — scoring worker and ScoreApplicationCommand both call passthrough (Phase 6, complete)
+- FR-038/048 (Phase 8) is the main new work — auto-trigger wiring after test-run creation
+- The `promptVersionId` override in `processApplication()` bypasses the production-approved gate for test scoring only — production scoring retains the gate (FR-032/FR-040)
+- Fire-and-forget pattern: HTTP response returns immediately with `pending_scoring` status; scoring runs asynchronously after the response. Stack A uses `setImmediate()`/post-response callback; Stack B dispatches commands within the handler
+- `PromptTestRun.status` lifecycle: `pending_scoring` → `scoring` → `pending_review` → `approved` | `rejected`
 - Stack A uses `extraction.markdown` for CV text; Stack B uses `extraction.NormalisedText` — different property names, same content
-- `AWR_SEQ_API_ENDPOINT` must be set to a running AWReason API instance for scoring to work; absence should produce a clear error
+- `AWR_SEQ_API_ENDPOINT` must be set to a running AWReason API instance for scoring to work
 - Commit after each task or logical group
 - Stop at any checkpoint to validate independently

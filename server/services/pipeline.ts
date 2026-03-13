@@ -31,7 +31,7 @@ export function createPipelineOrchestrator(storage: StorageProvider) {
   const audit = createAuditService(storage)
 
   return {
-    async processApplication(applicationId: string, jobId: string): Promise<void> {
+    async processApplication(applicationId: string, jobId: string, promptVersionIdOverride?: string): Promise<void> {
       const correlationId = randomUUID()
 
       try {
@@ -40,14 +40,22 @@ export function createPipelineOrchestrator(storage: StorageProvider) {
         await withRetry(() => runExtraction(storage, applicationId, jobId))
         await audit.appendEvent('system', 'pipeline.extraction.completed', 'Application', applicationId, { jobId }, correlationId)
 
-        // Step 2: Scoring — enforce production-approved prompt gate (FR-032/FR-040)
+        // Step 2: Scoring
         const jobs = await getArray<Job>(storage, JOBS)
         const job = jobs.find(j => j.jobId === jobId)
         const runCount = job?.currentVersion?.runsPerApplication || 3
 
-        const promptVersionId = await getProductionApprovedPromptId(storage, jobId)
-        if (!promptVersionId) {
-          throw new Error('No production-approved prompt exists for this job. Approve a prompt before scoring (FR-032).')
+        // When promptVersionIdOverride is provided (test scoring), bypass the production-approved gate.
+        // Otherwise enforce the production-approved prompt gate (FR-032/FR-040).
+        let promptVersionId: string
+        if (promptVersionIdOverride) {
+          promptVersionId = promptVersionIdOverride
+        } else {
+          const approvedId = await getProductionApprovedPromptId(storage, jobId)
+          if (!approvedId) {
+            throw new Error('No production-approved prompt exists for this job. Approve a prompt before scoring (FR-032).')
+          }
+          promptVersionId = approvedId
         }
 
         await audit.appendEvent('system', 'pipeline.scoring.started', 'Application', applicationId, { jobId, runCount, promptVersionId }, correlationId)

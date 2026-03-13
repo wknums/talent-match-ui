@@ -9,6 +9,7 @@ import {
 } from '../storage/kv-keys.js'
 import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
 import { createAuditService } from '../services/audit.js'
+import { createPipelineOrchestrator } from '../services/pipeline.js'
 import type {
   ScoringPrompt, PromptTestRun, Job, Application,
   ApplicationDocument, JobConfigVersion
@@ -303,7 +304,7 @@ Return ONLY the scoring prompt text, ready for use.`
           })
           const result = await response.json() as any
           promptText = result.response || result.content || JSON.stringify(result)
-          generationMetadata = { source: 'awrseqapi', timestamp: new Date().toISOString(), raw: result }
+          generationMetadata = { source: 'AWR_SEQ_API', timestamp: new Date().toISOString(), raw: result }
         } catch (apiErr) {
           // Fallback to locally generated prompt
           promptText = generateFallbackPrompt(rubricContext)
@@ -392,7 +393,7 @@ Return ONLY the scoring prompt text, ready for use.`
         testRunId,
         jobId,
         promptId,
-        status: 'pending_review',
+        status: 'pending_scoring',
         applicationIds,
         createdAt: new Date().toISOString(),
       }
@@ -407,7 +408,34 @@ Return ONLY the scoring prompt text, ready for use.`
         { jobId, promptId, applicationCount: applicationIds.length }
       )
 
+      // Respond immediately with pending_scoring status (FR-048)
       res.status(201).json(testRun)
+
+      // Fire-and-forget: auto-trigger scoring pipeline for each test application (FR-048)
+      // Uses promptId override to bypass the production-approved gate (FR-038)
+      setImmediate(async () => {
+        try {
+          // Update status to scoring
+          testRun.status = 'scoring'
+          await storage.set(promptTestRunKey(testRunId), JSON.stringify(testRun))
+
+          const pipeline = createPipelineOrchestrator(storage)
+          const results = await Promise.allSettled(
+            applicationIds.map(appId => pipeline.processApplication(appId, jobId, promptId))
+          )
+
+          const failures = results.filter(r => r.status === 'rejected')
+          if (failures.length > 0) {
+            console.error(`Test-run ${testRunId}: ${failures.length}/${applicationIds.length} applications failed scoring`)
+          }
+
+          // Update status to pending_review
+          testRun.status = 'pending_review'
+          await storage.set(promptTestRunKey(testRunId), JSON.stringify(testRun))
+        } catch (err) {
+          console.error(`Test-run ${testRunId} auto-trigger scoring failed:`, err)
+        }
+      })
     } catch (err) {
       next(err)
     }

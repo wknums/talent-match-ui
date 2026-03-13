@@ -272,7 +272,7 @@ export interface PasswordResetRequest {
 // US3a: Scoring Prompt Management
 export type PromptStatus = 'draft' | 'active' | 'inactive' | 'production-approved'
 export type PromptSource = 'manual' | 'imported' | 'generated'
-export type TestRunStatus = 'pending_review' | 'approved' | 'rejected'
+export type TestRunStatus = 'pending_scoring' | 'scoring' | 'pending_review' | 'approved' | 'rejected'
 
 export interface ScoringPrompt {
   promptId: string
