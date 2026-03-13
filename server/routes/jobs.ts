@@ -9,6 +9,143 @@ import type { Job, JobConfigVersion, Application } from '../../src/types/index.j
 
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
 
+const EXTRACT_SPEC_SYSTEM_PROMPT = `You are an expert information extraction and evaluation assistant. Read a job specification and produce a single JSON object that captures:
+
+Job Title, Job Description, Department (if present), Organization (if present).
+All must-have requirements.
+All recommended/desired qualifications.
+Experience requirements (years, domains, tools).
+A rubric with categories and weights that sum to 1.0:
+
+If a rubric is present in the document, extract its categories and weights (convert to normalized weights summing to 1.0).
+If no rubric is present, generate a thoughtful draft rubric and assign 60% of the total weight to the "Must-Have Requirements" (distribute the remaining 40% carefully across other relevant categories).
+For generated rubrics, include criteria mappings so each category clearly reflects items drawn from the spec.
+
+
+Important
+
+Think step-by-step privately. Do not reveal chain-of-thought.
+Output only the final JSON object—no additional text.
+The JSON must be valid, with proper escaping, no trailing commas, and weights that sum to exactly 1.0 (use rounding and final normalization as needed)
+Output JSON Schema (contract)
+
+You must adhere to this structure and field naming. If a field is not present in the document, use null or [] as appropriate.
+
+{
+  "job_title": "string | null",
+  "job_description": "string | null",
+  "department": "string | null",
+  "organization": "string | null",
+  "must_have_requirements": ["string", "..."],
+  "recommended_or_desired": ["string", "..."],
+  "experience_requirements": ["string", "..."],
+  "rubric": {
+    "has_rubric_in_doc": "boolean",
+    "categories": [
+      {
+        "name": "string",
+        "weight": 0.0,
+        "criteria": ["string", "..."],
+        "source": "doc|generated"
+      }
+    ],
+    "weights_sum_to_1_0": "boolean"
+  }
+}
+
+Extraction Rules & Heuristics
+
+
+Job Title
+
+Prefer explicit title lines/headings; otherwise infer from earliest explicit role labels.
+Normalize casing (Title Case) and trim department/org suffixes unless integral to the title.
+
+
+Job Description
+
+Use the main narrative of responsibilities/role purpose.
+Exclude company boilerplate unless tightly coupled to the role.
+
+
+Department / Organization
+
+Extract when explicitly present (e.g., "Department: Finance", "Reports to: Head of …" is not department unless clearly labeled).
+Organization is the hiring entity or brand named as the employer.
+
+
+
+Must-Have vs Recommended/Desired
+
+Must-Have indicators: "must", "required", "minimum", "compulsory", "essential", "non-negotiable", "shall", "strictly required".
+Recommended/Desired indicators: "nice to have", "preferred", "advantageous", "beneficial", "plus", "bonus", "good to have".
+If ambiguous, default to recommended_or_desired unless the doc uses strong mandatory language.
+
+
+
+Experience Requirements
+
+Capture explicit experience statements: years, domains, tools, certifications with "required/mandatory/minimum" → also include the phrases in must-have if marked mandatory.
+If experience is optional, keep under recommended_or_desired and still mirror relevant items in experience_requirements to preserve visibility.
+De-duplicate across arrays; keep one canonical phrasing.
+
+
+
+Deduplication & Normalization
+
+Trim whitespace; singularize plurals if natural; remove trailing punctuation; unify acronyms (first use can include long form).
+
+Rubric Logic
+If the document contains a rubric
+
+Extract all categories, their weights (percentages/points to be normalized to weights summing to 1.0), and any explicit criteria mapping.
+Preserve original category names (normalize casing).
+Set source: "doc".
+After conversion and rounding to two decimals, ensure final sum equals 1.00 by adjusting the largest category by the minimal residual (±0.01 as needed).
+
+If the document does NOT contain a rubric
+
+Create a draft rubric with thoughtful categories and weights that sum to 1.00, assigning 0.60 (60%) to "Must-Have Requirements".
+Distribute the remaining 0.40 (40%) across categories that make sense for this spec. Use these defaults unless the document strongly suggests alternatives:
+
+Must-Have Requirements: 0.60
+Recommended/Desired Qualifications: 0.20
+Experience Depth & Relevance: 0.15
+Role/Context Fit (Responsibilities, Domain, Soft Skills): 0.05
+
+
+Tailor the category names to match the document's language (e.g., "Core Competencies", "Technical Proficiency", "Domain Knowledge"), but keep Must-Have at 0.60.
+For each category, populate criteria with succinct bullet points derived from the extracted items.
+Mark source: "generated" for all categories.
+Round weights to two decimals and normalize to ensure the final sum equals 1.00 (adjust the "Must-Have Requirements" category by the minimal residual if needed, while staying as close as possible to 0.60).
+
+
+Before emitting, silently verify:
+
+All required top-level fields exist; use null or [] if not present.
+Arrays contain strings only (no nested objects except rubric.categories).
+No duplicate items across arrays; if overlaps are inherent, keep the most appropriate placement and remove duplicates.
+rubric.categories non-empty; each has name, weight (number), criteria (array), and source ("doc" or "generated").
+Sum of weight values equals 1.00 exactly after rounding and final normalization; set weights_sum_to_1_0: true.
+Output is valid JSON with no extra commentary.`
+
+const EXTRACT_RUBRIC_SYSTEM_PROMPT = `You are an expert rubric extraction assistant. Read a rubric or scoring criteria document and produce a single JSON object.
+
+Extract the job title (if present) and all rubric categories with their weights.
+Weights must be normalized to sum to exactly 1.0.
+
+Output only valid JSON with no additional text:
+{
+  "title": "string | null",
+  "categories": [
+    {
+      "name": "string",
+      "weight": 0.0,
+      "description": "string"
+    }
+  ]
+}`
+
 export function createJobsRouter(storage: StorageProvider) {
   const router = Router()
   const audit = createAuditService(storage)
@@ -53,7 +190,7 @@ export function createJobsRouter(storage: StorageProvider) {
   // POST /api/jobs - create job
   router.post('/', async (req: AuthenticatedRequest, res, next) => {
     try {
-      const { title, department, organization, postingDate, rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, specDocumentId, rubricDocumentId, jobCode, jobDescription } = req.body
+      const { title, department, organization, postingDate, rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, specDocumentId, rubricDocumentId, jobCode, jobDescription, rubricSource, rawExtractionResponse } = req.body
 
       if (!title || !department) {
         return res.status(400).json({ error: 'Validation Error', message: 'title and department are required' })
@@ -77,6 +214,9 @@ export function createJobsRouter(storage: StorageProvider) {
         longlistThreshold: longlistThreshold || 60,
         shortlistThreshold: shortlistThreshold || 75,
         varianceThreshold: varianceThreshold || 15,
+        rubricApprovalStatus: rubricSource === 'manual' ? 'approved' : 'draft',
+        rubricSource: rubricSource || 'manual',
+        rawExtractionResponse: rawExtractionResponse || undefined,
         createdAt: new Date().toISOString(),
       }
 
@@ -132,10 +272,20 @@ export function createJobsRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: `Unsupported file type: ${ext}. Supported: pdf, jpg, md, txt, docx` })
       }
 
-      const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/extract-spec`, {
+      const formData = new FormData()
+
+      // Add the extraction prompt as promptFile (required by /assess/passthrough)
+      const promptBlob = new Blob([EXTRACT_SPEC_SYSTEM_PROMPT], { type: 'text/plain' })
+      formData.append('promptFile', promptBlob, 'extract-spec-prompt.md')
+
+      // Add the uploaded document as specFile (decoded from base64)
+      const docBuffer = Buffer.from(content, 'base64')
+      const docBlob = new Blob([docBuffer], { type: mimeType || 'application/octet-stream' })
+      formData.append('specFile', docBlob, fileName)
+
+      const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName, content, mimeType }),
+        body: formData,
       })
 
       if (!extractionResponse.ok) {
@@ -143,8 +293,34 @@ export function createJobsRouter(storage: StorageProvider) {
         return res.status(extractionResponse.status).json({ error: 'Extraction Failed', message: errorText })
       }
 
-      const extracted = await extractionResponse.json()
-      res.json(extracted)
+      // Passthrough returns the raw output file directly (not wrapped in a response object)
+      const responseText = await extractionResponse.text()
+
+      // Parse the LLM JSON response
+      let extracted: any
+      try {
+        extracted = typeof responseText === 'string' ? JSON.parse(responseText) : responseText
+      } catch {
+        return res.status(502).json({ error: 'Extraction Failed', message: 'Failed to parse extraction response as JSON' })
+      }
+
+      // Map the extraction contract to the UI contract
+      const mapped = {
+        title: extracted.job_title || null,
+        jobDescription: extracted.job_description || null,
+        department: extracted.department || null,
+        organization: extracted.organization || null,
+        mustHaves: (extracted.must_have_requirements || []).map((r: string) => ({ criterion: r, description: '' })),
+        desiredCriteria: (extracted.recommended_or_desired || []).map((r: string) => ({ qualification: r, description: '' })),
+        rubric: extracted.rubric?.categories?.map((c: any) => ({
+          name: c.name,
+          weight: c.weight,
+          description: (c.criteria || []).join('; '),
+        })) || [],
+        raw: extracted,
+      }
+
+      res.json(mapped)
     } catch (err) {
       next(err)
     }
@@ -168,10 +344,20 @@ export function createJobsRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: `Unsupported file type: ${ext}. Supported: pdf, jpg, md, txt, docx` })
       }
 
-      const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/extract-rubric`, {
+      const formData = new FormData()
+
+      // Add the rubric extraction prompt as promptFile (required by /assess/passthrough)
+      const promptBlob = new Blob([EXTRACT_RUBRIC_SYSTEM_PROMPT], { type: 'text/plain' })
+      formData.append('promptFile', promptBlob, 'extract-rubric-prompt.md')
+
+      // Add the uploaded document as specFile (decoded from base64)
+      const docBuffer = Buffer.from(content, 'base64')
+      const docBlob = new Blob([docBuffer], { type: mimeType || 'application/octet-stream' })
+      formData.append('specFile', docBlob, fileName)
+
+      const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileName, content, mimeType }),
+        body: formData,
       })
 
       if (!extractionResponse.ok) {
@@ -179,7 +365,16 @@ export function createJobsRouter(storage: StorageProvider) {
         return res.status(extractionResponse.status).json({ error: 'Extraction Failed', message: errorText })
       }
 
-      const extracted = await extractionResponse.json()
+      // Passthrough returns the raw output file directly
+      const responseText = await extractionResponse.text()
+
+      let extracted: any
+      try {
+        extracted = typeof responseText === 'string' ? JSON.parse(responseText) : responseText
+      } catch {
+        return res.status(502).json({ error: 'Extraction Failed', message: 'Failed to parse rubric extraction response as JSON' })
+      }
+
       res.json(extracted)
     } catch (err) {
       next(err)
@@ -226,7 +421,7 @@ export function createJobsRouter(storage: StorageProvider) {
   router.put('/:jobId/config', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const { rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold } = req.body
+      const { rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, rubricSource, rawExtractionResponse } = req.body
 
       const jobs = await getArray<Job>(storage, JOBS)
       const jobIndex = jobs.findIndex(j => j.jobId === jobId)
@@ -245,6 +440,9 @@ export function createJobsRouter(storage: StorageProvider) {
         longlistThreshold: longlistThreshold ?? jobs[jobIndex].currentVersion.longlistThreshold,
         shortlistThreshold: shortlistThreshold ?? jobs[jobIndex].currentVersion.shortlistThreshold,
         varianceThreshold: varianceThreshold ?? jobs[jobIndex].currentVersion.varianceThreshold,
+        rubricApprovalStatus: 'draft',
+        rubricSource: rubricSource || 'manual',
+        rawExtractionResponse: rawExtractionResponse || undefined,
         createdAt: new Date().toISOString(),
       }
 
@@ -255,6 +453,59 @@ export function createJobsRouter(storage: StorageProvider) {
       await audit.appendEvent(req.user?.username || 'unknown', 'job.config-updated', 'Job', jobId, { versionId: newVersion.versionId })
 
       res.json(newVersion)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // PUT /api/jobs/:jobId/rubric-approval - toggle rubric approval status
+  router.put('/:jobId/rubric-approval', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId } = req.params
+      const { status } = req.body
+
+      if (status !== 'approved' && status !== 'draft') {
+        return res.status(400).json({ error: 'Validation Error', message: 'status must be "approved" or "draft"' })
+      }
+
+      const jobs = await getArray<Job>(storage, JOBS)
+      const jobIndex = jobs.findIndex(j => j.jobId === jobId)
+      if (jobIndex === -1) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+
+      const currentVersion = jobs[jobIndex].currentVersion
+      if (currentVersion.rubricApprovalStatus === status) {
+        return res.status(400).json({ error: 'Validation Error', message: `Rubric is already ${status}` })
+      }
+
+      // In-place update (not a new config version per research.md R5)
+      currentVersion.rubricApprovalStatus = status
+      jobs[jobIndex] = { ...jobs[jobIndex], currentVersion }
+      await setArray(storage, JOBS, jobs)
+
+      // Also update the versions array
+      const versions = await getArray<JobConfigVersion>(storage, jobVersionsKey(jobId))
+      const versionIndex = versions.findIndex(v => v.versionId === currentVersion.versionId)
+      if (versionIndex !== -1) {
+        versions[versionIndex].rubricApprovalStatus = status
+        await setArray(storage, jobVersionsKey(jobId), versions)
+      }
+
+      const auditAction = status === 'approved' ? 'rubric.approved' : 'rubric.reverted-to-draft'
+      await audit.appendEvent(
+        req.user?.username || 'unknown',
+        auditAction,
+        'job_config_version',
+        currentVersion.versionId,
+        { jobId, versionId: currentVersion.versionId, previousStatus: status === 'approved' ? 'draft' : 'approved', newStatus: status }
+      )
+
+      res.json({
+        versionId: currentVersion.versionId,
+        rubricApprovalStatus: status,
+        updatedAt: new Date().toISOString(),
+      })
     } catch (err) {
       next(err)
     }

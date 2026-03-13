@@ -16,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Plus, X, UploadSimple, File, Sparkle, WarningCircle } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
-import type { RubricCategory, MustHave, DesiredCriteria, AggregationStrategy } from '@/types'
+import type { RubricCategory, MustHave, DesiredCriteria, AggregationStrategy, RubricApprovalStatus, RubricSource } from '@/types'
 
 interface CreateJobDialogProps {
   open: boolean
@@ -52,6 +52,9 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   const [rubricUploadedFile, setRubricUploadedFile] = useState<File | null>(null)
   const [processingRubric, setProcessingRubric] = useState(false)
   const [rubricTitleMismatch, setRubricTitleMismatch] = useState<string | null>(null)
+  const [rubricApprovalStatus, setRubricApprovalStatus] = useState<RubricApprovalStatus>('approved')
+  const [rubricSource, setRubricSource] = useState<RubricSource>('manual')
+  const [rawExtractionResponse, setRawExtractionResponse] = useState<string | undefined>(undefined)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rubricFileInputRef = useRef<HTMLInputElement>(null)
 
@@ -70,6 +73,9 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
       setAggregationStrategy(editingJob.currentVersion.aggregationStrategy)
       setLonglistThreshold(String(editingJob.currentVersion.longlistThreshold))
       setShortlistThreshold(String(editingJob.currentVersion.shortlistThreshold))
+      setRubricApprovalStatus(editingJob.currentVersion.rubricApprovalStatus || 'approved')
+      setRubricSource(editingJob.currentVersion.rubricSource || 'manual')
+      setRawExtractionResponse(editingJob.currentVersion.rawExtractionResponse)
     }
   }, [editingJob])
 
@@ -101,6 +107,9 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
       })
 
       const extracted = await api.extractJobSpec(file.name, base64Content, file.type)
+
+      // Track rubric source and raw extraction response for audit
+      setRawExtractionResponse(JSON.stringify(extracted))
 
       setTitle(extracted.title || '')
       setDepartment(extracted.department || '')
@@ -136,6 +145,8 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
             weight: r.weight || 0,
           }))
         )
+        setRubricSource('extracted')
+        setRubricApprovalStatus('draft')
       } else if (!rubricUploadedFile) {
         // Auto-generate draft rubric: 60% weight to must-haves
         const mhItems = (extracted.mustHaves || []).filter((m: any) => m.criterion)
@@ -178,13 +189,16 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
             draftCategories[draftCategories.length - 1].weight += Math.round((1.0 - sum) * 100) / 100
           }
           setRubricCategories(draftCategories)
+          setRubricSource('generated')
+          setRubricApprovalStatus('draft')
           toast.info('Draft rubric generated from requirements. Review and adjust weights.')
         }
       }
 
       toast.success('Job specification extracted successfully')
-    } catch (error) {
-      toast.error('Failed to process document. Please fill in manually.')
+    } catch (error: any) {
+      const errorMsg = error?.message || 'Unknown error'
+      toast.error(`Extraction failed: ${errorMsg}. Please fill in manually.`)
       console.error('Error processing file:', error)
     } finally {
       setProcessingFile(false)
@@ -220,10 +234,13 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
 
       const extracted = await api.extractRubric(file.name, base64Content, file.type)
 
+      // Track raw response for audit
+      setRawExtractionResponse(JSON.stringify(extracted))
+
       // Check title mismatch
       if (extracted.title && title && extracted.title.toLowerCase() !== title.toLowerCase()) {
         setRubricTitleMismatch(
-          `The rubric document title "${extracted.title}" does not match the job title "${title}". Please correct and re-upload the rubric document. The existing rubric will be discarded.`
+          `The rubric document title "${extracted.title}" does not match the job title "${title}". Please correct and upload the corrected rubric document. The existing rubric document will be discarded.`
         )
         setRubricUploadedFile(null)
         if (rubricFileInputRef.current) rubricFileInputRef.current.value = ''
@@ -244,10 +261,13 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
         }
 
         setRubricCategories(rubric)
+        setRubricSource('extracted')
+        setRubricApprovalStatus('draft')
         toast.success('Rubric extracted from document successfully')
       }
-    } catch (error) {
-      toast.error('Failed to process rubric document.')
+    } catch (error: any) {
+      const errorMsg = error?.message || 'Unknown error'
+      toast.error(`Rubric extraction failed: ${errorMsg}`)
       console.error('Error processing rubric file:', error)
     } finally {
       setProcessingRubric(false)
@@ -354,6 +374,8 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
           shortlistThreshold: parseFloat(shortlistThreshold),
           specDocumentId: uploadedSpecDocId || undefined,
           rubricDocumentId: editingJob.rubricDocumentId,
+          rubricSource,
+          rawExtractionResponse,
         })
         toast.success('Job updated successfully')
       } else {
@@ -372,6 +394,8 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
           longlistThreshold: parseFloat(longlistThreshold),
           shortlistThreshold: parseFloat(shortlistThreshold),
           specDocumentId: uploadedSpecDocId || undefined,
+          rubricSource,
+          rawExtractionResponse,
         })
         toast.success('Job created successfully')
       }
@@ -404,6 +428,9 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
     setUploadedSpecDocId(null)
     setRubricUploadedFile(null)
     setRubricTitleMismatch(null)
+    setRubricApprovalStatus('approved')
+    setRubricSource('manual')
+    setRawExtractionResponse(undefined)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -638,11 +665,35 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
 
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label>Rubric Categories</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addRubricCategory}>
-                  <Plus size={16} />
-                  Add Category
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Label>Rubric Categories</Label>
+                  {rubricApprovalStatus === 'draft' ? (
+                    <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+                      Draft
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
+                      Approved
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {rubricApprovalStatus === 'draft' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRubricApprovalStatus('approved')}
+                      className="text-green-700 border-green-300 hover:bg-green-50"
+                    >
+                      Approve Rubric
+                    </Button>
+                  )}
+                  <Button type="button" variant="outline" size="sm" onClick={addRubricCategory}>
+                    <Plus size={16} />
+                    Add Category
+                  </Button>
+                </div>
               </div>
               {rubricCategories.map((category) => (
                 <Card key={category.id}>

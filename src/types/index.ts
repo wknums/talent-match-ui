@@ -2,6 +2,8 @@ export type JobStatus = 'Draft' | 'Active' | 'Processing' | 'Completed' | 'Archi
 export type ApplicationStatus = 'Queued' | 'Extracting' | 'ExtractionFailed' | 'Scoring' | 'ScoringFailed' | 'Aggregating' | 'Completed' | 'NeedsManualReview'
 export type AggregationStrategy = 'median' | 'mean' | 'weighted'
 export type Decision = 'Eligible' | 'Excluded' | 'NeedsManualReview'
+export type RubricApprovalStatus = 'draft' | 'approved'
+export type RubricSource = 'manual' | 'extracted' | 'generated'
 
 export interface RubricCategory {
   id: string
@@ -33,6 +35,9 @@ export interface JobConfigVersion {
   longlistThreshold: number
   shortlistThreshold: number
   varianceThreshold: number
+  rubricApprovalStatus: RubricApprovalStatus
+  rubricSource: RubricSource
+  rawExtractionResponse?: string
   createdAt: string
 }
 

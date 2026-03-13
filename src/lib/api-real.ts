@@ -151,6 +151,8 @@ export const realAPI = {
     specDocumentId?: string
     rubricDocumentId?: string
     jobCode?: string
+    rubricSource?: import('@/types').RubricSource
+    rawExtractionResponse?: string
   }): Promise<Job> {
     return fetchJSON(`${API_BASE}/jobs`, {
       method: 'POST',
@@ -174,6 +176,8 @@ export const realAPI = {
     specDocumentId?: string
     rubricDocumentId?: string
     jobCode?: string
+    rubricSource?: import('@/types').RubricSource
+    rawExtractionResponse?: string
   }): Promise<Job> {
     // Update job config creates a new version
     await fetchJSON(`${API_BASE}/jobs/${jobId}/config`, {
@@ -194,6 +198,13 @@ export const realAPI = {
 
   async updateJobRubric(jobId: string, rubricDocumentId: string): Promise<void> {
     // No-op for now; rubric is updated via config
+  },
+
+  async updateRubricApproval(jobId: string, status: 'approved' | 'draft'): Promise<{ versionId: string; rubricApprovalStatus: string; updatedAt: string }> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/rubric-approval`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    })
   },
 
   // Applications

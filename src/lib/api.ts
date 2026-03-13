@@ -12,6 +12,7 @@ import type {
   MustHave,
   DesiredCriteria,
   AggregationStrategy,
+  RubricSource,
   ScoringPrompt,
   PromptTestRun,
 } from '@/types'
@@ -114,6 +115,8 @@ const getDefaultJobs = (): Job[] => {
         longlistThreshold: 60,
         shortlistThreshold: 75,
         varianceThreshold: 15,
+        rubricApprovalStatus: 'approved',
+        rubricSource: 'manual',
         createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       },
     },
@@ -147,6 +150,8 @@ const getDefaultJobs = (): Job[] => {
         longlistThreshold: 65,
         shortlistThreshold: 80,
         varianceThreshold: 12,
+        rubricApprovalStatus: 'approved',
+        rubricSource: 'manual',
         createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       },
     },
@@ -179,6 +184,8 @@ const getDefaultJobs = (): Job[] => {
         longlistThreshold: 70,
         shortlistThreshold: 85,
         varianceThreshold: 10,
+        rubricApprovalStatus: 'approved',
+        rubricSource: 'manual',
         createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
       },
     },
@@ -389,10 +396,13 @@ const mockAPI = {
     specDocumentId?: string
     rubricDocumentId?: string
     jobCode?: string
+    rubricSource?: RubricSource
+    rawExtractionResponse?: string
   }): Promise<Job> {
     await delay(500)
     const jobId = `job-${Date.now()}`
     const jobCode = data.jobCode || generateJobCode(data.title, data.department)
+    const rubricSource = data.rubricSource || 'manual'
     const newJob: Job = {
       jobId,
       jobCode,
@@ -417,6 +427,9 @@ const mockAPI = {
         longlistThreshold: data.longlistThreshold,
         shortlistThreshold: data.shortlistThreshold,
         varianceThreshold: 15,
+        rubricApprovalStatus: rubricSource === 'manual' ? 'approved' : 'draft',
+        rubricSource,
+        rawExtractionResponse: data.rawExtractionResponse,
         createdAt: new Date().toISOString(),
       },
       stats: {
@@ -455,6 +468,8 @@ const mockAPI = {
     specDocumentId?: string
     rubricDocumentId?: string
     jobCode?: string
+    rubricSource?: RubricSource
+    rawExtractionResponse?: string
   }): Promise<Job> {
     await delay(500)
     const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
@@ -486,6 +501,9 @@ const mockAPI = {
         longlistThreshold: data.longlistThreshold,
         shortlistThreshold: data.shortlistThreshold,
         varianceThreshold: 15,
+        rubricApprovalStatus: 'draft',
+        rubricSource: data.rubricSource || 'manual',
+        rawExtractionResponse: data.rawExtractionResponse,
         createdAt: new Date().toISOString(),
       },
     }
@@ -504,6 +522,27 @@ const mockAPI = {
     if (jobIndex !== -1) {
       jobs[jobIndex].rubricDocumentId = rubricDocumentId
       await kv.set('jobs', jobs)
+    }
+  },
+
+  async updateRubricApproval(jobId: string, status: 'approved' | 'draft'): Promise<{ versionId: string; rubricApprovalStatus: string; updatedAt: string }> {
+    await delay(300)
+    const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
+    const jobIndex = jobs.findIndex(j => j.jobId === jobId)
+    
+    if (jobIndex === -1) {
+      throw new Error('Job not found')
+    }
+    
+    const currentVersion = jobs[jobIndex].currentVersion
+    currentVersion.rubricApprovalStatus = status
+    jobs[jobIndex] = { ...jobs[jobIndex], currentVersion }
+    await kv.set('jobs', jobs)
+
+    return {
+      versionId: currentVersion.versionId,
+      rubricApprovalStatus: status,
+      updatedAt: new Date().toISOString(),
     }
   },
 
