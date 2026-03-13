@@ -296,7 +296,7 @@ defaults to "Approved". Verify raw extraction response is stored when AI generat
 - **Setup (Phase 1)**: No dependencies — can start immediately ✅ COMPLETE
 - **Foundational (Phase 2)**: Depends on Setup completion — **BLOCKS all user stories** ✅ COMPLETE
 - **US3 Core (Phase 3)**: Depends on Foundational — core job creation ✅ COMPLETE
-- **US3 Rubric Approval (Phase 4)**: Depends on Phase 3 — rubric approval workflow ✅ COMPLETE
+- **AWReason API Auth (Phase 4)**: Depends on Phase 3 — outbound API auth ✅ COMPLETE
 - **US3 Polish (Phase 5)**: Depends on Phase 4 — US3 final validation ⬜ PENDING
 - **US5 Scoring Worker (Phase 6)**: Depends on US3a (approved prompt) + US4 (uploaded applications); can start in parallel with Phase 4/5 since it modifies different files ✅ COMPLETE
 - **US5 Scoring Polish (Phase 7)**: Depends on Phase 6 — scoring validation ⬜ PENDING
