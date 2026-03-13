@@ -33,13 +33,13 @@ public static class JobsEndpoints
             });
         });
 
-        group.MapPost("/extract-spec", async (ExtractDocumentRequest request, IHttpClientFactory httpClientFactory) =>
+        group.MapPost("/extract-spec", async (ExtractDocumentRequest request, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
         {
             var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
             if (string.IsNullOrEmpty(endpoint))
                 return Results.Problem("AWR_SEQ_API_ENDPOINT is not configured", statusCode: 503);
 
-            using var client = httpClientFactory.CreateClient();
+            using var client = httpClientFactory.CreateClient("AwrApiClient");
             using var formData = new MultipartFormDataContent();
 
             // Add the extraction prompt as promptFile (required by /assess/passthrough)
@@ -118,13 +118,13 @@ public static class JobsEndpoints
             });
         });
 
-        group.MapPost("/extract-rubric", async (ExtractDocumentRequest request, IHttpClientFactory httpClientFactory) =>
+        group.MapPost("/extract-rubric", async (ExtractDocumentRequest request, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
         {
             var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
             if (string.IsNullOrEmpty(endpoint))
                 return Results.Problem("AWR_SEQ_API_ENDPOINT is not configured", statusCode: 503);
 
-            using var client = httpClientFactory.CreateClient();
+            using var client = httpClientFactory.CreateClient("AwrApiClient");
             using var formData = new MultipartFormDataContent();
 
             // Add the rubric extraction prompt as promptFile (required by /assess/passthrough)

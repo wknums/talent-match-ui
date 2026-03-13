@@ -35,7 +35,11 @@ public static class DependencyInjection
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
         services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
-        services.AddHttpClient<ILlmProxyService, LlmProxyService>();
+        services.AddTransient<AwrAuthHandler>();
+        services.AddHttpClient<ILlmProxyService, LlmProxyService>()
+            .AddHttpMessageHandler<AwrAuthHandler>();
+        services.AddHttpClient("AwrApiClient")
+            .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddHttpContextAccessor();
 
         return services;

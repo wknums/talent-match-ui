@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { StorageProvider } from '../storage/types.js'
 import { appRunsKey, appExtractionKey, promptsKey, JOBS } from '../storage/kv-keys.js'
 import { getArray, pushToArray } from '../storage/kv-helpers.js'
+import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import type { ScoringRun, Job, ExtractionArtifact, ScoringPrompt } from '../../src/types/index.js'
 
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
@@ -76,8 +77,10 @@ export async function runScoring(
       formData.append('promptFile', new Blob([resolvedPrompt], { type: 'text/plain' }), 'score-prompt.md')
       formData.append('specFile', new Blob([candidateText], { type: 'text/plain' }), 'candidate-cv.md')
 
+      const awrHeaders = await getAwrAuthHeaders({ username: 'system', role: 'pipeline' })
       const response = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
         method: 'POST',
+        headers: awrHeaders,
         body: formData,
       })
 

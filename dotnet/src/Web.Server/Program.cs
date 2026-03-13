@@ -6,6 +6,7 @@ using TalentMatch.Application;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Infrastructure;
 using TalentMatch.Infrastructure.Persistence;
+using TalentMatch.Infrastructure.Services;
 using TalentMatch.Web.Server.Endpoints;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -50,6 +51,9 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// Validate AWReason API auth configuration at startup
+AwrAuthHandler.ValidateConfiguration();
 
 // Ensure database is created and seed default admin
 using (var scope = app.Services.CreateScope())

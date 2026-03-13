@@ -5,6 +5,7 @@ import type { AuthenticatedRequest } from '../middleware/auth.js'
 import { JOBS, jobVersionsKey, jobApplicationsKey } from '../storage/kv-keys.js'
 import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
 import { createAuditService } from '../services/audit.js'
+import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import type { Job, JobConfigVersion, Application } from '../../src/types/index.js'
 
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
@@ -283,8 +284,10 @@ export function createJobsRouter(storage: StorageProvider) {
       const docBlob = new Blob([docBuffer], { type: mimeType || 'application/octet-stream' })
       formData.append('specFile', docBlob, fileName)
 
+      const awrHeaders = await getAwrAuthHeaders(req.user ? { username: req.user.username, role: req.user.role } : undefined)
       const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
         method: 'POST',
+        headers: awrHeaders,
         body: formData,
       })
 
@@ -355,8 +358,10 @@ export function createJobsRouter(storage: StorageProvider) {
       const docBlob = new Blob([docBuffer], { type: mimeType || 'application/octet-stream' })
       formData.append('specFile', docBlob, fileName)
 
+      const awrHeaders = await getAwrAuthHeaders(req.user ? { username: req.user.username, role: req.user.role } : undefined)
       const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
         method: 'POST',
+        headers: awrHeaders,
         body: formData,
       })
 

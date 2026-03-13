@@ -100,6 +100,41 @@ including desired criteria. Upload a rubric doc with mismatched title → verify
 
 ---
 
+## Phase 4: AWReason API Authentication (FR-049, FR-050, FR-051)
+
+**Goal**: All outbound HTTP requests to `AWR_SEQ_API_ENDPOINT` must include authentication headers
+based on the `AWR_AUTH_MODE` environment variable. Supports three modes: `none` (local dev),
+`apikey` (staging — shared secret + user identity headers), and `entra` (production — Entra ID JWT
+via client-credentials flow). See research.md R6 for design decisions.
+
+**Independent Test**: Set `AWR_AUTH_MODE=apikey` and `AWR_API_KEY=test-secret` in `.env`. Trigger
+extraction, prompt generation, and scoring. Verify `X-Api-Key`, `X-User-Id`, and `X-User-Role`
+headers are present on all outbound requests to the AWReason API. Repeat with `AWR_AUTH_MODE=none`
+and verify no auth headers are sent.
+
+### Stack A — AWReason Auth Helper & Integration
+
+- [x] T026 [US3/US5] Create `server/services/awr-auth.ts` exporting `getAwrAuthHeaders(user?: { username: string, role: string }): Promise<Record<string, string>>` that reads `AWR_AUTH_MODE` from env and returns: empty object for `none`; `{ 'X-Api-Key': AWR_API_KEY, 'X-User-Id': user.username, 'X-User-Role': user.role }` for `apikey`; `{ 'Authorization': 'Bearer <token>' }` for `entra` (using `@azure/identity` `DefaultAzureCredential.getToken(AWR_AAD_AUDIENCE)`). Throw descriptive error if required env vars are missing for the configured mode.
+- [x] T027 [P] [US3] Update `server/routes/jobs.ts` to import `getAwrAuthHeaders` and attach returned headers to all `fetch()` calls to `AWR_SEQ_API_ENDPOINT/assess/passthrough` (extract-spec at ~L286, extract-rubric at ~L358). Pass the authenticated user from `req.user`.
+- [x] T028 [P] [US3a] Update `server/routes/prompts.ts` to import `getAwrAuthHeaders` and attach returned headers to the `fetch()` call to `AWR_SEQ_API_ENDPOINT/assess/passthrough` for prompt generation (~L297). Pass the authenticated user from `req.user`.
+- [x] T029 [P] [US5] Update `server/workers/scoring.ts` to import `getAwrAuthHeaders` and attach returned headers to the `fetch()` call to `AWR_SEQ_API_ENDPOINT/assess/passthrough` for scoring (~L79). The scoring worker may not have a user context — use a system-level identity (e.g. `{ username: 'system', role: 'pipeline' }`) for `X-User-Id` and `X-User-Role` in apikey mode.
+
+### Stack B — AWReason Auth Handler & Integration
+
+- [x] T030 [P] [US3/US5] Create `dotnet/src/Infrastructure/Services/AwrAuthHandler.cs` as a `DelegatingHandler` that reads `AWR_AUTH_MODE` from env and attaches headers to outbound requests: nothing for `none`; `X-Api-Key` (from `AWR_API_KEY`) for `apikey`; `Authorization: Bearer <token>` for `entra` (using `Azure.Identity.DefaultAzureCredential`). For `apikey` mode, read `X-User-Id` and `X-User-Role` from a custom request property or ambient context.
+- [x] T031 [P] [US3/US5] Register `AwrAuthHandler` in DI and configure `IHttpClientFactory` named client (or typed client) for AWReason API calls in `dotnet/src/Web.Server/Program.cs`, so that `LlmProxyService` and `JobsEndpoints` use the handler-decorated `HttpClient`.
+- [x] T032 [P] [US3/US5] Update `dotnet/src/Infrastructure/Services/LlmProxyService.cs` to use the handler-decorated `HttpClient` from DI instead of creating requests manually, ensuring auth headers are automatically applied to both `SendPromptAsync` and `ScoreAsync`.
+- [x] T033 [P] [US3] Update `dotnet/src/Web.Server/Endpoints/JobsEndpoints.cs` extract-spec and extract-rubric endpoints to use the handler-decorated `HttpClient` from DI instead of constructing `HttpClient` directly, ensuring auth headers are automatically applied.
+
+### Configuration & Validation
+
+- [x] T034 [P] Update `.env` to add `AWR_AUTH_MODE=none` (already present), `AWR_API_KEY`, `AWR_AAD_ISSUER`, and `AWR_AAD_AUDIENCE` with comments documenting the three modes. Add an `.env.example` or update existing comments to explain the AWReason auth configuration.
+- [x] T035 [P] Add startup validation in both `server/index.ts` (Stack A) and `dotnet/src/Web.Server/Program.cs` (Stack B) that checks `AWR_AUTH_MODE` and verifies required companion env vars are set (`AWR_API_KEY` for `apikey`; `AWR_AAD_AUDIENCE` for `entra`). Log a clear error and fail fast if misconfigured.
+
+**Checkpoint**: All outbound calls to AWReason API include correct authentication headers based on configured mode; startup fails fast with descriptive errors on misconfiguration
+
+---
+
 ## Phase 4: User Story 3 — Rubric Approval Status and Source Tracking (Priority: P2)
 
 **Goal**: AI-generated or AI-extracted rubrics receive a `draft` approval status that the user must

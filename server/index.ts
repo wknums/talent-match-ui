@@ -15,6 +15,7 @@ import { createPromptsRouter } from './routes/prompts.js'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { initializeUsers } from './services/init-users.js'
+import { validateAwrAuthConfig } from './services/awr-auth.js'
 
 // Load .env file
 const envPath = resolve(process.cwd(), '.env')
@@ -37,6 +38,14 @@ const PORT = parseInt(process.env.PORT || '3001', 10)
 const API_MODE = (process.env.API_MODE || 'mock') as 'mock' | 'real'
 
 async function main() {
+  // Validate AWReason API auth configuration before starting
+  try {
+    validateAwrAuthConfig()
+  } catch (err) {
+    console.error(`[startup] AWReason auth config error: ${(err as Error).message}`)
+    process.exit(1)
+  }
+
   const storage = await createStorageProvider()
 
   // Seed default admin user if none exist

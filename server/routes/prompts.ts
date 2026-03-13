@@ -9,6 +9,7 @@ import {
 } from '../storage/kv-keys.js'
 import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
 import { createAuditService } from '../services/audit.js'
+import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import { createPipelineOrchestrator } from '../services/pipeline.js'
 import type {
   ScoringPrompt, PromptTestRun, Job, Application,
@@ -294,9 +295,10 @@ Return ONLY the scoring prompt text, ready for use.`
 
       if (AWR_SEQ_API_ENDPOINT) {
         try {
+          const awrHeaders = await getAwrAuthHeaders(req.user ? { username: req.user.username, role: req.user.role } : undefined)
           const response = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...awrHeaders },
             body: JSON.stringify({
               systemPrompt,
               userPrompt: JSON.stringify(rubricContext, null, 2),
