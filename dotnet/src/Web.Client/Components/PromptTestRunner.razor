@@ -1,5 +1,7 @@
 @using TalentMatch.Web.Client.Services
+@using System.Text.Json
 @inject ApiClient Api
+@inject NavigationManager Navigation
 
 <div>
     <h5>Prompt Test Workflow</h5>
@@ -42,20 +44,201 @@
                         <span>Test Run: @run.Id[..8]... | Apps: @GetAppCount(run.ApplicationIdsJson)</span>
                         <span style="@TestRunStatusStyle(run.Status)">@run.Status</span>
                     </div>
-                    @if (run.Status == "approved" && ActivePrompt.Status != "production-approved")
-                    {
-                        <button @onclick="ApproveForProduction" style="margin-top: 0.5rem; padding: 0.5rem 1rem; background: #38a169; color: white; border: none; border-radius: 4px;">
-                            ✅ Approve for Production
-                        </button>
-                    }
-                    @if (run.Status == "pending_review")
-                    {
-                        <button @onclick="() => ApproveTestRun(run.Id)" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
-                            Approve Test Run
-                        </button>
-                    }
+                    <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        @if (run.Status is "pending_review" or "approved" or "rejected")
+                        {
+                            <button @onclick="() => ViewResults(run)" style="padding: 0.4rem 0.8rem; background: #4a5568; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                🔍 View Results
+                            </button>
+                        }
+                        @if (run.Status == "pending_review")
+                        {
+                            <button @onclick="() => ApproveTestRun(run.Id)" style="padding: 0.4rem 0.8rem; background: #38a169; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                ✅ Approve Test Run
+                            </button>
+                        }
+                        @if (run.Status == "approved" && ActivePrompt.Status != "production-approved")
+                        {
+                            <button @onclick="ApproveForProduction" style="padding: 0.4rem 0.8rem; background: #805ad5; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                🚀 Approve for Production
+                            </button>
+                        }
+                    </div>
                 </div>
             }
+        }
+
+        <!-- Results detail panel -->
+        @if (selectedDetail != null)
+        {
+            <div style="border: 2px solid #3182ce; border-radius: 8px; padding: 1rem; margin-top: 1rem; background: #f7fafc;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h6 style="margin: 0;">📊 Test Run Results</h6>
+                    <button @onclick="() => selectedDetail = null" style="padding: 0.25rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">✕ Close</button>
+                </div>
+
+                <div style="margin-bottom: 0.75rem;">
+                    <span><strong>Status:</strong> </span>
+                    <span style="@TestRunStatusStyle(selectedDetail.TestRun.Status)">@selectedDetail.TestRun.Status</span>
+                    <span style="margin-left: 1rem;"><strong>Created:</strong> @selectedDetail.TestRun.CreatedAt.ToString("g")</span>
+                </div>
+
+                @if (selectedDetail.Applications.Any())
+                {
+                    @foreach (var appDetail in selectedDetail.Applications)
+                    {
+                        <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; background: white;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                <strong>@(appDetail.Application.Id[..8])...</strong>
+                                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                                    <button @onclick="() => NavigateToApp(appDetail.Application.Id)" style="padding: 0.2rem 0.5rem; background: #4a5568; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.8rem;">
+                                        📋 Detail
+                                    </button>
+                                    @if (appDetail.Application.FinalDecision is "NeedsManualReview" or "Eligible")
+                                    {
+                                        <button @onclick="() => NavigateToManualReview(appDetail.Application.Id)" style="padding: 0.2rem 0.5rem; background: #805ad5; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.8rem;">
+                                            ✍️ Manual Review
+                                        </button>
+                                    }
+                                    <span style="@AppStatusStyle(appDetail.Application.Status)">@appDetail.Application.Status</span>
+                                </div>
+                            </div>
+
+                            @if (appDetail.Application.FinalScore.HasValue)
+                            {
+                                <div style="margin-bottom: 0.5rem;">
+                                    <strong>Final Score:</strong> @appDetail.Application.FinalScore.Value.ToString("F1")
+                                    @if (appDetail.Application.FinalDecision != null)
+                                    {
+                                        <span> | <strong>Decision:</strong> @appDetail.Application.FinalDecision</span>
+                                    }
+                                </div>
+                            }
+
+                            @if (appDetail.ScoringRuns.Any())
+                            {
+                                <div style="margin-top: 0.5rem; border-top: 1px solid #e2e8f0; padding-top: 0.5rem;">
+                                    <div style="font-size: 0.8rem; color: #718096; margin-bottom: 0.5rem;">
+                                        @appDetail.ScoringRuns.Count scoring run(s) — avg score: @appDetail.ScoringRuns.Average(r => r.TotalScore).ToString("F1")
+                                    </div>
+                                    @foreach (var run in appDetail.ScoringRuns.OrderBy(r => r.RunIndex))
+                                    {
+                                        <div style="border: 1px solid #e2e8f0; border-radius: 4px; padding: 0.5rem; margin-bottom: 0.5rem; background: @(HasError(run.MustHaveEvaluationJson) ? "#fff5f5" : "#f7fafc"); font-size: 0.85rem;">
+                                            <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                                <span><strong>Run #@(run.RunIndex)</strong></span>
+                                                <span><strong>Score: @run.TotalScore.ToString("F1")</strong>@(HasError(run.MustHaveEvaluationJson) ? " ⚠️" : "")</span>
+                                            </div>
+
+                                            @if (HasError(run.MustHaveEvaluationJson))
+                                            {
+                                                <div style="margin: 0.25rem 0; padding: 0.5rem; background: #fed7d7; border-radius: 4px; border: 1px solid #feb2b2;">
+                                                    <div style="font-weight: 600; color: #822727; font-size: 0.8rem; margin-bottom: 0.25rem;">⚠️ Scoring Error</div>
+                                                    <div style="color: #822727; font-size: 0.8rem;">@GetErrorMessage(run.MustHaveEvaluationJson)</div>
+                                                    @{ var rawResp = GetRawResponse(run.MustHaveEvaluationJson); }
+                                                    @if (!string.IsNullOrEmpty(rawResp))
+                                                    {
+                                                        <details style="margin-top: 0.25rem;">
+                                                            <summary style="cursor: pointer; font-size: 0.75rem; color: #822727;">Show raw LLM response</summary>
+                                                            <pre style="margin-top: 0.25rem; padding: 0.5rem; background: #1a202c; color: #e2e8f0; border-radius: 4px; font-size: 0.7rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">@rawResp</pre>
+                                                        </details>
+                                                    }
+                                                </div>
+                                            }
+
+                                            @{ var subScores = ParseJson<Dictionary<string, double>>(run.CategoryScoresJson); }
+                                            @if (subScores?.Any() == true)
+                                            {
+                                                <div style="margin: 0.25rem 0; padding: 0.25rem 0.5rem; background: #edf2f7; border-radius: 4px;">
+                                                    <div style="font-weight: 600; font-size: 0.8rem; color: #4a5568; margin-bottom: 0.15rem;">Category Scores</div>
+                                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem;">
+                                                        @foreach (var kv in subScores)
+                                                        {
+                                                            <div style="display: flex; justify-content: space-between;">
+                                                                <span style="color: #718096;">@kv.Key:</span>
+                                                                <span><strong>@kv.Value.ToString("F1")</strong></span>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            }
+
+                                            @{ var mustHave = ParseJson<MustHaveDto>(run.MustHaveEvaluationJson); }
+                                            @if (mustHave != null)
+                                            {
+                                                <div style="margin-top: 0.25rem;">
+                                                    <span style="font-weight: 600; font-size: 0.8rem; color: #4a5568;">Eligibility: </span>
+                                                    @if (mustHave.Passed)
+                                                    {
+                                                        <span style="color: #38a169;">✅ Passed</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span style="color: #e53e3e;">❌ Failed</span>
+                                                        @if (mustHave.MissingCriteria?.Any() == true)
+                                                        {
+                                                            <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0; color: #e53e3e;">
+                                                                @foreach (var m in mustHave.MissingCriteria)
+                                                                {
+                                                                    <li>@m</li>
+                                                                }
+                                                            </ul>
+                                                        }
+                                                    }
+                                                </div>
+                                            }
+                                            else if (HasError(run.MustHaveEvaluationJson))
+                                            {
+                                                <div style="margin-top: 0.25rem; color: #e53e3e; font-size: 0.8rem;">
+                                                    <span style="font-weight: 600;">Eligibility: </span>⚠️ @GetErrorMessage(run.MustHaveEvaluationJson)
+                                                </div>
+                                            }
+
+                                            @{ var evidence = ParseJson<Dictionary<string, string>>(run.EvidenceCitationsJson); }
+                                            @if (evidence?.Any() == true)
+                                            {
+                                                <details style="margin-top: 0.25rem;">
+                                                    <summary style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #4a5568;">Evidence Citations (@evidence.Count)</summary>
+                                                    <div style="margin-top: 0.15rem; padding: 0.25rem 0.5rem; background: #fffff0; border-radius: 4px; font-size: 0.8rem;">
+                                                        @foreach (var kv in evidence)
+                                                        {
+                                                            <div style="margin-bottom: 0.25rem;">
+                                                                <span style="font-weight: 600; color: #4a5568;">@kv.Key:</span>
+                                                                <span style="color: #718096;"> @kv.Value</span>
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </details>
+                                            }
+
+                                            @{ var tips = ParseJson<List<string>>(run.ImprovementTipsJson); }
+                                            @if (tips?.Any() == true)
+                                            {
+                                                <details style="margin-top: 0.25rem;">
+                                                    <summary style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #4a5568;">Improvement Tips (@tips.Count)</summary>
+                                                    <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
+                                                        @foreach (var tip in tips)
+                                                        {
+                                                            <li>@tip</li>
+                                                        }
+                                                    </ul>
+                                                </details>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <p style="color: #a0aec0; font-size: 0.85rem;">No scoring runs yet</p>
+                            }
+                        </div>
+                    }
+                }
+                else
+                {
+                    <p style="color: #a0aec0;">No application data available.</p>
+                }
+            </div>
         }
     }
 </div>
@@ -66,20 +249,66 @@
     [Parameter] public EventCallback OnPromptStatusChange { get; set; }
 
     private List<PromptTestRunDto> testRuns = new();
+    private PromptTestRunDetailDto? selectedDetail;
     private bool showUpload;
     private bool isUploading;
     private List<IBrowserFile> selectedFiles = new();
+    private System.Threading.Timer? _pollTimer;
+    private bool _disposed;
 
     protected override async Task OnParametersSetAsync()
     {
         if (ActivePrompt != null)
         {
             testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+            StartOrStopPolling();
         }
         else
         {
             testRuns = new();
+            selectedDetail = null;
+            StopPolling();
         }
+    }
+
+    private bool HasActiveRuns => testRuns.Any(r => r.Status is "pending_scoring" or "scoring");
+
+    private void StartOrStopPolling()
+    {
+        if (HasActiveRuns && _pollTimer == null)
+        {
+            _pollTimer = new System.Threading.Timer(async _ =>
+            {
+                if (_disposed || ActivePrompt == null) return;
+                try
+                {
+                    var updated = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+                    await InvokeAsync(() =>
+                    {
+                        testRuns = updated;
+                        StartOrStopPolling();
+                        StateHasChanged();
+                    });
+                }
+                catch { /* ignore transient errors during polling */ }
+            }, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+        }
+        else if (!HasActiveRuns)
+        {
+            StopPolling();
+        }
+    }
+
+    private void StopPolling()
+    {
+        _pollTimer?.Dispose();
+        _pollTimer = null;
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        StopPolling();
     }
 
     private void OnFilesSelected(InputFileChangeEventArgs e)
@@ -119,11 +348,18 @@
         }
     }
 
+    private async Task ViewResults(PromptTestRunDto run)
+    {
+        if (ActivePrompt == null) return;
+        selectedDetail = await Api.GetTestRunDetailAsync(JobId, ActivePrompt.Id, run.Id);
+    }
+
     private async Task ApproveTestRun(string testRunId)
     {
         if (ActivePrompt == null) return;
         await Api.ApproveTestRunAsync(JobId, ActivePrompt.Id, testRunId);
         testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+        selectedDetail = null;
     }
 
     private async Task ApproveForProduction()
@@ -137,7 +373,7 @@
     {
         try
         {
-            return System.Text.Json.JsonSerializer.Deserialize<string[]>(applicationIdsJson)?.Length ?? 0;
+            return JsonSerializer.Deserialize<string[]>(applicationIdsJson)?.Length ?? 0;
         }
         catch
         {
@@ -145,11 +381,70 @@
         }
     }
 
+    private T? ParseJson<T>(string? json) where T : class
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private bool HasError(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("error", out _);
+        }
+        catch { return false; }
+    }
+
+    private string GetErrorMessage(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("error", out var err))
+                return err.GetString() ?? "";
+        }
+        catch { }
+        return "";
+    }
+
+    private string GetRawResponse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("rawResponse", out var raw))
+                return raw.GetString() ?? "";
+        }
+        catch { }
+        return "";
+    }
+
     private string TestRunStatusStyle(string status) => status switch
     {
         "pending_review" => "padding: 2px 8px; background: #fefcbf; color: #744210; border-radius: 4px;",
         "approved" => "padding: 2px 8px; background: #c6f6d5; color: #22543d; border-radius: 4px;",
         "rejected" => "padding: 2px 8px; background: #fed7d7; color: #822727; border-radius: 4px;",
+        "pending_scoring" => "padding: 2px 8px; background: #bee3f8; color: #2a4365; border-radius: 4px;",
+        "scoring" => "padding: 2px 8px; background: #bee3f8; color: #2a4365; border-radius: 4px;",
         _ => "padding: 2px 8px; background: #eee; border-radius: 4px;"
     };
+
+    private string AppStatusStyle(string status) => status switch
+    {
+        "Completed" => "padding: 2px 8px; background: #c6f6d5; color: #22543d; border-radius: 4px; font-size: 0.8rem;",
+        "ScoringFailed" or "ExtractionFailed" => "padding: 2px 8px; background: #fed7d7; color: #822727; border-radius: 4px; font-size: 0.8rem;",
+        _ => "padding: 2px 8px; background: #bee3f8; color: #2a4365; border-radius: 4px; font-size: 0.8rem;"
+    };
+
+    private void NavigateToApp(string appId) => Navigation.NavigateTo($"/applications/{appId}");
+
+    private void NavigateToManualReview(string appId) => Navigation.NavigateTo($"/manual-review/{appId}");
+
+    public record MustHaveDto(bool Passed, List<string>? MissingCriteria);
 }

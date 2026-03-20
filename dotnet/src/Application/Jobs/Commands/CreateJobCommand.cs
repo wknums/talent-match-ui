@@ -17,7 +17,9 @@ public record CreateJobCommand(
     double LonglistThreshold,
     double ShortlistThreshold,
     double VarianceThreshold,
-    string? JobDescription
+    string? JobDescription,
+    string? RubricSource,
+    string? RawExtractionResponse
 ) : IRequest<Job>;
 
 public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
@@ -53,7 +55,9 @@ public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
             AggregationStrategy = request.AggregationStrategy ?? "median",
             LonglistThreshold = request.LonglistThreshold,
             ShortlistThreshold = request.ShortlistThreshold,
-            VarianceThreshold = request.VarianceThreshold > 0 ? request.VarianceThreshold : 15
+            VarianceThreshold = request.VarianceThreshold > 0 ? request.VarianceThreshold : 15,
+            RubricSource = request.RubricSource ?? "manual",
+            RawExtractionResponse = request.RawExtractionResponse
         };
 
         job.CurrentConfigVersionId = configVersion.Id;

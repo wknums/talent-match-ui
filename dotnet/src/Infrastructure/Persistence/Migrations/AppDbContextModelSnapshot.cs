@@ -56,7 +56,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("ApplicationId")
                         .IsUnique();
 
-                    b.ToTable("AggregatedResults");
+                    b.ToTable("AggregatedResults", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Application", b =>
@@ -78,9 +78,15 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("PromptTestRunId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TestRunId")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("UpdatedAt")
@@ -93,7 +99,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("JobId");
 
-                    b.ToTable("Applications");
+                    b.HasIndex("PromptTestRunId");
+
+                    b.HasIndex("TestRunId");
+
+                    b.ToTable("Applications", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ApplicationDocument", b =>
@@ -132,7 +142,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ApplicationId");
 
-                    b.ToTable("ApplicationDocuments");
+                    b.ToTable("ApplicationDocuments", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ExtractionArtifact", b =>
@@ -164,7 +174,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("ApplicationId")
                         .IsUnique();
 
-                    b.ToTable("ExtractionArtifacts");
+                    b.ToTable("ExtractionArtifacts", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.FailureQueueItem", b =>
@@ -196,7 +206,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("FailureQueueItems");
+                    b.ToTable("FailureQueueItems", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Job", b =>
@@ -205,6 +215,9 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("CurrentConfigVersionId")
@@ -245,7 +258,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Jobs");
+                    b.ToTable("Jobs", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.JobConfigVersion", b =>
@@ -276,7 +289,18 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RawExtractionResponse")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RubricApprovalStatus")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("RubricJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RubricSource")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
@@ -296,7 +320,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("JobId");
 
-                    b.ToTable("JobConfigVersions");
+                    b.ToTable("JobConfigVersions", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ManualReviewData", b =>
@@ -334,7 +358,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("ApplicationId")
                         .IsUnique();
 
-                    b.ToTable("ManualReviews");
+                    b.ToTable("ManualReviews", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.PasswordResetRequest", b =>
@@ -364,7 +388,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("PasswordResetRequests");
+                    b.ToTable("PasswordResetRequests", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ProcessingEvent", b =>
@@ -405,7 +429,103 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Timestamp");
 
-                    b.ToTable("ProcessingEvents");
+                    b.ToTable("ProcessingEvents", (string)null);
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.PromptTestRun", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApplicationIdsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PromptId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReviewNotes")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReviewedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId");
+
+                    b.HasIndex("PromptId");
+
+                    b.ToTable("PromptTestRuns", (string)null);
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Author")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Comments")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GenerationMetadataJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastModifiedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PromptText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("Rating")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId", "Status");
+
+                    b.ToTable("ScoringPrompts", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringRun", b =>
@@ -461,7 +581,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ApplicationId");
 
-                    b.ToTable("ScoringRuns");
+                    b.ToTable("ScoringRuns", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.User", b =>
@@ -506,7 +626,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("Username")
                         .IsUnique();
 
-                    b.ToTable("Users");
+                    b.ToTable("Users", (string)null);
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.AggregatedResult", b =>
@@ -528,7 +648,13 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("TalentMatch.Domain.Entities.PromptTestRun", "PromptTestRun")
+                        .WithMany()
+                        .HasForeignKey("PromptTestRunId");
+
                     b.Navigation("Job");
+
+                    b.Navigation("PromptTestRun");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ApplicationDocument", b =>
@@ -575,6 +701,36 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Application");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.PromptTestRun", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.ScoringPrompt", "Prompt")
+                        .WithMany("TestRuns")
+                        .HasForeignKey("PromptId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+
+                    b.Navigation("Prompt");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringRun", b =>
                 {
                     b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
@@ -604,6 +760,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Applications");
 
                     b.Navigation("ConfigVersions");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
+                {
+                    b.Navigation("TestRuns");
                 });
 #pragma warning restore 612, 618
         }

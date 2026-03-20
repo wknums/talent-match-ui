@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-talent-matching-platform`
 **Created**: 2026-03-03
-**Updated**: 2026-03-09
+**Updated**: 2026-03-14
 **Status**: Active (brownfield — existing codebase)
 **Source**: PRD.md, INTEGRATION.md, README.md, AUTHENTICATION.md, MANUAL_REVIEW_SUMMARY.md
 
@@ -68,7 +68,7 @@ reset request from a different user.
 ### User Story 3 — Recruiter creates a job with rubric and scoring config (Priority: P2)
 
 A recruiter fills in job details (title, department, organisation, posting date), uploads or
-manually specifies a job specification, uploads and reviews/approved or defines a scoring rubric document with weighted categories, sets must-have criteria, and desired criteris, and configures the number of scoring runs and aggregation strategy. The user interface provides the capability to optionally upload a job specification, a separate job scoring rubric document or both.
+manually specifies a job specification, uploads and reviews/approves or manually defines a scoring rubric document with weighted categories, sets must-have criteria, desired criteria, and configures the number of scoring runs and aggregation strategy. The user interface provides the capability to optionally upload a job specification, a separate job scoring rubric document or both.
 
 **Why this priority**: Core data creation step; all downstream features depend on a configured job.
 
@@ -79,12 +79,12 @@ manually specifies a job specification, uploads and reviews/approved or defines 
 1. **Given** a recruiter clicks "Create Job", **When** they complete the form, **Then** a new job
    card appears on the dashboard with the correct title, department, organisation, and posting date.
 2.  **Given** a job form, **When** a job specification document is uploaded, **Then** the system extracts
-   Job Title, Job Description, if present, the department , organization. The system further extracts all "must have" requirements, recommended or desired qualifications and experience items. if a rubric is present in the Job Specification document, extract the rubric categories and its weights that sum to 1.0. If no rubric is present within the document and no separate rubric document was uploaded, generate a draft rubric with weights that sum to 1.0 based on the requirements, assigning 60% of the weights to the "must have" requirements. The supported document types are pdf, jpg , md, txt, docx and the system calls the external API at `AWRSEQAPI_ENDPOINT/assess/passthrough` to perform this extraction (API documentation is available at `AWRSEQAPI_ENDPOINT/docs`). The generated or extracted rubric MUST be stored and associated with the job as part of the job configuration version.
+   Job Title, Job Description, if present, the department , organization. The system further extracts all "must have" requirements, recommended or desired qualifications and experience items. if a rubric is present in the Job Specification document, extract the rubric categories and its weights that sum to 1.0. If no rubric is present within the document and no separate rubric document was uploaded, generate a draft rubric with weights that sum to 1.0 based on the requirements, assigning 60% of the weights to the "must have" requirements. The supported document types are pdf, jpg , md, txt, docx and the system calls the external API at `AWR_SEQ_API_ENDPOINT/assess/passthrough` to perform this extraction (API documentation is available at `AWR_SEQ_API_ENDPOINT/docs`). The generated or extracted rubric MUST be stored and associated with the job as part of the job configuration version.
 3. **Given** a job form, **When** a rubric document is uploaded, **Then** the system extracts the job title and rubric categories with weights that sum to 1.0 and presents them for confirmation. Should the Job title of the rubric document not match the Job Title of the job form, present a warning to the user explaining the mismatch and advise the user to correct and upload the corrected the rubric document and inform then that the existing rubric document will be discarded.
 4. **Given** rubric categories are confirmed, **When** the job is saved, **Then** the job
    configuration is persisted with the rubric (including the raw API response from generation, if
    applicable), must-have criteria, scoring run count, aggregation strategy, and longlist/shortlist
-   thresholds. The stored rubric serves as the approved rubric for downstream prompt generation
+   thresholds. The stored rubric MUST be explicitly approved by the user toggling a button from "draft" to "approved" state - once approved by the user, it  serves as the approved rubric for downstream prompt generation
    (US3a).
 5. **Given** a job is already created, **When** configuration is changed, **Then** a new version of
    the configuration is created without affecting in-progress scoring on the previous version.
@@ -103,7 +103,7 @@ does not have an approved, active prompt.
 Once a job exists, the job detail view enables prompt management controls. The recruiter can
 choose to: (a) manually author a prompt, (b) import/upload a prompt from a file, or (c) generate
 a draft prompt. When generating, the system uses the approved scoring rubric from US3 and calls the
-external API endpoint defined by the environment variable `AWRSEQAPI_ENDPOINT` to produce a draft.
+external API endpoint defined by the environment variable `AWR_SEQ_API_ENDPOINT` to produce a draft.
 The recruiter MUST review the generated prompt, may optionally edit it, and MUST explicitly approve
 it before it can be used.
 
@@ -137,7 +137,7 @@ scoring can now proceed and test-case results do not appear in production ranked
 2. **Given** no job exists, **When** the recruiter views the prompt management area, **Then** all
    prompt controls are disabled with a message indicating a job must be created first.
 3. **Given** the recruiter selects "Generate Prompt", **When** the job has an approved scoring
-   rubric, **Then** the system calls the `AWRSEQAPI_ENDPOINT` API with the rubric and returns a
+   rubric, **Then** the system calls the `AWR_SEQ_API_ENDPOINT` API with the rubric and returns a
    draft prompt for review.
 4. **Given** a draft prompt is displayed, **When** the recruiter edits and clicks "Save", **Then**
    the prompt is stored as a new versioned revision for the job.
@@ -157,15 +157,28 @@ scoring can now proceed and test-case results do not appear in production ranked
     prompt revision list.
 11. **Given** an active prompt exists, **When** the recruiter initiates a "Test Prompt" workflow,
     **Then** the system allows uploading example applications using the same process as US4.
-12. **Given** test applications are uploaded, **When** they are scored via the pipeline (US5),
-    **Then** the results are marked as **test cases** and are excluded from production ranked lists.
-13. **Given** test-case results are available, **When** the recruiter opens manual review (US7),
-    **Then** they can review each test case with the same three-pane interface.
-14. **Given** the recruiter completes manual review of all test cases, **When** no score changes
-    were required, **Then** the prompt is eligible for production approval and an "Approve for
-    Production" button is enabled.
-15. **Given** manual review of test cases required score changes, **Then** the prompt is NOT
-    eligible for production approval; the recruiter must revise the prompt and re-test.
+12. **Given** test applications are uploaded, **When** the upload completes, **Then** the system
+    automatically triggers the scoring pipeline for each test application using the prompt under
+    test (not requiring production-approved status), marks all resulting scores as **test cases**,
+    and excludes them from production ranked lists. The test-run status transitions through
+    `pending_scoring` → `scoring` → `pending_review` as processing completes.
+13. **Given** test-case scoring completes and the test-run status transitions to `pending_review`,
+    **When** the recruiter views the test run card in prompt management, **Then** a "Review Results"
+    button is displayed on the card. Clicking it opens an expandable results summary dialog showing
+    each test application with its overall score, eligibility gate pass/fail, and per-category
+    sub-scores. From this summary, the recruiter can click "Open Manual Review" to enter the full
+    three-pane manual review interface (US7) pre-filtered to show only the test applications from
+    that specific test run, or close the dialog and return later.
+14. **Given** the recruiter completes manual review of all test applications in the run, **When**
+    the system compares AI-assigned scores with manual review scores and finds no score changes in
+    any category for any test application, **Then** the test run is marked as eligible and an
+    "Approve for Production" button appears on the test run card. The button MUST NOT appear
+    alongside any intermediate approval controls — the approval flow is: Review Results → Manual
+    Review → (if no changes) → Approve for Production appears on the card.
+15. **Given** the recruiter completes manual review of test applications, **When** any manual review
+    adjusted a score in any category for any test application, **Then** the system prompts the user to mark the test run as 'acceptable' or 
+    as `rejected`. if it is marked as rejectedt, the prompt is NOT eligible for production approval, and 
+    recruiter must revise the prompt and re-test.
 16. **Given** no prompt has been approved for production for a job, **When** production scoring is
     attempted, **Then** the system blocks scoring and displays a message requiring prompt approval.
 17. **Given** the recruiter imports/uploads a prompt file, **When** the file is valid, **Then** its
@@ -199,32 +212,63 @@ with status "Queued" and correct fingerprints.
 
 ### User Story 5 — AI scoring pipeline runs and results are visible (Priority: P2)
 
-Once applications are queued, the system extracts documents to a normalised text format, runs N
-configurable scoring passes per application (each producing a score, category breakdown, must-have
-evaluation, evidence citations, and improvement tips), then aggregates runs into a final decision.
+Once applications are queued, the system submits each application to the scoring engine with the
+configured number of runs (N). The scoring engine executes all N scoring passes internally and
+performs automatic aggregation — computing the final score, per-category aggregates, variance,
+confidence, and final decision — returning both the individual run results and the aggregated
+result in a single response. The platform stores these results directly without performing its
+own aggregation step.
+
+The scoring pipeline supports two processing modes determined at startup by comparing the
+`AWR_PLATFORM_API_ENDPOINT` and `AWR_SEQ_API_ENDPOINT` environment variables:
+
+- **Sequential mode** — When `AWR_PLATFORM_API_ENDPOINT` equals `AWR_SEQ_API_ENDPOINT` (or
+  `AWR_PLATFORM_API_ENDPOINT` is unset), the pipeline orchestrator sends a single scoring
+  request to `AWR_SEQ_API_ENDPOINT/assess/passthrough` specifying the number of runs (N). The
+  engine executes all N passes, aggregates the results, and returns the complete response
+  synchronously. This is the simpler path, reusing the same endpoint already used for prompt
+  management and test scoring runs.
+
+- **Platform mode** — When `AWR_PLATFORM_API_ENDPOINT` differs from `AWR_SEQ_API_ENDPOINT`, the
+  pipeline orchestrator submits scoring work to the scalable platform API at
+  `AWR_PLATFORM_API_ENDPOINT` using its asynchronous, queue-based processing architecture.
+  The platform API likewise executes N runs and returns aggregated results.
+
+Regardless of mode, the scoring output schema, audit trail, and all downstream behaviour (ranked
+lists, manual review, failure handling) remain identical. The mode selection is transparent to
+the user — the UI, API contracts, and data model are unchanged.
 
 **Why this priority**: Core value proposition of the platform.
 
 **Independent Test**: Trigger scoring for a single application; verify N scoring run records exist,
 each with score, evidence citations, must-have results, and AI model metadata; verify aggregated
-result is present with final decision.
+result is present with final decision. Repeat with both endpoint configurations to validate
+dual-mode operation.
 
 **Acceptance Scenarios**:
 
-1. **Given** a queued application, **When** extraction succeeds, **Then** a normalised text version
-   of the document exists with a confidence score.
-2. **Given** a successful extraction, **When** N scoring runs execute, **Then** each run record
-   contains a run index, total score, per-category scores, must-have evaluation, evidence citations,
-   improvement tips, and AI model and prompt version identifiers.
-3. **Given** N runs complete, **When** aggregation runs (using the configured strategy), **Then** an
-   aggregated result exists with a final score, decision (Eligible, Excluded, or Needs Manual
-   Review), variance, confidence, and a consolidated rationale.
-4. **Given** variance exceeds the configured threshold, **Then** the application is flagged as
+1. **Given** a queued application, **When** scoring is submitted to the engine with N runs
+   requested, **Then** the engine executes all N scoring passes internally and returns each
+   individual run record (containing run index, total score, per-category scores, must-have
+   evaluation, evidence citations, improvement tips, and AI model and prompt version identifiers)
+   along with the aggregated result. The original document is sent directly to the scoring API
+   which handles preprocessing/OCR internally.
+2. **Given** the engine returns aggregated results, **Then** the aggregated result contains a final
+   score, decision (Eligible, Excluded, or Needs Manual Review), variance, confidence, and a
+   consolidated rationale. The platform stores these results directly without performing its own
+   aggregation computation.
+3. **Given** variance exceeds the configured threshold, **Then** the application is flagged as
    "Needs Manual Review".
-5. **Given** an extraction failure, **Then** the application status becomes "Extraction Failed"; the
-   error reason is stored and a manual retry is available.
-6. **Given** a scoring run failure after maximum retries, **Then** the item moves to the failure
+4. **Given** a scoring run failure after maximum retries, **Then** the item moves to the failure
    queue with error details.
+5. **Given** `AWR_PLATFORM_API_ENDPOINT` equals `AWR_SEQ_API_ENDPOINT`, **When** scoring is
+   triggered, **Then** the pipeline uses sequential mode — a single request to
+   `AWR_SEQ_API_ENDPOINT/assess/passthrough` with N runs specified.
+6. **Given** `AWR_PLATFORM_API_ENDPOINT` differs from `AWR_SEQ_API_ENDPOINT`, **When** scoring is
+   triggered, **Then** the pipeline uses platform mode — scoring work is submitted to the
+   platform API at `AWR_PLATFORM_API_ENDPOINT`.
+7. **Given** either scoring mode, **When** results are produced, **Then** the scoring output schema,
+   ranked lists, manual review, and audit trail behave identically.
 
 ---
 
@@ -247,8 +291,9 @@ correctly categorised candidates; drill into one application and verify all run 
    applications appear first.
 3. **Given** variance filter applied, **When** threshold set, **Then** only applications above that
    variance are shown.
-4. **Given** a candidate row is clicked, **Then** a detail view shows: original documents, extracted
-   text, all N individual scoring runs (scores and evidence), and the aggregated final decision.
+4. **Given** a candidate row is clicked, **Then** a detail view shows: original documents rendered
+   in their native format, all N individual scoring runs (scores and evidence), and the aggregated
+   final decision.
 5. **Given** an excluded candidate, **When** their detail is viewed, **Then** justification and
    improvement tips are prominently displayed.
 6. **Given** an eligible application, **When** viewed, **Then** a "Manual Review" option navigates
@@ -258,9 +303,12 @@ correctly categorised candidates; drill into one application and verify all run 
 
 ### User Story 7 — Recruiter performs a manual review (Priority: P3)
 
-The manual review interface has three resizable panes: job specification (left), rubric scoring form
-(centre), and application content (right). The recruiter assigns points per category, adds comments,
-saves the review, and every change is appended to an immutable audit trail.
+The manual review interface has three resizable panes: original application document rendered in
+its native format (left), rubric scoring form (centre), and job specification with rubric
+categories (right). The recruiter assigns points per category, adds comments, saves the review,
+and every change is appended to an immutable audit trail. Documents are rendered natively: PDF
+via browser-embedded viewer, DOCX via client-side HTML conversion, Markdown via a Markdown
+renderer, TXT as preformatted text, and images (JPG) inline.
 
 **Why this priority**: Required for high-variance and edge-case applications; provides defensibility.
 
@@ -270,7 +318,8 @@ categories; save; reload and verify the saved scores and comments persist with a
 **Acceptance Scenarios**:
 
 1. **Given** a recruiter opens manual review, **Then** all three panes are visible and independently
-   scrollable.
+   scrollable. The left pane displays the original uploaded document in its native format (PDF,
+   DOCX rendered as HTML, Markdown rendered, TXT as preformatted text, images inline).
 2. **Given** points are allocated to a rubric category, **Then** the live score updates immediately.
 3. **Given** save is clicked, **Then** the review data (including rubric scores, overall comment,
    and audit trail) is persisted against the application.
@@ -284,7 +333,7 @@ categories; save; reload and verify the saved scores and comments persist with a
 ### User Story 8 — Admin/recruiter monitors the processing pipeline (Priority: P3)
 
 The dashboard shows system-wide stats (queued, processing, completed, failed), a filterable job
-list, a pipeline visualiser per job (extraction → scoring → aggregation), and a failure queue
+list, a pipeline visualiser per job (scoring → complete), and a failure queue
 browser with retry controls. Stats refresh automatically.
 
 **Why this priority**: Operational oversight for large batch runs.
@@ -299,15 +348,16 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 2. **Given** filtering by department and organisation, **Then** only matching jobs are shown.
 3. **Given** a failed item in the failure queue, **When** "Retry" is clicked, **Then** the item
    moves back to the processing queue and the failure count decreases.
-4. **Given** the pipeline visualiser for a job, **Then** the stages (extraction, scoring,
-   aggregation, complete) display correct counts and percentage completion.
+4. **Given** the pipeline visualiser for a job, **Then** the stages (scoring, complete) display
+   correct counts and percentage completion. Aggregation is performed by the scoring engine as
+   part of the scoring step.
 
 ---
 
 ### Edge Cases
 
-- Document format failures: extraction records failure reason; application marked for manual review;
-  document preview available for human processing.
+- Document format failures: scoring API returns error; application marked for manual review;
+  original document still viewable in its native format for human processing.
 - AI model timeout/errors: automatic retry with backoff; maximum attempts exceeded moves item to
   failure queue with full error detail and manual retry option.
 - High score variance (>15 points across runs): auto-flagged for manual review with variance
@@ -333,11 +383,11 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 - **FR-006**: Job configuration changes MUST create a new version without invalidating in-progress scoring.
 - **FR-007**: System MUST accept bulk document upload with per-file cryptographic fingerprinting, file type, and size validation.
 - **FR-008**: System MUST flag duplicate applications via fingerprint comparison.
-- **FR-009**: System MUST run N configurable scoring passes per application (default N=3).
+- **FR-009**: System MUST submit each application to the scoring engine with N configurable scoring passes requested (default N=3). The engine executes all N passes internally and returns both the individual run results and the aggregated result in a single response. The platform MUST NOT loop over N individual API calls — the run count is passed to the engine as a parameter.
 - **FR-010**: Each scoring run MUST record the score, category breakdown, must-have evaluation, evidence citations, improvement tips, AI model identifier, prompt version, and resource usage metrics.
-- **FR-011**: System MUST aggregate N runs using a configurable strategy (median/mean/weighted) and compute variance.
+- **FR-011**: Aggregation of N runs MUST be performed by the scoring engine automatically when multiple runs are requested. The engine computes the final score, per-category aggregates, variance, confidence, and final decision (using its built-in aggregation strategy) and returns them alongside the individual runs. The platform MUST store the engine-provided aggregated result directly. The platform's local aggregation worker (`server/workers/aggregation.ts` in Stack A; equivalent in Stack B) is deprecated for new scoring flows but retained for backward compatibility.
 - **FR-012**: Applications with variance above the configured threshold MUST be auto-flagged as "Needs Manual Review".
-- **FR-013**: Failed extractions and scoring runs MUST be retried with backoff; items exceeding maximum retries go to the failure queue.
+- **FR-013**: Failed scoring runs MUST be retried with backoff; items exceeding maximum retries go to the failure queue.
 - **FR-014**: Manual review MUST record per-category scores, comments, and produce an immutable audit trail.
 - **FR-015**: Dashboard stats MUST auto-refresh at intervals of 30 seconds or less.
 - **FR-016**: Longlist, shortlist, and exclusion lists MUST be sortable and filterable.
@@ -349,7 +399,7 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 - **FR-022**: The Stack B Blazor WASM client MUST provide a `UserMenu` component in the layout header displaying the authenticated user's name, role badge, and department, with controls for logout, change password, and (admin-only) user management access — matching the React `UserMenu.tsx` behaviour.
 - **FR-023**: The Stack B Blazor WASM client MUST provide accessible navigation entry points for all features: "Create Job" button on Dashboard, "Upload Applications" button on Job Detail, User Management from UserMenu (admin-only), Change Password from UserMenu, and Failure Queue from navigation — ensuring no component is orphaned from the UI.
 - **FR-024**: The Stack B Blazor WASM client MUST implement a Change Password dialog with current password, new password, and confirmation fields, calling the change-password API endpoint with success/error feedback — matching US2 acceptance scenario 5.
-- **FR-025**: The Stack B Blazor WASM client MUST implement an Application Detail page (`ApplicationDetail.razor`) displaying original documents with download links, extracted text, all N individual scoring runs with per-category breakdown and evidence citations, and the aggregated final decision with rationale and improvement tips — matching US6 acceptance scenario 4 and React `ApplicationDetail.tsx`.
+- **FR-025**: The Stack B Blazor WASM client MUST implement an Application Detail page (`ApplicationDetail.razor`) displaying original documents rendered in their native format (PDF via embedded viewer, DOCX converted to HTML, Markdown rendered, TXT as preformatted text, images inline), all N individual scoring runs with per-category breakdown and evidence citations, and the aggregated final decision with rationale and improvement tips — matching US6 acceptance scenario 4 and React `ApplicationDetail.tsx`.
 - **FR-026**: The Stack B Manual Review page MUST implement per-category rubric scoring with point allocation inputs for each category, live weighted score recalculation, display of the job's rubric categories and must-have criteria in the left pane, and a chronological audit trail — matching US7 acceptance scenarios 1–5 and React `ManualReviewView.tsx`.
 - **FR-027**: The Stack B Blazor WASM client MUST implement a Failure Queue view displaying DLQ items with error details, failure reason, retry count, timestamps, a retry button, and 30-second auto-refresh — matching US8 acceptance scenario 3 and React `FailureQueueView.tsx`.
 - **FR-028**: The Stack B Create Job dialog MUST implement rubric category management (add/remove rows, weight inputs with sum-to-1.0 validation), must-have criteria list management (add/remove), and job specification file upload with LLM-based rubric extraction — matching US3 acceptance scenarios 2–3 and React `CreateJobDialog.tsx` / `UploadRubricDialog.tsx`.
@@ -358,25 +408,49 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 - **FR-031**: The Stack B Blazor WASM client MUST verify that newly created users can authenticate immediately — the password hash produced during user creation (via `CreateUserCommand`) MUST be identical to the hash computed during login (via `AuthEndpoints`), and the `ApiClient.CreateUserAsync` method MUST propagate server-side errors (e.g., duplicate username, validation failures) to the calling component.
 - **FR-032**: System MUST require an approved, active scoring prompt for a job before any production scoring runs can execute for that job.
 - **FR-033**: Prompt management controls MUST be enabled only after a job has been created with an approved scoring rubric.
-- **FR-034**: System MUST support three prompt creation methods: manual authoring, file import/upload, and AI-assisted generation via the `AWRSEQAPI_ENDPOINT` external API using the job's approved rubric.
+- **FR-034**: System MUST support three prompt creation methods: manual authoring, file import/upload, and AI-assisted generation via the `AWR_SEQ_API_ENDPOINT` external API using the job's approved rubric.
 - **FR-035**: All prompts MUST be stored per-job with immutable versioning; editing an existing prompt MUST create a new revision without altering the original.
 - **FR-036**: Only one prompt revision MAY be active for a given job at any time; activating a new revision MUST deactivate the previously active one.
 - **FR-037**: Recruiters MUST be able to assign a rating (integer 0–5) and add free-text comments to any prompt revision.
-- **FR-038**: The system MUST support a prompt testing workflow that scores a set of example applications using the active prompt, marks all resulting scores as test cases, and excludes them from production ranked lists.
+- **FR-038**: The system MUST support a prompt testing workflow that scores a set of example applications using the active prompt, marks all resulting scores as test cases, and excludes them from production ranked lists. Completing the test-application upload MUST automatically trigger the scoring pipeline for those applications using the prompt under test — no separate manual trigger is required. The prompt under test does NOT need to be production-approved for test scoring to proceed.
 - **FR-039**: Test-case results MUST be reviewable through the manual review process (US7); a prompt is eligible for production approval only when manual review of all test cases completes without requiring score changes.
 - **FR-040**: The system MUST block production scoring for a job until at least one prompt has been approved for production use via the test-and-review workflow.
 - **FR-041**: All prompt lifecycle events (creation, editing, activation, rating, commenting, testing, approval) MUST be recorded in the immutable audit trail with actor, timestamp, and event payload.
+- **FR-045**: The scoring worker in both Stack A and Stack B MUST send the original uploaded document (in its native format) directly to the `AWR_SEQ_API_ENDPOINT/assess/passthrough` API for scoring. The passthrough API handles document preprocessing (including OCR) internally. The production-approved `ScoringPrompt.promptText` (with `{{JOB_SPEC_TEXT}}` placeholder resolved) MUST be sent as the `promptFile`. The original document blob (PDF, DOCX, etc.) MUST be sent as `specFile` with its original MIME type and filename. Each scoring run produces the structured JSON response (score, category breakdown, must-have evaluation, evidence citations, improvement tips) by parsing the LLM output. The scoring worker MUST NOT generate synthetic/random scores — all scores MUST originate from the external LLM via the passthrough API. The `{{CANDIDATE_CV_TEXT}}` placeholder is no longer used since the original document is sent directly.
+- **FR-046**: The prompt test-run workflow (FR-038) MUST execute real LLM scoring via `AWR_SEQ_API_ENDPOINT/assess/passthrough` — not mocked or synthetic scores — so that test-case results are representative of production quality and can be meaningfully reviewed during the manual review gate (FR-039). For test scoring, the prompt under test is used directly (it does not need production-approved status).
+- **FR-047**: Both Stack A and Stack B MUST implement the scoring worker with the same passthrough calling convention used by prompt generation (FR-034): `POST {AWR_SEQ_API_ENDPOINT}/assess/passthrough` with multipart `FormData` containing `promptFile` (the scoring system prompt) and `specFile` (the original application document in its native format). The response text is the LLM's structured scoring output.
+- **FR-048**: When test-application upload completes (FR-038), the system MUST automatically trigger the scoring pipeline in the background for each uploaded test application. The test-run status MUST transition from `pending_scoring` to `scoring` during processing and to `pending_review` once all test applications have been scored and aggregated. The UI MUST reflect these status transitions. No separate user action (e.g. clicking a "Process" button) is required to initiate test scoring.
+- **FR-049**: All outbound HTTP requests to `AWR_SEQ_API_ENDPOINT` MUST include authentication headers determined by the `AWR_AUTH_MODE` environment variable. When `AWR_AUTH_MODE=none`, no authentication headers are sent. When `AWR_AUTH_MODE=apikey`, the request MUST include `X-Api-Key` (from `AWR_API_KEY`), `X-User-Id` (the authenticated user's username), and `X-User-Role` (the authenticated user's role). When `AWR_AUTH_MODE=entra`, the request MUST include an `Authorization: Bearer <JWT>` header obtained via MSAL / `DefaultAzureCredential` client-credentials flow against the audience specified by `AWR_AAD_AUDIENCE`.
+- **FR-050**: The system MUST read AWReason API authentication configuration from environment variables: `AWR_AUTH_MODE` (`none` | `apikey` | `entra`), `AWR_API_KEY` (shared secret for apikey mode), `AWR_AAD_ISSUER` (Entra ID issuer URL for entra mode), and `AWR_AAD_AUDIENCE` (Entra ID audience for entra mode). Missing required variables for the configured mode MUST cause a descriptive startup error.
+- **FR-051**: Health endpoints (`/healthz`, `/ready`) on the AWReason API are unauthenticated regardless of mode. The system's health-check or readiness probes (if any) targeting the AWReason API MUST NOT send authentication headers to these endpoints.
+- **FR-052**: Each test run card in the prompt management panel MUST display a "Review Results" button when the test run status is `pending_review`. Clicking it MUST open a results summary dialog showing each test application with its overall score, eligibility gate pass/fail, and per-category sub-scores. The dialog MUST provide an "Open Manual Review" button that launches the three-pane manual review interface (US7) pre-filtered to the test applications from that specific test run.
+- **FR-053**: The system MUST automatically compare AI-assigned scores with manual review scores for each test application upon completion of manual review. If any manual review adjusted a score in any category, the system must prompt the user to choose between 'reject' or 'accept' the test run scores as the variance may be acceptable. is user select "reject" , the test run MUST be marked as `rejected` and the prompt MUST NOT be eligible for production approval. the approval or rejection step is mandatory "human in the loop" step.
+- **FR-054**: The "Approve for Production" button MUST appear on the test run card ONLY after the recruiter has completed manual review of ALL test applications in the run  (FR-053). The button MUST NOT appear alongside the "Review Results" button or any intermediate approval controls. The approval flow is: Review Results → Manual Review  → Approve for Production.
+If one or more test runs result in rejected status, the user must be returned to the prompt management ui to make improvements to the prompt for another test cycle.
+- **FR-055**: Both Stack A (React/TypeScript) and Stack B (.NET/Blazor) MUST implement identical test review workflow UI elements with feature parity: test run cards with "Review Results" button, results summary dialog with per-application scores and eligibility status, and entry into the manual review interface (US7). The API endpoints are shared between stacks.
+- **FR-056**: The upload route MUST persist the raw file content (base64-encoded) alongside the document metadata so that the original document can be retrieved for native rendering and for submission to the scoring API. Document blobs MUST be stored in the KV store under a dedicated key per document (`app:{applicationId}:doc:{documentId}:blob` in Stack A; equivalent storage in Stack B).
+- **FR-057**: Both stacks MUST expose a document content retrieval endpoint (`GET /api/applications/:applicationId/documents/:documentId/content`) that returns the original file bytes with the correct `Content-Type` header and `Content-Disposition: inline` for browser rendering.
+- **FR-058**: The manual review left pane and application detail views MUST render uploaded documents in their native format: PDF via browser-embedded `<iframe>` viewer, DOCX via client-side HTML conversion (e.g. mammoth.js in React, a Blazor equivalent), Markdown via a Markdown renderer, TXT as preformatted `<pre>` text, and images (JPG/PNG) inline via `<img>` tag. If multiple documents exist, a tabbed or selectable list MUST allow switching between them.
+- **FR-059**: The scoring pipeline MUST skip the extraction step entirely. The pipeline flow is: Queued → Scoring (single engine call with N runs + aggregation) → Completed/NeedsManualReview. The `Extracting` and `Aggregating` statuses are no longer used for new applications — the engine performs both multi-run scoring and aggregation in a single request. The `ExtractionArtifact` type and local aggregation worker are retained for backward compatibility but are no longer produced/invoked.
+- **FR-060**: The scoring worker MUST load the original document blob from storage and send it as the `specFile` parameter in the multipart FormData to the passthrough scoring API, using the document's original MIME type and filename. The `{{CANDIDATE_CV_TEXT}}` prompt placeholder is deprecated; prompts should use only `{{JOB_SPEC_TEXT}}`.
+- **FR-061**: The system MUST support two scoring modes — **sequential** and **platform** — determined at startup by comparing the `AWR_PLATFORM_API_ENDPOINT` and `AWR_SEQ_API_ENDPOINT` environment variables. When `AWR_PLATFORM_API_ENDPOINT` is unset, empty, or equal to `AWR_SEQ_API_ENDPOINT`, the system MUST operate in sequential mode. When `AWR_PLATFORM_API_ENDPOINT` is set to a value that differs from `AWR_SEQ_API_ENDPOINT`, the system MUST operate in platform mode. The resolved mode MUST be logged at startup.
+- **FR-062**: In **sequential mode**, the pipeline orchestrator MUST send a single scoring request to `AWR_SEQ_API_ENDPOINT/assess/passthrough` specifying the number of runs (N) as a parameter. The engine executes all N passes internally, performs aggregation, and returns the complete set of individual runs plus the aggregated result in a single synchronous response. The request uses the multipart FormData calling convention (FR-045, FR-047) extended with a `runs` parameter.
+- **FR-063**: In **platform mode**, the pipeline orchestrator MUST submit production scoring work to `AWR_PLATFORM_API_ENDPOINT` using the platform API's asynchronous submission and result-retrieval pattern. The platform API handles document preprocessing, parallel LLM execution, multi-run scoring, and aggregation at scale. Results returned include both individual runs and the aggregated result, following the same schema as sequential mode. The specific platform API contract (submission endpoint, polling/callback mechanism, response format) MUST be documented in a separate contract addendum (`contracts/scoring-platform.md`) before platform mode implementation begins. All test scoring must make use of the "sequential mode" api
+- **FR-064**: Regardless of scoring mode, the scoring output MUST conform to the same schema defined in FR-045 and the scoring passthrough contract, extended to include the engine-provided aggregated result alongside individual runs. The ranked lists (FR-016), manual review (FR-014), audit trail (FR-041), and failure handling (FR-013) MUST behave identically in both modes. The scoring mode MUST be transparent to all downstream consumers.
+- **FR-065**: Non-scoring operations — prompt management, prompt generation (FR-034), test scoring runs (FR-038, FR-046), job spec extraction, and rubric extraction — MUST always use `AWR_SEQ_API_ENDPOINT/assess/passthrough` regardless of the scoring mode. The platform API endpoint is used exclusively for production and batch scoring operations.
+- **FR-066**: Both Stack A and Stack B MUST implement scoring mode detection with identical logic: read `AWR_PLATFORM_API_ENDPOINT` and `AWR_SEQ_API_ENDPOINT` from environment variables, compare them, and route production scoring accordingly. The mode detection logic MUST reside in the pipeline orchestrator layer (`server/services/pipeline.ts` in Stack A; equivalent orchestrator in Stack B) — not in individual workers or route handlers.
+- **FR-067**: Authentication for outbound requests to `AWR_PLATFORM_API_ENDPOINT` (platform mode) MUST use the same `AWR_AUTH_MODE` mechanism defined in FR-049 and FR-050. The existing `getAwrAuthHeaders()` (Stack A) and `AwrAuthHandler` (Stack B) MUST be reused with no changes to the auth layer.
 
 ### Key Entities
 
 - **User**: A person who accesses the system. Key attributes: username, role (admin or recruiter), full name, email, department, account creation date, and last login. Passwords stored as secure one-way hashes.
 - **Job**: A job opening that applications are scored against. Key attributes: job code, title, department, organisation, posting date, status, and a reference to its current configuration version.
 - **Job Configuration Version**: A versioned snapshot of a job's scoring setup. Key attributes: rubric (categories with weights), must-have criteria, number of scoring runs, aggregation strategy, longlist/shortlist thresholds, and variance threshold.
-- **Application**: A candidate's submission for a specific job. Tracks status through the pipeline (Queued → Extracting → Scoring → Aggregating → Completed / Needs Manual Review / Failed), associated documents, final score, final decision, and variance.
-- **Application Document**: An individual file within an application (CV, cover letter, etc.). Tracked with cryptographic fingerprint, file type, file size, file name, and upload timestamp.
-- **Extraction Artifact**: The normalised text version of an application's documents, with a confidence score and processing status.
+- **Application**: A candidate's submission for a specific job. Tracks status through the pipeline (Queued → Scoring → Completed / Needs Manual Review / Failed), associated documents, final score, final decision, and variance. The `Aggregating` status is deprecated — aggregation is now performed by the scoring engine as part of the scoring step.
+- **Application Document**: An individual file within an application (CV, cover letter, etc.). Tracked with cryptographic fingerprint, file type, file size, file name, upload timestamp, and persisted raw file content (base64-encoded blob) for native rendering and scoring API submission.
+- **Extraction Artifact**: *(Deprecated — extraction is handled internally by the AWR scoring API.)* Retained for backward compatibility but no longer produced by the pipeline.
 - **Scoring Run**: A single AI scoring pass for an application. Records the run index, total score, per-category scores, must-have evaluation, evidence citations, improvement tips, AI model identifier, prompt version, and resource usage.
-- **Aggregated Result**: The combined result of all scoring runs for an application. Contains final score, decision (Eligible / Excluded / Needs Manual Review), variance, confidence, consolidated rationale, and merged improvement tips.
+- **Aggregated Result**: The combined result of all scoring runs for an application, computed by the scoring engine and returned alongside the individual runs. Contains final score, decision (Eligible / Excluded / Needs Manual Review), variance, confidence, consolidated rationale, and merged improvement tips. The platform stores the engine-provided result directly rather than computing aggregation locally.
 - **Scoring Prompt**: A versioned prompt used by the external scoring API for a specific job. Key attributes: job reference, version number, prompt text, status (draft / active / inactive / production-approved), creation timestamp, last-modified timestamp, author, rating (0–5, nullable), and comments. Only one prompt may be active per job. A prompt must pass the test-and-review workflow before it can be approved for production scoring.
 - **Prompt Test Run**: A scoring pipeline execution triggered for prompt testing purposes. Links a set of test-case applications to a specific prompt revision. Tracks test status (pending review / approved / rejected) and is excluded from production result sets.
 - **Failure Queue Item**: A processing item that has exceeded retry limits. Records the entity type, failure reason, retry count, and timestamps.
@@ -407,6 +481,8 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 - Document formats accepted for upload include common file types (PDF, DOCX, MD); exotic formats are out of scope for initial release.
 - The admin user account is pre-created during initial deployment; subsequent users are managed through the admin interface.
 - AI model availability and rate limits are managed externally; the platform handles transient failures through retry mechanisms.
+- The AWReason engine API (`AWR_SEQ_API_ENDPOINT`) requires authentication configured via `AWR_AUTH_MODE`. Local development uses `none`; staging uses `apikey` with a shared secret; production uses `entra` (Entra ID JWT). See FR-049–FR-051.
+- The system supports two scoring modes: sequential (using `AWR_SEQ_API_ENDPOINT`) and platform (using `AWR_PLATFORM_API_ENDPOINT`). The mode is determined by comparing the two endpoint values at startup. When both point to the same URL (or `AWR_PLATFORM_API_ENDPOINT` is unset), sequential mode is used. See FR-061–FR-067.
 - Scoring rubrics are defined per job; there is no global rubric library in the initial release.
 - The platform handles English-language documents and job specifications; multi-language support is a future consideration.
 
@@ -434,3 +510,36 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 - Advanced analytics or reporting beyond the operational dashboard
 - Candidate communication or interview scheduling
 - Mobile-native application (responsive web is in scope)
+
+---
+
+## Clarifications
+
+### Session 2026-03-14
+
+- Q: How does the recruiter navigate from the test run in prompt management to the manual review (US7) interface? → A: Each test run card shows a "Review Results" button when status is `pending_review`. Clicking it opens the manual review interface (US7) pre-filtered to show only the test applications from that specific test run, using the same three-pane interface.
+- Q: Should test run results show a summary before the recruiter enters full manual review? → A: Yes. The "Review Results" button first shows an expandable results summary dialog with each test application's overall score, eligibility gate pass/fail, and per-category sub-scores. From there, the recruiter can click "Open Manual Review" or close and return later.
+- Q: How does the system detect whether manual review required score changes (for the approval gate in Scenario 14-15)? → A: Automatic comparison of AI-assigned scores vs manual review scores per test application. If any category score was adjusted, the test run is marked `rejected` and the prompt cannot be approved for production.
+- Q: Should this test review workflow be identical in both Stack A (React) and Stack B (Blazor)? → A: Yes. Both stacks must have feature parity: test run cards with Review Results button, results summary dialog, and entry into manual review. The API endpoints are shared.
+- Q: Where should the "Approve for Production" button appear? → A: On the test run card ONLY after the recruiter has completed manual review of ALL test applications AND no score changes were required. It must NOT appear alongside "Review Results" — the flow is: Review Results → Manual Review → (if no changes) → Approve for Production appears on the card.
+
+### Session 2026-03-20
+
+- Q: Should the platform perform its own aggregation of scoring runs, or delegate to the scoring engine? → A: The scoring engine has built-in automatic aggregation when multiple runs are requested for the same input. The platform MUST delegate aggregation to the engine rather than running its own aggregation step. The pipeline submits a single request per application with the run count (N), and the engine returns both individual run results and the aggregated result (final score, variance, confidence, decision). This eliminates the separate `Aggregating` pipeline step and simplifies the flow to: Queued → Scoring → Completed. See updated FR-009, FR-011, FR-059.
+- Q: What happens to the existing local aggregation worker? → A: The local aggregation worker (`server/workers/aggregation.ts` in Stack A; equivalent in Stack B) is deprecated for new scoring flows but retained for backward compatibility. The pipeline orchestrator no longer calls it — the engine-provided aggregated result is stored directly.
+- Q: Does this change affect the scoring passthrough contract? → A: Yes. The passthrough API contract (`contracts/scoring-passthrough.md`) must be updated to include the `runs` parameter in the request and the aggregated result alongside individual runs in the response.
+
+### Session 2026-03-19
+
+- Q: Can the scoring pipeline support both a simple sequential API path and the full scalable platform architecture? → A: Yes. The system supports dual-mode scoring determined by environment configuration. When `AWR_PLATFORM_API_ENDPOINT` equals `AWR_SEQ_API_ENDPOINT` (or is unset), sequential mode is used — the same synchronous passthrough endpoint already used for prompt management, test scoring, and extraction. When they differ, platform mode routes production scoring to the scalable platform API. See FR-061–FR-067.
+- Q: What is the impact on existing code? → A: Minimal. The mode detection logic is a simple string comparison at the pipeline orchestrator level. Sequential mode is the existing behaviour — zero changes to current workers, routes, or services. Platform mode requires a new submission/retrieval path in the orchestrator but reuses the same auth layer, output schema, and downstream logic. Non-scoring operations (prompt management, extraction, test runs) always use the sequential endpoint.
+- Q: Should test scoring runs also use platform mode when configured? → A: No. Test scoring runs (FR-038, FR-046) always use `AWR_SEQ_API_ENDPOINT` regardless of the scoring mode configuration. Test runs are low-volume, interactive workflows where synchronous response is appropriate. Platform mode is reserved for production/batch scoring.
+- Q: What needs to happen before platform mode can be implemented? → A: The platform API contract (submission endpoint, polling/callback mechanism, response format mapping) must be documented in `contracts/scoring-platform.md`. The sequential mode is fully functional today and serves as the baseline.
+
+### Session 2026-03-16
+
+- Q: Should the application call the API to extract markdown content before scoring? → A: No. The `AWR_SEQ_API_ENDPOINT` passthrough API handles document preprocessing (including OCR) internally. The extraction step is removed from the pipeline. The scoring worker sends the original uploaded document directly to the API.
+- Q: What should the left panel of the manual review 3-panel layout show? → A: The original document rendered in its native format (PDF via embedded viewer, DOCX converted to HTML client-side, Markdown rendered, TXT as preformatted text, images inline) — not extracted markdown text.
+- Q: What happens to the existing extraction worker and ExtractionArtifact? → A: The extraction worker (`server/workers/extraction.ts`) and `ExtractApplicationCommand` (.NET) are deprecated. The `ExtractionArtifact` type and storage keys are retained for backward compatibility but no longer produced. The pipeline skips directly from Queued to Scoring.
+- Q: How does the scoring worker get the document content if extraction is removed? → A: The upload route now persists raw file content (base64) in the KV store. The scoring worker loads the document blob and sends it as `specFile` in the FormData to the passthrough API with the correct MIME type. The `{{CANDIDATE_CV_TEXT}}` placeholder is deprecated.
+- Q: How is the document content served to the frontend for rendering? → A: A new endpoint `GET /api/applications/:applicationId/documents/:documentId/content` returns the raw file bytes with the correct `Content-Type` header for browser rendering.

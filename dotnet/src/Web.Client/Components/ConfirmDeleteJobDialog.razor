@@ -1,0 +1,109 @@
+@if (Visible)
+{
+    <div class="dialog-backdrop"
+         @onclick="HandleBackdropClick"
+         @onmousemove="OnMouseMove"
+         @onmouseup="OnMouseUp">
+        <div class="dialog-window"
+             style="left: @(posX)px; top: @(posY)px; width: @(width)px; height: @(height)px;"
+             @onclick:stopPropagation="true">
+            <div class="dialog-header"
+                 @onmousedown="OnHeaderMouseDown">
+                <h4 style="margin: 0;">Confirm Delete Job</h4>
+                <button class="dialog-close-btn" @onclick="HandleCancel">✕</button>
+            </div>
+
+            <div class="dialog-body">
+                <p>Are you sure you want to permanently delete the job <strong>@JobTitle</strong>?</p>
+
+                @if (ApplicationCount > 0)
+                {
+                    <div style="padding: 0.75rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; margin-bottom: 1rem;">
+                        ⚠️ This will also permanently delete @ApplicationCount application@(ApplicationCount != 1 ? "s" : "") and all associated scoring data.
+                    </div>
+                }
+
+                <p style="color: #666; font-size: 0.85rem;">This action cannot be undone.</p>
+
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem;">
+                    <button @onclick="HandleCancel" style="padding: 0.5rem 1rem;">Cancel</button>
+                    <button @onclick="HandleConfirm" style="padding: 0.5rem 1rem; background: #dc2626; color: white; border: none; border-radius: 4px;">
+                        Delete Job
+                    </button>
+                </div>
+            </div>
+
+            <div class="dialog-resize-handle"
+                 @onmousedown="OnResizeMouseDown"></div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string JobTitle { get; set; } = "";
+    [Parameter] public int ApplicationCount { get; set; }
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    private double posX = 300;
+    private double posY = 200;
+    private double width = 450;
+    private double height = 280;
+    private bool isDragging;
+    private bool isResizing;
+    private double startMouseX;
+    private double startMouseY;
+    private double startPosX;
+    private double startPosY;
+    private double startWidth;
+    private double startHeight;
+
+    protected override void OnParametersSet()
+    {
+        if (Visible && ApplicationCount > 0)
+            height = 340;
+    }
+
+    private void HandleBackdropClick() => OnCancel.InvokeAsync();
+    private void HandleCancel() => OnCancel.InvokeAsync();
+    private void HandleConfirm() => OnConfirm.InvokeAsync();
+
+    private void OnHeaderMouseDown(MouseEventArgs e)
+    {
+        isDragging = true;
+        startMouseX = e.ClientX;
+        startMouseY = e.ClientY;
+        startPosX = posX;
+        startPosY = posY;
+    }
+
+    private void OnResizeMouseDown(MouseEventArgs e)
+    {
+        isResizing = true;
+        startMouseX = e.ClientX;
+        startMouseY = e.ClientY;
+        startWidth = width;
+        startHeight = height;
+    }
+
+    private void OnMouseMove(MouseEventArgs e)
+    {
+        if (isDragging)
+        {
+            posX = startPosX + (e.ClientX - startMouseX);
+            posY = startPosY + (e.ClientY - startMouseY);
+        }
+        else if (isResizing)
+        {
+            width = Math.Max(350, startWidth + (e.ClientX - startMouseX));
+            height = Math.Max(200, startHeight + (e.ClientY - startMouseY));
+        }
+    }
+
+    private void OnMouseUp(MouseEventArgs e)
+    {
+        isDragging = false;
+        isResizing = false;
+    }
+}

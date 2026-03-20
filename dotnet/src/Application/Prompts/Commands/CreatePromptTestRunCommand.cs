@@ -1,6 +1,9 @@
+using System.Text;
 using System.Text.Json;
 using MediatR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
@@ -21,7 +24,8 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
     private readonly IScoringPromptRepository _promptRepo;
     private readonly IApplicationRepository _applicationRepo;
     private readonly IJobRepository _jobRepo;
-    private readonly IMediator _mediator;
+    private readonly ILlmProxyService _llmService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<CreatePromptTestRunCommandHandler> _logger;
 
     public CreatePromptTestRunCommandHandler(
@@ -29,14 +33,16 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
         IScoringPromptRepository promptRepo,
         IApplicationRepository applicationRepo,
         IJobRepository jobRepo,
-        IMediator mediator,
+        ILlmProxyService llmService,
+        IServiceScopeFactory scopeFactory,
         ILogger<CreatePromptTestRunCommandHandler> logger)
     {
         _testRunRepo = testRunRepo;
         _promptRepo = promptRepo;
         _applicationRepo = applicationRepo;
         _jobRepo = jobRepo;
-        _mediator = mediator;
+        _llmService = llmService;
+        _scopeFactory = scopeFactory;
         _logger = logger;
     }
 
@@ -79,52 +85,126 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
             };
             await _applicationRepo.AddDocumentAsync(doc, ct);
 
+            // Extract text via AWR passthrough API (sends binary PDF for proper extraction)
+            var bytes = Convert.FromBase64String(file.ContentBase64);
+            var mimeType = file.FileType;
+            if (string.IsNullOrEmpty(mimeType))
+                mimeType = Path.GetExtension(file.FileName).ToLowerInvariant() switch
+                {
+                    ".pdf" => "application/pdf",
+                    ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ".txt" or ".md" or ".csv" => "text/plain",
+                    _ => "application/octet-stream"
+                };
+
+            string extractedText;
+            double confidence;
+            var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+            if (ext is ".txt" or ".md" or ".csv")
+            {
+                // Plain text files don't need API extraction
+                extractedText = Encoding.UTF8.GetString(bytes);
+                confidence = 1.0;
+            }
+            else
+            {
+                try
+                {
+                    extractedText = await _llmService.ExtractAsync(bytes, file.FileName, mimeType, ct);
+                    confidence = 0.90;
+                    _logger.LogInformation("Extracted {Length} chars from {FileName} via AWR API", extractedText.Length, file.FileName);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "AWR extraction failed for {FileName}, using fallback", file.FileName);
+                    extractedText = $"[Extraction failed for {file.FileName}: {ex.Message}]";
+                    confidence = 0.0;
+                }
+            }
+
+            var extraction = new ExtractionArtifact
+            {
+                ApplicationId = app.Id,
+                NormalisedText = extractedText,
+                ConfidenceScore = confidence,
+                Status = "completed"
+            };
+            await _applicationRepo.SetExtractionAsync(extraction, ct);
+
             applicationIds.Add(app.Id);
         }
 
         testRun.ApplicationIdsJson = JsonSerializer.Serialize(applicationIds);
         await _testRunRepo.AddAsync(testRun, ct);
 
+        // Capture values needed by background task
+        var testRunId = testRun.Id;
+        var jobId = request.JobId;
+        var promptId = request.PromptId;
+
         // Auto-trigger scoring pipeline (FR-048): fire scoring for each test application
         // using the test prompt ID (bypasses production-approved gate per FR-038)
+        // Uses IServiceScopeFactory to create a new DI scope since the HTTP request scope
+        // will be disposed before the background work completes.
         _ = Task.Run(async () =>
         {
+            using var scope = _scopeFactory.CreateScope();
+            var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
+            var testRunRepo = scope.ServiceProvider.GetRequiredService<IPromptTestRunRepository>();
+            var jobRepo = scope.ServiceProvider.GetRequiredService<IJobRepository>();
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<CreatePromptTestRunCommandHandler>>();
+
             try
             {
                 // Update status to scoring
-                testRun.Status = "scoring";
-                await _testRunRepo.UpdateAsync(testRun);
+                var run = await testRunRepo.GetByIdAsync(testRunId);
+                if (run == null) return;
+                run.Status = "scoring";
+                await testRunRepo.UpdateAsync(run);
 
                 // Load job to get run count from config
-                var job = await _jobRepo.GetByIdAsync(request.JobId);
-                var configVersions = await _jobRepo.GetConfigVersionsAsync(request.JobId);
+                var job = await jobRepo.GetByIdAsync(jobId);
+                var configVersions = await jobRepo.GetConfigVersionsAsync(jobId);
                 var config = configVersions
                     .FirstOrDefault(v => v.Id == job?.CurrentConfigVersionId)
                     ?? configVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
                 var runCount = config?.ScoringRunCount ?? 3;
 
                 // Score each test application
+                var appRepo = scope.ServiceProvider.GetRequiredService<IApplicationRepository>();
                 foreach (var appId in applicationIds)
                 {
                     try
                     {
-                        await _mediator.Send(new ScoreApplicationCommand(
-                            appId, request.JobId, runCount, request.PromptId));
+                        await mediator.Send(new ScoreApplicationCommand(
+                            appId, jobId, runCount, promptId));
+
+                        // Update application status so approve validation passes
+                        var app = await appRepo.GetByIdAsync(appId);
+                        if (app != null)
+                        {
+                            app.Status = "Completed";
+                            await appRepo.UpdateAsync(app);
+                        }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Test-run {TestRunId}: scoring failed for application {ApplicationId}",
-                            testRun.Id, appId);
+                        logger.LogError(ex, "Test-run {TestRunId}: scoring failed for application {ApplicationId}",
+                            testRunId, appId);
                     }
                 }
 
                 // Update status to pending_review
-                testRun.Status = "pending_review";
-                await _testRunRepo.UpdateAsync(testRun);
+                var updatedRun = await testRunRepo.GetByIdAsync(testRunId);
+                if (updatedRun != null)
+                {
+                    updatedRun.Status = "pending_review";
+                    await testRunRepo.UpdateAsync(updatedRun);
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Test-run {TestRunId} auto-trigger scoring failed", testRun.Id);
+                logger.LogError(ex, "Test-run {TestRunId} auto-trigger scoring failed", testRunId);
             }
         }, CancellationToken.None);
 

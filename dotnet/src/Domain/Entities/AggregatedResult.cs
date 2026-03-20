@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class AggregatedResult
@@ -12,5 +14,6 @@ public class AggregatedResult
     public string MergedImprovementTipsJson { get; set; } = "[]";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
+    [JsonIgnore]
     public Application? Application { get; set; }
 }

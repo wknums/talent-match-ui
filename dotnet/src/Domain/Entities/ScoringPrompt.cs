@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class ScoringPrompt
@@ -16,6 +18,8 @@ public class ScoringPrompt
     public string? GenerationMetadataJson { get; set; }
 
     // Navigation properties
+    [JsonIgnore]
     public Job? Job { get; set; }
+    [JsonIgnore]
     public ICollection<PromptTestRun> TestRuns { get; set; } = new List<PromptTestRun>();
 }

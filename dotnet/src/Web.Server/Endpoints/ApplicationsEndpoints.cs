@@ -55,6 +55,27 @@ public static class ApplicationsEndpoints
             return result != null ? Results.Ok(result) : Results.NotFound();
         });
 
+        appGroup.MapGet("/documents", async (string applicationId, IApplicationRepository repo) =>
+        {
+            var documents = await repo.GetDocumentsAsync(applicationId);
+            return Results.Ok(documents.Select(d => new { d.Id, d.FileName, d.FileType, d.FileSize, d.ContentBase64 }));
+        });
+
+        // GET /api/applications/:applicationId/documents/:documentId/content - raw document bytes (FR-057)
+        appGroup.MapGet("/documents/{documentId}/content", async (string applicationId, string documentId, IApplicationRepository repo) =>
+        {
+            var documents = await repo.GetDocumentsAsync(applicationId);
+            var doc = documents.FirstOrDefault(d => d.Id == documentId);
+            if (doc == null)
+                return Results.NotFound();
+
+            if (string.IsNullOrEmpty(doc.ContentBase64))
+                return Results.NotFound("Document content not available");
+
+            var bytes = Convert.FromBase64String(doc.ContentBase64);
+            return Results.File(bytes, doc.FileType);
+        });
+
         appGroup.MapGet("/extraction", async (string applicationId, IApplicationRepository repo) =>
         {
             var extraction = await repo.GetExtractionAsync(applicationId);

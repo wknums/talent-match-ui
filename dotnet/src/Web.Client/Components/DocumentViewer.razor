@@ -1,0 +1,103 @@
+﻿@using System.Text
+
+<div style="display: flex; flex-direction: column; height: 100%;">
+    @if (Documents != null && Documents.Any())
+    {
+        @if (Documents.Count > 1)
+        {
+            <div style="display: flex; gap: 0.25rem; margin-bottom: 0.5rem; padding: 0 0.5rem; flex-wrap: wrap;">
+                @for (int i = 0; i < Documents.Count; i++)
+                {
+                    var idx = i;
+                    <button @onclick="() => SelectedIndex = idx"
+                            style="padding: 0.2rem 0.5rem; border: 1px solid @(SelectedIndex == idx ? "#3182ce" : "#ccc"); border-radius: 4px; background: @(SelectedIndex == idx ? "#ebf8ff" : "white"); cursor: pointer; font-size: 0.8rem;">
+                        @Documents[idx].FileName
+                    </button>
+                }
+            </div>
+        }
+
+        @{ var doc = Documents[SelectedIndex]; }
+
+        @if (doc.FileType == "application/pdf")
+        {
+            @* PDF via embedded iframe viewer (FR-058) *@
+            <iframe src="@GetContentUrl(doc)" style="width: 100%; flex: 1; border: none; min-height: 300px;"></iframe>
+        }
+        else if (doc.FileType != null && doc.FileType.StartsWith("image/"))
+        {
+            @* Images (JPG/PNG) inline via img tag (FR-058) *@
+            <div style="text-align: center; padding: 1rem; overflow: auto; flex: 1;">
+                <img src="@GetContentUrl(doc)" alt="@doc.FileName" style="max-width: 100%;" />
+            </div>
+        }
+        else if (doc.FileType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && !string.IsNullOrEmpty(doc.ContentBase64))
+        {
+            @* DOCX — rendered as preformatted text (client-side HTML conversion placeholder) *@
+            <div style="padding: 1rem; overflow: auto; flex: 1; font-size: 0.9rem; line-height: 1.6;">
+                <div style="padding: 0.5rem; background: #f0f4f8; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.8rem; color: #666;">
+                    📄 DOCX Document — @doc.FileName
+                </div>
+                <pre style="white-space: pre-wrap; margin: 0;">@DecodeBase64(doc.ContentBase64)</pre>
+            </div>
+        }
+        else if (doc.FileType == "text/markdown" && !string.IsNullOrEmpty(doc.ContentBase64))
+        {
+            @* Markdown via preformatted rendering (FR-058) *@
+            <div style="padding: 1rem; overflow: auto; flex: 1; font-size: 0.9rem; line-height: 1.6;">
+                <pre style="white-space: pre-wrap; margin: 0; font-family: inherit;">@DecodeBase64(doc.ContentBase64)</pre>
+            </div>
+        }
+        else if (doc.FileType == "text/plain" && !string.IsNullOrEmpty(doc.ContentBase64))
+        {
+            @* TXT as preformatted text (FR-058) *@
+            <pre style="white-space: pre-wrap; padding: 1rem; margin: 0; font-size: 0.9rem; line-height: 1.6; overflow: auto; flex: 1;">@DecodeBase64(doc.ContentBase64)</pre>
+        }
+        else if (!string.IsNullOrEmpty(doc.ContentBase64))
+        {
+            @* Fallback for other text-based formats *@
+            <div style="padding: 1rem; font-size: 0.9rem; white-space: pre-wrap; overflow: auto; flex: 1;">@DecodeBase64(doc.ContentBase64)</div>
+        }
+        else
+        {
+            <p style="padding: 1rem; color: #999;">Preview not available for @doc.FileType. <a href="@GetContentUrl(doc)" target="_blank">Download</a></p>
+        }
+    }
+    else
+    {
+        <p style="padding: 1rem; color: #999;">No documents available.</p>
+    }
+</div>
+
+@code {
+    [Parameter] public List<DocumentDto> Documents { get; set; } = new();
+    [Parameter] public string ApplicationId { get; set; } = "";
+    [Parameter] public int SelectedIndex { get; set; } = 0;
+    [Parameter] public EventCallback<int> SelectedIndexChanged { get; set; }
+
+    private string GetContentUrl(DocumentDto doc)
+    {
+        return $"/api/applications/{ApplicationId}/documents/{doc.Id}/content";
+    }
+
+    private string DecodeBase64(string? base64)
+    {
+        if (string.IsNullOrEmpty(base64)) return "";
+        try
+        {
+            return Encoding.UTF8.GetString(Convert.FromBase64String(base64));
+        }
+        catch
+        {
+            return "(Unable to decode document content)";
+        }
+    }
+
+    public class DocumentDto
+    {
+        public string Id { get; set; } = "";
+        public string FileName { get; set; } = "";
+        public string FileType { get; set; } = "";
+        public string? ContentBase64 { get; set; }
+    }
+}

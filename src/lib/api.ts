@@ -15,6 +15,7 @@ import type {
   RubricSource,
   ScoringPrompt,
   PromptTestRun,
+  PromptTestRunDetail,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
 import { realAPI } from '@/lib/api-real'
@@ -668,6 +669,16 @@ const mockAPI = {
     }
   },
 
+  getDocumentContentUrl(applicationId: string, documentId: string): string {
+    return `/api/applications/${applicationId}/documents/${documentId}/content`
+  },
+
+  async getDocumentContent(applicationId: string, documentId: string): Promise<ArrayBuffer> {
+    const res = await fetch(`/api/applications/${applicationId}/documents/${documentId}/content`)
+    if (!res.ok) throw new Error(`Failed to fetch document content: ${res.status}`)
+    return res.arrayBuffer()
+  },
+
   async getDLQItems(): Promise<DLQItem[]> {
     await delay(400)
     return [
@@ -953,7 +964,7 @@ const mockAPI = {
     return []
   },
 
-  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun & { applications?: Application[] }> {
+  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRunDetail> {
     await delay(300)
     return {
       testRunId,
@@ -962,6 +973,7 @@ const mockAPI = {
       status: 'pending_review',
       applicationIds: [],
       createdAt: new Date().toISOString(),
+      applications: [],
     }
   },
 

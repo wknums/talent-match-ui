@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class ApplicationDocument
@@ -7,9 +9,10 @@ public class ApplicationDocument
     public string FileName { get; set; } = string.Empty;
     public string FileType { get; set; } = string.Empty;
     public long FileSize { get; set; }
-    public string Fingerprint { get; set; } = string.Empty; // SHA-256
+    public string Fingerprint { get; set; } = string.Empty;
     public string? ContentBase64 { get; set; }
     public DateTime UploadTimestamp { get; set; } = DateTime.UtcNow;
     
+    [JsonIgnore]
     public Application? Application { get; set; }
 }

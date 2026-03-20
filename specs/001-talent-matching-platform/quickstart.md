@@ -21,7 +21,8 @@ cp .env.example .env
 # Edit .env:
 #   API_MODE=mock   (for mock data, no server needed)
 #   API_MODE=real   (for real KV-backed persistence)
-#   AWRSEQAPI_ENDPOINT=https://your-api.azure.com  (for doc extraction / prompt generation)
+#   AWR_SEQ_API_ENDPOINT=https://your-api.azure.com  (for doc extraction / prompt generation)
+#   AWR_PLATFORM_API_ENDPOINT=https://your-platform-api.azure.com  (optional - for platform-mode scoring)
 ```
 
 ### 3. Start the development server
@@ -101,7 +102,7 @@ Both implement the same API contracts and acceptance scenarios from `spec.md`.
 Both stacks support the full prompt lifecycle:
 
 1. **Create Job** (US3) — job must have an approved rubric
-2. **Create Prompt** — manual, import file, or generate from rubric via `AWRSEQAPI_ENDPOINT`
+2. **Create Prompt** — manual, import file, or generate from rubric via `AWR_SEQ_API_ENDPOINT`
 3. **Activate Prompt** — only one active prompt per job
 4. **Test Prompt** — upload test applications, score them, review via manual review (US7)
 5. **Approve for Production** — requires all test cases pass review without score changes
@@ -126,7 +127,8 @@ Both stacks support the full prompt lifecycle:
 
 | Variable | Purpose | Required |
 |----------|---------|----------|
-| `AWRSEQAPI_ENDPOINT` | External API for document extraction and prompt generation | For US3/US3a AI features |
+| `AWR_SEQ_API_ENDPOINT` | External API for document extraction and prompt generation | For US3/US3a AI features |
+| `AWR_PLATFORM_API_ENDPOINT` | Platform API for async production scoring. When unset or equal to `AWR_SEQ_API_ENDPOINT`, system uses sequential mode. When different, production scoring routes to the platform endpoint. Non-scoring ops always use `AWR_SEQ_API_ENDPOINT`. | Optional (FR-061) |
 | `STORAGE_PROVIDER` | `local` or `azuresql` (Stack A) | Stack A only |
 | `API_MODE` | `mock` or `real` (Stack A) | Stack A only |
 | `DatabaseProvider` | `sqlite` or `sqlserver` (Stack B) | Stack B only |

@@ -44,3 +44,7 @@ export function promptsKey(jobId: string): string {
 export function promptTestRunKey(testRunId: string): string {
   return `prompt-test-run:${testRunId}`;
 }
+
+export function appDocBlobKey(applicationId: string, documentId: string): string {
+  return `app:${applicationId}:doc:${documentId}:blob`;
+}

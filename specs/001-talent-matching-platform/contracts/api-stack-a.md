@@ -174,7 +174,7 @@ Activate this prompt revision (deactivates current active).
 ### POST /api/jobs/:jobId/prompts/generate
 Generate a draft prompt from the job's approved rubric via external API.
 **Response** (200): `{ "promptText": "string", "generationMetadata": {} }`
-**Dependency**: Calls `AWRSEQAPI_ENDPOINT/assess/passthrough`
+**Dependency**: Calls `AWR_SEQ_API_ENDPOINT/assess/passthrough`
 
 ### POST /api/jobs/:jobId/prompts/:promptId/approve-production
 Approve prompt for production scoring.

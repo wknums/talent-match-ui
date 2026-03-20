@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class Application
@@ -13,7 +15,9 @@ public class Application
     public string? TestRunId { get; set; }
     
     // Navigation properties
+    [JsonIgnore]
     public Job? Job { get; set; }
+    [JsonIgnore]
     public PromptTestRun? PromptTestRun { get; set; }
     public ICollection<ApplicationDocument> Documents { get; set; } = new List<ApplicationDocument>();
     public ICollection<ScoringRun> ScoringRuns { get; set; } = new List<ScoringRun>();

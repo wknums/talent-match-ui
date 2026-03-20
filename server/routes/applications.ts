@@ -4,7 +4,7 @@ import type { StorageProvider } from '../storage/types.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
 import {
   JOBS, jobApplicationsKey, appDocumentsKey, appExtractionKey,
-  appRunsKey, appResultKey, appManualReviewKey
+  appRunsKey, appResultKey, appManualReviewKey, appDocBlobKey
 } from '../storage/kv-keys.js'
 import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
 import { createAuditService } from '../services/audit.js'
@@ -75,6 +75,7 @@ export function createApplicationsRouter(storage: StorageProvider) {
           sizeBytes: file.sizeBytes,
           sha256: fingerprint,
           uploadedAt: new Date().toISOString(),
+          rawContent: file.content,
         }
 
         const application: Application = {
@@ -89,6 +90,8 @@ export function createApplicationsRouter(storage: StorageProvider) {
 
         await pushToArray(storage, jobApplicationsKey(jobId), application)
         await storage.set(appDocumentsKey(applicationId), [doc])
+        // Persist raw file content as base64 blob (FR-056)
+        await storage.set(appDocBlobKey(applicationId, documentId), file.content)
 
         applicationIds.push(applicationId)
       }
@@ -274,6 +277,34 @@ export function createApplicationsRouter(storage: StorageProvider) {
         return res.status(404).json({ error: 'Not Found', message: 'No extraction artifact yet' })
       }
       res.json(extraction)
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // GET /api/applications/:applicationId/documents/:documentId/content - raw document bytes (FR-057)
+  router.get('/applications/:applicationId/documents/:documentId/content', async (req, res, next) => {
+    try {
+      const { applicationId, documentId } = req.params
+
+      // Find the document metadata for MIME type
+      const documents = await getArray<ApplicationDocument>(storage, appDocumentsKey(applicationId))
+      const doc = documents.find(d => d.documentId === documentId)
+      if (!doc) {
+        return res.status(404).json({ error: 'Not Found', message: 'Document not found' })
+      }
+
+      // Load raw content from blob storage
+      const rawContent = await storage.get<string>(appDocBlobKey(applicationId, documentId))
+      if (!rawContent) {
+        return res.status(404).json({ error: 'Not Found', message: 'Document content not available' })
+      }
+
+      const buffer = Buffer.from(rawContent, 'base64')
+      res.set('Content-Type', doc.mimeType)
+      res.set('Content-Disposition', `inline; filename="${doc.fileName}"`)
+      res.set('Content-Length', String(buffer.length))
+      res.send(buffer)
     } catch (err) {
       next(err)
     }

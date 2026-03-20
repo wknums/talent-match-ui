@@ -42,21 +42,21 @@ This document resolves all unknowns identified during Technical Context analysis
 
 ---
 
-## R3: External API Contract — AWRSEQAPI_ENDPOINT
+## R3: External API Contract — AWR_SEQ_API_ENDPOINT
 
-**Context**: The spec references `AWRSEQAPI_ENDPOINT` for document extraction (US3 — extract job spec/rubric) and prompt generation (US3a — generate draft prompt from rubric). The existing codebase already has `POST /api/jobs/extract-spec` and `POST /api/jobs/extract-rubric` routes that call `AWRSEQAPI_ENDPOINT/assess/passthrough`.
+**Context**: The spec references `AWR_SEQ_API_ENDPOINT` for document extraction (US3 — extract job spec/rubric) and prompt generation (US3a — generate draft prompt from rubric). The existing codebase already has `POST /api/jobs/extract-spec` and `POST /api/jobs/extract-rubric` routes that call `AWR_SEQ_API_ENDPOINT/assess/passthrough`.
 
-**Decision**: Prompt generation (US3a) will use the same `AWRSEQAPI_ENDPOINT/assess/passthrough` endpoint pattern, with a prompt-generation-specific payload.
+**Decision**: Prompt generation (US3a) will use the same `AWR_SEQ_API_ENDPOINT/assess/passthrough` endpoint pattern, with a prompt-generation-specific payload.
 
 **Rationale**: The existing extraction routes demonstrate the integration pattern — the server constructs a request with a system prompt and user content, sends it to the external API, and returns structured JSON. Prompt generation follows the same pattern: send the approved rubric as context with a system prompt requesting structured scoring prompt output.
 
 **Alternatives Considered**:
 - Add a separate `/assess/generate-prompt` endpoint on the external API — rejected because the passthrough endpoint is designed for flexible AI tasks and avoids coupling to a specific API version.
-- Call OpenAI/Azure OpenAI directly via `server/routes/llm.ts` — this is a valid fallback but the spec specifically mentions `AWRSEQAPI_ENDPOINT` for rubric-related AI operations.
+- Call OpenAI/Azure OpenAI directly via `server/routes/llm.ts` — this is a valid fallback but the spec specifically mentions `AWR_SEQ_API_ENDPOINT` for rubric-related AI operations.
 
 **Implementation Approach**:
 - Reuse the existing passthrough pattern from `extract-spec`/`extract-rubric` routes.
-- Add `POST /api/jobs/:jobId/prompts/generate` route that sends the job's approved rubric to `AWRSEQAPI_ENDPOINT/assess/passthrough` with a prompt-generation system instruction.
+- Add `POST /api/jobs/:jobId/prompts/generate` route that sends the job's approved rubric to `AWR_SEQ_API_ENDPOINT/assess/passthrough` with a prompt-generation system instruction.
 - Stack B: Add equivalent endpoint in Web.Server, calling through `LlmProxyService`.
 
 ---
@@ -100,9 +100,38 @@ This document resolves all unknowns identified during Technical Context analysis
 
 ---
 
+## R6: AWReason Engine API Authentication
+
+**Context**: The AWReason HTTP engine API (`AWR_SEQ_API_ENDPOINT`) has introduced authentication controlled by an `AUTH_MODE` environment variable on the engine side. All callers (extraction, prompt generation, scoring) must now send appropriate credentials depending on the configured mode. Previously, the API accepted all requests without authentication.
+
+**Decision**: Introduce a shared authentication helper that decorates all outbound requests to `AWR_SEQ_API_ENDPOINT` with the correct headers based on a new `AWR_AUTH_MODE` environment variable. Use `AWR_`-prefixed env vars to avoid collision with the platform's own `AUTH_MODE`.
+
+**Rationale**: The platform already has its own `AUTH_MODE` / `API_KEY` for frontend→backend authentication. The AWReason API's auth is independent — it protects the LLM engine. Using `AWR_AUTH_MODE`, `AWR_API_KEY`, `AWR_AAD_ISSUER`, and `AWR_AAD_AUDIENCE` makes the separation explicit and avoids ambiguity.
+
+**Auth Modes**:
+
+| Mode | `AWR_AUTH_MODE` | Headers sent | Use case |
+|------|----------------|--------------|----------|
+| No auth | `none` | None | Local dev |
+| API key | `apikey` | `X-Api-Key: <AWR_API_KEY>`, `X-User-Id: <username>`, `X-User-Role: <role>` | Staging |
+| Entra ID | `entra` | `Authorization: Bearer <JWT>` (client-credentials via MSAL / DefaultAzureCredential) | Production |
+
+**Alternatives Considered**:
+- Reuse the existing `AUTH_MODE` / `API_KEY` env vars — rejected because those control the platform's own inbound auth (frontend→backend). The AWReason API auth is a separate concern with different credentials and potentially different modes in the same deployment.
+- Hardcode API key in source — rejected for obvious security reasons; secrets must come from environment variables or key vault.
+- Per-call auth configuration — rejected as over-engineered. All calls to the same endpoint use the same auth mode.
+
+**Implementation Approach**:
+- Stack A: Create a shared helper function (e.g. `getAwrAuthHeaders(user)` in `server/services/awr-auth.ts`) that reads `AWR_AUTH_MODE` and returns the appropriate headers. Call it from `server/routes/jobs.ts` (extraction), `server/routes/prompts.ts` (prompt generation), and `server/workers/scoring.ts` (scoring). For `entra` mode, use `@azure/identity` `DefaultAzureCredential` with `.getToken()`.
+- Stack B: Create a shared helper or `DelegatingHandler` (e.g. `AwrAuthHandler`) in `Infrastructure/Services/` that decorates `HttpClient` requests to the AWReason endpoint. For `entra` mode, use `Azure.Identity.DefaultAzureCredential`. Register as a transient handler in DI.
+- Validate required env vars at startup: `AWR_API_KEY` required when `AWR_AUTH_MODE=apikey`; `AWR_AAD_AUDIENCE` required when `AWR_AUTH_MODE=entra`.
+- Health endpoints (`/healthz`, `/ready`) are unauthenticated — no headers needed for readiness checks.
+
+---
+
 ## R6: Document Upload Extraction — Supported Formats and Flow
 
-**Context**: US3 specifies supported document types: PDF, JPG, MD, TXT, DOCX. The extraction calls `AWRSEQAPI_ENDPOINT/assess/passthrough` for AI-based content extraction.
+**Context**: US3 specifies supported document types: PDF, JPG, MD, TXT, DOCX. The extraction calls `AWR_SEQ_API_ENDPOINT/assess/passthrough` for AI-based content extraction.
 
 **Decision**: Use the existing extraction route pattern (`POST /api/jobs/extract-spec`) which already handles file content + MIME type and forwards to the external API.
 
@@ -156,3 +185,75 @@ This document resolves all unknowns identified during Technical Context analysis
 ---
 
 *All NEEDS CLARIFICATION items resolved. Proceed to Phase 1: Design & Contracts.*
+
+---
+
+## R10: Scoring Worker Already Calls Passthrough (FR-045, FR-047)
+
+**Context**: FR-045 requires the scoring worker to call `AWR_SEQ_API_ENDPOINT/assess/passthrough` with multipart FormData (`promptFile` + `specFile`). FR-047 requires the same calling convention as extraction/prompt-generation.
+
+**Decision**: No scoring worker changes needed — both stacks already implement this correctly.
+
+**Rationale**:
+- **Stack A** `server/workers/scoring.ts`: Lines 75–81 build `FormData` with `promptFile` (resolved prompt as Blob) and `specFile` (candidate CV text as Blob), POST to `${AWR_SEQ_API_ENDPOINT}/assess/passthrough`. Lines 67–70 resolve `{{JOB_SPEC_TEXT}}` and `{{CANDIDATE_CV_TEXT}}` placeholders. Lines 90–120 parse the LLM JSON response into `ScoringRun` fields (eligibility_gate, rubric_scores, composite_score, improvement_recommendations).
+- **Stack B** `LlmProxyService.ScoreAsync` (Infrastructure/Services/LlmProxyService.cs): Lines 55–72 build `MultipartFormDataContent` with `promptFile` and `specFile`, POST to `{endpoint}/assess/passthrough`. `ScoreApplicationCommand` (Application/Scoring/Commands/ScoreApplicationCommand.cs) resolves placeholders at lines 64–66 and parses JSON at lines 74–120.
+
+**Alternatives Considered**: None — the implementation matches the requirement exactly.
+
+---
+
+## R11: Test Scoring Requires Production-Gate Bypass (FR-038, FR-046)
+
+**Context**: The production scoring pipeline (`server/services/pipeline.ts` line 53; `JobsEndpoints.cs` line 225) enforces that a `production-approved` prompt must exist before scoring can run. FR-038 (amended) states the prompt under test does NOT need to be production-approved for test scoring. FR-046 requires real LLM scoring (not mocked) for test runs.
+
+**Decision**: Add an optional `promptVersionId` parameter to the pipeline orchestrator. When provided (test-run context), skip the production-approved gate and use the given prompt directly for scoring. The scoring worker itself already accepts a `promptVersionId` parameter and uses it — the gate is only in the pipeline orchestrator.
+
+**Rationale**: The scoring worker (`runScoring()` in Stack A) already accepts an optional `promptVersionId` and falls back to production-approved if not provided. The gate enforcement is in `processApplication()` which calls `getProductionApprovedPromptId()` and throws if null. By accepting an explicit `promptVersionId` override, test-run scoring bypasses only the gate lookup — scoring itself is identical (real LLM, same passthrough API, same response parsing).
+
+**Alternatives Considered**:
+- Add a separate `processTestApplication()` function — rejected because it would duplicate 90% of `processApplication()` logic (extraction, retry, DLQ, audit). Violates DRY.
+- Temporarily mark the test prompt as `production-approved`, then revert — rejected because it creates a race condition in concurrent scenarios and violates audit trail integrity.
+- Add a boolean `isTestRun` flag — rejected because passing the explicit `promptVersionId` is more precise and already supported by the scoring worker.
+
+**Implementation Approach**:
+- Stack A: Add optional `promptVersionId?: string` to `processApplication()`. When present, skip the `getProductionApprovedPromptId()` lookup and use the override directly.
+- Stack B: `CreatePromptTestRunCommand` directly dispatches `ScoreApplicationCommand` with the test prompt ID — this already bypasses `JobsEndpoints.cs /process` entirely, so no endpoint change needed.
+
+---
+
+## R12: Auto-Trigger Scoring on Test Upload (FR-048)
+
+**Context**: FR-048 requires that completing test-application upload automatically triggers the scoring pipeline. The current test-run creation endpoints (Stack A `POST /prompts/:promptId/test-runs`; Stack B `CreatePromptTestRunCommand`) create Queued applications but return immediately without triggering scoring. The user would need to manually hit a separate "Process" endpoint, which requires production-approved prompt (chicken-and-egg).
+
+**Decision**: After inserting test applications, the test-run handler fires the scoring pipeline in the background (fire-and-forget) for each application, using the test prompt ID. The test-run status transitions: `pending_scoring` → `scoring` → `pending_review`.
+
+**Rationale**: FR-048 explicitly states "no separate user action required to initiate test scoring." The auto-trigger must be non-blocking so the HTTP response returns promptly. The pipeline runs asynchronously, and status updates are visible via polling or the test-run GET endpoint.
+
+**Alternatives Considered**:
+- Synchronous scoring before returning the response — rejected because scoring N applications × M runs takes significant time (minutes). Would timeout HTTP connections.
+- Queue-based dispatch (Service Bus, BullMQ) — rejected for local development simplicity (YAGNI). The fire-and-forget approach using `Promise` (Stack A) or `Task.Run` (Stack B) is sufficient for single-tenant deployment. Production scaling would use the message-based architecture from Principle VIII.
+- Add a new `/process-test-run` endpoint — rejected because FR-048 says no separate action. The trigger is internal.
+
+**Implementation Approach**:
+- Stack A: After creating test applications, set test-run status to `pending_scoring`. Fire `Promise.allSettled()` of `processApplication()` calls (with `promptVersionId` override) in the background (not awaited in the request handler). When all complete, update status to `pending_review`.
+- Stack B: After creating test applications, set status to `pending_scoring`. Use `Task.Run()` to dispatch scoring via `ISender.Send(ScoreApplicationCommand)` for each application. Update status to `pending_review` on completion.
+
+---
+
+## R13: PromptTestRun Status Enum Extension (FR-048)
+
+**Context**: The current `PromptTestRun` status enum is `pending_review | approved | rejected`. FR-048 requires status transitions `pending_scoring → scoring → pending_review` during pipeline processing.
+
+**Decision**: Extend the status enum to: `pending_scoring | scoring | pending_review | approved | rejected`.
+
+**Rationale**: The new states make pipeline progress visible to the UI. `pending_scoring` is set immediately after test applications are created. `scoring` is set when the first application begins processing. `pending_review` is set when all applications have completed scoring and aggregation.
+
+**Alternatives Considered**:
+- Use the existing `pending_review` status for all states — rejected because the UI cannot distinguish between "waiting for pipeline" and "ready for manual review".
+- Add a separate progress tracking mechanism — rejected as over-engineering when status values suffice (YAGNI).
+
+**State Transition Diagram**:
+```
+pending_scoring → scoring → pending_review → approved
+                                           → rejected
+```

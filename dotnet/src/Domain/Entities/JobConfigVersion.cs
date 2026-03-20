@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class JobConfigVersion
@@ -13,7 +15,11 @@ public class JobConfigVersion
     public double LonglistThreshold { get; set; } = 70;
     public double ShortlistThreshold { get; set; } = 85;
     public double VarianceThreshold { get; set; } = 15;
+    public string RubricApprovalStatus { get; set; } = "draft";
+    public string RubricSource { get; set; } = "manual";
+    public string? RawExtractionResponse { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
+    [JsonIgnore]
     public Job? Job { get; set; }
 }

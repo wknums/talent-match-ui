@@ -5,9 +5,14 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.Prompts.Queries;
 
+public record TestRunApplicationDetail(
+    Domain.Entities.Application Application,
+    IReadOnlyList<ScoringRun> ScoringRuns
+);
+
 public record PromptTestRunDetail(
     PromptTestRun TestRun,
-    IReadOnlyList<Domain.Entities.Application> Applications
+    IReadOnlyList<TestRunApplicationDetail> Applications
 );
 
 public record GetPromptTestRunQuery(string TestRunId) : IRequest<PromptTestRunDetail?>;
@@ -32,13 +37,16 @@ public class GetPromptTestRunQueryHandler : IRequestHandler<GetPromptTestRunQuer
             return null;
 
         var applicationIds = JsonSerializer.Deserialize<List<string>>(testRun.ApplicationIdsJson) ?? [];
-        var applications = new List<Domain.Entities.Application>();
+        var applications = new List<TestRunApplicationDetail>();
 
         foreach (var appId in applicationIds)
         {
             var app = await _applicationRepo.GetByIdAsync(appId, ct);
             if (app != null)
-                applications.Add(app);
+            {
+                var runs = await _applicationRepo.GetScoringRunsAsync(appId, ct);
+                applications.Add(new TestRunApplicationDetail(app, runs));
+            }
         }
 
         return new PromptTestRunDetail(testRun, applications);

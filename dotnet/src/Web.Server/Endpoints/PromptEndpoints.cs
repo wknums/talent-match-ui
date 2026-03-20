@@ -78,27 +78,30 @@ public static class PromptEndpoints
             return detail != null ? Results.Ok(detail) : Results.NotFound();
         });
 
-        testRunGroup.MapPost("/", async (string jobId, string promptId, HttpRequest httpRequest, ISender mediator) =>
+        testRunGroup.MapPost("/", async (string jobId, string promptId, CreateTestRunRequest request, ISender mediator) =>
         {
-            var files = new List<TestRunFile>();
-            var form = await httpRequest.ReadFormAsync();
-            foreach (var file in form.Files)
+            var files = request.Files.Select(f =>
             {
-                using var ms = new MemoryStream();
-                await file.CopyToAsync(ms);
-                var bytes = ms.ToArray();
+                var bytes = Convert.FromBase64String(f.Content);
                 var fingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
-                files.Add(new TestRunFile(file.FileName, file.ContentType, file.Length, Convert.ToBase64String(bytes), fingerprint));
-            }
+                return new TestRunFile(f.FileName, f.MimeType, f.SizeBytes, f.Content, fingerprint);
+            }).ToList();
             var testRun = await mediator.Send(new CreatePromptTestRunCommand(jobId, promptId, files));
             return Results.Created($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRun.Id}", testRun);
-        }).DisableAntiforgery();
+        });
 
         testRunGroup.MapPost("/{testRunId}/approve", async (string jobId, string promptId, string testRunId,
-            ApproveTestRunRequest request, ISender mediator) =>
+            ApproveTestRunRequest? request, ISender mediator) =>
         {
-            var testRun = await mediator.Send(new ApprovePromptTestRunCommand(testRunId, "current-user", request.ReviewNotes));
-            return Results.Ok(testRun);
+            try
+            {
+                var testRun = await mediator.Send(new ApprovePromptTestRunCommand(testRunId, "current-user", request?.ReviewNotes));
+                return Results.Ok(testRun);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
         });
     }
 }
@@ -107,3 +110,5 @@ public record CreatePromptRequest(string PromptText, string Source, string? Gene
 public record EditPromptRequest(string PromptText);
 public record RatePromptRequest(int Rating, string? Comments);
 public record ApproveTestRunRequest(string? ReviewNotes);
+public record CreateTestRunFileRequest(string FileName, string Content, string MimeType, long SizeBytes);
+public record CreateTestRunRequest(List<CreateTestRunFileRequest> Files);

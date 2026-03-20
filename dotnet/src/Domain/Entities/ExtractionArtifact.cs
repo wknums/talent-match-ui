@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class ExtractionArtifact
@@ -9,5 +11,6 @@ public class ExtractionArtifact
     public string Status { get; set; } = "pending"; // pending, completed, failed
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
+    [JsonIgnore]
     public Application? Application { get; set; }
 }

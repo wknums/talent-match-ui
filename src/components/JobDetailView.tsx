@@ -136,14 +136,8 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
       total: stats.totalApplications,
     },
     {
-      name: 'Extracting',
-      status: stats.extracting > 0 ? ('processing' as const) : stats.queued === 0 ? ('completed' as const) : ('pending' as const),
-      count: stats.extracting,
-      total: stats.totalApplications,
-    },
-    {
       name: 'Scoring',
-      status: stats.scoring > 0 ? ('processing' as const) : stats.extracting === 0 && stats.queued === 0 ? ('completed' as const) : ('pending' as const),
+      status: stats.scoring > 0 ? ('processing' as const) : stats.queued === 0 ? ('completed' as const) : ('pending' as const),
       count: stats.scoring,
       total: stats.totalApplications,
     },

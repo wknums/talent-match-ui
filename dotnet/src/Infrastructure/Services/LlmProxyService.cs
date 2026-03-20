@@ -111,10 +111,9 @@ public class LlmProxyService : ILlmProxyService
     }
 
     // FR-065: Extraction ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
-    public async Task<string> ExtractAsync(byte[] documentBytes, string fileName, string mimeType, int runs = 1, CancellationToken cancellationToken = default, string? endpointOverride = null)
+    public async Task<string> ExtractAsync(byte[] documentBytes, string fileName, string mimeType, CancellationToken cancellationToken = default)
     {
-        var endpoint = endpointOverride
-            ?? Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
+        var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
             ?? throw new InvalidOperationException("AWR_SEQ_API_ENDPOINT is not configured.");
 
         const string extractionPrompt = """

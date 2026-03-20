@@ -21,7 +21,7 @@
 
     private List<StageInfo> stages => new()
     {
-        new StageInfo("Extraction", Applications.Count(a => a.Status is "Queued" or "Extracting"), "#2196f3", Applications.Count),
+        new StageInfo("Queued", Applications.Count(a => a.Status == "Queued"), "#2196f3", Applications.Count),
         new StageInfo("Scoring", Applications.Count(a => a.Status == "Scoring"), "#ff9800", Applications.Count),
         new StageInfo("Aggregation", Applications.Count(a => a.Status == "Aggregating"), "#9c27b0", Applications.Count),
         new StageInfo("Complete", Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", Applications.Count)

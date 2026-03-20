@@ -169,24 +169,33 @@ inactive → active (re-activated by recruiter)
 
 ---
 
-### 5. PromptTestRun *(NEW — from US3a / FR-038–FR-040)*
+### 5. PromptTestRun *(NEW — from US3a / FR-038–FR-040, FR-048)*
 
 | Field | Type | Constraints | Notes |
 |-------|------|-------------|-------|
 | testRunId | string (UUID) | PK, required | |
 | jobId | string | FK → Job, required | |
 | promptId | string | FK → ScoringPrompt, required | The prompt revision being tested |
-| status | TestRunStatus enum | required, default: pending_review | `pending_review` \| `approved` \| `rejected` |
+| status | TestRunStatus enum | required, default: pending_scoring | `pending_scoring` \| `scoring` \| `pending_review` \| `approved` \| `rejected` |
 | applicationIds | string[] | required | IDs of test-case applications |
 | createdAt | ISO 8601 datetime | required, auto-set | |
 | completedAt | ISO 8601 datetime | optional | When review was completed |
 | reviewedBy | string | optional | userId of reviewer |
 | reviewNotes | string | optional | |
 
+**State Transitions** (FR-048):
+```
+pending_scoring → scoring        (first test application begins processing)
+scoring → pending_review         (all test applications scored and aggregated)
+pending_review → approved        (manual review passed — no score changes)
+pending_review → rejected        (manual review required score changes)
+```
+
 **Validation Rules**:
 - Test-case applications excluded from production ranked lists (FR-038)
 - Approval requires ALL test applications to pass manual review without score changes (FR-039)
 - Prompt can be approved for production ONLY when testRun status is `approved` (FR-040)
+- Auto-trigger: scoring pipeline fires automatically after test application upload — no manual trigger (FR-048)
 
 ---
 
@@ -211,11 +220,14 @@ inactive → active (re-activated by recruiter)
 
 **State Transitions**:
 ```
-Queued → Extracting → Scoring → Aggregating → Completed
+Queued → Scoring → Aggregating → Completed
                                              → NeedsManualReview (variance > threshold)
-Extracting → ExtractionFailed (retry available)
 Scoring → ScoringFailed (retry → failure queue after max retries)
 ```
+
+> **Note**: The `Extracting` and `ExtractionFailed` statuses are retained for backward compatibility
+> but are no longer used in the pipeline. The AWR scoring API handles document preprocessing
+> (including OCR) internally per FR-059.
 
 ---
 
@@ -231,6 +243,7 @@ Scoring → ScoringFailed (retry → failure queue after max retries)
 | sha256 | string | required | Cryptographic fingerprint for dedup |
 | uploadedAt | ISO 8601 datetime | required, auto-set | |
 | contentUrl | string | optional | Blob URL (production) or inline (dev) |
+| rawContent | string | required | Base64-encoded raw file content for native rendering and scoring API submission (FR-056) |
 
 **Validation Rules**:
 - Allowed MIME types: `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `text/markdown`, `text/plain`, `image/jpeg`
@@ -238,7 +251,11 @@ Scoring → ScoringFailed (retry → failure queue after max retries)
 
 ---
 
-### 8. ExtractionArtifact
+### 8. ExtractionArtifact *(Deprecated)*
+
+> **Note**: ExtractionArtifact is retained for backward compatibility but is no longer produced
+> by the pipeline. The AWR scoring API handles document preprocessing (including OCR) internally
+> per FR-059. The scoring worker sends the original document directly to the API.
 
 | Field | Type | Constraints | Notes |
 |-------|------|-------------|-------|
@@ -331,7 +348,7 @@ Scoring → ScoringFailed (retry → failure queue after max retries)
 | itemId | string (UUID) | PK, required | |
 | applicationId | string | FK → Application, required | |
 | jobId | string | FK → Job, required | |
-| failureType | enum | required | `Extraction` \| `Scoring` \| `Aggregation` |
+| failureType | enum | required | `Extraction` (deprecated) \| `Scoring` \| `Aggregation` |
 | failureReason | string | required | |
 | attemptCount | integer | required | |
 | firstFailedAt | ISO 8601 datetime | required | |

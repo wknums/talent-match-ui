@@ -28,7 +28,7 @@ import {
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ScoringPrompt, PromptStatus, PromptTestRun, Application } from '@/types'
+import type { ScoringPrompt, PromptStatus, PromptTestRun, PromptTestRunDetail, Application } from '@/types'
 
 interface PromptManagementProps {
   jobId: string
@@ -105,7 +105,7 @@ function PromptTestWorkflow({
   const [creating, setCreating] = useState(false)
   const [approving, setApproving] = useState(false)
   const [approvingProduction, setApprovingProduction] = useState(false)
-  const [selectedTestRun, setSelectedTestRun] = useState<(PromptTestRun & { applications?: Application[] }) | null>(null)
+  const [selectedTestRun, setSelectedTestRun] = useState<PromptTestRunDetail | null>(null)
 
   useEffect(() => {
     loadTestRuns()
@@ -350,12 +350,12 @@ function PromptTestWorkflow({
 
       {/* Test run detail dialog */}
       <Dialog open={selectedTestRun !== null} onOpenChange={() => setSelectedTestRun(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Test Run Details</DialogTitle>
           </DialogHeader>
           {selectedTestRun && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div>
                   <span className="text-muted-foreground">Status:</span>{' '}
@@ -376,18 +376,98 @@ function PromptTestWorkflow({
                   {new Date(selectedTestRun.createdAt).toLocaleString()}
                 </div>
               </div>
-              {selectedTestRun.applicationIds.length > 0 && (
+
+              {/* Scoring results per application */}
+              {selectedTestRun.applications && selectedTestRun.applications.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium">
+                    Applications ({selectedTestRun.applications.length})
+                  </p>
+                  {selectedTestRun.applications.map(({ application, scoringRuns }) => (
+                    <Card key={application.applicationId} className="p-3">
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium">
+                            {application.candidateName || application.candidateRef || application.applicationId.slice(0, 8)}
+                          </span>
+                          <Badge
+                            className={cn(
+                              application.status === 'Completed'
+                                ? 'bg-success text-success-foreground'
+                                : application.status === 'ScoringFailed' || application.status === 'ExtractionFailed'
+                                  ? 'bg-destructive text-destructive-foreground'
+                                  : 'bg-accent text-accent-foreground'
+                            )}
+                          >
+                            {application.status}
+                          </Badge>
+                        </div>
+
+                        {scoringRuns.length > 0 ? (
+                          <div className="space-y-2">
+                            {scoringRuns.map((run) => (
+                              <div key={run.runId} className="border rounded p-2 text-xs space-y-1.5 bg-muted/50">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-medium">Run #{run.runIndex}</span>
+                                  <span className="font-semibold text-sm">
+                                    Score: {run.overallScore.toFixed(1)}
+                                  </span>
+                                </div>
+
+                                {/* Sub-scores */}
+                                {Object.keys(run.subScores).length > 0 && (
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                                    {Object.entries(run.subScores).map(([category, score]) => (
+                                      <div key={category} className="flex justify-between">
+                                        <span className="text-muted-foreground truncate mr-2">{category}:</span>
+                                        <span className="font-medium">{(score as number).toFixed(1)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Must-have gate */}
+                                {run.mustHaveResult && (
+                                  <div className="flex items-center gap-1">
+                                    {run.mustHaveResult.passed ? (
+                                      <CheckCircle size={14} className="text-green-600" />
+                                    ) : (
+                                      <Warning size={14} className="text-red-600" />
+                                    )}
+                                    <span>
+                                      Eligibility: {run.mustHaveResult.passed ? 'Passed' : `Failed (${run.mustHaveResult.missingCriteria.join(', ')})`}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Improvement tips */}
+                                {run.improvementRecommendations && run.improvementRecommendations.length > 0 && (
+                                  <div>
+                                    <span className="text-muted-foreground">Tips:</span>
+                                    <ul className="list-disc list-inside ml-1">
+                                      {run.improvementRecommendations.map((tip, i) => (
+                                        <li key={i}>{tip}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">No scoring runs yet</p>
+                        )}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              ) : selectedTestRun.applicationIds.length > 0 ? (
                 <div>
                   <p className="text-sm font-medium mb-1">Applications ({selectedTestRun.applicationIds.length})</p>
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {selectedTestRun.applicationIds.map((appId) => (
-                      <div key={appId} className="text-xs font-mono p-1.5 bg-muted rounded">
-                        {appId}
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-xs text-muted-foreground">Scoring in progress...</p>
                 </div>
-              )}
+              ) : null}
+
               {selectedTestRun.reviewNotes && (
                 <div>
                   <p className="text-sm font-medium mb-1">Review Notes</p>

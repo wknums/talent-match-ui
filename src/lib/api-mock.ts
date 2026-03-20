@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   Job,
   JobConfigVersion,
   Application,
@@ -623,11 +623,11 @@ export const mockAPI = {
       versionId: job.currentVersion.versionId,
       finalScore,
       finalSubScores,
-      confidence: 0.85,
+      confidence: 1 - (variance / 100),
       variance,
-      finalDecision: finalScore >= 75 ? 'Eligible' : finalScore >= 60 ? 'Eligible' : 'Excluded',
-      rationaleText: `Consolidated assessment across ${runs.length} scoring runs shows consistent performance across evaluation criteria.`,
-      recommendationsText: 'Focus on quantifying impact in future applications. Add more detail about key decisions and team contributions.',
+      finalDecision: variance > (job.currentVersion.varianceThreshold || 15) ? 'NeedsManualReview' : finalScore >= (job.currentVersion.longlistThreshold || 60) ? 'Eligible' : 'Excluded',
+      rationaleText: `Engine-aggregated assessment across ${runs.length} scoring runs. Scores ranged from ${Math.min(...scores).toFixed(1)} to ${Math.max(...scores).toFixed(1)} with variance ${variance.toFixed(2)}. ${variance > (job.currentVersion.varianceThreshold || 15) ? 'High variance flagged for manual review.' : 'Consistent scoring across runs confirms decision.'}`,
+      recommendationsText: runs.flatMap(r => r.improvementRecommendations).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3).join('; '),
       allRuns: runs,
       createdAt: new Date().toISOString(),
     }
@@ -878,9 +878,9 @@ export const mockAPI = {
     return []
   },
 
-  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun & { applications?: Application[] }> {
+  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun & { applications?: any[] }> {
     await delay(300)
-    return { testRunId, jobId, promptId, status: 'pending_review', applicationIds: [], createdAt: new Date().toISOString() }
+    return { testRunId, jobId, promptId, status: 'pending_review', applicationIds: [], createdAt: new Date().toISOString(), applications: [] }
   },
 
   async approveTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun> {

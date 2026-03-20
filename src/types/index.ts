@@ -80,6 +80,7 @@ export interface ApplicationDocument {
   sha256: string
   uploadedAt: string
   contentUrl?: string
+  rawContent?: string
 }
 
 export interface Application {
@@ -299,4 +300,13 @@ export interface PromptTestRun {
   completedAt?: string
   reviewedBy?: string
   reviewNotes?: string
+}
+
+export interface TestRunApplicationDetail {
+  application: Application
+  scoringRuns: ScoringRun[]
+}
+
+export interface PromptTestRunDetail extends PromptTestRun {
+  applications: TestRunApplicationDetail[]
 }

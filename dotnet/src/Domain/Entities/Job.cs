@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class Job
@@ -11,10 +13,13 @@ public class Job
     public string Status { get; set; } = "active"; // active, closed, draft
     public string? JobDescription { get; set; }
     public string? CurrentConfigVersionId { get; set; }
+    public string? CreatedBy { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     
     // Navigation properties
+    [JsonIgnore]
     public ICollection<JobConfigVersion> ConfigVersions { get; set; } = new List<JobConfigVersion>();
+    [JsonIgnore]
     public ICollection<Application> Applications { get; set; } = new List<Application>();
 }

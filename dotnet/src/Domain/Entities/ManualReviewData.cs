@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class ManualReviewData
@@ -11,5 +13,6 @@ public class ManualReviewData
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     
+    [JsonIgnore]
     public Application? Application { get; set; }
 }

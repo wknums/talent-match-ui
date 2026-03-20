@@ -13,7 +13,9 @@ public record UpdateJobConfigCommand(
     string AggregationStrategy,
     double LonglistThreshold,
     double ShortlistThreshold,
-    double VarianceThreshold
+    double VarianceThreshold,
+    string? RubricSource,
+    string? RawExtractionResponse
 ) : IRequest<JobConfigVersion>;
 
 public class UpdateJobConfigCommandHandler : IRequestHandler<UpdateJobConfigCommand, JobConfigVersion>
@@ -44,7 +46,9 @@ public class UpdateJobConfigCommandHandler : IRequestHandler<UpdateJobConfigComm
             AggregationStrategy = request.AggregationStrategy,
             LonglistThreshold = request.LonglistThreshold,
             ShortlistThreshold = request.ShortlistThreshold,
-            VarianceThreshold = request.VarianceThreshold
+            VarianceThreshold = request.VarianceThreshold,
+            RubricSource = request.RubricSource ?? "manual",
+            RawExtractionResponse = request.RawExtractionResponse
         };
 
         job.CurrentConfigVersionId = configVersion.Id;

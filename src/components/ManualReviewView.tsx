@@ -12,7 +12,8 @@ import { api } from '@/lib/api'
 import { getCurrentUser as authGetCurrentUser } from '@/lib/auth'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { Application, Job, ExtractionArtifact, ManualReviewData, ManualReviewAuditEntry } from '@/types'
+import { DocumentViewer } from '@/components/DocumentViewer'
+import type { Application, Job, ManualReviewData, ManualReviewAuditEntry } from '@/types'
 
 interface ManualReviewViewProps {
   applicationId: string
@@ -23,7 +24,7 @@ interface ManualReviewViewProps {
 export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewViewProps) {
   const [application, setApplication] = useState<Application | null>(null)
   const [job, setJob] = useState<Job | null>(null)
-  const [extractionArtifact, setExtractionArtifact] = useState<ExtractionArtifact | null>(null)
+  const [selectedDocIndex, setSelectedDocIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -71,10 +72,9 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     setLoading(true)
     setError(null)
     try {
-      const [appData, jobData, artifactData] = await Promise.all([
+      const [appData, jobData] = await Promise.all([
         api.getApplication(applicationId),
         api.getJob(jobId),
-        api.getExtractionArtifact(applicationId),
       ])
       
       if (!appData) {
@@ -89,7 +89,6 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       
       setApplication(appData)
       setJob(jobData)
-      setExtractionArtifact(artifactData)
 
       if (jobData) {
         setReviewData((current) => {
@@ -289,6 +288,118 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
       <div className="container mx-auto px-6 py-6">
         <div className="grid grid-cols-3 gap-6" style={{ height: 'calc(100vh - 180px)' }}>
+          {/* Left pane: Original Document (FR-058) */}
+          <Card className="flex flex-col h-full">
+            <CardHeader className="shrink-0">
+              <CardTitle className="text-lg">Original Document</CardTitle>
+              {application.documents.length > 1 && (
+                <div className="flex gap-1 mt-2">
+                  {application.documents.map((doc, idx) => (
+                    <Button
+                      key={doc.documentId}
+                      variant={idx === selectedDocIndex ? 'default' : 'outline'}
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => setSelectedDocIndex(idx)}
+                    >
+                      {doc.fileName}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </CardHeader>
+            <CardContent className="flex-1 overflow-hidden p-0">
+              {application.documents[selectedDocIndex] && (
+                <DocumentViewer
+                  applicationId={application.applicationId}
+                  document={application.documents[selectedDocIndex]}
+                  className="h-full"
+                />
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Centre pane: Scoring Rubric */}
+          <Card className="flex flex-col h-full">
+            <CardHeader className="shrink-0">
+              <CardTitle className="text-lg">Scoring Rubric</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 overflow-hidden p-0">
+              <ScrollArea className="h-full w-full">
+                <div className="space-y-4 px-6 pb-6">
+                  {job.currentVersion.rubric.map((category) => {
+                    const score = reviewData.rubricScores[category.id] || {
+                      points: 0,
+                      maxPoints: Math.round(category.weight * 100),
+                      comment: '',
+                    }
+
+                    return (
+                      <div key={category.id} className="space-y-3">
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium text-sm">{category.name}</h4>
+                            <Badge variant="secondary" className="font-mono text-xs">
+                              Weight: {(category.weight * 100).toFixed(0)}%
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mb-3">
+                            {category.description}
+                          </p>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="number"
+                                min={0}
+                                max={score.maxPoints}
+                                value={score.points}
+                                onChange={(e) =>
+                                  updatePoints(
+                                    category.id,
+                                    category.name,
+                                    parseFloat(e.target.value) || 0
+                                  )
+                                }
+                                className="w-24 font-mono"
+                              />
+                              <span className="text-sm text-muted-foreground">
+                                / {score.maxPoints} points
+                              </span>
+                            </div>
+
+                            <Textarea
+                              placeholder="Add evaluation comments..."
+                              value={score.comment}
+                              onChange={(e) =>
+                                updateComment(category.id, category.name, e.target.value)
+                              }
+                              className="min-h-[80px] text-sm"
+                            />
+                          </div>
+                        </div>
+                        <Separator />
+                      </div>
+                    )
+                  })}
+
+                  <div className="pt-2">
+                    <Label className="text-sm font-medium mb-2 block">
+                      Overall Review Comments
+                    </Label>
+                    <Textarea
+                      placeholder="Add overall comments about this candidate..."
+                      value={reviewData.overallComment}
+                      onChange={(e) => updateOverallComment(e.target.value)}
+                      className="min-h-[120px]"
+                    />
+                  </div>
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+
+          {/* Right pane: Job Specification */}
           <Card className="flex flex-col h-full">
             <CardHeader className="shrink-0">
               <CardTitle className="text-lg">Job Specification</CardTitle>
@@ -370,167 +481,6 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
                       </div>
                     </div>
                   </div>
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-
-          <Card className="flex flex-col h-full">
-            <CardHeader className="shrink-0">
-              <CardTitle className="text-lg">Scoring Rubric</CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1 overflow-hidden p-0">
-              <ScrollArea className="h-full w-full">
-                <div className="space-y-4 px-6 pb-6">
-                  {job.currentVersion.rubric.map((category) => {
-                    const score = reviewData.rubricScores[category.id] || {
-                      points: 0,
-                      maxPoints: Math.round(category.weight * 100),
-                      comment: '',
-                    }
-
-                    return (
-                      <div key={category.id} className="space-y-3">
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <h4 className="font-medium text-sm">{category.name}</h4>
-                            <Badge variant="secondary" className="font-mono text-xs">
-                              Weight: {(category.weight * 100).toFixed(0)}%
-                            </Badge>
-                          </div>
-                          <p className="text-xs text-muted-foreground mb-3">
-                            {category.description}
-                          </p>
-
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              <Input
-                                type="number"
-                                min={0}
-                                max={score.maxPoints}
-                                value={score.points}
-                                onChange={(e) =>
-                                  updatePoints(
-                                    category.id,
-                                    category.name,
-                                    parseFloat(e.target.value) || 0
-                                  )
-                                }
-                                className="w-24 font-mono"
-                              />
-                              <span className="text-sm text-muted-foreground">
-                                / {score.maxPoints} points
-                              </span>
-                            </div>
-
-                            <Textarea
-                              placeholder="Add evaluation comments..."
-                              value={score.comment}
-                              onChange={(e) =>
-                                updateComment(category.id, category.name, e.target.value)
-                              }
-                              className="min-h-[80px] text-sm"
-                            />
-                          </div>
-                        </div>
-                        <Separator />
-                      </div>
-                    )
-                  })}
-
-                  <div className="pt-2">
-                    <Label className="text-sm font-medium mb-2 block">
-                      Overall Review Comments
-                    </Label>
-                    <Textarea
-                      placeholder="Add overall comments about this candidate..."
-                      value={reviewData.overallComment}
-                      onChange={(e) => updateOverallComment(e.target.value)}
-                      className="min-h-[120px]"
-                    />
-                  </div>
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-
-          <Card className="flex flex-col h-full">
-            <CardHeader className="shrink-0">
-              <CardTitle className="text-lg">Application</CardTitle>
-            </CardHeader>
-            <CardContent className="flex-1 overflow-hidden p-0">
-              <ScrollArea className="h-full w-full">
-                <div className="space-y-4 px-6 pb-6">
-                  <div>
-                    <h3 className="font-semibold mb-1">
-                      {application.candidateName || application.candidateRef}
-                    </h3>
-                    {application.candidateEmail && (
-                      <p className="text-sm text-muted-foreground">
-                        {application.candidateEmail}
-                      </p>
-                    )}
-                  </div>
-
-                  <Separator />
-
-                  {application.finalScore !== undefined && (
-                    <>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">AI Score</p>
-                          <p className="text-xl font-mono font-bold text-accent">
-                            {application.finalScore.toFixed(1)}
-                          </p>
-                        </div>
-                        {application.variance !== undefined && (
-                          <div>
-                            <p className="text-xs text-muted-foreground mb-1">Variance</p>
-                            <p className="text-lg font-mono">±{application.variance.toFixed(1)}</p>
-                          </div>
-                        )}
-                      </div>
-                      <Separator />
-                    </>
-                  )}
-
-                  {extractionArtifact && (
-                    <div>
-                      <h4 className="font-medium text-sm mb-2 text-muted-foreground">
-                        EXTRACTED CONTENT
-                      </h4>
-                      <div className="prose prose-sm max-w-none text-sm">
-                        <pre className="whitespace-pre-wrap font-sans text-foreground">
-                          {extractionArtifact.markdown}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-
-                  {application.documents && application.documents.length > 0 && (
-                    <>
-                      <Separator />
-                      <div>
-                        <h4 className="font-medium text-sm mb-2 text-muted-foreground">
-                          ATTACHED DOCUMENTS
-                        </h4>
-                        <div className="space-y-2">
-                          {application.documents.map((doc) => (
-                            <div
-                              key={doc.documentId}
-                              className="flex items-center gap-2 text-sm p-2 rounded bg-muted/50"
-                            >
-                              <span className="text-xs text-muted-foreground">📄</span>
-                              <span className="flex-1 truncate">{doc.fileName}</span>
-                              <span className="text-xs text-muted-foreground">
-                                {(doc.sizeBytes / 1024).toFixed(1)} KB
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </>
-                  )}
                 </div>
               </ScrollArea>
             </CardContent>

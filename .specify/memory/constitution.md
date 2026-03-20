@@ -33,7 +33,7 @@ the same layered separation MUST be maintained:
   layers but owning no implementation.
 
 ### III. Storage Abstraction (NON-NEGOTIABLE)
-All persistence goes through the `StorageProvider` interface (`server/storage/types.ts`). The active
+All persistence goes through the `StorageProvider` interface (`server/storage/types.ts` for Stack A - equivalent for Stack B). The active
 provider is selected via `STORAGE_PROVIDER` env var (`local` | `azuresql`). No component or route
 may import a concrete storage implementation directly.
 
@@ -48,13 +48,13 @@ may import a concrete storage implementation directly.
 - in the event of BLobs Storagebeing used , SAS tokens are forbidden by security policy - always use RBAC instead
 
 ### V. LLM Integration Discipline
-All LLM calls MUST go through `server/routes/llm.ts` (server-side proxy). The frontend calls
-`/api/llm` only — never an LLM provider directly. Prompts MUST be constructed server-side to
+All LLM calls MUST go through server-side proxy - in Stack A: `server/routes/llm.ts` equivalent for Sack B. The frontend calls
+`/api/llm` (in stack A, and equivalent code path in stack B) only — never an LLM provider directly. Prompts MUST be constructed server-side to
 prevent prompt injection from untrusted client input. JSON-mode must be used when structured output
 is required.
 
 ### VI. UI Precision & Responsiveness
-- Async operations MUST show loading state and handle errors with Sonner toast notifications.
+- Async operations MUST show loading state and handle errors with notifications.
 - Optimistic updates require rollback on failure.
 - Dashboard stats MUST refresh automatically (≤30-second polling interval).
 - Tables with >100 rows MUST use virtual scrolling or pagination.
@@ -176,7 +176,7 @@ This codebase supports two stacks. Stack A is the current prototype; Stack B is 
    implementation begins.
 3. API shape changes MUST update the endpoint mapping table in `INTEGRATION.md`.
 4. Environment variables MUST be documented in `.env.example` with comments.
-5. `npm run dev` runs both backend (`tsx watch`) and frontend (Vite) concurrently — this is the
+5. For stack A: `npm run dev` runs both backend (`tsx watch`) and frontend (Vite) concurrently — this is the
    standard local dev command.
 6. Type errors are blocking: `tsc -b --noCheck` must pass before PR merge.
 

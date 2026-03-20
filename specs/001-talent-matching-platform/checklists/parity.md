@@ -93,7 +93,7 @@
   _Stack A_: `src/components/CreateJobDialog.tsx` form fields  
   _Stack B_: `CreateJobDialog.razor` with 2 tabs (Upload Spec, Manual Entry); `CreateJobCommand`
 
-- [x] **CHK015** — Both stacks implement job specification document upload with LLM-based extraction via `AWRSEQAPI_ENDPOINT/assess/passthrough`  
+- [x] **CHK015** — Both stacks implement job specification document upload with LLM-based extraction via `AWR_SEQ_API_ENDPOINT/assess/passthrough`  
   _Stack A_: `server/routes/jobs.ts` POST `/extract-spec` with `EXTRACT_SPEC_SYSTEM_PROMPT`; `CreateJobDialog.tsx` file upload  
   _Stack B_: `JobsEndpoints.cs` POST `/extract-spec` lines 35–119; `CreateJobDialog.razor` spec upload tab
 
@@ -125,7 +125,7 @@
 
 ## US3a — Prompt Management
 
-- [x] **CHK022** — Both stacks implement prompt creation with three methods: manual authoring, file import/upload, and AI-assisted generation via `AWRSEQAPI_ENDPOINT`  
+- [x] **CHK022** — Both stacks implement prompt creation with three methods: manual authoring, file import/upload, and AI-assisted generation via `AWR_SEQ_API_ENDPOINT`  
   _Stack A_: `server/routes/prompts.ts` POST create + POST generate; `PromptManagement.tsx` tabs  
   _Stack B_: `PromptEndpoints.cs` POST `/` and POST `/{id}/generate`; `PromptManagement.razor` create manual/file/AI
 
@@ -282,8 +282,8 @@
   _Stack B_: SHA-256 hashing in `AuthEndpoints`, `CreateUserCommand`
 
 - [x] **CHK055** — Both stacks proxy all AI model calls through the backend; no client-side API keys (FR-017)  
-  _Stack A_: `server/routes/jobs.ts` calls `AWRSEQAPI_ENDPOINT` from Express; no client-side keys  
-  _Stack B_: `JobsEndpoints.cs` calls `AWRSEQAPI_ENDPOINT` from ASP.NET; no client-side keys
+  _Stack A_: `server/routes/jobs.ts` calls `AWR_SEQ_API_ENDPOINT` from Express; no client-side keys  
+  _Stack B_: `JobsEndpoints.cs` calls `AWR_SEQ_API_ENDPOINT` from ASP.NET; no client-side keys
 
 ---
 

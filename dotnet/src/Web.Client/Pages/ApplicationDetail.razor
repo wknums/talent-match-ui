@@ -4,118 +4,233 @@
 @inject ApiClient Api
 @inject NavigationManager Navigation
 
-<h3>Application Detail</h3>
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <h3 style="margin: 0;">Application Detail</h3>
+        @if (application != null)
+        {
+            <span style="background: @StatusColor; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">@application.Status</span>
+            @if (application.FinalScore.HasValue)
+            {
+                <span style="font-weight: bold; font-size: 1.1rem;">Score: @application.FinalScore.Value.ToString("F1")</span>
+            }
+            @if (application.FinalDecision != null)
+            {
+                <span style="color: #555;">@application.FinalDecision</span>
+            }
+        }
+    </div>
+    <div style="display: flex; gap: 0.5rem;">
+        @if (application?.FinalDecision is "NeedsManualReview" or "Eligible")
+        {
+            <button @onclick="NavigateToManualReview" style="padding: 0.4rem 0.8rem; background: #805ad5; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                ✍️ Manual Review
+            </button>
+        }
+        <button @onclick="NavigateToJob" style="padding: 0.4rem 0.8rem; background: #4a5568; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            ← Back to Job
+        </button>
+    </div>
+</div>
 
 @if (application != null)
 {
-    <div style="margin-bottom: 1rem;">
-        <span style="background: @StatusColor; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">@application.Status</span>
-        @if (application.FinalDecision != null)
-        {
-            <span style="margin-left: 0.5rem; font-weight: bold;">Decision: @application.FinalDecision</span>
-        }
-        @if (application.FinalScore.HasValue)
-        {
-            <span style="margin-left: 0.5rem;">Score: @application.FinalScore.Value.ToString("F1")</span>
-        }
-        @if (application.Variance.HasValue)
-        {
-            <span style="margin-left: 0.5rem; color: #666;">Variance: @application.Variance.Value.ToString("F1")</span>
-        }
-    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; height: calc(100vh - 140px);">
 
-    @if (application.FinalDecision is "NeedsManualReview" or "Eligible")
-    {
-        <button @onclick="NavigateToManualReview" style="margin-bottom: 1rem; padding: 0.5rem 1rem; background: #ed8936; color: white; border: none; border-radius: 4px;">
-            Manual Review
-        </button>
-    }
-
-    @* Extracted Text *@
-    @if (extraction != null)
-    {
-        <div style="margin-bottom: 1.5rem;">
-            <h4>Extracted Text</h4>
-            <div style="font-size: 0.8rem; color: #666; margin-bottom: 0.25rem;">Confidence: @extraction.ConfidenceScore.ToString("F2")</div>
-            <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; max-height: 300px; overflow-y: auto; background: #f9f9f9;">
-                <pre style="white-space: pre-wrap; margin: 0;">@extraction.NormalisedText</pre>
-            </div>
+        @* Panel 1: Original Document (FR-058) - uses DocumentViewer component (T183) *@
+        <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto; background: #fafafa;">
+            <h5 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">📄 Candidate Document</h5>
+            <DocumentViewer Documents="@MapToDocumentDtos()" ApplicationId="@ApplicationId" />
         </div>
-    }
 
-    @* Scoring Runs *@
-    @if (scoringRuns.Any())
-    {
-        <div style="margin-bottom: 1.5rem;">
-            <h4>Scoring Runs (@scoringRuns.Count)</h4>
-            @foreach (var run in scoringRuns.OrderBy(r => r.RunIndex))
+
+        @* Panel 2: Job Rubric & Configuration *@
+        <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto; background: #fafafa;">
+            <h5 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">📋 Job Rubric</h5>
+            @if (job != null)
             {
-                <details style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem;">
-                    <summary style="cursor: pointer; font-weight: bold;">
-                        Run @(run.RunIndex + 1) — Score: @run.TotalScore.ToString("F1")
-                        <span style="font-size: 0.8rem; color: #666; margin-left: 0.5rem;">(@run.AiModelId, v@run.PromptVersion)</span>
-                    </summary>
-                    <div style="margin-top: 0.5rem;">
-                        @if (!string.IsNullOrEmpty(run.CategoryScoresJson))
+                <div style="margin-bottom: 1rem;">
+                    <strong>@job.Title</strong>
+                    <div style="font-size: 0.85rem; color: #666;">@job.Department — @job.Organisation</div>
+                </div>
+            }
+            @if (rubricCategories.Any())
+            {
+                <h6 style="margin-bottom: 0.25rem;">Scoring Categories</h6>
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 1rem;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid #ccc;">
+                            <th style="text-align: left; padding: 0.3rem;">Category</th>
+                            <th style="text-align: right; padding: 0.3rem;">Weight</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var cat in rubricCategories)
                         {
-                            <h5>Category Scores</h5>
-                            <pre style="white-space: pre-wrap; font-size: 0.85rem; background: #f5f5f5; padding: 0.5rem; border-radius: 4px;">@FormatJson(run.CategoryScoresJson)</pre>
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 0.3rem;">@cat.Name</td>
+                                <td style="text-align: right; padding: 0.3rem;">@cat.Weight.ToString("F2")</td>
+                            </tr>
+                            @if (!string.IsNullOrEmpty(cat.Description))
+                            {
+                                <tr><td colspan="2" style="padding: 0.1rem 0.3rem; font-size: 0.8rem; color: #888;">@cat.Description</td></tr>
+                            }
                         }
-                        @if (!string.IsNullOrEmpty(run.MustHaveEvaluationJson))
-                        {
-                            <h5>Must-Have Evaluation</h5>
-                            <pre style="white-space: pre-wrap; font-size: 0.85rem; background: #f5f5f5; padding: 0.5rem; border-radius: 4px;">@FormatJson(run.MustHaveEvaluationJson)</pre>
-                        }
-                        @if (!string.IsNullOrEmpty(run.EvidenceCitationsJson))
-                        {
-                            <h5>Evidence Citations</h5>
-                            <pre style="white-space: pre-wrap; font-size: 0.85rem; background: #f5f5f5; padding: 0.5rem; border-radius: 4px;">@FormatJson(run.EvidenceCitationsJson)</pre>
-                        }
-                        @if (!string.IsNullOrEmpty(run.ImprovementTipsJson))
-                        {
-                            <h5>Improvement Tips</h5>
-                            <pre style="white-space: pre-wrap; font-size: 0.85rem; background: #f5f5f5; padding: 0.5rem; border-radius: 4px;">@FormatJson(run.ImprovementTipsJson)</pre>
-                        }
-                        <div style="font-size: 0.8rem; color: #666; margin-top: 0.5rem;">
-                            Tokens: @run.InputTokens input / @run.OutputTokens output
-                        </div>
-                    </div>
-                </details>
+                    </tbody>
+                </table>
+            }
+            @if (mustHaveCriteria.Any())
+            {
+                <h6 style="margin-bottom: 0.25rem;">Must-Have Criteria</h6>
+                <ul style="padding-left: 1.25rem; font-size: 0.85rem; margin-bottom: 1rem;">
+                    @foreach (var crit in mustHaveCriteria)
+                    {
+                        <li style="margin-bottom: 0.2rem;">@crit</li>
+                    }
+                </ul>
+            }
+            @if (config != null)
+            {
+                <h6 style="margin-bottom: 0.25rem;">Thresholds</h6>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.85rem;">
+                    <div>Shortlist: <strong>@config.ShortlistThreshold</strong></div>
+                    <div>Longlist: <strong>@config.LonglistThreshold</strong></div>
+                    <div>Variance: <strong>@config.VarianceThreshold</strong></div>
+                    <div>Runs: <strong>@config.ScoringRunCount</strong></div>
+                </div>
+            }
+            @if (!rubricCategories.Any() && !mustHaveCriteria.Any() && config == null)
+            {
+                <p style="color: #999;">No rubric configuration available.</p>
             }
         </div>
-    }
 
-    @* Aggregated Result *@
-    @if (aggregatedResult != null)
-    {
-        <div style="margin-bottom: 1.5rem;">
-            <h4>Aggregated Result</h4>
-            <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem;">
-                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1rem;">
-                    <div><strong>Final Score</strong><br />@aggregatedResult.FinalScore.ToString("F1")</div>
-                    <div><strong>Decision</strong><br />@aggregatedResult.Decision</div>
-                    <div><strong>Variance</strong><br />@aggregatedResult.Variance.ToString("F2")</div>
-                    <div><strong>Confidence</strong><br />@aggregatedResult.Confidence.ToString("F2")</div>
+        @* Panel 3: Scoring Results *@
+        <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto; background: #fafafa;">
+            <h5 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">🎯 Scoring Results</h5>
+
+            @* Aggregated summary at top *@
+            @if (aggregatedResult != null)
+            {
+                <div style="background: #edf2f7; border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.9rem;">
+                        <div><strong>Final Score:</strong> @aggregatedResult.FinalScore.ToString("F1")</div>
+                        <div><strong>Decision:</strong> @aggregatedResult.Decision</div>
+                        <div><strong>Confidence:</strong> @aggregatedResult.Confidence.ToString("P0")</div>
+                        <div><strong>Variance:</strong> @aggregatedResult.Variance.ToString("F2")</div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(aggregatedResult.ConsolidatedRationale))
+                    {
+                        <div style="margin-top: 0.5rem; font-size: 0.85rem;">
+                            <strong>Rationale:</strong> @aggregatedResult.ConsolidatedRationale
+                        </div>
+                    }
                 </div>
-                @if (!string.IsNullOrEmpty(aggregatedResult.ConsolidatedRationale))
-                {
-                    <div style="margin-bottom: 0.5rem;">
-                        <strong>Consolidated Rationale</strong>
-                        <p style="margin-top: 0.25rem;">@aggregatedResult.ConsolidatedRationale</p>
-                    </div>
-                }
-                @if (!string.IsNullOrEmpty(aggregatedResult.MergedImprovementTipsJson))
-                {
-                    <div>
-                        <strong>Improvement Tips</strong>
-                        <pre style="white-space: pre-wrap; font-size: 0.85rem; background: #f5f5f5; padding: 0.5rem; border-radius: 4px; margin-top: 0.25rem;">@FormatJson(aggregatedResult.MergedImprovementTipsJson)</pre>
-                    </div>
-                }
-            </div>
-        </div>
-    }
+            }
 
-    <button @onclick="NavigateToJob">← Back to Job</button>
+            @* Individual scoring runs *@
+            @if (scoringRuns.Any())
+            {
+                @foreach (var run in scoringRuns.OrderBy(r => r.RunIndex))
+                {
+                    <details open style="border: 1px solid @(HasError(run.MustHaveEvaluationJson) ? "#feb2b2" : "#e2e8f0"); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; background: @(HasError(run.MustHaveEvaluationJson) ? "#fff5f5" : "white");">
+                        <summary style="cursor: pointer; font-weight: bold; font-size: 0.9rem;">
+                            Run #@(run.RunIndex) — Score: @run.TotalScore.ToString("F1") @(HasError(run.MustHaveEvaluationJson) ? "⚠️" : "")
+                        </summary>
+                        <div style="margin-top: 0.5rem; font-size: 0.85rem;">
+
+                            @if (HasError(run.MustHaveEvaluationJson))
+                            {
+                                <div style="padding: 0.5rem; background: #fed7d7; border-radius: 4px; border: 1px solid #feb2b2; margin-bottom: 0.5rem;">
+                                    <div style="font-weight: 600; color: #822727; font-size: 0.85rem; margin-bottom: 0.25rem;">⚠️ Scoring Error</div>
+                                    <div style="color: #822727; font-size: 0.85rem;">@GetErrorMessage(run.MustHaveEvaluationJson)</div>
+                                    @{ var rawResp = GetRawResponse(run.MustHaveEvaluationJson); }
+                                    @if (!string.IsNullOrEmpty(rawResp))
+                                    {
+                                        <details style="margin-top: 0.5rem;">
+                                            <summary style="cursor: pointer; font-size: 0.8rem; color: #822727;">Show raw LLM response</summary>
+                                            <pre style="margin-top: 0.25rem; padding: 0.5rem; background: #1a202c; color: #e2e8f0; border-radius: 4px; font-size: 0.75rem; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">@rawResp</pre>
+                                        </details>
+                                    }
+                                </div>
+                            }
+                            @{ var catScores = ParseDict(run.CategoryScoresJson); }
+                            @if (catScores?.Any() == true)
+                            {
+                                <h6 style="margin: 0.5rem 0 0.25rem;">Category Scores</h6>
+                                <div style="display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 1rem;">
+                                    @foreach (var kv in catScores)
+                                    {
+                                        <span style="color: #4a5568;">@kv.Key</span>
+                                        <span style="font-weight: bold; text-align: right;">@kv.Value.ToString("F1")</span>
+                                    }
+                                </div>
+                            }
+
+                            @{ var gate = ParseGate(run.MustHaveEvaluationJson); }
+                            @if (gate != null)
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
+                                @if (gate.Passed)
+                                {
+                                    <span style="color: #38a169;">✅ Passed</span>
+                                }
+                                else
+                                {
+                                    <span style="color: #e53e3e;">❌ Failed</span>
+                                    @if (gate.MissingCriteria?.Any() == true)
+                                    {
+                                        <ul style="margin: 0.25rem 0 0 1rem; padding: 0;">
+                                            @foreach (var m in gate.MissingCriteria)
+                                            {
+                                                <li style="color: #e53e3e;">@m</li>
+                                            }
+                                        </ul>
+                                    }
+                                }
+                            }
+                            else if (HasError(run.MustHaveEvaluationJson))
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
+                                <div style="color: #e53e3e; font-size: 0.8rem;">
+                                    ⚠️ @GetErrorMessage(run.MustHaveEvaluationJson)
+                                </div>
+                            }
+
+                            @{ var evidence = ParseStringDict(run.EvidenceCitationsJson); }
+                            @if (evidence?.Any() == true)
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Evidence Citations</h6>
+                                @foreach (var kv in evidence)
+                                {
+                                    <div style="margin-bottom: 0.25rem;">
+                                        <span style="font-weight: 600; color: #4a5568;">@kv.Key:</span>
+                                        <span style="color: #718096;"> @kv.Value</span>
+                                    </div>
+                                }
+                            }
+
+                            @{ var tips = ParseList(run.ImprovementTipsJson); }
+                            @if (tips?.Any() == true)
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Improvement Tips</h6>
+                                <ul style="margin: 0; padding-left: 1.25rem;">
+                                    @foreach (var tip in tips)
+                                    {
+                                        <li>@tip</li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    </details>
+                }
+            }
+            else
+            {
+                <p style="color: #999;">No scoring runs available yet.</p>
+            }
+        </div>
+    </div>
 }
 else
 {
@@ -126,37 +241,136 @@ else
     [Parameter] public string ApplicationId { get; set; } = "";
 
     private ApplicationDto? application;
-    private ExtractionDto? extraction;
+    private JobDto? job;
+    private JobConfigDto? config;
+    private List<DocumentDto> documents = new();
+
+    private List<DocumentViewer.DocumentDto> MapToDocumentDtos()
+    {
+        return documents.Select(d => new DocumentViewer.DocumentDto
+        {
+            Id = d.Id,
+            FileName = d.FileName,
+            FileType = d.FileType,
+            ContentBase64 = d.ContentBase64
+        }).ToList();
+    }
     private List<ScoringRunDto> scoringRuns = new();
     private AggregatedResultDto? aggregatedResult;
+    private List<RubricCategoryItem> rubricCategories = new();
+    private List<string> mustHaveCriteria = new();
 
     private string StatusColor => application?.Status switch
     {
         "Completed" => "#38a169",
         "Failed" => "#e53e3e",
         "NeedsManualReview" => "#ed8936",
-        "Scoring" or "Extracting" or "Aggregating" => "#3182ce",
+        "Scoring" or "Aggregating" => "#3182ce",
         _ => "#718096"
     };
 
     protected override async Task OnInitializedAsync()
     {
         application = await Api.GetApplicationAsync(ApplicationId);
-        extraction = await Api.GetExtractionAsync(ApplicationId);
+        documents = await Api.GetDocumentsAsync(ApplicationId);
         scoringRuns = await Api.GetScoringRunsAsync(ApplicationId);
         aggregatedResult = await Api.GetAggregatedResultAsync(ApplicationId);
+
+        if (application != null)
+        {
+            job = await Api.GetJobAsync(application.JobId);
+            config = await Api.GetJobConfigAsync(application.JobId);
+            if (config != null)
+            {
+                if (!string.IsNullOrEmpty(config.RubricJson))
+                {
+                    try { rubricCategories = JsonSerializer.Deserialize<List<RubricCategoryItem>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+                    catch { }
+                }
+                if (!string.IsNullOrEmpty(config.MustHaveCriteriaJson))
+                {
+                    try
+                    {
+                        var items = JsonSerializer.Deserialize<List<MustHaveItem>>(config.MustHaveCriteriaJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        mustHaveCriteria = items?.Select(i => i.Criterion).ToList() ?? new();
+                    }
+                    catch
+                    {
+                        try { mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHaveCriteriaJson) ?? new(); }
+                        catch { }
+                    }
+                }
+            }
+        }
     }
 
-    private static string FormatJson(string json)
+    private Dictionary<string, double>? ParseDict(string? json)
     {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<Dictionary<string, double>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private Dictionary<string, string>? ParseStringDict(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<Dictionary<string, string>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private GateResult? ParseGate(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<GateResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private List<string>? ParseList(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<List<string>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private bool HasError(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
         try
         {
-            var doc = JsonDocument.Parse(json);
-            return JsonSerializer.Serialize(doc, new JsonSerializerOptions { WriteIndented = true });
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("error", out _);
         }
-        catch { return json; }
+        catch { return false; }
+    }
+
+    private string GetErrorMessage(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("error", out var err))
+                return err.GetString() ?? "";
+        }
+        catch { }
+        return "";
+    }
+
+    private string GetRawResponse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("rawResponse", out var raw))
+                return raw.GetString() ?? "";
+        }
+        catch { }
+        return "";
     }
 
     private void NavigateToManualReview() => Navigation.NavigateTo($"/manual-review/{ApplicationId}");
     private void NavigateToJob() => Navigation.NavigateTo($"/jobs/{application?.JobId}");
+
+    private record GateResult(bool Passed, List<string>? MissingCriteria);
 }

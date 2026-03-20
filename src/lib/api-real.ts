@@ -13,7 +13,74 @@ import type {
   PasswordResetRequest,
   ScoringPrompt,
   PromptTestRun,
+  PromptTestRunDetail,
 } from '@/types'
+
+function mapTestRun(raw: any): PromptTestRun {
+  return {
+    testRunId: raw.id ?? raw.testRunId,
+    jobId: raw.jobId,
+    promptId: raw.promptId,
+    status: raw.status,
+    applicationIds: typeof raw.applicationIdsJson === 'string'
+      ? JSON.parse(raw.applicationIdsJson)
+      : (raw.applicationIds ?? []),
+    createdAt: raw.createdAt,
+    completedAt: raw.completedAt,
+    reviewedBy: raw.reviewedBy,
+    reviewNotes: raw.reviewNotes,
+  }
+}
+
+function mapScoringRun(raw: any): ScoringRun {
+  return {
+    runId: raw.id ?? raw.runId,
+    applicationId: raw.applicationId,
+    versionId: raw.aiModelId ?? '',
+    runIndex: raw.runIndex,
+    modelDeploymentId: raw.aiModelId ?? '',
+    promptVersionId: raw.promptVersion ?? '',
+    overallScore: raw.totalScore,
+    subScores: typeof raw.categoryScoresJson === 'string'
+      ? JSON.parse(raw.categoryScoresJson)
+      : (raw.subScores ?? {}),
+    mustHaveResult: typeof raw.mustHaveEvaluationJson === 'string'
+      ? JSON.parse(raw.mustHaveEvaluationJson)
+      : (raw.mustHaveResult ?? { passed: true, missingCriteria: [], details: {} }),
+    evidenceCitations: typeof raw.evidenceCitationsJson === 'string'
+      ? JSON.parse(raw.evidenceCitationsJson)
+      : (raw.evidenceCitations ?? []),
+    rationale: '',
+    improvementRecommendations: typeof raw.improvementTipsJson === 'string'
+      ? JSON.parse(raw.improvementTipsJson)
+      : (raw.improvementRecommendations ?? []),
+    createdAt: raw.createdAt,
+    durationMs: 0,
+    tokenUsage: raw.inputTokens || raw.outputTokens
+      ? { promptTokens: raw.inputTokens ?? 0, completionTokens: raw.outputTokens ?? 0, totalTokens: (raw.inputTokens ?? 0) + (raw.outputTokens ?? 0) }
+      : undefined,
+    status: 'Success',
+  }
+}
+
+function mapApplication(raw: any): Application {
+  return {
+    applicationId: raw.id ?? raw.applicationId,
+    jobId: raw.jobId,
+    candidateRef: raw.candidateRef ?? '',
+    candidateName: raw.candidateName,
+    candidateEmail: raw.candidateEmail,
+    status: raw.status,
+    createdAt: raw.createdAt,
+    documents: raw.documents ?? [],
+    extractionArtifactId: raw.extractionArtifactId,
+    finalScore: raw.finalScore,
+    finalDecision: raw.finalDecision,
+    variance: raw.variance,
+    flagged: raw.flagged,
+    testRunId: raw.testRunId,
+  }
+}
 
 const API_BASE = '/api'
 
@@ -277,6 +344,16 @@ export const realAPI = {
     }
   },
 
+  getDocumentContentUrl(applicationId: string, documentId: string): string {
+    return `${API_BASE}/applications/${applicationId}/documents/${documentId}/content`
+  },
+
+  async getDocumentContent(applicationId: string, documentId: string): Promise<ArrayBuffer> {
+    const res = await fetch(`${API_BASE}/applications/${applicationId}/documents/${documentId}/content`)
+    if (!res.ok) throw new Error(`Failed to fetch document content: ${res.status}`)
+    return res.arrayBuffer()
+  },
+
   // Manual Review
   async getManualReview(applicationId: string): Promise<ManualReviewData | null> {
     try {
@@ -385,21 +462,30 @@ export const realAPI = {
   },
 
   async createTestRun(jobId: string, promptId: string, files: Array<{ fileName: string; content: string; mimeType: string; sizeBytes: number }>): Promise<PromptTestRun> {
-    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs`, {
+    const raw = await fetchJSON<any>(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs`, {
       method: 'POST',
       body: JSON.stringify({ files }),
     })
+    return mapTestRun(raw.testRun ?? raw)
   },
 
   async getTestRuns(jobId: string, promptId: string): Promise<PromptTestRun[]> {
-    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs`)
+    const raw = await fetchJSON<any[]>(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs`)
+    return raw.map(mapTestRun)
   },
 
-  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun & { applications?: Application[] }> {
-    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}`)
+  async getTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRunDetail> {
+    const raw = await fetchJSON<any>(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}`)
+    const testRun = mapTestRun(raw.testRun ?? raw)
+    const applications = (raw.applications ?? []).map((a: any) => ({
+      application: mapApplication(a.application ?? a),
+      scoringRuns: (a.scoringRuns ?? []).map(mapScoringRun),
+    }))
+    return { ...testRun, applications }
   },
 
   async approveTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun> {
-    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}/approve`, { method: 'POST' })
+    const raw = await fetchJSON<any>(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}/approve`)
+    return mapTestRun(raw)
   },
 }

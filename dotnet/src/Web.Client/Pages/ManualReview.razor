@@ -7,49 +7,16 @@
 <h3>Manual Review</h3>
 
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; height: calc(100vh - 150px);">
-    @* Left Pane: Job Specification *@
-    <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
-        <h5>Job Specification</h5>
-        @if (rubricCategories.Any())
-        {
-            <h6>Rubric Categories</h6>
-            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
-                <thead>
-                    <tr style="border-bottom: 1px solid #ccc;">
-                        <th style="text-align: left; padding: 0.25rem;">Category</th>
-                        <th style="text-align: right; padding: 0.25rem;">Weight</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach (var cat in rubricCategories)
-                    {
-                        <tr style="border-bottom: 1px solid #eee;">
-                            <td style="padding: 0.25rem;">@cat.Name</td>
-                            <td style="text-align: right; padding: 0.25rem;">@cat.Weight.ToString("F2")</td>
-                        </tr>
-                        @if (!string.IsNullOrEmpty(cat.Description))
-                        {
-                            <tr><td colspan="2" style="padding: 0.1rem 0.25rem; font-size: 0.8rem; color: #666;">@cat.Description</td></tr>
-                        }
-                    }
-                </tbody>
-            </table>
-        }
-        @if (mustHaveCriteria.Any())
-        {
-            <h6 style="margin-top: 1rem;">Must-Have Criteria</h6>
-            <ul style="padding-left: 1.5rem; font-size: 0.85rem;">
-                @foreach (var criterion in mustHaveCriteria)
-                {
-                    <li>@criterion</li>
-                }
-            </ul>
-        }
-        @if (!rubricCategories.Any() && !mustHaveCriteria.Any())
-        {
-            <p style="color: #666;">No rubric configuration available for this job.</p>
-        }
+    @* Left Pane: Original Document (FR-058) - uses DocumentViewer component (T184) *@
+    <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
+        <div style="padding: 0.75rem 1rem; border-bottom: 1px solid #ccc; background: #f9f9f9;">
+            <h5 style="margin: 0;">Original Document</h5>
+        </div>
+        <div style="flex: 1; overflow: auto; padding: 0;">
+            <DocumentViewer Documents="@MapToDocumentDtos()" ApplicationId="@ApplicationId" />
+        </div>
     </div>
+
 
     @* Centre Pane: Scoring Form *@
     <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
@@ -104,16 +71,47 @@
         }
     </div>
 
-    @* Right Pane: Application Content *@
+    @* Right Pane: Job Specification *@
     <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
-        <h5>Application Content</h5>
-        @if (extraction != null)
+        <h5>Job Specification</h5>
+        @if (rubricCategories.Any())
         {
-            <pre style="white-space: pre-wrap;">@extraction.NormalisedText</pre>
+            <h6>Rubric Categories</h6>
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #ccc;">
+                        <th style="text-align: left; padding: 0.25rem;">Category</th>
+                        <th style="text-align: right; padding: 0.25rem;">Weight</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var cat in rubricCategories)
+                    {
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 0.25rem;">@cat.Name</td>
+                            <td style="text-align: right; padding: 0.25rem;">@cat.Weight.ToString("F2")</td>
+                        </tr>
+                        @if (!string.IsNullOrEmpty(cat.Description))
+                        {
+                            <tr><td colspan="2" style="padding: 0.1rem 0.25rem; font-size: 0.8rem; color: #666;">@cat.Description</td></tr>
+                        }
+                    }
+                </tbody>
+            </table>
         }
-        else
+        @if (mustHaveCriteria.Any())
         {
-            <p>No extracted content available.</p>
+            <h6 style="margin-top: 1rem;">Must-Have Criteria</h6>
+            <ul style="padding-left: 1.5rem; font-size: 0.85rem;">
+                @foreach (var criterion in mustHaveCriteria)
+                {
+                    <li>@criterion</li>
+                }
+            </ul>
+        }
+        @if (!rubricCategories.Any() && !mustHaveCriteria.Any())
+        {
+            <p style="color: #666;">No rubric configuration available for this job.</p>
         }
     </div>
 </div>
@@ -126,7 +124,18 @@
     [Parameter] public string ApplicationId { get; set; } = "";
 
     private ManualReviewDto? review;
-    private ExtractionDto? extraction;
+    private List<DocumentDto> documents = new();
+
+    private List<DocumentViewer.DocumentDto> MapToDocumentDtos()
+    {
+        return documents.Select(d => new DocumentViewer.DocumentDto
+        {
+            Id = d.Id,
+            FileName = d.FileName,
+            FileType = d.FileType,
+            ContentBase64 = d.ContentBase64
+        }).ToList();
+    }
     private ApplicationDto? application;
     private string overallComment = "";
     private bool isSaving;
@@ -140,7 +149,7 @@
     {
         application = await Api.GetApplicationAsync(ApplicationId);
         review = await Api.GetManualReviewAsync(ApplicationId);
-        extraction = await Api.GetExtractionAsync(ApplicationId);
+        documents = await Api.GetDocumentsAsync(ApplicationId);
 
         if (application != null)
         {

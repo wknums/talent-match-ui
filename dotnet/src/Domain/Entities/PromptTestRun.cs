@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TalentMatch.Domain.Entities;
 
 public class PromptTestRun
@@ -13,6 +15,8 @@ public class PromptTestRun
     public string? ReviewNotes { get; set; }
 
     // Navigation properties
+    [JsonIgnore]
     public Job? Job { get; set; }
+    [JsonIgnore]
     public ScoringPrompt? Prompt { get; set; }
 }

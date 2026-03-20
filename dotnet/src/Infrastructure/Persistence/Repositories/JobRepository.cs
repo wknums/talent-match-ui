@@ -16,6 +16,14 @@ public class JobRepository : IJobRepository
         => await _context.Jobs.Include(j => j.ConfigVersions)
             .Where(j => j.Department == department).AsNoTracking().ToListAsync(ct);
 
+    public async Task<IReadOnlyList<Job>> GetByDepartmentsOrCreatorAsync(IEnumerable<string> departments, string creatorId, CancellationToken ct = default)
+    {
+        var deptList = departments.ToList();
+        return await _context.Jobs.Include(j => j.ConfigVersions)
+            .Where(j => deptList.Contains(j.Department) || j.CreatedBy == creatorId)
+            .AsNoTracking().ToListAsync(ct);
+    }
+
     public async Task<Job?> GetByIdAsync(string id, CancellationToken ct = default)
         => await _context.Jobs.Include(j => j.ConfigVersions).Include(j => j.Applications)
             .FirstOrDefaultAsync(j => j.Id == id, ct);

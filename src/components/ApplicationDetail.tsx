@@ -12,7 +12,8 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { Quotes, File, CheckCircle, XCircle, ShieldCheck, Pencil } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import type { Application, ScoringRun, ExtractionArtifact, AggregatedResult } from '@/types'
+import { DocumentViewer } from '@/components/DocumentViewer'
+import type { Application, ScoringRun, AggregatedResult } from '@/types'
 import { cn } from '@/lib/utils'
 
 interface ApplicationDetailProps {
@@ -25,7 +26,6 @@ interface ApplicationDetailProps {
 export function ApplicationDetail({ applicationId, open, onClose, onStartManualReview }: ApplicationDetailProps) {
   const [application, setApplication] = useState<Application | null>(null)
   const [scoringRuns, setScoringRuns] = useState<ScoringRun[]>([])
-  const [extractionArtifact, setExtractionArtifact] = useState<ExtractionArtifact | null>(null)
   const [aggregatedResult, setAggregatedResult] = useState<AggregatedResult | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -40,15 +40,13 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
 
     setLoading(true)
     try {
-      const [appData, runsData, artifactData, resultData] = await Promise.all([
+      const [appData, runsData, resultData] = await Promise.all([
         api.getApplication(applicationId),
         api.getScoringRuns(applicationId),
-        api.getExtractionArtifact(applicationId),
         api.getAggregatedResult(applicationId),
       ])
       setApplication(appData)
       setScoringRuns(runsData)
-      setExtractionArtifact(artifactData)
       setAggregatedResult(resultData)
     } finally {
       setLoading(false)
@@ -133,11 +131,10 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
 
       <DraggableDialogBody className="px-6">
         <Tabs defaultValue="overview">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="runs">Runs ({scoringRuns.length})</TabsTrigger>
             <TabsTrigger value="documents">Documents</TabsTrigger>
-            <TabsTrigger value="extraction">Extracted</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-4 mt-6">
@@ -272,38 +269,28 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                 <TabsContent value="documents" className="space-y-4 mt-6">
                   {application.documents.map((doc) => (
                     <Card key={doc.documentId}>
-                      <CardContent className="p-4">
+                      <CardHeader>
                         <div className="flex items-center gap-3">
-                          <File size={32} className="text-accent" />
+                          <File size={20} className="text-accent" />
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">{doc.fileName}</p>
+                            <CardTitle className="text-lg truncate">{doc.fileName}</CardTitle>
                             <p className="text-xs text-muted-foreground">
                               {(doc.sizeBytes / 1024).toFixed(1)} KB • {doc.mimeType}
                             </p>
                           </div>
                         </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </TabsContent>
-
-                <TabsContent value="extraction" className="mt-6">
-                  {extractionArtifact && (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-lg">Extracted Content</CardTitle>
-                        <p className="text-xs text-muted-foreground">
-                          Confidence: {(extractionArtifact.extractionMetadata.confidence * 100).toFixed(0)}% • 
-                          Tool: {extractionArtifact.extractionMetadata.toolVersion}
-                        </p>
                       </CardHeader>
                       <CardContent>
-                        <div className="bg-muted p-4 rounded-md font-mono text-sm whitespace-pre-wrap">
-                          {extractionArtifact.markdown}
+                        <div className="border rounded-md overflow-hidden" style={{ height: '400px' }}>
+                          <DocumentViewer
+                            applicationId={application.applicationId}
+                            document={doc}
+                            className="h-full"
+                          />
                         </div>
                       </CardContent>
                     </Card>
-                  )}
+                  ))}
                 </TabsContent>
               </Tabs>
           </DraggableDialogBody>

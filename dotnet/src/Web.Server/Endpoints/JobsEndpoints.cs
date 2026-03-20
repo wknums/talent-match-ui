@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using MediatR;
 using TalentMatch.Application.Jobs.Commands;
 using TalentMatch.Application.Jobs.Queries;

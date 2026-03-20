@@ -186,7 +186,10 @@ public class ApiClient
         => await _http.GetFromJsonAsync<List<ScoringRunDto>>($"/api/applications/{applicationId}/runs") ?? new();
 
     public async Task<AggregatedResultDto?> GetAggregatedResultAsync(string applicationId)
-        => await _http.GetFromJsonAsync<AggregatedResultDto>($"/api/applications/{applicationId}/result");
+    {
+        try { return await _http.GetFromJsonAsync<AggregatedResultDto>($"/api/applications/{applicationId}/result"); }
+        catch { return null; }
+    }
 
     public async Task<ExtractionDto?> GetExtractionAsync(string applicationId)
         => await _http.GetFromJsonAsync<ExtractionDto>($"/api/applications/{applicationId}/extraction");
@@ -282,10 +285,19 @@ public class ApiClient
     public async Task<PromptTestRunDto?> GetTestRunAsync(string jobId, string promptId, string testRunId)
         => await _http.GetFromJsonAsync<PromptTestRunDto>($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}");
 
+    public async Task<PromptTestRunDetailDto?> GetTestRunDetailAsync(string jobId, string promptId, string testRunId)
+        => await _http.GetFromJsonAsync<PromptTestRunDetailDto>($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}");
+
     public async Task<bool> ApproveTestRunAsync(string jobId, string promptId, string testRunId)
     {
-        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/approve", null);
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/approve", new { ReviewNotes = (string?)null });
         return response.IsSuccessStatusCode;
+    }
+
+    public async Task<List<DocumentDto>> GetDocumentsAsync(string applicationId)
+    {
+        try { return await _http.GetFromJsonAsync<List<DocumentDto>>($"/api/applications/{applicationId}/documents") ?? new(); }
+        catch { return new(); }
     }
 }
 
@@ -298,6 +310,7 @@ public record UpdateConfigDto(string? RubricJson, string? MustHaveCriteriaJson, 
 public record ApplicationDto(string Id, string JobId, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt);
 public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);
+public record DocumentDto(string Id, string FileName, string FileType, long FileSize, string? ContentBase64);
 public record ExtractionDto(string Id, string NormalisedText, double ConfidenceScore, string Status);
 public record ManualReviewDto(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson);
 public record SystemStatsDto(int Queued, int Extracting, int Scoring, int Aggregating, int Completed, int NeedsManualReview, int Failed, int TotalJobs, int TotalApplications);
@@ -312,6 +325,8 @@ public record DesiredCriterionItem(string Qualification, string? Description);
 public record RubricCategoryItem(string Name, double Weight, string? Description);
 public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson);
 public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes);
+public record TestRunApplicationDetailDto(ApplicationDto Application, List<ScoringRunDto> ScoringRuns);
+public record PromptTestRunDetailDto(PromptTestRunDto TestRun, List<TestRunApplicationDetailDto> Applications);
 public record CreatePromptRequest(string PromptText, string Source, string? GenerationMetadataJson);
 public record GeneratePromptResult(string PromptText, string? GenerationMetadataJson);
 public record RecruiterAnalyticsDto(string RecruiterId, string RecruiterName, string Department, int ApplicationsInQueue, int ManualReviewsPerformed, int ShortlistRecommendations, double? AverageProcessingTime, int ActiveJobs);
