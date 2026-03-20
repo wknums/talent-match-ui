@@ -16,6 +16,7 @@ import type {
   ApplicationDocument, JobConfigVersion
 } from '../../src/types/index.js'
 
+// FR-065: Prompt generation ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
 
 export function createPromptsRouter(storage: StorageProvider) {

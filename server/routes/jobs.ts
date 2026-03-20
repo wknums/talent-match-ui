@@ -8,6 +8,7 @@ import { createAuditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import type { Job, JobConfigVersion, Application } from '../../src/types/index.js'
 
+// FR-065: Spec extraction and rubric extraction ALWAYS use AWR_SEQ_API_ENDPOINT regardless of scoring mode
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
 
 const EXTRACT_SPEC_SYSTEM_PROMPT = `You are an expert information extraction and evaluation assistant. Read a job specification and produce a single JSON object that captures:

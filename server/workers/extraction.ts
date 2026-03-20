@@ -5,6 +5,7 @@ import { getArray, setArray } from '../storage/kv-helpers.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import type { Application, ApplicationDocument, ExtractionArtifact } from '../../src/types/index.js'
 
+// FR-065: Extraction ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
 
 const EXTRACTION_SYSTEM_PROMPT = `You are a document extraction specialist. Extract the text content from the provided document and return it as clean, well-structured Markdown.
