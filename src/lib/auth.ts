@@ -59,6 +59,10 @@ export async function requestPasswordReset(_userId: string): Promise<void> {
   await realAPI.requestPasswordReset()
 }
 
+export async function requestPasswordResetFromLogin(username: string): Promise<void> {
+  await realAPI.requestPasswordResetFromLogin(username, 'Requested from login screen')
+}
+
 export async function getPasswordResetRequests(): Promise<PasswordResetRequest[]> {
   return realAPI.getPasswordResetRequests()
 }

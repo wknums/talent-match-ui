@@ -13,7 +13,8 @@ Four issues prevent this from working out of the box on Windows:
 1. **`ghcs` is not a built-in command** — In `gh` CLI v2.80+, `gh copilot` is a built-in subcommand, but the `ghcs` shorthand alias does not exist.
 2. **VS Code Insiders PATH conflict** — `gh copilot` searches PATH for a `copilot` binary and finds VS Code's `copilot.bat` at `C:\Users\<user>\AppData\Roaming\Code - Insiders\...\copilotCli\copilot.bat`. The space in `Code - Insiders` causes cmd.exe to break.
 3. **Non-interactive mode** — `gh copilot` requires the `-p` flag for non-interactive (piped) prompts. SpecKit passes the prompt as a positional argument.
-4. **Agent routing** — SpecKit Companion sends `/speckit.<agent> <args>` as prompt text, but `gh copilot` CLI doesn't interpret `/` prefixes as agent routing. It requires the `--agent <agent>` flag and `--allow-all-tools` for non-interactive agent execution.
+4. **Agent routing** — SpecKit Companion sends `/speckit.<agent> <args>` as prompt text, but `gh copilot` CLI doesn't interpret `/` prefixes as agent routing. It requires the `--agent <agent>` flag.
+5. **Write permissions** — Non-interactive agent execution may still fail on file edits unless the CLI is granted path access. `--allow-all-tools` alone is insufficient for reliable writes; use `--allow-all` or at least `--allow-all-tools --allow-all-paths`.
 
 ## Prerequisites
 
@@ -58,7 +59,7 @@ try {
         $agent = $Matches[1]
         $text = $Matches[2]
         if ([string]::IsNullOrWhiteSpace($text)) { $text = '.' }
-        gh copilot -p $text --agent $agent --allow-all-tools
+        gh copilot -p $text --agent $agent --allow-all
     } else {
         gh copilot -p @args
     }
@@ -69,8 +70,35 @@ try {
 This script:
 - Temporarily removes VS Code's `copilotCli` directory from PATH (fixes the spaces-in-path error)
 - Passes `-p` flag for non-interactive prompt mode
-- Detects `/agent.name <text>` prefix and converts to `--agent agent.name --allow-all-tools` flags
+- Detects `/agent.name <text>` prefix and converts to `--agent agent.name --allow-all` flags
 - Restores the original PATH after execution
+
+### Step 1b: Add a `copilot` shim for SpecKit Companion
+
+Some SpecKit Companion configurations invoke `copilot -p ...` directly instead of `ghcs`. In that case, patching `ghcs` alone will not affect the live execution path. Create a higher-precedence shim in `C:\Users\<user>\bin` so `copilot` resolves to the shim before the WinGet-installed executable.
+
+Git Bash shim in `~/bin/copilot`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_COPILOT='/c/Users/<user>/AppData/Local/Microsoft/WinGet/Links/copilot'
+
+if [[ "${1:-}" == "-p" && $# -ge 2 ]]; then
+    prompt="$2"
+    if [[ "$prompt" =~ ^/([^[:space:]]+)[[:space:]]*(.*) ]]; then
+        agent="${BASH_REMATCH[1]}"
+        text="${BASH_REMATCH[2]}"
+        [[ -z "$text" ]] && text='.'
+        exec "$REAL_COPILOT" -p "$text" --agent "$agent" --allow-all "${@:3}"
+    fi
+fi
+
+exec "$REAL_COPILOT" "$@"
+```
+
+If you use PowerShell terminals for SpecKit, add a matching `copilot.ps1` shim in the same directory.
 
 ### Step 2: Add `~\.local\bin` to user PATH (one-time)
 
@@ -97,7 +125,7 @@ function ghcs {
             $agent = $Matches[1]
             $text = $Matches[2]
             if ([string]::IsNullOrWhiteSpace($text)) { $text = '.' }
-            gh copilot -p $text --agent $agent --allow-all-tools
+            gh copilot -p $text --agent $agent --allow-all
         } else {
             gh copilot -p @args
         }
@@ -142,8 +170,10 @@ The prompt file contains text like `/speckit.specify c:\code\project\specs\001-f
 1. Strips `copilotCli` from PATH (avoids VS Code Insiders space-in-path error)
 2. Detects the `/speckit.specify` prefix
 3. Extracts the agent name (`speckit.specify`) and remaining text
-4. Invokes `gh copilot -p "<text>" --agent speckit.specify --allow-all-tools`
+4. Invokes `gh copilot -p "<text>" --agent speckit.specify --allow-all`
 5. The CLI loads the agent definition from `.github/agents/speckit.specify.agent.md`
+
+If SpecKit Companion invokes `copilot -p ...` directly, the shim in `~/bin/copilot` performs the same prefix translation and permission grant before delegating to the real executable.
 
 ## Notes
 
@@ -153,5 +183,7 @@ The prompt file contains text like `/speckit.specify c:\code\project\specs\001-f
 - Key `gh copilot` flags for reference:
   - `--agent <agent>` — invoke a custom agent from `.github/agents/`
   - `-p <text>` — non-interactive prompt mode
-  - `--allow-all-tools` — required for non-interactive agent execution
+    - `--allow-all-tools` — allows tool use, but not broad filesystem access
+    - `--allow-all-paths` — allows broader file write access
+    - `--allow-all` — recommended for SpecKit; bundles the permissions needed for non-interactive agent edits
   - `-s` — silent mode (output only agent response, no stats)

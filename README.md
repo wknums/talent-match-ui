@@ -50,11 +50,10 @@ Data is persisted to `.data/kv-store.json` on disk. No external dependencies req
 ### Azure SQL
 
 ```env
-STORAGE_PROVIDER=azuresql
 AZURE_SQL_CONNECTION_STRING=Server=your-server.database.windows.net;Database=your-db;User Id=your-user;Password=your-password;Encrypt=true
 ```
 
-Requires `mssql` package (included as optional dependency). The server will create a `kv_store` table automatically on first run.
+Requires `mssql` package (included as optional dependency). The server will run `schema.sql` automatically on first connection.
 
 ## LLM Configuration (Optional)
 
@@ -168,6 +167,9 @@ Stack B uses `appsettings.json` for configuration:
 - `DatabaseProvider`: `sqlite` (default) or `sqlserver`
 - `ConnectionStrings:DefaultConnection`: Database connection string
 - `AzureOpenAI:Endpoint`: Azure OpenAI endpoint (for LLM features)
+
+In local development, both stacks now default to the same shared SQLite file at `shared-data/talentmatch.db` under the repo root.
+You can override that location for either stack with `SQLITE_DB_PATH`.
 
 ### API Mode
 

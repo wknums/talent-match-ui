@@ -11,15 +11,16 @@ import {
   DraggableDialogBody,
 } from '@/components/DraggableResizableDialog'
 import { ApplicationsTable } from '@/components/ApplicationsTable'
+import { DeleteJobDialog } from '@/components/DeleteJobDialog'
 import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
 import { UploadRubricDialog } from '@/components/UploadRubricDialog'
 import { PromptManagement } from '@/components/PromptManagement'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText, Lightning, Play, SpinnerGap, ArrowClockwise } from '@phosphor-icons/react'
+import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText, Lightning, Play, SpinnerGap, ArrowClockwise, Trash } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
-import type { Job, Application, ScoringPrompt } from '@/types'
+import type { Job, Application, ScoringPrompt, User } from '@/types'
 
 interface JobDetailViewProps {
   jobId: string
@@ -28,11 +29,12 @@ interface JobDetailViewProps {
   onUploadApplications: () => void
   onEditJob: (job: Job) => void
   onStartManualReview?: (applicationId: string, jobId: string) => void
+  currentUser?: User
 }
 
 type DrilldownType = 'longlist' | 'shortlist' | 'manual-review' | null
 
-export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadApplications, onEditJob, onStartManualReview }: JobDetailViewProps) {
+export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadApplications, onEditJob, onStartManualReview, currentUser }: JobDetailViewProps) {
   const [job, setJob] = useState<Job | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
   const [loading, setLoading] = useState(true)
@@ -47,6 +49,8 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const [retryingFailed, setRetryingFailed] = useState(false)
   const [reaggregating, setReaggregating] = useState(false)
   const [reaggregateMessage, setReaggregateMessage] = useState<string | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [deletingJob, setDeletingJob] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -81,6 +85,12 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   }
 
   const stats = job.stats!
+  const createdByName = job.createdByName || 'Unknown User'
+  const createdDate = new Date(job.createdAt).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
   const completionPercentage = stats.totalApplications > 0
     ? Math.round((stats.completed / stats.totalApplications) * 100)
     : 0
@@ -174,6 +184,9 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
           <p className="text-sm text-muted-foreground mt-1">
             Posted {new Date(job.postingDate).toLocaleDateString()} • {daysOpen} days open
           </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            Created {createdDate} by {createdByName}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <Button variant="outline" onClick={() => onEditJob(job)}>
@@ -200,6 +213,16 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
             <Lightning size={20} />
             Prompt Management
           </Button>
+          {currentUser?.role === 'admin' && (
+            <Button
+              variant="destructive"
+              onClick={() => setDeleteDialogOpen(true)}
+              disabled={deletingJob}
+            >
+              <Trash size={20} />
+              Delete Job
+            </Button>
+          )}
           {productionApprovedPrompt ? (
             <>
               <Button onClick={onUploadApplications}>
@@ -480,6 +503,26 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
           />
         </DraggableDialogBody>
       </DraggableResizableDialog>
+
+      <DeleteJobDialog
+        open={deleteDialogOpen}
+        jobTitle={job.title}
+        applicationCount={stats.totalApplications}
+        isDeleting={deletingJob}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={async () => {
+          setDeletingJob(true)
+          try {
+            await api.deleteJob(jobId)
+            toast.success(`Deleted ${job.title}`)
+            onBack()
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Failed to delete job')
+          } finally {
+            setDeletingJob(false)
+          }
+        }}
+      />
     </div>
   )
 }

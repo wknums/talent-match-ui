@@ -95,6 +95,7 @@ const getDefaultJobs = (): Job[] => {
       organization: 'TechCorp Solutions',
       postingDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       createdBy: 'recruiter@company.com',
+      createdByName: 'Sarah Johnson',
       createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
       status: 'Processing',
       currentVersion: {
@@ -131,6 +132,7 @@ const getDefaultJobs = (): Job[] => {
       organization: 'TechCorp Solutions',
       postingDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       createdBy: 'hiring.manager@company.com',
+      createdByName: 'Michael Chen',
       createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
       status: 'Active',
       currentVersion: {
@@ -166,6 +168,7 @@ const getDefaultJobs = (): Job[] => {
       organization: 'DesignHub Inc',
       postingDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
       createdBy: 'design.lead@company.com',
+      createdByName: 'Emily Rodriguez',
       createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
       status: 'Active',
       currentVersion: {
@@ -383,6 +386,18 @@ const mockAPI = {
     return jobs.find((j) => j.jobId === jobId) || null
   },
 
+  async deleteJob(jobId: string): Promise<void> {
+    await delay(300)
+    const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
+    const nextJobs = jobs.filter((job) => job.jobId !== jobId)
+
+    if (nextJobs.length === jobs.length) {
+      throw new Error('Job not found')
+    }
+
+    await kv.set('jobs', nextJobs)
+  },
+
   async createJob(data: {
     title: string
     department: string
@@ -414,6 +429,7 @@ const mockAPI = {
       organization: data.organization,
       postingDate: data.postingDate,
       createdBy: 'current.user@company.com',
+      createdByName: 'Current User',
       createdAt: new Date().toISOString(),
       status: 'Active',
       specDocumentId: data.specDocumentId,

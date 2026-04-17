@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { StatusBadge } from '@/components/StatusBadge'
-import { Briefcase, ArrowRight, UploadSimple } from '@phosphor-icons/react'
+import { Briefcase, ArrowRight, UploadSimple, Trash } from '@phosphor-icons/react'
 import type { Job } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -10,11 +10,19 @@ interface JobCardProps {
   job: Job
   onClick?: () => void
   onUpload?: () => void
+  onDelete?: () => void
+  canDelete?: boolean
   className?: string
 }
 
-export function JobCard({ job, onClick, onUpload, className }: JobCardProps) {
+export function JobCard({ job, onClick, onUpload, onDelete, canDelete = false, className }: JobCardProps) {
   const stats = job.stats
+  const createdByName = job.createdByName || 'Unknown User'
+  const createdDate = new Date(job.createdAt).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
 
   const completionPercentage = stats
     ? Math.round((stats.completed / stats.totalApplications) * 100) || 0
@@ -50,9 +58,27 @@ export function JobCard({ job, onClick, onUpload, className }: JobCardProps) {
               <p className="text-xs font-mono text-accent font-semibold mb-1">{job.jobCode}</p>
               <p className="text-sm text-muted-foreground">{job.department} • {job.organization}</p>
               <p className="text-xs text-muted-foreground mt-1">{daysOpen} days open</p>
+              <p className="text-xs text-muted-foreground mt-1">Created {createdDate} by {createdByName}</p>
             </div>
           </div>
-          <StatusBadge status={job.status} />
+          <div className="flex items-start gap-2">
+            <StatusBadge status={job.status} />
+            {canDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-destructive hover:text-destructive"
+                aria-label={`Delete ${job.title}`}
+                title="Delete job"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDelete?.()
+                }}
+              >
+                <Trash size={16} />
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
@@ -65,6 +91,10 @@ export function JobCard({ job, onClick, onUpload, className }: JobCardProps) {
               </div>
               <Progress value={completionPercentage} className="h-2" />
             </div>
+
+            <p className="mb-4 text-sm text-muted-foreground">
+              {stats.completed} / {stats.totalApplications} completed
+            </p>
 
             <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="flex flex-col gap-1">
@@ -89,7 +119,7 @@ export function JobCard({ job, onClick, onUpload, className }: JobCardProps) {
 
         {(!stats || stats.totalApplications === 0) && (
           <div className="py-4 text-center text-sm text-muted-foreground">
-            No applications uploaded yet
+            0 applications
           </div>
         )}
 

@@ -66,8 +66,6 @@ Add required reviewers to `production`.
 
 ### 5. Create Deployment Profiles
 
-Start from the tracked examples:
-
 ```bash
 cp .env_local.example .env_local
 cp .env_qa.example .env_qa
@@ -102,18 +100,40 @@ Set the reuse flags and existing resource coordinates needed for each environmen
 ./infra/scripts/deploy.sh .env_prod prod plan shared-only
 ```
 
+### Deploy Command Reference
+
+```bash
+./infra/scripts/deploy.sh <env-file> <tf-environment> <action> <target>
+```
+
+| Argument | Options |
+|----------|---------|
+| `env-file` | `.env_local`, `.env_qa`, `.env_prod` |
+| `tf-environment` | `dev`, `test`, `prod` |
+| `action` | `plan`, `apply` |
+| `target` | `shared-only`, `stack-a`, `stack-b`, `both` |
+
 ## Manual Deployment via GitHub Actions
 
 1. Open the `selective-azure-deploy` workflow.
-2. Choose the target environment.
+2. Choose the target environment (`development`, `staging`, `production`).
 3. Choose one target: `shared-only`, `stack-a`, `stack-b`, or `both`.
-4. Run the workflow.
+4. Choose the action: `plan` or `apply`.
+5. Run the workflow.
 
 Manual target selection overrides changed-path detection.
 
 ## Automatic Deployment
 
 Pushes to `develop` default to `staging` and pushes to `main` default to `production`. The workflow resolves which scopes changed, then applies shared infrastructure first when required and deploys only the selected or affected stack artifacts.
+
+### Changed-Path Detection
+
+| Scope | Paths |
+|-------|-------|
+| Shared | `infra/**`, `.github/workflows/**`, `.env_*.example` |
+| Stack A | `src/**`, `server/**`, `package.json`, `vite.config.ts`, `tsconfig*.json`, `tailwind.config.js` |
+| Stack B | `dotnet/**` |
 
 ## Verify Deployment
 
@@ -130,6 +150,7 @@ terraform -chdir=infra/terraform/live/stack-b output
 
 ```bash
 KV_NAME="kv-talentmatch-dev"
+az keyvault secret set --vault-name "$KV_NAME" --name sql-connection-string --value "<connection-string>"
 az keyvault secret set --vault-name "$KV_NAME" --name openai-api-key --value "<your-key>"
 az keyvault secret set --vault-name "$KV_NAME" --name awr-api-key --value "<your-key>"
 ```
@@ -148,10 +169,30 @@ az keyvault secret set --vault-name "$KV_NAME" --name awr-api-key --value "<your
 ./infra/scripts/deprovision.sh .env_qa test stack-b
 ```
 
+### Remove Both Stacks
+
+```bash
+./infra/scripts/deprovision.sh .env_local dev both
+```
+
 ### Remove Shared Infrastructure
 
 ```bash
 ./infra/scripts/deprovision.sh .env_prod prod shared
 ```
 
-The deprovision wrapper is required so reuse-flagged resources remain protected.
+The deprovision wrapper is required so reuse-flagged resources remain protected. Resources with `*_REUSE=TRUE` are marked `[PROTECTED]` and will never be destroyed.
+
+### Deprovision Command Reference
+
+```bash
+./infra/scripts/deprovision.sh <env-file> <tf-environment> <target> [--dry-run] [--force]
+```
+
+| Argument | Options |
+|----------|---------|
+| `env-file` | `.env_local`, `.env_qa`, `.env_prod` |
+| `tf-environment` | `dev`, `test`, `prod` |
+| `target` | `shared`, `stack-a`, `stack-b`, `both` |
+| `--dry-run` | Preview without destroying |
+| `--force` | Skip confirmation (CI only) |

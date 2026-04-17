@@ -111,6 +111,12 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task RequestPasswordResetFromLoginAsync(string username, string? reason = null)
+    {
+        var response = await _http.PostAsJsonAsync("/api/auth/request-password-reset", new { Username = username, Reason = reason });
+        await EnsureSuccessOrThrowAsync(response, "Failed to submit password reset request.");
+    }
+
     // Users
     public async Task<List<UserInfo>> GetUsersAsync()
         => await _http.GetFromJsonAsync<List<UserInfo>>("/api/users") ?? new();

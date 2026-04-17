@@ -289,5 +289,3 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProcessingEvents_Times
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProcessingEvents_EntityType_Action')
     CREATE INDEX IX_ProcessingEvents_EntityType_Action ON ProcessingEvents (EntityType, Action);
 
--- Drop the old kv_store table if it exists (migrate data first!)
--- IF EXISTS (SELECT * FROM sys.tables WHERE name = 'kv_store') DROP TABLE kv_store;

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { StatCard } from '@/components/StatCard'
 import { JobCard } from '@/components/JobCard'
+import { DeleteJobDialog } from '@/components/DeleteJobDialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -8,6 +9,7 @@ import { Plus, ChartBar, Briefcase, Queue, Gear, Funnel, X, ArrowUp, ArrowDown }
 import { api } from '@/lib/api'
 import { FailureQueueView } from '@/components/FailureQueueView'
 import type { Job, SystemStats, User } from '@/types'
+import { toast } from 'sonner'
 
 interface DashboardViewProps {
   onJobClick: (jobId: string) => void
@@ -29,6 +31,8 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, c
   
   const [sortBy, setSortBy] = useState<'title' | 'department' | 'organization' | 'postingDate' | 'applications'>('postingDate')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [jobToDelete, setJobToDelete] = useState<Job | null>(null)
+  const [deletingJob, setDeletingJob] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -111,6 +115,40 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, c
     setFilterDepartment('all')
     setFilterOrganization('all')
     setFilterTitle('')
+  }
+
+  const handleDeleteRequest = (job: Job) => {
+    setJobToDelete(job)
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!jobToDelete) {
+      return
+    }
+
+    const deletedJob = jobToDelete
+    setDeletingJob(true)
+    setJobToDelete(null)
+    setJobs((currentJobs) => currentJobs.filter((job) => job.jobId !== deletedJob.jobId))
+
+    try {
+      await api.deleteJob(deletedJob.jobId)
+      toast.success(`Deleted ${deletedJob.title}`)
+      await LoadStats()
+    } catch (error) {
+      setJobs((currentJobs) => {
+        if (currentJobs.some((job) => job.jobId === deletedJob.jobId)) {
+          return currentJobs
+        }
+
+        return [...currentJobs, deletedJob].sort(
+          (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+        )
+      })
+      toast.error(error instanceof Error ? error.message : 'Failed to delete job')
+    } finally {
+      setDeletingJob(false)
+    }
   }
   
   const hasActiveFilters = filterDepartment !== 'all' || filterOrganization !== 'all' || filterTitle !== ''
@@ -266,6 +304,8 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, c
               job={job}
               onClick={() => onJobClick(job.jobId)}
               onUpload={() => onUploadApplications(job.jobId)}
+              onDelete={() => handleDeleteRequest(job)}
+              canDelete={currentUser?.role === 'admin'}
             />
           ))}
           {filteredJobs.length === 0 && (
@@ -278,6 +318,19 @@ export function DashboardView({ onJobClick, onCreateJob, onUploadApplications, c
 
       {/* Failure Queue */}
       <FailureQueueView className="mt-6" />
+
+      <DeleteJobDialog
+        open={jobToDelete !== null}
+        jobTitle={jobToDelete?.title ?? ''}
+        applicationCount={jobToDelete?.stats?.totalApplications ?? 0}
+        isDeleting={deletingJob}
+        onOpenChange={(open) => {
+          if (!open) {
+            setJobToDelete(null)
+          }
+        }}
+        onConfirm={handleDeleteConfirm}
+      />
 
       {/* Last updated timestamp */}
       {systemStats && (

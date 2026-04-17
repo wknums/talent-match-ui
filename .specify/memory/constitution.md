@@ -48,7 +48,7 @@ may import a concrete storage implementation directly.
 - in the event of BLobs Storagebeing used , SAS tokens are forbidden by security policy - always use RBAC instead
 
 ### V. LLM Integration Discipline
-All LLM calls MUST go through server-side proxy - in Stack A: `server/routes/llm.ts` equivalent for Sack B. The frontend calls
+All LLM calls MUST go through server-side proxy - in Stack A: `server/routes/llm.ts` equivalent for Stack B. The frontend calls
 `/api/llm` (in stack A, and equivalent code path in stack B) only — never an LLM provider directly. Prompts MUST be constructed server-side to
 prevent prompt injection from untrusted client input. JSON-mode must be used when structured output
 is required.
@@ -136,6 +136,8 @@ sequenceDiagram
 
 This codebase supports two stacks. Stack A is the current prototype; Stack B is an additional target for
  for a specific customer. New features SHOULD be planned for both Stack A and Stack B.
+both technology stack use shared database and shared datamodel 
+Deployment code and Infrastructure as code use terraform and bash.
 
 ### Stack A — React / TypeScript (prototype)
 
@@ -149,7 +151,7 @@ This codebase supports two stacks. Stack A is the current prototype; Stack B is 
 | Forms | React Hook Form + Zod |
 | Charts | Recharts |
 | Backend | Express 4, TypeScript, tsx (dev), Node 20+ |
-| Storage (local) | JSON file KV store (`.data/kv-store.json`) |
+| Storage (local) | shared sqllite (`shared-data/talentmatch.db`) |
 | Storage (cloud) | Azure SQL via `mssql` (optional dependency) |
 | LLM | OpenAI API or Azure OpenAI (server-side proxy) |
 | Fonts | Space Grotesk (UI), JetBrains Mono (data/metrics) |
@@ -164,7 +166,7 @@ This codebase supports two stacks. Stack A is the current prototype; Stack B is 
 | API | ASP.NET Core Web API (minimal APIs preferred) |
 | Application | MediatR (CQRS), FluentValidation |
 | ORM / Migrations | Entity Framework Core (code-first migrations) |
-| Storage | Azure SQL |
+| Storage | local: shared sqllite in shared-data/talentmatch.db cloud: Azure SQL |
 | Architecture | Clean Architecture (see Principle IX) |
 | Auth | Microsoft Identity / Entra ID |
 | LLM | Azure OpenAI via APIM (server-side only) |
@@ -186,9 +188,11 @@ This constitution supersedes all other practices; amendments require updating th
 the reason and date. All implementation tasks must be checked against these principles before
 execution. Complexity that violates YAGNI (YAGNI stands for “You Aren’t Gonna Need It.”) must be explicitly justified in the relevant `plan.md`.
 
-**Version**: 1.1.0 | **Ratified**: 2026-03-03 | **Last Amended**: 2026-03-04
+**Version**: 1.1.1 | **Ratified**: 2026-03-03 | **Last Amended**: 2026-04-16
 
 ### Amendment Log
 | Version | Date | Change |
 |---|---|---|
 | 1.1.0 | 2026-03-04 | Added Stack B (.NET Blazor WASM, Clean Architecture, EF Core); added Principle IX |
+| 1.1.1 | 2026-04-16 | Added Technology for Deployment and Infrastructure as Code (Bash and Terraform)|
+

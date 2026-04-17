@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import { jobRepo, applicationRepo, dlqRepo } from '../storage/repos/index.js'
+import { jobRepo, applicationRepo, userRepo } from '../storage/repos/index.js'
+import { requireRole } from '../middleware/rbac.js'
 import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import type { AggregatedResult, Job, JobConfigVersion } from '../../src/types/index.js'
@@ -146,6 +147,19 @@ Output only valid JSON with no additional text:
   ]
 }`
 
+async function buildCreatedByNameLookup() {
+  const users = await userRepo.getAll()
+  return new Map(
+    users.flatMap((user) => {
+      const displayName = user.fullName || user.username
+      return [
+        [user.userId, displayName],
+        [user.username, displayName],
+      ]
+    })
+  )
+}
+
 export function createJobsRouter() {
   const router = Router()
   const audit = auditService
@@ -160,11 +174,17 @@ export function createJobsRouter() {
         jobs = await jobRepo.getAll()
       }
 
+      const createdByNameLookup = await buildCreatedByNameLookup()
+
       // Compute stats for each job (exclude test scoring applications)
       const jobsWithStats = await Promise.all(
         jobs.map(async (job) => {
           const stats = await jobRepo.getJobStats(job.jobId, job.currentVersion)
-          return { ...job, stats }
+          return {
+            ...job,
+            createdByName: createdByNameLookup.get(job.createdBy) || 'Unknown User',
+            stats,
+          }
         })
       )
 
@@ -390,8 +410,39 @@ export function createJobsRouter() {
       }
 
       const stats = await jobRepo.getJobStats(jobId, job.currentVersion)
+      const createdByNameLookup = await buildCreatedByNameLookup()
 
-      res.json({ ...job, stats })
+      res.json({
+        ...job,
+        createdByName: createdByNameLookup.get(job.createdBy) || 'Unknown User',
+        stats,
+      })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // DELETE /api/jobs/:jobId - delete job and cascade related data
+  router.delete('/:jobId', requireRole('admin'), async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId } = req.params
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+
+      const stats = await jobRepo.getJobStats(jobId, job.currentVersion)
+      const deleted = await jobRepo.delete(jobId)
+      if (!deleted) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+
+      await audit.appendEvent(req.user?.username || 'unknown', 'job.deleted', 'Job', jobId, {
+        title: job.title,
+        totalApplications: stats.totalApplications,
+      })
+
+      res.status(204).send()
     } catch (err) {
       next(err)
     }

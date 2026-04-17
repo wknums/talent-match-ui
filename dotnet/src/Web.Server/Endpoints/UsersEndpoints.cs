@@ -2,6 +2,7 @@ using FluentValidation;
 using MediatR;
 using TalentMatch.Application.Users.Commands;
 using TalentMatch.Application.Users.Queries;
+using TalentMatch.Domain.Entities;
 
 namespace TalentMatch.Web.Server.Endpoints;
 
@@ -85,8 +86,8 @@ public static class UsersEndpoints
 
         resetGroup.MapGet("/", async (ISender mediator) =>
         {
-            // This needs a query - for now return from user repo
-            return Results.Ok(new List<object>());
+            var requests = await mediator.Send(new GetResetRequestsQuery());
+            return Results.Ok(requests.Select(r => new { r.Id, r.UserId, r.Username, r.Reason, r.Status, r.CreatedAt }));
         }).RequireAuthorization("AdminOnly");
 
         resetGroup.MapPost("/", async (RequestResetRequest request, ISender mediator) =>

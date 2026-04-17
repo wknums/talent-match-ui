@@ -12,6 +12,13 @@
         <div style="color: red; margin-bottom: 1rem;">@errorMessage</div>
     }
 
+    @if (!string.IsNullOrEmpty(resetSuccessMessage))
+    {
+        <div style="color: #166534; margin-bottom: 1rem; background: #dcfce7; border: 1px solid #86efac; padding: 0.5rem; border-radius: 4px;">
+            @resetSuccessMessage
+        </div>
+    }
+
     <div style="margin-bottom: 1rem;">
         <label>Username</label>
         <input type="text" @bind="username" style="width: 100%; padding: 0.5rem;" />
@@ -23,13 +30,45 @@
     <button @onclick="HandleLogin" disabled="@isLoading" style="width: 100%; padding: 0.5rem;">
         @(isLoading ? "Signing in..." : "Sign In")
     </button>
+
+    <button @onclick="OpenResetConfirmation" disabled="@isLoading" style="width: 100%; padding: 0.5rem; margin-top: 0.75rem; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 4px;">
+        forgot password - request password reset
+    </button>
 </div>
+
+@if (showResetConfirmation)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="CloseResetConfirmation">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; width: 100%; max-width: 420px;" @onclick:stopPropagation>
+            <h4 style="margin-top: 0;">Confirm Password Reset Request</h4>
+            <p style="margin: 0.5rem 0 1rem 0; color: #334155;">
+                Submit a password reset request for username <strong>@username</strong>? An admin will need to approve this request.
+            </p>
+
+            @if (!string.IsNullOrEmpty(resetErrorMessage))
+            {
+                <div style="color: #b91c1c; margin-bottom: 0.75rem;">@resetErrorMessage</div>
+            }
+
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button @onclick="CloseResetConfirmation" disabled="@isSubmittingReset" style="padding: 0.5rem 0.75rem; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 4px;">Cancel</button>
+                <button @onclick="ConfirmResetRequest" disabled="@isSubmittingReset" style="padding: 0.5rem 0.75rem; background: #1d4ed8; color: white; border: none; border-radius: 4px;">
+                    @(isSubmittingReset ? "Submitting..." : "Confirm")
+                </button>
+            </div>
+        </div>
+    </div>
+}
 
 @code {
     private string username = "";
     private string password = "";
     private string? errorMessage;
     private bool isLoading;
+    private bool showResetConfirmation;
+    private bool isSubmittingReset;
+    private string? resetErrorMessage;
+    private string? resetSuccessMessage;
 
     private async Task HandleLogin()
     {
@@ -41,5 +80,52 @@
         else
             errorMessage = "Invalid username or password.";
         isLoading = false;
+    }
+
+    private void OpenResetConfirmation()
+    {
+        resetErrorMessage = null;
+        resetSuccessMessage = null;
+
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            resetErrorMessage = "Enter your username before requesting a password reset.";
+            return;
+        }
+
+        showResetConfirmation = true;
+    }
+
+    private void CloseResetConfirmation()
+    {
+        showResetConfirmation = false;
+        resetErrorMessage = null;
+    }
+
+    private async Task ConfirmResetRequest()
+    {
+        if (string.IsNullOrWhiteSpace(username))
+        {
+            resetErrorMessage = "Enter your username before requesting a password reset.";
+            return;
+        }
+
+        isSubmittingReset = true;
+        resetErrorMessage = null;
+
+        try
+        {
+            await Api.RequestPasswordResetFromLoginAsync(username.Trim(), "Requested from login dialog");
+            resetSuccessMessage = "If the account exists, your password reset request was submitted for admin review.";
+            showResetConfirmation = false;
+        }
+        catch (Exception ex)
+        {
+            resetErrorMessage = ex.Message;
+        }
+        finally
+        {
+            isSubmittingReset = false;
+        }
     }
 }

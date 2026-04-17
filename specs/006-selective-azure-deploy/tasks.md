@@ -17,10 +17,10 @@
 
 **Purpose**: Establish the repo-level deployment scaffolding and environment profile placeholders required by all later Terraform and Bash work.
 
-- [ ] T001 Update `.gitignore` to ignore `.env_local`, `.env_qa`, `.env_prod`, `.terraform/`, and `*.tfstate*` for the new Terraform/Bash deployment assets
-- [ ] T002 Create the development deployment profile template in `.env_local.example` with placeholder Azure subscription, naming, stack-target, and reuse settings for `dev`
-- [ ] T003 [P] Create the staging deployment profile template in `.env_qa.example` with placeholder Azure subscription, naming, stack-target, and reuse settings for `test`
-- [ ] T004 [P] Create the production deployment profile template in `.env_prod.example` with placeholder Azure subscription, naming, stack-target, and reuse settings for `prod`
+- [x] T001 Update `.gitignore` to ignore `.env_local`, `.env_qa`, `.env_prod`, `.terraform/`, and `*.tfstate*` for the new Terraform/Bash deployment assets
+- [x] T002 Create the development deployment profile template in `.env_local.example` with placeholder Azure subscription, naming, stack-target, and reuse settings for `dev`
+- [x] T003 [P] Create the staging deployment profile template in `.env_qa.example` with placeholder Azure subscription, naming, stack-target, and reuse settings for `test`
+- [x] T004 [P] Create the production deployment profile template in `.env_prod.example` with placeholder Azure subscription, naming, stack-target, and reuse settings for `prod`
 
 ---
 
@@ -30,16 +30,16 @@
 
 **⚠️ CRITICAL**: No user story work should begin until this phase is complete.
 
-- [ ] T005 Create shared Bash helpers in `infra/scripts/lib/common.sh` for loading `.env_*` files, validating required inputs, exporting `TF_VAR_*` values, and handling Git Bash Azure CLI path-conversion safeguards
-- [ ] T006 [P] Create the reuse-aware App Service plan module in `infra/terraform/modules/foundation/app-service-plan/main.tf`, `infra/terraform/modules/foundation/app-service-plan/variables.tf`, and `infra/terraform/modules/foundation/app-service-plan/outputs.tf`
-- [ ] T007 [P] Create the reuse-aware SQL module in `infra/terraform/modules/foundation/sql/main.tf`, `infra/terraform/modules/foundation/sql/variables.tf`, and `infra/terraform/modules/foundation/sql/outputs.tf`
-- [ ] T008 [P] Create the reuse-aware Key Vault module in `infra/terraform/modules/foundation/key-vault/main.tf`, `infra/terraform/modules/foundation/key-vault/variables.tf`, and `infra/terraform/modules/foundation/key-vault/outputs.tf`
-- [ ] T009 [P] Create the reuse-aware API Management module in `infra/terraform/modules/foundation/apim/main.tf`, `infra/terraform/modules/foundation/apim/variables.tf`, and `infra/terraform/modules/foundation/apim/outputs.tf`
-- [ ] T010 [P] Create the reuse-aware managed identities module in `infra/terraform/modules/foundation/identities/main.tf`, `infra/terraform/modules/foundation/identities/variables.tf`, and `infra/terraform/modules/foundation/identities/outputs.tf`
-- [ ] T011 [P] Create the shared App Service host building block in `infra/terraform/modules/foundation/app-service/main.tf`, `infra/terraform/modules/foundation/app-service/variables.tf`, and `infra/terraform/modules/foundation/app-service/outputs.tf`
-- [ ] T012 Create the shared root Terraform shell in `infra/terraform/live/shared/versions.tf`, `infra/terraform/live/shared/providers.tf`, and `infra/terraform/live/shared/variables.tf`
-- [ ] T013 [P] Create the Stack A root Terraform shell in `infra/terraform/live/stack-a/versions.tf`, `infra/terraform/live/stack-a/providers.tf`, and `infra/terraform/live/stack-a/variables.tf`
-- [ ] T014 [P] Create the Stack B root Terraform shell in `infra/terraform/live/stack-b/versions.tf`, `infra/terraform/live/stack-b/providers.tf`, and `infra/terraform/live/stack-b/variables.tf`
+- [x] T005 Create shared Bash helpers in `infra/scripts/lib/common.sh` for loading `.env_*` files, validating required inputs, exporting `TF_VAR_*` values, and handling Git Bash Azure CLI path-conversion safeguards
+- [x] T006 [P] Create the reuse-aware App Service plan module in `infra/terraform/modules/foundation/app-service-plan/main.tf`, `infra/terraform/modules/foundation/app-service-plan/variables.tf`, and `infra/terraform/modules/foundation/app-service-plan/outputs.tf`
+- [x] T007 [P] Create the reuse-aware SQL module in `infra/terraform/modules/foundation/sql/main.tf`, `infra/terraform/modules/foundation/sql/variables.tf`, and `infra/terraform/modules/foundation/sql/outputs.tf`
+- [x] T008 [P] Create the reuse-aware Key Vault module in `infra/terraform/modules/foundation/key-vault/main.tf`, `infra/terraform/modules/foundation/key-vault/variables.tf`, and `infra/terraform/modules/foundation/key-vault/outputs.tf`
+- [x] T009 [P] Create the reuse-aware API Management module in `infra/terraform/modules/foundation/apim/main.tf`, `infra/terraform/modules/foundation/apim/variables.tf`, and `infra/terraform/modules/foundation/apim/outputs.tf`
+- [x] T010 [P] Create the reuse-aware managed identities module in `infra/terraform/modules/foundation/identities/main.tf`, `infra/terraform/modules/foundation/identities/variables.tf`, and `infra/terraform/modules/foundation/identities/outputs.tf`
+- [x] T011 [P] Create the shared App Service host building block in `infra/terraform/modules/foundation/app-service/main.tf`, `infra/terraform/modules/foundation/app-service/variables.tf`, and `infra/terraform/modules/foundation/app-service/outputs.tf`
+- [x] T012 Create the shared root Terraform shell in `infra/terraform/live/shared/versions.tf`, `infra/terraform/live/shared/providers.tf`, and `infra/terraform/live/shared/variables.tf`
+- [x] T013 [P] Create the Stack A root Terraform shell in `infra/terraform/live/stack-a/versions.tf`, `infra/terraform/live/stack-a/providers.tf`, and `infra/terraform/live/stack-a/variables.tf`
+- [x] T014 [P] Create the Stack B root Terraform shell in `infra/terraform/live/stack-b/versions.tf`, `infra/terraform/live/stack-b/providers.tf`, and `infra/terraform/live/stack-b/variables.tf`
 
 **Checkpoint**: The repository now has the shared Terraform/Bash foundation required for selective deployment work.
 
@@ -53,14 +53,14 @@
 
 ### Implementation for User Story 1
 
-- [ ] T015 [P] [US1] Implement the Stack A composition module in `infra/terraform/modules/stack-a/main.tf`, `infra/terraform/modules/stack-a/variables.tf`, and `infra/terraform/modules/stack-a/outputs.tf` using the shared App Service building block and stable shared-root inputs
-- [ ] T016 [P] [US1] Implement the Stack B composition module in `infra/terraform/modules/stack-b/main.tf`, `infra/terraform/modules/stack-b/variables.tf`, and `infra/terraform/modules/stack-b/outputs.tf` using the shared App Service building block and stable shared-root inputs
-- [ ] T017 [US1] Implement the shared live root in `infra/terraform/live/shared/main.tf` and `infra/terraform/live/shared/outputs.tf` to create or reuse shared infrastructure and emit stable outputs for created or reused resources
-- [ ] T018 [US1] Implement the Stack A live root in `infra/terraform/live/stack-a/main.tf` and `infra/terraform/live/stack-a/outputs.tf` so Stack A consumes shared outputs without managing Stack B resources
-- [ ] T019 [US1] Implement the Stack B live root in `infra/terraform/live/stack-b/main.tf` and `infra/terraform/live/stack-b/outputs.tf` so Stack B consumes shared outputs without managing Stack A resources
-- [ ] T020 [P] [US1] Create the Stack A packaging script in `infra/scripts/package-stack-a.sh` to run the existing Node build steps and assemble an App Service deployment artifact for Stack A
-- [ ] T021 [P] [US1] Create the Stack B packaging script in `infra/scripts/package-stack-b.sh` to run `dotnet publish` for `dotnet/src/Web.Server/TalentMatch.Web.Server.csproj` and assemble an App Service deployment artifact for Stack B
-- [ ] T022 [US1] Implement the deployment wrapper in `infra/scripts/deploy.sh` to load `.env_*`, sequence `shared`, `stack-a`, and `stack-b` roots correctly for `shared-only`, `stack-a`, `stack-b`, and `both`, and print stable deployment outputs at the end of each run
+- [x] T015 [P] [US1] Implement the Stack A composition module in `infra/terraform/modules/stack-a/main.tf`, `infra/terraform/modules/stack-a/variables.tf`, and `infra/terraform/modules/stack-a/outputs.tf` using the shared App Service building block and stable shared-root inputs
+- [x] T016 [P] [US1] Implement the Stack B composition module in `infra/terraform/modules/stack-b/main.tf`, `infra/terraform/modules/stack-b/variables.tf`, and `infra/terraform/modules/stack-b/outputs.tf` using the shared App Service building block and stable shared-root inputs
+- [x] T017 [US1] Implement the shared live root in `infra/terraform/live/shared/main.tf` and `infra/terraform/live/shared/outputs.tf` to create or reuse shared infrastructure and emit stable outputs for created or reused resources
+- [x] T018 [US1] Implement the Stack A live root in `infra/terraform/live/stack-a/main.tf` and `infra/terraform/live/stack-a/outputs.tf` so Stack A consumes shared outputs without managing Stack B resources
+- [x] T019 [US1] Implement the Stack B live root in `infra/terraform/live/stack-b/main.tf` and `infra/terraform/live/stack-b/outputs.tf` so Stack B consumes shared outputs without managing Stack A resources
+- [x] T020 [P] [US1] Create the Stack A packaging script in `infra/scripts/package-stack-a.sh` to run the existing Node build steps and assemble an App Service deployment artifact for Stack A
+- [x] T021 [P] [US1] Create the Stack B packaging script in `infra/scripts/package-stack-b.sh` to run `dotnet publish` for `dotnet/src/Web.Server/TalentMatch.Web.Server.csproj` and assemble an App Service deployment artifact for Stack B
+- [x] T022 [US1] Implement the deployment wrapper in `infra/scripts/deploy.sh` to load `.env_*`, sequence `shared`, `stack-a`, and `stack-b` roots correctly for `shared-only`, `stack-a`, `stack-b`, and `both`, and print stable deployment outputs at the end of each run
 
 **Checkpoint**: A single stack can be deployed to Azure through the Terraform/Bash operator flow without touching the other stack.
 
@@ -74,9 +74,9 @@
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Implement `infra/scripts/resolve-targets.sh` to merge `workflow_dispatch` target overrides with changed-path detection, map GitHub environments to `.env_*` and `dev|test|prod`, and emit `deploy_shared`, `deploy_stack_a`, `deploy_stack_b`, `package_stack_a`, and `package_stack_b`
-- [ ] T024 [US2] Create the single workflow in `.github/workflows/selective-azure-deploy.yml` with `push` and `workflow_dispatch` triggers, changed-path filters for `shared`, `stack_a`, and `stack_b`, and the `resolve-targets` job contract defined in `specs/006-selective-azure-deploy/contracts/workflow-dispatch.md`
-- [ ] T025 [US2] Extend `.github/workflows/selective-azure-deploy.yml` with the shared apply job, Stack A and Stack B package jobs, and Stack A and Stack B deploy jobs so the workflow preserves the shared-first dependency graph while still allowing stack package and deploy work to run in parallel when possible
+- [x] T023 [US2] Implement `infra/scripts/resolve-targets.sh` to merge `workflow_dispatch` target overrides with changed-path detection, map GitHub environments to `.env_*` and `dev|test|prod`, and emit `deploy_shared`, `deploy_stack_a`, `deploy_stack_b`, `package_stack_a`, and `package_stack_b`
+- [x] T024 [US2] Create the single workflow in `.github/workflows/selective-azure-deploy.yml` with `push` and `workflow_dispatch` triggers, changed-path filters for `shared`, `stack_a`, and `stack_b`, and the `resolve-targets` job contract defined in `specs/006-selective-azure-deploy/contracts/workflow-dispatch.md`
+- [x] T025 [US2] Extend `.github/workflows/selective-azure-deploy.yml` with the shared apply job, Stack A and Stack B package jobs, and Stack A and Stack B deploy jobs so the workflow preserves the shared-first dependency graph while still allowing stack package and deploy work to run in parallel when possible
 
 **Checkpoint**: One workflow now supports both automatic selective deployment and manual stack selection.
 
@@ -90,14 +90,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T026 [US3] Expand the development profile in `.env_local.example` with the full environment contract for location, stack target, reuse booleans, existing resource coordinates, and non-secret runtime settings required by `infra/scripts/deploy.sh`
-- [ ] T027 [P] [US3] Expand the staging profile in `.env_qa.example` with the full environment contract for location, stack target, reuse booleans, existing resource coordinates, and non-secret runtime settings required by `infra/scripts/deploy.sh`
-- [ ] T028 [P] [US3] Expand the production profile in `.env_prod.example` with the full environment contract for location, stack target, reuse booleans, existing resource coordinates, and non-secret runtime settings required by `infra/scripts/deploy.sh`
-- [ ] T029 [US3] Extend `infra/scripts/lib/common.sh` and `infra/scripts/deploy.sh` to validate missing reuse coordinates early, export environment-specific `TF_VAR_*` values without echoing secrets, and fail fast when required secret references or profile inputs are missing
-- [ ] T030 [P] [US3] Extend `infra/terraform/live/shared/main.tf` and `infra/terraform/live/shared/outputs.tf` to publish stable shared outputs for Key Vault URIs, SQL endpoints, APIM gateway URLs, and managed identity IDs regardless of whether the underlying resources were created or reused
-- [ ] T031 [P] [US3] Wire Stack A runtime settings in `infra/terraform/modules/stack-a/main.tf` so cloud deployments use `STORAGE_PROVIDER=azuresql`, Key Vault-backed SQL settings, and the shared APIM endpoint without introducing client-exposed secrets
-- [ ] T032 [P] [US3] Wire Stack B runtime settings in `infra/terraform/modules/stack-b/main.tf` so cloud deployments use `DatabaseProvider=sqlserver`, Key Vault-backed connection settings, and the shared APIM endpoint without introducing client-exposed secrets
-- [ ] T033 [US3] Harden secret handling in `.github/workflows/selective-azure-deploy.yml` so environment inputs, Terraform outputs, and deployment commands avoid printing secret values while still surfacing actionable failure messages
+- [x] T026 [US3] Expand the development profile in `.env_local.example` with the full environment contract for location, stack target, reuse booleans, existing resource coordinates, and non-secret runtime settings required by `infra/scripts/deploy.sh`
+- [x] T027 [P] [US3] Expand the staging profile in `.env_qa.example` with the full environment contract for location, stack target, reuse booleans, existing resource coordinates, and non-secret runtime settings required by `infra/scripts/deploy.sh`
+- [x] T028 [P] [US3] Expand the production profile in `.env_prod.example` with the full environment contract for location, stack target, reuse booleans, existing resource coordinates, and non-secret runtime settings required by `infra/scripts/deploy.sh`
+- [x] T029 [US3] Extend `infra/scripts/lib/common.sh` and `infra/scripts/deploy.sh` to validate missing reuse coordinates early, export environment-specific `TF_VAR_*` values without echoing secrets, and fail fast when required secret references or profile inputs are missing
+- [x] T030 [P] [US3] Extend `infra/terraform/live/shared/main.tf` and `infra/terraform/live/shared/outputs.tf` to publish stable shared outputs for Key Vault URIs, SQL endpoints, APIM gateway URLs, and managed identity IDs regardless of whether the underlying resources were created or reused
+- [x] T031 [P] [US3] Wire Stack A runtime settings in `infra/terraform/modules/stack-a/main.tf` so cloud deployments use `STORAGE_PROVIDER=azuresql`, Key Vault-backed SQL settings, and the shared APIM endpoint without introducing client-exposed secrets
+- [x] T032 [P] [US3] Wire Stack B runtime settings in `infra/terraform/modules/stack-b/main.tf` so cloud deployments use `DatabaseProvider=sqlserver`, Key Vault-backed connection settings, and the shared APIM endpoint without introducing client-exposed secrets
+- [x] T033 [US3] Harden secret handling in `.github/workflows/selective-azure-deploy.yml` so environment inputs, Terraform outputs, and deployment commands avoid printing secret values while still surfacing actionable failure messages
 
 **Checkpoint**: Environment profiles, runtime configuration, and secrets management are production-safe and environment-isolated.
 
@@ -111,9 +111,9 @@
 
 ### Implementation for User Story 4
 
-- [ ] T034 [US4] Implement the protected destroy wrapper in `infra/scripts/deprovision.sh` with `shared`, `stack-a`, `stack-b`, and `both` target handling, `.env_*` enforcement, `--dry-run` and `--force` options, and the `[DESTROY]` versus `[PROTECTED]` summary required by the plan
-- [ ] T035 [P] [US4] Finalize stable create-or-reuse outputs in `infra/terraform/modules/foundation/app-service-plan/outputs.tf`, `infra/terraform/modules/foundation/sql/outputs.tf`, `infra/terraform/modules/foundation/key-vault/outputs.tf`, `infra/terraform/modules/foundation/apim/outputs.tf`, and `infra/terraform/modules/foundation/identities/outputs.tf` so downstream roots never branch on ownership
-- [ ] T036 [US4] Update `.github/workflows/selective-azure-deploy.yml` to support manual `shared-only` runs that skip stack packaging and deployment jobs while still applying the shared root and surfacing shared outputs
+- [x] T034 [US4] Implement the protected destroy wrapper in `infra/scripts/deprovision.sh` with `shared`, `stack-a`, `stack-b`, and `both` target handling, `.env_*` enforcement, `--dry-run` and `--force` options, and the `[DESTROY]` versus `[PROTECTED]` summary required by the plan
+- [x] T035 [P] [US4] Finalize stable create-or-reuse outputs in `infra/terraform/modules/foundation/app-service-plan/outputs.tf`, `infra/terraform/modules/foundation/sql/outputs.tf`, `infra/terraform/modules/foundation/key-vault/outputs.tf`, `infra/terraform/modules/foundation/apim/outputs.tf`, and `infra/terraform/modules/foundation/identities/outputs.tf` so downstream roots never branch on ownership
+- [x] T036 [US4] Update `.github/workflows/selective-azure-deploy.yml` to support manual `shared-only` runs that skip stack packaging and deployment jobs while still applying the shared root and surfacing shared outputs
 
 **Checkpoint**: Shared infrastructure now has an independent lifecycle and safe deprovision flow.
 
@@ -123,8 +123,8 @@
 
 **Purpose**: Finish operator documentation and scenario validation across all stories.
 
-- [ ] T037 [P] Document the Terraform/Bash selective deployment flow in `infra/README.md`, including the three live roots, reuse-aware module behavior, stable outputs, workflow expectations, and safe deprovision usage
-- [ ] T038 [P] Refresh `specs/006-selective-azure-deploy/quickstart.md` so its commands and validation steps match `infra/scripts/deploy.sh`, `infra/scripts/deprovision.sh`, `.github/workflows/selective-azure-deploy.yml`, and the three Terraform live roots
+- [x] T037 [P] Document the Terraform/Bash selective deployment flow in `infra/README.md`, including the three live roots, reuse-aware module behavior, stable outputs, workflow expectations, and safe deprovision usage
+- [x] T038 [P] Refresh `specs/006-selective-azure-deploy/quickstart.md` so its commands and validation steps match `infra/scripts/deploy.sh`, `infra/scripts/deprovision.sh`, `.github/workflows/selective-azure-deploy.yml`, and the three Terraform live roots
 
 ---
 

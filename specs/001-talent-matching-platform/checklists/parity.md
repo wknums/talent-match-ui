@@ -3,8 +3,8 @@
 **Feature**: 001 — Talent Matching Platform  
 **Spec**: [spec.md](../spec.md)  
 **Created**: March 11, 2026  
-**Last Verified**: April 16, 2026  
-**Overall Status**: ⚠️ Re-review required (57/59)
+**Last Verified**: April 17, 2026  
+**Overall Status**: ⚠️ Minor structural differences remain (59/60)
 
 ---
 
@@ -13,8 +13,8 @@
 | Section | Items | Checked | Status |
 |---------|-------|---------|--------|
 | US1 — Authentication & Dashboard | 7 | 7/7 | ✅ |
-| US2 — User Management | 6 | 5/6 | ⚠️ |
-| US3 — Job Creation & Document Extraction | 8 | 8/8 | ✅ |
+| US2 — User Management | 7 | 7/7 | ✅ |
+| US3 — Job Creation & Document Extraction | 9 | 8/9 | ⚠️ |
 | US3a — Prompt Management | 7 | 7/7 | ✅ |
 | US4 — Application Upload | 4 | 4/4 | ✅ |
 | US5 — Scoring Pipeline | 6 | 6/6 | ✅ |
@@ -22,8 +22,8 @@
 | US7 — Manual Review | 4 | 4/4 | ✅ |
 | US8 — Monitoring & Pipeline Visibility | 5 | 5/5 | ✅ |
 | Authorization & Security | 4 | 4/4 | ✅ |
-| Infrastructure & Storage | 4 | 3/4 | ⚠️ |
-| **Total** | **59** | **57/59** | **⚠️** |
+| Infrastructure & Storage | 3 | 3/3 | ✅ |
+| **Total** | **60** | **59/60** | **⚠️** |
 
 ---
 
@@ -77,13 +77,17 @@
   _Stack A_: `src/components/ChangePasswordDialog.tsx` with toast feedback  
   _Stack B_: `AuthEndpoints.cs` POST `/change-password`; `ChangePasswordCommand`; UI dialog
 
-- [ ] **CHK012** — Both stacks implement recruiter password-reset requests with admin approval workflow  
-  _Stack A_: `server/routes/users.ts` request/resolve reset; `UserManagementDialog.tsx` pending requests  
-  _Stack B_: `UsersEndpoints.cs` exposes POST and resolve actions, but GET `/api/users/reset-requests` still returns an empty placeholder list, so admin approval parity is not complete
+- [x] **CHK012** — Both stacks implement recruiter password-reset requests with admin approval workflow  
+  _Stack A_: `server/routes/users.ts` GET/POST/PUT `/reset-requests` fully implemented; `UserManagementDialog.tsx` shows pending requests; `UserMenu.tsx` exposes "Request Password Reset" in the dropdown for logged-in users; `LoginForm.tsx` exposes an unauthenticated forgot-password entry point  
+  _Stack B_: `UsersEndpoints.cs` exposes GET/POST/PUT on `/api/users/reset-requests`; `GetResetRequestsQuery` is fully implemented (calls `_userRepository.GetResetRequestsAsync()`); `UserMenu.razor` exposes "Request Password Reset" for logged-in non-admin users; `Login.razor` exposes a matching unauthenticated forgot-password entry point
 
 - [x] **CHK013** — Both stacks display a user menu with name, role badge, department, and controls for logout, change password, and user management (admin-only)  
-  _Stack A_: `src/components/UserMenu.tsx` dropdown with role display and action buttons  
-  _Stack B_: Layout component with user menu matching React `UserMenu.tsx` behavior (FR-022)
+  _Stack A_: `src/components/UserMenu.tsx` — name, role badge, department, Change Password, **Request Password Reset**, Manage Users (admin), Sign Out  
+  _Stack B_: `dotnet/src/Web.Client/Components/UserMenu.razor` — name, role badge, department, Change Password, **Request Password Reset** (non-admin only), Manage Users (admin), Logout
+
+- [x] **CHK013a** — Both stacks surface a password-reset request entry point on the login page for users who cannot log in  
+  _Stack A_: `src/components/LoginForm.tsx` — "forgot password - request password reset" button opens a confirmation dialog; calls `POST /api/auth/request-password-reset` anonymously  
+  _Stack B_: `dotnet/src/Web.Client/Pages/Login.razor` — matching button and confirmation dialog; calls `POST /api/auth/request-password-reset` anonymously
 
 ---
 
@@ -120,6 +124,11 @@
 - [x] **CHK021** — Both stacks implement rubric category management (add/remove rows, weights summing to 1.0) and must-have criteria list management  
   _Stack A_: `CreateJobDialog.tsx` rubric categories with weight inputs, must-haves list  
   _Stack B_: `CreateJobDialog.razor` rubric management with sum-to-1.0 validation (FR-028)
+
+- [ ] **CHK059** — Both stacks implement the `UploadRubricDialog` component as a standalone dialog for rubric document upload  
+  _Stack A_: `src/components/UploadRubricDialog.tsx` exists and is wired from `JobDetailView.tsx` as a standalone dialog  
+  _Stack B_: Rubric upload is integrated into `CreateJobDialog.razor` rather than implemented as a standalone dialog component  
+  _Note_: Functional parity exists for rubric upload and extraction, but the UI structure differs. This is a job-creation UX mismatch, not an infrastructure/storage gap.
 
 ---
 
@@ -301,16 +310,11 @@
   _Stack A_: `server/middleware/validate.ts` Zod schema validation returns 400 with detail  
   _Stack B_: FluentValidation / MediatR pipeline behaviors; returns 400 with validation errors
 
-- [X] **CHK059** — Both stacks implement the `UploadRubricDialog` component as a standalone dialog for rubric document upload  
-  _Stack A_: `src/components/UploadRubricDialog.tsx` exists but **requires verification** — file present but implementation completeness not confirmed  
-  _Stack B_: Rubric upload integrated into `CreateJobDialog.razor`  
-  _Note_: Stack B integrates rubric upload within the Create Job dialog rather than a separate component. Functional parity exists (both support rubric document upload and extraction), but the UI structure differs. Verify Stack A implementation and confirm behavioral equivalence.
-
 ---
 
 ## Notes
 
-- **Tasks.md vs Reality**: The `tasks.md` for feature 001 marks all ~170 tasks as `[ ]` unchecked, but the implementation audit found the feature broadly complete with two re-review items still open.
-- **Outstanding Items**: CHK012 remains open because Stack B reset-request retrieval is stubbed, and CHK059 still requires verification of `UploadRubricDialog.tsx` completeness in Stack A.
+- **Tasks.md vs Reality**: The `tasks.md` for feature 001 marks many items unchecked, but the implementation audit found the feature broadly complete.
+- **Outstanding Items**: The only checklist item still marked partial is CHK059, where functional parity exists but the UI structure differs: Stack A uses a standalone `UploadRubricDialog.tsx`, while Stack B integrates rubric upload within `CreateJobDialog.razor`.
 - **Architectural Differences**: Stack B uses Clean Architecture (Domain → Infrastructure → Application → Web) with CQRS/MediatR, while Stack A uses Express middleware with KV storage. These are expected structural differences per the constitution — behavioral parity is what matters.
 - **Real-Time Updates**: Stack B uses SignalR for real-time dashboard updates; Stack A uses polling. Both achieve the same user-facing behavior (stats refresh within 30 seconds per FR-015).

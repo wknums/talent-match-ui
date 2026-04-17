@@ -128,6 +128,7 @@
 - [ ] T053 [P] [US2] Implement `CreateUserCommand` handler in `dotnet/src/Application/Users/Commands/` with FluentValidation (unique username, recruiter requires department, SHA-256 hash) per FR-031
 - [ ] T054 [P] [US2] Implement `DeleteUserCommand` handler blocking self-deletion per US2 scenario 6
 - [ ] T055 [US2] Implement password reset request endpoints and handlers: `GetResetRequestsQuery`, `RequestPasswordResetCommand`, `ResolveResetRequestCommand` in `dotnet/src/Application/Users/` per api-stack-b.md
+- [x] T055 [US2] Implement password reset request endpoints and handlers: `GetResetRequestsQuery`, `RequestPasswordResetCommand`, `ResolveResetRequestCommand` in `dotnet/src/Application/Users/` per api-stack-b.md
 - [ ] T056 [US2] Implement `ChangePasswordCommand` handler in `dotnet/src/Application/Auth/` validating current password first
 - [ ] T057 [US2] Implement Blazor WASM `UserManagement.razor` component in `dotnet/src/Web.Client/Components/` — user list, create/delete/reset controls, reset requests tab per FR-029
 - [ ] T058 [P] [US2] Implement Blazor WASM `ChangePasswordDialog.razor` in `dotnet/src/Web.Client/Components/` per FR-024

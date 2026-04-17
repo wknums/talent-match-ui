@@ -49,6 +49,7 @@ export interface Job {
   organization: string
   postingDate: string
   createdBy: string
+  createdByName?: string
   createdAt: string
   status: JobStatus
   currentVersion: JobConfigVersion

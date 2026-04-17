@@ -226,6 +226,7 @@ function App() {
             onUploadApplications={() => handleUploadApplications(selectedJobId)}
             onEditJob={handleEditJob}
             onStartManualReview={handleStartManualReview}
+            currentUser={currentUser}
           />
         </div>
       )}

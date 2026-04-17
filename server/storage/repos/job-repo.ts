@@ -286,6 +286,32 @@ export const jobRepo = {
       .query(`UPDATE JobConfigVersions SET ${field} = @val WHERE Id = @id`)
   },
 
+  async delete(jobId: string): Promise<boolean> {
+    const pool = await getPool()
+    const txn = pool.transaction()
+    await txn.begin()
+
+    try {
+      await txn.request()
+        .input('jobId', sql.NVarChar, jobId)
+        .query('DELETE FROM FailureQueueItems WHERE JobId = @jobId OR EntityId = @jobId')
+
+      await txn.request()
+        .input('jobId', sql.NVarChar, jobId)
+        .query('DELETE FROM PromptTestRuns WHERE JobId = @jobId')
+
+      const result = await txn.request()
+        .input('jobId', sql.NVarChar, jobId)
+        .query('DELETE FROM Jobs WHERE Id = @jobId')
+
+      await txn.commit()
+      return (result.rowsAffected?.[0] ?? 0) > 0
+    } catch (err) {
+      await txn.rollback()
+      throw err
+    }
+  },
+
   /** Compute stats for a job directly via SQL instead of loading all apps in memory */
   async getJobStats(jobId: string, config: JobConfigVersion): Promise<JobStats> {
     const pool = await getPool()

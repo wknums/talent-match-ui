@@ -68,8 +68,9 @@ Thumbs.db
 # .NET launch settings (contains environment-specific secrets)
 **/Properties/launchSettings.json
 
-# Spec Kit - agent folder may contain credentials/auth tokens
-.github/
+# GitHub - ignore agent configs but allow workflows
+.github/*
+!.github/workflows/
 
 # .NET / Stack B
 bin/
@@ -87,3 +88,22 @@ x86/
 *.VisualState.xml
 TestResult.xml
 [Rr]esult*/
+
+# Deployment profiles (concrete env files, not examples)
+.env_local
+.env_qa
+.env_prod
+!.env_*.example
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

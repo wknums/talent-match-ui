@@ -176,6 +176,21 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
+async function fetchVoid(url: string, options?: RequestInit): Promise<void> {
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    },
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }))
+    throw new Error(err.message || `Request failed: ${res.status}`)
+  }
+}
+
 export const realAPI = {
   // Auth
   async login(username: string, password: string): Promise<User> {
@@ -245,6 +260,13 @@ export const realAPI = {
     })
   },
 
+  async requestPasswordResetFromLogin(username: string, reason?: string): Promise<void> {
+    await fetchJSON(`${API_BASE}/auth/request-password-reset`, {
+      method: 'POST',
+      body: JSON.stringify({ username, reason }),
+    })
+  },
+
   async resolvePasswordResetRequest(requestId: string, action: 'approve' | 'reject', newPassword?: string): Promise<void> {
     await fetchJSON(`${API_BASE}/users/reset-requests/${requestId}`, {
       method: 'PUT',
@@ -263,6 +285,10 @@ export const realAPI = {
     } catch {
       return null
     }
+  },
+
+  async deleteJob(jobId: string): Promise<void> {
+    await fetchVoid(`${API_BASE}/jobs/${jobId}`, { method: 'DELETE' })
   },
 
   async extractJobSpec(fileName: string, content: string, mimeType: string): Promise<any> {
