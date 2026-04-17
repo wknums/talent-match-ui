@@ -145,7 +145,7 @@ export function ApplicationsTable({ applications, onApplicationClick, onStartMan
               </TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
-                  {(app.finalDecision === 'NeedsManualReview' || app.status === 'NeedsManualReview') && onStartManualReview && (
+                  {(app.finalDecision === 'NeedsManualReview' || app.finalDecision === 'Excluded' || app.status === 'NeedsManualReview') && onStartManualReview && (
                     <Button
                       variant="outline"
                       size="sm"

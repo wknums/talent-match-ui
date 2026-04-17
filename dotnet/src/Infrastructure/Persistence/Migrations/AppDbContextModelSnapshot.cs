@@ -56,7 +56,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("ApplicationId")
                         .IsUnique();
 
-                    b.ToTable("AggregatedResults", (string)null);
+                    b.ToTable("AggregatedResults");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Application", b =>
@@ -76,6 +76,9 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("JobId")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PromptTestRunId")
@@ -103,7 +106,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TestRunId");
 
-                    b.ToTable("Applications", (string)null);
+                    b.ToTable("Applications");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ApplicationDocument", b =>
@@ -142,7 +145,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ApplicationId");
 
-                    b.ToTable("ApplicationDocuments", (string)null);
+                    b.ToTable("ApplicationDocuments");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ExtractionArtifact", b =>
@@ -174,7 +177,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("ApplicationId")
                         .IsUnique();
 
-                    b.ToTable("ExtractionArtifacts", (string)null);
+                    b.ToTable("ExtractionArtifacts");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.FailureQueueItem", b =>
@@ -206,7 +209,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("FailureQueueItems", (string)null);
+                    b.ToTable("FailureQueueItems");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Job", b =>
@@ -258,7 +261,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("Jobs", (string)null);
+                    b.ToTable("Jobs");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.JobConfigVersion", b =>
@@ -320,7 +323,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("JobId");
 
-                    b.ToTable("JobConfigVersions", (string)null);
+                    b.ToTable("JobConfigVersions");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ManualReviewData", b =>
@@ -358,7 +361,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("ApplicationId")
                         .IsUnique();
 
-                    b.ToTable("ManualReviews", (string)null);
+                    b.ToTable("ManualReviews");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.PasswordResetRequest", b =>
@@ -388,7 +391,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("PasswordResetRequests", (string)null);
+                    b.ToTable("PasswordResetRequests");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ProcessingEvent", b =>
@@ -429,7 +432,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Timestamp");
 
-                    b.ToTable("ProcessingEvents", (string)null);
+                    b.ToTable("ProcessingEvents");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.PromptTestRun", b =>
@@ -472,7 +475,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("PromptId");
 
-                    b.ToTable("PromptTestRuns", (string)null);
+                    b.ToTable("PromptTestRuns");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
@@ -525,7 +528,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("JobId", "Status");
 
-                    b.ToTable("ScoringPrompts", (string)null);
+                    b.ToTable("ScoringPrompts");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringRun", b =>
@@ -581,7 +584,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ApplicationId");
 
-                    b.ToTable("ScoringRuns", (string)null);
+                    b.ToTable("ScoringRuns");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.User", b =>
@@ -626,7 +629,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("Username")
                         .IsUnique();
 
-                    b.ToTable("Users", (string)null);
+                    b.ToTable("Users");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.AggregatedResult", b =>

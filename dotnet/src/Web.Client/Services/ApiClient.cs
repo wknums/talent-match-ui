@@ -32,11 +32,57 @@ public class ApiClient
         {
             var body = await response.Content.ReadAsStringAsync();
             if (!string.IsNullOrWhiteSpace(body))
-                errorMessage = body;
+                errorMessage = ExtractErrorMessage(body, fallbackMessage);
         }
         catch { /* use fallback */ }
 
         throw new ApiException(errorMessage, (int)response.StatusCode);
+    }
+
+    private static string ExtractErrorMessage(string body, string fallbackMessage)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+
+            if (root.ValueKind == JsonValueKind.String)
+                return root.GetString() ?? fallbackMessage;
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Object)
+                {
+                    var messages = errors.EnumerateObject()
+                        .SelectMany(property => property.Value.ValueKind == JsonValueKind.Array
+                            ? property.Value.EnumerateArray()
+                                .Where(item => item.ValueKind == JsonValueKind.String)
+                                .Select(item => item.GetString())
+                                .Where(message => !string.IsNullOrWhiteSpace(message))
+                                .Select(message => $"{property.Name}: {message}")
+                            : Enumerable.Empty<string>())
+                        .ToList();
+
+                    if (messages.Count > 0)
+                        return string.Join(" ", messages);
+                }
+
+                if (root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
+                    return message.GetString() ?? fallbackMessage;
+
+                if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
+                    return error.GetString() ?? fallbackMessage;
+
+                if (root.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
+                    return title.GetString() ?? fallbackMessage;
+            }
+        }
+        catch
+        {
+            // Fall back to the raw response body when it is not valid JSON.
+        }
+
+        return body.Trim().Trim('"');
     }
 
     // Auth
@@ -128,10 +174,27 @@ public class ApiClient
         await EnsureSuccessOrThrowAsync(response, "Failed to update job configuration.");
     }
 
-    public async Task<bool> ProcessJobAsync(string jobId)
+    public async Task<ProcessJobResponse> ProcessJobAsync(string jobId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/process", null);
-        return response.IsSuccessStatusCode;
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return new ProcessJobResponse(0, 0, [$"HTTP {(int)response.StatusCode}: {errorBody}"]);
+        }
+        var result = await response.Content.ReadFromJsonAsync<ProcessJobResponse>();
+        return result ?? new ProcessJobResponse(0, 0, ["Empty response from server"]);
+    }
+
+    public async Task<ReAggregateResponse> ReAggregateJobAsync(string jobId)
+    {
+        var response = await _http.PostAsync($"/api/jobs/{jobId}/reaggregate", null);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync();
+            return new ReAggregateResponse(0, 0, $"HTTP {(int)response.StatusCode}: {errorBody}");
+        }
+        return await response.Content.ReadFromJsonAsync<ReAggregateResponse>() ?? new(0, 0, null);
     }
 
     public async Task<bool> DeleteJobAsync(string jobId)
@@ -226,6 +289,12 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task BulkRetryDlqAsync(List<string> ids)
+        => await _http.PostAsJsonAsync("/api/dlq/bulk-retry", new { Ids = ids });
+
+    public async Task BulkDeleteDlqAsync(List<string> ids)
+        => await _http.PostAsJsonAsync("/api/dlq/bulk-delete", new { Ids = ids });
+
     public async Task<List<AuditEventDto>> GetAuditEventsAsync(string? entityType = null, string? eventType = null)
         => await _http.GetFromJsonAsync<List<AuditEventDto>>($"/api/audit?entityType={entityType}&eventType={eventType}") ?? new();
 
@@ -242,7 +311,7 @@ public class ApiClient
 
     public async Task<ScoringPromptDto?> EditPromptAsync(string jobId, string promptId, string promptText)
     {
-        var response = await _http.PutAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}", new { PromptText = promptText });
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/edit", new { PromptText = promptText });
         if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
     }
@@ -272,6 +341,12 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<bool> SetProductionPromptAsync(string jobId, string promptId)
+    {
+        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/set-production", null);
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task<PromptTestRunDto?> CreateTestRunAsync(string jobId, string promptId, object files)
     {
         var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs", new { Files = files });
@@ -294,6 +369,12 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<bool> RetryTestRunAsync(string jobId, string promptId, string testRunId)
+    {
+        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/retry", null);
+        return response.IsSuccessStatusCode;
+    }
+
     public async Task<List<DocumentDto>> GetDocumentsAsync(string applicationId)
     {
         try { return await _http.GetFromJsonAsync<List<DocumentDto>>($"/api/applications/{applicationId}/documents") ?? new(); }
@@ -307,8 +388,8 @@ public record JobDto(string Id, string JobCode, string Title, string Department,
 public record JobSummaryDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt, string CreatedByName, int TotalApplications, int CompletedApplications);
 public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription);
 public record UpdateConfigDto(string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold);
-public record ApplicationDto(string Id, string JobId, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt);
-public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens);
+public record ApplicationDto(string Id, string JobId, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
+public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);
 public record DocumentDto(string Id, string FileName, string FileType, long FileSize, string? ContentBase64);
 public record ExtractionDto(string Id, string NormalisedText, double ConfidenceScore, string Status);
@@ -323,6 +404,8 @@ public record ExtractRubricResult(string? Title, List<RubricCategoryItem>? Categ
 public record MustHaveItem(string Criterion, string? Description);
 public record DesiredCriterionItem(string Qualification, string? Description);
 public record RubricCategoryItem(string Name, double Weight, string? Description);
+public record ProcessJobResponse(int Processed, int Total, List<string> Errors);
+public record ReAggregateResponse(int Updated, int Total, string? Error);
 public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson);
 public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes);
 public record TestRunApplicationDetailDto(ApplicationDto Application, List<ScoringRunDto> ScoringRuns);

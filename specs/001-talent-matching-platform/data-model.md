@@ -390,15 +390,17 @@ Scoring → ScoringFailed (retry → failure queue after max retries)
 
 ### 15. SystemStats (computed, not persisted)
 
+All application counts MUST exclude test scoring applications (`testRunId != null`) to reflect production-only statistics (FR-038).
+
 | Field | Type | Notes |
 |-------|------|-------|
 | totalJobs | integer | |
 | activeJobs | integer | |
-| totalApplications | integer | |
-| queuedApplications | integer | |
-| processingApplications | integer | |
-| completedApplications | integer | |
-| failedApplications | integer | |
+| totalApplications | integer | Production applications only (excludes test runs) |
+| queuedApplications | integer | Production applications only |
+| processingApplications | integer | Production applications only |
+| completedApplications | integer | Production applications only |
+| failedApplications | integer | Production applications only |
 | averageThroughputPerHour | number | |
 
 ---

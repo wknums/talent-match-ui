@@ -75,7 +75,7 @@ public class GetRecruiterAnalyticsQueryTests
     {
         var users = new List<User>
         {
-            new() { Id = "u1", Role = "recruiter", Department = "Engineering", FullName = "Alice" },
+            new() { Id = "u1", Username = "alice", Role = "recruiter", Department = "Engineering", FullName = "Alice" },
         };
         var jobs = new List<Job>
         {
@@ -111,6 +111,119 @@ public class GetRecruiterAnalyticsQueryTests
         analytics.ShortlistRecommendations.Should().Be(1); // a3
         analytics.ActiveJobs.Should().Be(2); // j1 (Active) + j2 (Processing)
         analytics.AverageProcessingTime.Should().BeNull(); // No aggregated results
+    }
+
+    [Fact]
+    public async Task Handle_MatchesJobsCreatedByUsername()
+    {
+        var users = new List<User>
+        {
+            new() { Id = "u1", Username = "alice", Role = "recruiter", Department = "Engineering", FullName = "Alice" },
+        };
+        var jobs = new List<Job>
+        {
+            new() { Id = "j1", Department = "Engineering", CreatedBy = "alice", Status = "Active" },
+        };
+
+        _userRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(users);
+        _jobRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(jobs);
+        _appRepoMock.Setup(r => r.GetByJobIdAsync("j1", It.IsAny<CancellationToken>())).ReturnsAsync(new List<Domain.Entities.Application>
+        {
+            new() { Id = "a1", JobId = "j1", Status = "Queued" },
+        });
+        _appRepoMock.Setup(r => r.GetAggregatedResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((AggregatedResult?)null);
+
+        var handler = CreateHandler();
+        var result = await handler.Handle(new GetRecruiterAnalyticsQuery("admin", null), CancellationToken.None);
+
+        result.Should().ContainSingle();
+        result[0].ApplicationsInQueue.Should().Be(1);
+        result[0].ActiveJobs.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Handle_AssignsBlankCreatedByToUniqueDepartmentRecruiter()
+    {
+        var users = new List<User>
+        {
+            new() { Id = "u1", Username = "alice", Role = "recruiter", Department = "Engineering", FullName = "Alice" },
+            new() { Id = "u2", Username = "bob", Role = "recruiter", Department = "Product", FullName = "Bob" },
+        };
+        var jobs = new List<Job>
+        {
+            new() { Id = "j1", Department = "Engineering", CreatedBy = "", Status = "Processing" },
+        };
+
+        _userRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(users);
+        _jobRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(jobs);
+        _appRepoMock.Setup(r => r.GetByJobIdAsync("j1", It.IsAny<CancellationToken>())).ReturnsAsync(new List<Domain.Entities.Application>
+        {
+            new() { Id = "a1", JobId = "j1", Status = "Queued" },
+        });
+        _appRepoMock.Setup(r => r.GetAggregatedResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((AggregatedResult?)null);
+
+        var handler = CreateHandler();
+        var result = await handler.Handle(new GetRecruiterAnalyticsQuery("admin", null), CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result.Single(r => r.RecruiterId == "u1").ApplicationsInQueue.Should().Be(1);
+        result.Single(r => r.RecruiterId == "u1").ActiveJobs.Should().Be(1);
+        result.Single(r => r.RecruiterId == "u2").ApplicationsInQueue.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Handle_DoesNotAssignBlankCreatedByWhenDepartmentIsAmbiguous()
+    {
+        var users = new List<User>
+        {
+            new() { Id = "u1", Username = "alice", Role = "recruiter", Department = "Engineering", FullName = "Alice" },
+            new() { Id = "u2", Username = "betty", Role = "recruiter", Department = "Engineering", FullName = "Betty" },
+        };
+        var jobs = new List<Job>
+        {
+            new() { Id = "j1", Department = "Engineering", CreatedBy = "", Status = "Active" },
+        };
+
+        _userRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(users);
+        _jobRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(jobs);
+        _appRepoMock.Setup(r => r.GetByJobIdAsync("j1", It.IsAny<CancellationToken>())).ReturnsAsync(new List<Domain.Entities.Application>
+        {
+            new() { Id = "a1", JobId = "j1", Status = "Queued" },
+        });
+
+        var handler = CreateHandler();
+        var result = await handler.Handle(new GetRecruiterAnalyticsQuery("admin", null), CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result.Should().OnlyContain(r => r.ActiveJobs == 0 && r.ApplicationsInQueue == 0);
+    }
+
+    [Fact]
+    public async Task Handle_ExcludesPromptTestRunApplications()
+    {
+        var users = new List<User>
+        {
+            new() { Id = "u1", Username = "alice", Role = "recruiter", Department = "Engineering", FullName = "Alice" },
+        };
+        var jobs = new List<Job>
+        {
+            new() { Id = "j1", Department = "Engineering", CreatedBy = "u1", Status = "Active" },
+        };
+
+        _userRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(users);
+        _jobRepoMock.Setup(r => r.GetAllAsync(It.IsAny<CancellationToken>())).ReturnsAsync(jobs);
+        _appRepoMock.Setup(r => r.GetByJobIdAsync("j1", It.IsAny<CancellationToken>())).ReturnsAsync(new List<Domain.Entities.Application>
+        {
+            new() { Id = "a1", JobId = "j1", Status = "Queued" },
+            new() { Id = "a2", JobId = "j1", Status = "Queued", TestRunId = "test-run-1" },
+        });
+        _appRepoMock.Setup(r => r.GetAggregatedResultAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((AggregatedResult?)null);
+
+        var handler = CreateHandler();
+        var result = await handler.Handle(new GetRecruiterAnalyticsQuery("admin", null), CancellationToken.None);
+
+        result.Should().ContainSingle();
+        result[0].ApplicationsInQueue.Should().Be(1);
     }
 
     [Fact]

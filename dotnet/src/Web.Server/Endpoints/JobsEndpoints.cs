@@ -237,32 +237,17 @@ public static class JobsEndpoints
                 ?? job.ConfigVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
             var runCount = config?.ScoringRunCount ?? 3;
 
-            // Load applications for this job
-            var applications = await mediator.Send(new TalentMatch.Application.Applications.Queries.GetApplicationsQuery(jobId, null, null, null, null, 1, 10000));
-            var toProcess = applications.Where(a => a.Status == "Queued" || a.Status == "Scored").ToList();
+            // Delegate to ProcessJobCommand which properly persists status changes
+            var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ProcessJobCommand(
+                jobId, productionPrompt.Id, runCount));
 
-            int processed = 0;
-            var errors = new List<string>();
+            return Results.Accepted(null, new { processed = result.Processed, total = result.Total, errors = result.Errors });
+        });
 
-            foreach (var app in toProcess)
-            {
-                try
-                {
-                    app.Status = "Scoring";
-                    var scoreCommand = new TalentMatch.Application.Scoring.Commands.ScoreApplicationCommand(
-                        app.Id, jobId, runCount, productionPrompt.Id);
-                    await mediator.Send(scoreCommand);
-                    app.Status = "Completed";
-                    processed++;
-                }
-                catch (Exception ex)
-                {
-                    app.Status = "ScoringFailed";
-                    errors.Add($"Application {app.Id}: {ex.Message}");
-                }
-            }
-
-            return Results.Accepted(null, new { processed, total = toProcess.Count, errors });
+        group.MapPost("/{jobId}/reaggregate", async (string jobId, ISender mediator) =>
+        {
+            var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ReAggregateJobCommand(jobId));
+            return Results.Ok(new { updated = result.Updated, total = result.Total });
         });
 
         group.MapPut("/{jobId}/rubric-approval", async (string jobId, UpdateRubricApprovalRequest request, ISender mediator) =>

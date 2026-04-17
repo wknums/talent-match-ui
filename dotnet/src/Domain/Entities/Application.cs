@@ -13,12 +13,11 @@ public class Application
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string? TestRunId { get; set; }
+    public string? LastError { get; set; }
     
     // Navigation properties
     [JsonIgnore]
     public Job? Job { get; set; }
-    [JsonIgnore]
-    public PromptTestRun? PromptTestRun { get; set; }
     public ICollection<ApplicationDocument> Documents { get; set; } = new List<ApplicationDocument>();
     public ICollection<ScoringRun> ScoringRuns { get; set; } = new List<ScoringRun>();
     public AggregatedResult? AggregatedResult { get; set; }

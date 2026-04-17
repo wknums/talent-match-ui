@@ -38,6 +38,15 @@ public class ApprovePromptForProductionCommandHandler : IRequestHandler<ApproveP
         if (!hasApprovedRun)
             throw new InvalidOperationException("Cannot approve for production: no approved test run exists for this prompt");
 
+        // Demote any existing production-approved prompts for this job to inactive
+        var allPrompts = await _promptRepo.GetByJobIdAsync(prompt.JobId, ct);
+        foreach (var other in allPrompts.Where(p => p.Status == "production-approved" && p.Id != prompt.Id))
+        {
+            other.Status = "inactive";
+            other.LastModifiedAt = DateTime.UtcNow;
+            await _promptRepo.UpdateAsync(other, ct);
+        }
+
         prompt.Status = "production-approved";
         prompt.LastModifiedAt = DateTime.UtcNow;
         await _promptRepo.UpdateAsync(prompt, ct);

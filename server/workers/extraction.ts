@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import type { StorageProvider } from '../storage/types.js'
-import { appDocumentsKey, appExtractionKey, jobApplicationsKey } from '../storage/kv-keys.js'
-import { getArray, setArray } from '../storage/kv-helpers.js'
+import { applicationRepo } from '../storage/repos/index.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
-import type { Application, ApplicationDocument, ExtractionArtifact } from '../../src/types/index.js'
+import type { ExtractionArtifact } from '../../src/types/index.js'
 
 // FR-065: Extraction ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
@@ -19,19 +17,13 @@ Rules:
 Output format: raw Markdown text.`
 
 export async function runExtraction(
-  storage: StorageProvider,
   applicationId: string,
   jobId: string,
 ): Promise<ExtractionArtifact> {
   // Update status to Extracting
-  const apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-  const appIndex = apps.findIndex(a => a.applicationId === applicationId)
-  if (appIndex !== -1) {
-    apps[appIndex] = { ...apps[appIndex], status: 'Extracting' }
-    await setArray(storage, jobApplicationsKey(jobId), apps)
-  }
+  await applicationRepo.updateStatus(applicationId, 'Extracting')
 
-  const documents = await getArray<ApplicationDocument>(storage, appDocumentsKey(applicationId))
+  const documents = await applicationRepo.getDocuments(applicationId)
 
   let extractedParts: string[]
 
@@ -93,15 +85,10 @@ export async function runExtraction(
     createdAt: new Date().toISOString(),
   }
 
-  await storage.set(appExtractionKey(applicationId), artifact)
+  await applicationRepo.setExtraction(artifact)
 
   // Update status to Scoring
-  const updatedApps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-  const idx = updatedApps.findIndex(a => a.applicationId === applicationId)
-  if (idx !== -1) {
-    updatedApps[idx] = { ...updatedApps[idx], status: 'Scoring' }
-    await setArray(storage, jobApplicationsKey(jobId), updatedApps)
-  }
+  await applicationRepo.updateStatus(applicationId, 'Scoring')
 
   return artifact
 }

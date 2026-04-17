@@ -27,7 +27,6 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
         var allUsers = await _userRepository.GetAllAsync(cancellationToken);
         var allJobs = await _jobRepository.GetAllAsync(cancellationToken);
 
-        // Filter to recruiters/admins with departments, scoped by caller role
         var users = allUsers
             .Where(u => (u.Role == "recruiter" || u.Role == "admin")
                 && !string.IsNullOrEmpty(u.Department))
@@ -38,11 +37,35 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
             users = users.Where(u => u.Department == request.CallerDepartment).ToList();
         }
 
+        var usersById = users.ToDictionary(u => u.Id, StringComparer.OrdinalIgnoreCase);
+        var usersByUsername = users
+            .Where(u => !string.IsNullOrWhiteSpace(u.Username))
+            .GroupBy(u => u.Username, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var departmentCandidates = users
+            .GroupBy(u => u.Department, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        var jobsByRecruiterId = users.ToDictionary(
+            user => user.Id,
+            _ => new List<Job>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var job in allJobs)
+        {
+            var recruiterId = ResolveRecruiterId(job, usersById, usersByUsername, departmentCandidates);
+            if (recruiterId is null) continue;
+
+            if (jobsByRecruiterId.TryGetValue(recruiterId, out var recruiterJobs))
+            {
+                recruiterJobs.Add(job);
+            }
+        }
+
         var results = new List<RecruiterAnalytics>();
 
         foreach (var user in users)
         {
-            var userJobs = allJobs.Where(j => j.CreatedBy == user.Id).ToList();
+            var userJobs = jobsByRecruiterId[user.Id];
 
             var activeJobs = userJobs.Count(j =>
                 j.Status.Equals("Active", StringComparison.OrdinalIgnoreCase) ||
@@ -88,5 +111,37 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
         }
 
         return results;
+    }
+
+    private static string? ResolveRecruiterId(
+        Job job,
+        IReadOnlyDictionary<string, User> usersById,
+        IReadOnlyDictionary<string, User> usersByUsername,
+        IReadOnlyDictionary<string, List<User>> departmentCandidates)
+    {
+        if (!string.IsNullOrWhiteSpace(job.CreatedBy))
+        {
+            if (usersById.ContainsKey(job.CreatedBy))
+            {
+                return job.CreatedBy;
+            }
+
+            if (usersByUsername.TryGetValue(job.CreatedBy, out var userByUsername))
+            {
+                return userByUsername.Id;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(job.Department))
+        {
+            return null;
+        }
+
+        if (!departmentCandidates.TryGetValue(job.Department, out var candidates) || candidates.Count != 1)
+        {
+            return null;
+        }
+
+        return candidates[0].Id;
     }
 }

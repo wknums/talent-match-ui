@@ -55,6 +55,19 @@ Thumbs.db
 .spark-workbench-id
 .spark-initial-sha
 
+# SQLite databases (may contain application/candidate data)
+*.db
+*.sqlite
+*.sqlite3
+# SQLite WAL/shared-memory journal files (runtime artifacts)
+*.db-shm
+*.db-wal
+# MSBuild/Roslyn language server cache (machine-local)
+*.lscache
+
+# .NET launch settings (contains environment-specific secrets)
+**/Properties/launchSettings.json
+
 # Spec Kit - agent folder may contain credentials/auth tokens
 .github/
 

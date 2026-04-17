@@ -36,7 +36,7 @@ _(No tasks — proceed to Phase 2)_
 
 ### Stack A Backend (Express)
 
-- [x] T003 Implement analytics computation helper in server/routes/stats.ts — function that loads jobs from jobs:all, iterates jobs:{jobId}:applications, loads users from users:all via StorageProvider, and computes per-recruiter metrics: applicationsInQueue (status=Queued), manualReviewsPerformed (status=NeedsManualReview or flagged=true), shortlistRecommendations (finalDecision=Eligible), activeJobs (job status Active/Processing), averageProcessingTime (createdAt-to-completion or undefined) per research.md R1/R3/R6
+- [x] T003 Implement analytics computation helper in server/routes/stats.ts — function that loads jobs from jobs:all, iterates jobs:{jobId}:applications, loads users from users:all via StorageProvider, and computes per-recruiter metrics: applicationsInQueue (status=Queued), manualReviewsPerformed (status=NeedsManualReview or flagged=true), shortlistRecommendations (finalDecision=Eligible), activeJobs (job status Active/Processing), averageProcessingTime (createdAt-to-completion or undefined) per research.md R1/R3/R6. Follow-up required: Stack A still stores username in `createdBy`, so recruiter ownership normalization is not yet complete.
 - [x] T004 Add GET /api/stats/recruiters route in server/routes/stats.ts — protected with requireRole('admin', 'recruiter') from server/middleware/rbac.ts, apply department scoping (admin=all recruiters, recruiter=only req.user.department), return RecruiterAnalytics[] per contracts/get-recruiter-analytics.md (401 if unauthenticated, 403 if unauthorized role)
 - [x] T005 Add GET /api/stats/departments route in server/routes/stats.ts — protected with requireRole('admin', 'recruiter'), group recruiter records by department, sum aggregate metrics, apply department scoping (admin=all, recruiter=own dept), return DepartmentAnalytics[] per contracts/get-department-analytics.md
 - [x] T006 [P] Implement getRecruiterAnalytics() in src/lib/api-real.ts — replace empty array stub with fetch call to GET /api/stats/recruiters, return RecruiterAnalytics[]
@@ -49,7 +49,7 @@ _(No tasks — proceed to Phase 2)_
 - [x] T010 Create AnalyticsEndpoints.cs in dotnet/src/Web.Server/Endpoints/AnalyticsEndpoints.cs — map GET /api/stats/recruiters and GET /api/stats/departments as minimal API endpoints, require authorization for admin/recruiter roles (403 for other roles, 401 for unauthenticated), extract caller role and department from authenticated user claims, dispatch to MediatR queries
 - [x] T011 Register analytics query handlers and endpoint mappings in dotnet/src/Application/DependencyInjection.cs and dotnet/src/Web.Server/ startup — ensure MediatR discovers Analytics query handlers and AnalyticsEndpoints are mapped in the route builder
 
-**Checkpoint**: Foundation ready — all backend endpoints operational with RBAC in both stacks. Stack A frontend works end-to-end with `API_MODE=real`. User story implementation (Stack B UI) can now begin.
+**Checkpoint**: Foundation ready — all backend endpoints are operational with RBAC in both stacks. Stack A frontend works end-to-end with `API_MODE=real`, but Stack A recruiter ownership normalization still needs a parity correction.
 
 ---
 
@@ -82,7 +82,7 @@ _(No tasks — proceed to Phase 2)_
 - [x] T017 [US1] Add skeleton loading states for page title, stat cards, and table area in dotnet/src/Web.Client/Pages/Analytics.razor — show placeholder elements while API call is in-flight per FR-008
 - [x] T018 [US1] Handle empty/zero data state — stat cards display zero values gracefully when API returns empty array in dotnet/src/Web.Client/Pages/Analytics.razor per acceptance scenario US1-4
 
-**Checkpoint**: At this point, User Story 1 is fully functional — summary stat cards visible on analytics page in both stacks.
+**Checkpoint**: At this point, User Story 1 is implemented — summary stat cards are visible on analytics page in both stacks.
 
 ---
 
@@ -99,7 +99,7 @@ _(No tasks — proceed to Phase 2)_
 - [x] T021 [US2] Add department filter dropdown above the recruiter table in dotnet/src/Web.Client/Pages/Analytics.razor — populate from distinct departments in loaded data, filter table client-side on selection (instant, no API call) per FR-006/SC-002
 - [x] T022 [US2] Add "No recruiters found" empty state message when no data matches current department filter in dotnet/src/Web.Client/Pages/Analytics.razor per FR-009
 
-**Checkpoint**: At this point, User Stories 1 AND 2 are both functional — stat cards and recruiter table working in both stacks.
+**Checkpoint**: At this point, User Stories 1 AND 2 are implemented — stat cards and recruiter table render in both stacks, with Stack A metrics still requiring ownership validation.
 
 ---
 
@@ -115,7 +115,7 @@ _(No tasks — proceed to Phase 2)_
 - [x] T024 [US3] Implement "By Department" tab content in dotnet/src/Web.Client/Pages/Analytics.razor — render a card per department showing summary stats (Applications in Queue, Manual Reviews, Shortlist Recommendations, Active Jobs) and a nested table of individual recruiters per FR-007
 - [x] T025 [US3] Handle edge cases in department view in dotnet/src/Web.Client/Pages/Analytics.razor — zero-recruiter departments show zero-value stats with empty recruiter table, recruiter role sees only own department card, per acceptance scenarios US3-2 and US3-3
 
-**Checkpoint**: All user stories functional in both stacks. Full analytics feature complete.
+**Checkpoint**: All user stories are implemented in both stacks, but Stack A recruiter ownership normalization remains open before parity can be treated as complete.
 
 ---
 
@@ -127,6 +127,16 @@ _(No tasks — proceed to Phase 2)_
 - [x] T027 [P] Add analytics endpoint integration tests in tests/integration/api.test.ts — test GET /api/stats/recruiters: 200 with valid schema for admin, 200 with department-scoped data for recruiter, 403 for business_panel, 401 for unauthenticated; test GET /api/stats/departments: same auth matrix, verify aggregate sums match nested recruiters, verify totalRecruiters equals recruiters array length
 - [x] T028 [P] Create Stack B analytics tests in dotnet/tests/ — test GetRecruiterAnalyticsQuery and GetDepartmentAnalyticsQuery handlers: correct metric aggregation, admin sees all recruiters, recruiter sees only own department, empty data returns empty array, department aggregates sum correctly
 - [x] T029 Run quickstart.md validation for both stacks — execute manual testing steps: start Stack A with npm run dev, log in as admin/recruiter/business_panel, verify all 6 user story acceptance scenarios; start Stack B with dotnet run, repeat verification
+
+---
+
+## Phase 8: Stack A Parity Correction
+
+**Purpose**: Correct the Stack A recruiter ownership mismatch discovered after implementation so parity can be re-verified.
+
+- [ ] T030 Normalize Stack A recruiter ownership in `server/routes/stats.ts` and/or the Stack A job-creation path so recruiter analytics group jobs against the same recruiter identifier used by the user repository.
+- [ ] T031 Extend Stack A analytics tests to cover the username-vs-userId ownership mismatch and prevent regressions once the normalization fix is applied.
+- [ ] T032 Re-run quickstart/manual validation after the Stack A fix and only then restore the feature to parity-complete status.
 
 ---
 
@@ -237,5 +247,6 @@ With multiple developers:
 - `averageProcessingTime` is `null`/`undefined` (not `0`) when no completed applications exist — UI displays "—"
 - Recruiters without a `department` field are excluded from analytics results per edge case spec
 - Server returns pre-scoped data based on caller role — client-side sum of returned data automatically reflects correct scope (research.md R5)
+- Stack A parity is still blocked by recruiter-ownership normalization because jobs currently store username in `createdBy` while analytics group recruiters by `userId`
 - Commit after each task or logical group
 - Stop at any checkpoint to validate story independently

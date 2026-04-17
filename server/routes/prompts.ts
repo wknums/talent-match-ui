@@ -1,33 +1,27 @@
 import { randomUUID, createHash } from 'node:crypto'
 import { Router } from 'express'
-import type { StorageProvider } from '../storage/types.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import {
-  JOBS, jobApplicationsKey, jobVersionsKey,
-  promptsKey, promptTestRunKey,
-  appDocumentsKey
-} from '../storage/kv-keys.js'
-import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
-import { createAuditService } from '../services/audit.js'
+import { jobRepo, applicationRepo, promptRepo } from '../storage/repos/index.js'
+import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import { createPipelineOrchestrator } from '../services/pipeline.js'
 import type {
-  ScoringPrompt, PromptTestRun, Job, Application,
-  ApplicationDocument, JobConfigVersion
+  ScoringPrompt, PromptTestRun, Application,
+  ApplicationDocument, ScoringRun, AggregatedResult, ManualReviewData
 } from '../../src/types/index.js'
 
 // FR-065: Prompt generation ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
 
-export function createPromptsRouter(storage: StorageProvider) {
+export function createPromptsRouter() {
   const router = Router()
-  const audit = createAuditService(storage)
+  const audit = auditService
 
   // GET /api/jobs/:jobId/prompts - list all prompt revisions
   router.get('/:jobId/prompts', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
+      const prompts = await promptRepo.getByJobId(jobId)
       const sorted = prompts.sort((a, b) => b.versionNumber - a.versionNumber)
       res.json(sorted)
     } catch (err) {
@@ -42,8 +36,7 @@ export function createPromptsRouter(storage: StorageProvider) {
       const { promptText, source, generationMetadata } = req.body
 
       // Validate job exists
-      const jobs = await getArray<Job>(storage, JOBS)
-      const job = jobs.find(j => j.jobId === jobId)
+      const job = await jobRepo.getById(jobId)
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
@@ -61,8 +54,7 @@ export function createPromptsRouter(storage: StorageProvider) {
       }
 
       // Auto-increment version number
-      const existingPrompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
-      const maxVersion = existingPrompts.reduce((max, p) => Math.max(max, p.versionNumber), 0)
+      const maxVersion = await promptRepo.getMaxVersion(jobId)
 
       const prompt: ScoringPrompt = {
         promptId: randomUUID(),
@@ -77,7 +69,7 @@ export function createPromptsRouter(storage: StorageProvider) {
         generationMetadata: generationMetadata || undefined,
       }
 
-      await pushToArray(storage, promptsKey(jobId), prompt)
+      await promptRepo.create(prompt)
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -97,7 +89,7 @@ export function createPromptsRouter(storage: StorageProvider) {
   router.get('/:jobId/prompts/:promptId', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId, promptId } = req.params
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
+      const prompts = await promptRepo.getByJobId(jobId)
       const prompt = prompts.find(p => p.promptId === promptId)
       if (!prompt) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
@@ -118,14 +110,13 @@ export function createPromptsRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: 'promptText is required' })
       }
 
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
-      const original = prompts.find(p => p.promptId === promptId)
+      const original = await promptRepo.getById(promptId)
       if (!original) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
       }
 
       // Create new revision with incremented version (FR-035)
-      const maxVersion = prompts.reduce((max, p) => Math.max(max, p.versionNumber), 0)
+      const maxVersion = await promptRepo.getMaxVersion(jobId)
       const newPrompt: ScoringPrompt = {
         promptId: randomUUID(),
         jobId,
@@ -138,7 +129,7 @@ export function createPromptsRouter(storage: StorageProvider) {
         source: original.source,
       }
 
-      await pushToArray(storage, promptsKey(jobId), newPrompt)
+      await promptRepo.create(newPrompt)
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -158,20 +149,20 @@ export function createPromptsRouter(storage: StorageProvider) {
   router.post('/:jobId/prompts/:promptId/activate', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId, promptId } = req.params
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
-      const targetIdx = prompts.findIndex(p => p.promptId === promptId)
+      const prompts = await promptRepo.getByJobId(jobId)
+      const target = prompts.find(p => p.promptId === promptId)
 
-      if (targetIdx === -1) {
+      if (!target) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
       }
 
       // Deactivate any currently active prompt and activate the target (FR-036)
-      const updated = prompts.map(p => {
-        if (p.promptId === promptId) {
-          return { ...p, status: 'active' as const, lastModifiedAt: new Date().toISOString() }
-        }
-        if (p.status === 'active') {
-          // Record deactivation audit
+      await promptRepo.deactivateAllForJob(jobId)
+      await promptRepo.updateStatus(promptId, 'active')
+
+      // Audit deactivated prompts
+      for (const p of prompts) {
+        if (p.status === 'active' && p.promptId !== promptId) {
           audit.appendEvent(
             req.user?.username || 'unknown',
             'prompt.deactivated',
@@ -179,12 +170,8 @@ export function createPromptsRouter(storage: StorageProvider) {
             p.promptId,
             { jobId, replacedBy: promptId }
           )
-          return { ...p, status: 'inactive' as const, lastModifiedAt: new Date().toISOString() }
         }
-        return p
-      })
-
-      await setArray(storage, promptsKey(jobId), updated)
+      }
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -194,7 +181,7 @@ export function createPromptsRouter(storage: StorageProvider) {
         { jobId }
       )
 
-      const activated = updated.find(p => p.promptId === promptId)!
+      const activated = await promptRepo.getById(promptId)
       res.json(activated)
     } catch (err) {
       next(err)
@@ -214,19 +201,17 @@ export function createPromptsRouter(storage: StorageProvider) {
         })
       }
 
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
+      const prompts = await promptRepo.getByJobId(jobId)
       const idx = prompts.findIndex(p => p.promptId === promptId)
       if (idx === -1) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
       }
 
-      prompts[idx] = {
-        ...prompts[idx],
-        rating: rating !== undefined ? Math.round(rating) : prompts[idx].rating,
-        comments: comments !== undefined ? comments : prompts[idx].comments,
-        lastModifiedAt: new Date().toISOString(),
-      }
-      await setArray(storage, promptsKey(jobId), prompts)
+      await promptRepo.updateRating(
+        promptId,
+        rating !== undefined ? Math.round(rating) : 0,
+        comments !== undefined ? comments : undefined
+      )
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -236,7 +221,8 @@ export function createPromptsRouter(storage: StorageProvider) {
         { jobId, rating, comments }
       )
 
-      res.json(prompts[idx])
+      const updated = await promptRepo.getById(promptId)
+      res.json(updated)
     } catch (err) {
       next(err)
     }
@@ -247,8 +233,7 @@ export function createPromptsRouter(storage: StorageProvider) {
     try {
       const { jobId } = req.params
 
-      const jobs = await getArray<Job>(storage, JOBS)
-      const job = jobs.find(j => j.jobId === jobId)
+      const job = await jobRepo.getById(jobId)
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
@@ -289,7 +274,9 @@ The prompt should:
 4. Produce scores from 0-100 for each category
 5. Provide evidence citations from the candidate's documents
 6. Include improvement recommendations
-Return ONLY the scoring prompt text, ready for use.`
+7. Include all eligibility gate details regardless if they are met or not.
+Return ONLY the scoring prompt text, ready for use.
+ At the end of the prompt, include the instruction to return all the output as valid json.`
 
       let promptText: string
       let generationMetadata: Record<string, any> = {}
@@ -297,17 +284,27 @@ Return ONLY the scoring prompt text, ready for use.`
       if (AWR_SEQ_API_ENDPOINT) {
         try {
           const awrHeaders = await getAwrAuthHeaders(req.user ? { username: req.user.username, role: req.user.role } : undefined)
+
+          // /assess/passthrough expects multipart FormData with promptFile + specFile
+          const combinedPrompt = `${systemPrompt}\n\n${JSON.stringify(rubricContext, null, 2)}`
+          const formData = new FormData()
+          formData.append('promptFile', new Blob([combinedPrompt], { type: 'text/plain' }), 'generate-prompt.md')
+          formData.append('specFile', new Blob([JSON.stringify(rubricContext, null, 2)], { type: 'text/plain' }), 'context.md')
+
           const response = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...awrHeaders },
-            body: JSON.stringify({
-              systemPrompt,
-              userPrompt: JSON.stringify(rubricContext, null, 2),
-            }),
+            headers: awrHeaders,
+            body: formData,
           })
-          const result = await response.json() as any
-          promptText = result.response || result.content || JSON.stringify(result)
-          generationMetadata = { source: 'AWR_SEQ_API', timestamp: new Date().toISOString(), raw: result }
+          if (!response.ok) {
+            const errorText = await response.text()
+            throw new Error(`Passthrough API error (${response.status}): ${errorText}`)
+          }
+
+          // Passthrough returns the raw output text directly
+          const responseText = await response.text()
+          promptText = responseText
+          generationMetadata = { source: 'AWR_SEQ_API', timestamp: new Date().toISOString() }
         } catch (apiErr) {
           // Fallback to locally generated prompt
           promptText = generateFallbackPrompt(rubricContext)
@@ -338,8 +335,7 @@ Return ONLY the scoring prompt text, ready for use.`
       const { jobId, promptId } = req.params
 
       // Validate prompt exists
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
-      const prompt = prompts.find(p => p.promptId === promptId)
+      const prompt = await promptRepo.getById(promptId)
       if (!prompt) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
       }
@@ -353,7 +349,7 @@ Return ONLY the scoring prompt text, ready for use.`
       const allowedTypes = [
         'application/pdf',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'text/markdown', 'text/plain', 'image/jpeg'
+        'text/markdown', 'text/plain', 'image/jpeg', 'image/png', 'image/webp', 'image/gif'
       ]
       const maxSize = 50 * 1024 * 1024 // 50 MB
 
@@ -374,6 +370,7 @@ Return ONLY the scoring prompt text, ready for use.`
           sizeBytes: file.sizeBytes,
           sha256,
           uploadedAt: new Date().toISOString(),
+          rawContent: file.content,
         }
 
         const app: Application = {
@@ -387,9 +384,17 @@ Return ONLY the scoring prompt text, ready for use.`
           testRunId,
         }
 
-        await pushToArray(storage, jobApplicationsKey(jobId), app)
-        await pushToArray(storage, appDocumentsKey(applicationId), doc)
+        await applicationRepo.create(app)
+        await applicationRepo.createDocument(doc)
+        await applicationRepo.storeBlob(doc.documentId, file.content)
         applicationIds.push(applicationId)
+      }
+
+      if (applicationIds.length === 0) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: 'No supported test files were provided',
+        })
       }
 
       const testRun: PromptTestRun = {
@@ -401,7 +406,7 @@ Return ONLY the scoring prompt text, ready for use.`
         createdAt: new Date().toISOString(),
       }
 
-      await storage.set(promptTestRunKey(testRunId), JSON.stringify(testRun))
+      await promptRepo.createTestRun(testRun)
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -419,13 +424,10 @@ Return ONLY the scoring prompt text, ready for use.`
       setImmediate(async () => {
         try {
           // Update status to scoring
-          testRun.status = 'scoring'
-          await storage.set(promptTestRunKey(testRunId), JSON.stringify(testRun))
+          await promptRepo.updateTestRun(testRunId, { status: 'scoring' })
 
-          const pipeline = createPipelineOrchestrator(storage)
-          const results = await Promise.allSettled(
-            applicationIds.map(appId => pipeline.processApplication(appId, jobId, promptId))
-          )
+          const pipeline = createPipelineOrchestrator()
+          const results = await pipeline.processApplicationsBatch(applicationIds, jobId, promptId)
 
           const failures = results.filter(r => r.status === 'rejected')
           if (failures.length > 0) {
@@ -433,8 +435,7 @@ Return ONLY the scoring prompt text, ready for use.`
           }
 
           // Update status to pending_review
-          testRun.status = 'pending_review'
-          await storage.set(promptTestRunKey(testRunId), JSON.stringify(testRun))
+          await promptRepo.updateTestRun(testRunId, { status: 'pending_review', completedAt: new Date().toISOString() })
         } catch (err) {
           console.error(`Test-run ${testRunId} auto-trigger scoring failed:`, err)
         }
@@ -448,27 +449,13 @@ Return ONLY the scoring prompt text, ready for use.`
   router.get('/:jobId/prompts/:promptId/test-runs', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId, promptId } = req.params
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
+      const prompts = await promptRepo.getByJobId(jobId)
       const prompt = prompts.find(p => p.promptId === promptId)
       if (!prompt) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
       }
 
-      // Collect test runs for this prompt by scanning all applications with testRunId
-      const apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-      const testApps = apps.filter(a => a.testRunId)
-      const testRunIds = [...new Set(testApps.map(a => a.testRunId!))]
-
-      const testRuns: PromptTestRun[] = []
-      for (const trId of testRunIds) {
-        const trJson = await storage.get<string>(promptTestRunKey(trId))
-        if (trJson) {
-          const tr: PromptTestRun = typeof trJson === 'string' ? JSON.parse(trJson) : trJson
-          if (tr.promptId === promptId) {
-            testRuns.push(tr)
-          }
-        }
-      }
+      const testRuns = await promptRepo.getTestRunsByPrompt(promptId)
 
       res.json(testRuns)
     } catch (err) {
@@ -480,21 +467,92 @@ Return ONLY the scoring prompt text, ready for use.`
   router.get('/:jobId/prompts/:promptId/test-runs/:testRunId', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId, promptId, testRunId } = req.params
-      const trJson = await storage.get<string>(promptTestRunKey(testRunId))
-      if (!trJson) {
-        return res.status(404).json({ error: 'Not Found', message: 'Test run not found' })
-      }
-
-      const testRun: PromptTestRun = typeof trJson === 'string' ? JSON.parse(trJson) : trJson
-      if (testRun.promptId !== promptId || testRun.jobId !== jobId) {
+      const testRun = await promptRepo.getTestRun(testRunId)
+      if (!testRun || testRun.promptId !== promptId || testRun.jobId !== jobId) {
         return res.status(404).json({ error: 'Not Found', message: 'Test run not found for this prompt' })
       }
 
-      // Enrich with application details
-      const apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-      const testApps = apps.filter(a => a.testRunId === testRunId)
+      // Enrich with application details and scoring runs
+      const testApps = await applicationRepo.getByTestRunId(testRunId)
+      const applications = await Promise.all(
+        testApps.map(async application => {
+          const scoringRuns = await applicationRepo.getScoringRuns(application.applicationId)
+          const aggregatedResult = await applicationRepo.getAggregatedResult(application.applicationId)
+          const manualReview = await applicationRepo.getManualReview(application.applicationId)
+          return {
+            application,
+            scoringRuns,
+            aggregatedResult,
+            manualReview,
+          }
+        })
+      )
 
-      res.json({ ...testRun, applications: testApps })
+      res.json({ ...testRun, applications })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/jobs/:jobId/prompts/:promptId/test-runs/:testRunId/rescore - re-score all applications in a test run
+  router.post('/:jobId/prompts/:promptId/test-runs/:testRunId/rescore', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId, promptId, testRunId } = req.params
+      const testRun = await promptRepo.getTestRun(testRunId)
+      if (!testRun || testRun.promptId !== promptId || testRun.jobId !== jobId) {
+        return res.status(404).json({ error: 'Not Found', message: 'Test run not found for this prompt' })
+      }
+
+      // Only allow re-scoring for pending_review or scoring_failed runs
+      if (!['pending_review', 'scoring_failed', 'scoring'].includes(testRun.status)) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: `Cannot re-score a test run with status "${testRun.status}". Only pending_review or scoring_failed runs can be re-scored.`
+        })
+      }
+
+      // Get all applications belonging to this test run
+      const testApps = await applicationRepo.getByTestRunId(testRunId)
+      const applicationIds = testApps.map(a => a.applicationId)
+
+      if (applicationIds.length === 0) {
+        return res.status(400).json({ error: 'Validation Error', message: 'No applications found for this test run' })
+      }
+
+      // Clear existing scoring data and reset application statuses
+      for (const appId of applicationIds) {
+        await applicationRepo.resetForRescore(appId)
+      }
+
+      // Update test run status to scoring
+      await promptRepo.updateTestRun(testRunId, { status: 'scoring', completedAt: undefined })
+
+      await audit.appendEvent(
+        req.user?.username || 'unknown',
+        'prompt.test-run.rescore',
+        'prompt_test_run',
+        testRunId,
+        { jobId, promptId, applicationCount: applicationIds.length }
+      )
+
+      res.json({ message: 'Re-scoring started', applicationCount: applicationIds.length })
+
+      // Fire-and-forget: re-trigger scoring pipeline
+      setImmediate(async () => {
+        try {
+          const pipeline = createPipelineOrchestrator()
+          const results = await pipeline.processApplicationsBatch(applicationIds, jobId, promptId)
+
+          const failures = results.filter(r => r.status === 'rejected')
+          if (failures.length > 0) {
+            console.error(`Re-score test-run ${testRunId}: ${failures.length}/${applicationIds.length} applications failed`)
+          }
+
+          await promptRepo.updateTestRun(testRunId, { status: 'pending_review', completedAt: new Date().toISOString() })
+        } catch (err) {
+          console.error(`Re-score test-run ${testRunId} failed:`, err)
+        }
+      })
     } catch (err) {
       next(err)
     }
@@ -504,16 +562,13 @@ Return ONLY the scoring prompt text, ready for use.`
   router.post('/:jobId/prompts/:promptId/test-runs/:testRunId/approve', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId, promptId, testRunId } = req.params
-      const trJson = await storage.get<string>(promptTestRunKey(testRunId))
-      if (!trJson) {
+      const testRun = await promptRepo.getTestRun(testRunId)
+      if (!testRun) {
         return res.status(404).json({ error: 'Not Found', message: 'Test run not found' })
       }
 
-      const testRun: PromptTestRun = typeof trJson === 'string' ? JSON.parse(trJson) : trJson
-
       // Verify all test applications completed manual review without score changes (FR-039)
-      const apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-      const testApps = apps.filter(a => a.testRunId === testRunId)
+      const testApps = await applicationRepo.getByTestRunId(testRunId)
 
       const allCompleted = testApps.every(a =>
         a.status === 'Completed' || a.status === 'NeedsManualReview'
@@ -526,15 +581,12 @@ Return ONLY the scoring prompt text, ready for use.`
         })
       }
 
-      const updatedTestRun: PromptTestRun = {
-        ...testRun,
+      await promptRepo.updateTestRun(testRunId, {
         status: 'approved',
         completedAt: new Date().toISOString(),
         reviewedBy: req.user?.userId,
         reviewNotes: req.body.reviewNotes,
-      }
-
-      await storage.set(promptTestRunKey(testRunId), JSON.stringify(updatedTestRun))
+      })
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -544,6 +596,7 @@ Return ONLY the scoring prompt text, ready for use.`
         { jobId, promptId }
       )
 
+      const updatedTestRun = await promptRepo.getTestRun(testRunId)
       res.json(updatedTestRun)
     } catch (err) {
       next(err)
@@ -555,28 +608,14 @@ Return ONLY the scoring prompt text, ready for use.`
     try {
       const { jobId, promptId } = req.params
 
-      const prompts = await getArray<ScoringPrompt>(storage, promptsKey(jobId))
-      const targetIdx = prompts.findIndex(p => p.promptId === promptId)
-      if (targetIdx === -1) {
+      const prompt = await promptRepo.getById(promptId)
+      if (!prompt) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
       }
 
       // Verify a PromptTestRun for this prompt has status=approved (FR-040)
-      const apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-      const testApps = apps.filter(a => a.testRunId)
-      const testRunIds = [...new Set(testApps.map(a => a.testRunId!))]
-
-      let hasApprovedTestRun = false
-      for (const trId of testRunIds) {
-        const trJson = await storage.get<string>(promptTestRunKey(trId))
-        if (trJson) {
-          const tr: PromptTestRun = typeof trJson === 'string' ? JSON.parse(trJson) : trJson
-          if (tr.promptId === promptId && tr.status === 'approved') {
-            hasApprovedTestRun = true
-            break
-          }
-        }
-      }
+      const testRuns = await promptRepo.getTestRunsByPrompt(promptId)
+      const hasApprovedTestRun = testRuns.some(tr => tr.status === 'approved')
 
       if (!hasApprovedTestRun) {
         return res.status(400).json({
@@ -586,17 +625,8 @@ Return ONLY the scoring prompt text, ready for use.`
       }
 
       // Set prompt to production-approved; deactivate previous production-approved (FR-036)
-      const updated = prompts.map(p => {
-        if (p.promptId === promptId) {
-          return { ...p, status: 'production-approved' as const, lastModifiedAt: new Date().toISOString() }
-        }
-        if (p.status === 'production-approved') {
-          return { ...p, status: 'inactive' as const, lastModifiedAt: new Date().toISOString() }
-        }
-        return p
-      })
-
-      await setArray(storage, promptsKey(jobId), updated)
+      await promptRepo.deactivateAllForJob(jobId)
+      await promptRepo.updateStatus(promptId, 'production-approved')
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -606,7 +636,7 @@ Return ONLY the scoring prompt text, ready for use.`
         { jobId }
       )
 
-      const approved = updated.find(p => p.promptId === promptId)!
+      const approved = await promptRepo.getById(promptId)
       res.json(approved)
     } catch (err) {
       next(err)

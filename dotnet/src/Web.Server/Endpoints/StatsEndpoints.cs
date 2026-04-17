@@ -14,15 +14,15 @@ public static class StatsEndpoints
         {
             var stats = new
             {
-                Queued = await db.Applications.CountAsync(a => a.Status == "Queued"),
-                Extracting = await db.Applications.CountAsync(a => a.Status == "Extracting"),
-                Scoring = await db.Applications.CountAsync(a => a.Status == "Scoring"),
-                Aggregating = await db.Applications.CountAsync(a => a.Status == "Aggregating"),
-                Completed = await db.Applications.CountAsync(a => a.Status == "Completed"),
-                NeedsManualReview = await db.Applications.CountAsync(a => a.Status == "NeedsManualReview"),
-                Failed = await db.Applications.CountAsync(a => a.Status == "Failed"),
+                Queued = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Queued"),
+                Extracting = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Extracting"),
+                Scoring = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Scoring"),
+                Aggregating = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Aggregating"),
+                Completed = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Completed"),
+                NeedsManualReview = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "NeedsManualReview"),
+                Failed = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Failed"),
                 TotalJobs = await db.Jobs.CountAsync(),
-                TotalApplications = await db.Applications.CountAsync()
+                TotalApplications = await db.Applications.CountAsync(a => a.TestRunId == null)
             };
             return Results.Ok(stats);
         });

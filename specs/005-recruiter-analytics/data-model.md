@@ -7,7 +7,7 @@
 
 ### RecruiterAnalytics (read-only projection)
 
-A computed view representing performance metrics for a single recruiter. Not persisted — aggregated at query time from existing Job and Application entities.
+A computed view representing performance metrics for a single recruiter. Not persisted — aggregated at query time from existing Job and Application entities. All application-derived metrics MUST exclude test scoring applications (`testRunId != null`) to reflect production-only statistics (FR-038).
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|

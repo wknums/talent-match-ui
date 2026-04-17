@@ -37,8 +37,7 @@ function App() {
   useEffect(() => {
     async function init() {
       await initializeAuth()
-      // Try API client first, fall back to direct auth
-      const user = await api.getCurrentUser() || await authGetCurrentUser()
+      const user = await authGetCurrentUser()
       setCurrentUser(user)
       setIsAuthInitialized(true)
     }
@@ -46,31 +45,17 @@ function App() {
   }, [])
 
   const handleLogin = async (username: string, password: string): Promise<boolean> => {
-    try {
-      const user = await api.login(username, password)
-      if (user) {
-        setCurrentUser(user)
-        toast.success(`Welcome back, ${user.fullName}!`)
-        return true
-      }
-    } catch {
-      // Fall back to auth.ts login
-      const user = await authLogin(username, password)
-      if (user) {
-        setCurrentUser(user)
-        toast.success(`Welcome back, ${user.fullName}!`)
-        return true
-      }
+    const user = await authLogin(username, password)
+    if (user) {
+      setCurrentUser(user)
+      toast.success(`Welcome back, ${user.fullName}!`)
+      return true
     }
     return false
   }
 
   const handleLogout = async () => {
-    try {
-      await api.logout()
-    } catch {
-      await authLogout()
-    }
+    await authLogout()
     setCurrentUser(null)
     setCurrentView('dashboard')
     toast.success('Signed out successfully')
@@ -155,6 +140,7 @@ function App() {
   const handleCloseCreateJobDialog = () => {
     setCreateJobDialogOpen(false)
     setEditingJob(null)
+    setRefreshKey((prev) => prev + 1)
   }
 
   return (

@@ -1,7 +1,9 @@
 @using TalentMatch.Web.Client.Services
 @using System.Text.Json
 @using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.JSInterop
 @inject ApiClient Api
+@inject IJSRuntime JS
 
 @if (Visible)
 {
@@ -232,7 +234,8 @@
     private Tab activeTab = Tab.Upload;
 
     // Drag & resize state
-    private int posX = 200, posY = 50, width = 750, height = 600;
+    private int posX, posY, width = 750, height = 600;
+    private bool _sizedToViewport;
     private const int MinWidth = 500, MinHeight = 400;
     private bool isDragging, isResizing;
     private double dragStartX, dragStartY;
@@ -256,6 +259,11 @@
 
     protected override void OnParametersSet()
     {
+        if (Visible && !_sizedToViewport)
+        {
+            // Will be properly sized in OnAfterRenderAsync via JS interop
+        }
+
         if (IsEditMode && EditingConfig != null && !_populated)
         {
             // Populate config fields
@@ -310,6 +318,21 @@
 
             _populated = true;
             activeTab = Tab.Manual;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Visible && !_sizedToViewport)
+        {
+            _sizedToViewport = true;
+            var vw = await JS.InvokeAsync<int>("eval", "window.innerWidth");
+            var vh = await JS.InvokeAsync<int>("eval", "window.innerHeight");
+            width = (int)(vw * 0.8);
+            height = (int)(vh * 0.8);
+            posX = (vw - width) / 2;
+            posY = (vh - height) / 2;
+            StateHasChanged();
         }
     }
 
@@ -590,6 +613,7 @@
         activeTab = Tab.Upload;
         validationErrors = new();
         isSaving = false;
+        _sizedToViewport = false;
     }
 
     private async Task HandleCancel()

@@ -2,7 +2,7 @@
 
 **Branch**: `002-edit-user-departments` | **Date**: 2026-03-10 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/002-edit-user-departments/spec.md`
-**Constitution**: v1.1.0
+**Constitution**: v1.1.1
 
 ---
 
@@ -13,28 +13,24 @@ multi-department assignment via a tag-style input. Departments are stored as a c
 string in the existing `User.Department` field — no schema migration needed.
 
 **Scope**: Both stacks.
-- **Stack B** (.NET Blazor WASM / Clean Architecture) — **COMPLETED**
-- **Stack A** (Node.js/Express + React/TypeScript) — implementation pending
+- **Stack A** (Node.js/Express + React/TypeScript) — implemented
+- **Stack B** (.NET Blazor WASM / Clean Architecture) — implemented; parity re-review pending
 
-**Approach (Stack B — completed)**:
-- Backend: `UpdateUserCommand` + `UpdateUserValidator` → `PUT /api/users/{userId}` endpoint
-- Frontend: `UpdateUserAsync` in `ApiClient` → Edit button + modal form in `UserManagement.razor`
-- Department UI: tag-style input (type + Enter to add, click × to remove)
-- Self-role-change prevention: admins can edit their own profile but not their own role
+**Approach (Stack B — current state)**:
+- Backend: `UpdateUserCommand` + `UpdateUserValidator` exist in the Application layer
+- Frontend client: `UpdateUserAsync` exists in `ApiClient` and now surfaces problem-details style validation errors cleanly
+- Web/API surface: `UsersEndpoints.cs` exposes `PUT /api/users/{userId}`, and `UserManagement.razor` now includes the edit-user modal, pre-populated fields, and multi-department tag input
+- Self-role-change prevention logic remains enforced in `UpdateUserCommand` and is now reachable through the Blazor UI and API surface
 
-**Approach (Stack A)**:
-- Backend: Add `PUT /:userId` route to `server/routes/users.ts` with `requireRole('admin')` middleware
-  — load users from KV store (`AUTH_USERS`), find by userId, validate email uniqueness, apply changes,
-  write back to KV store. Self-role-change prevention mirrors Stack B.
-- Frontend: Add `updateUser()` to `src/lib/api-real.ts` → call `PUT /api/users/{userId}`
-- Frontend: Add `updateUser()` proxy to `src/lib/api.ts` (mock/real bridge)
-- Frontend: Add edit button + inline edit form (or modal) to `src/components/UserManagementDialog.tsx`
-  — tag-style multi-department input using existing `Badge` + `Input` components
-- Types: `User.department` in `src/types/index.ts` is already `string` — compatible with comma-separated format
+**Approach (Stack A — implemented)**:
+- Backend: `server/routes/users.ts` exposes `PUT /:userId` with admin RBAC, email uniqueness validation, and self-role-change protection
+- Frontend: `updateUser()` exists in `src/lib/api-real.ts` and is exposed through `src/lib/api.ts`
+- Frontend: `src/components/UserManagementDialog.tsx` includes edit controls and multi-department tag input
+- Types: `User.department` in `src/types/index.ts` remains compatible with comma-separated storage
 
 ## Technical Context
 
-### Stack B (.NET — completed)
+### Stack B (.NET — implemented; parity re-review pending)
 **Language/Version**: C# / .NET 9+, Blazor WebAssembly  
 **Primary Dependencies**: MediatR (CQRS), FluentValidation, Entity Framework Core  
 **Storage**: SQLite (local dev via EF Core) — existing `User` table, no migration needed  
@@ -43,9 +39,9 @@ string in the existing `User.Department` field — no schema migration needed.
 **Project Type**: Full-stack web application (Blazor WASM + ASP.NET Core minimal API)  
 **Performance Goals**: Edit save completes in <1s  
 **Constraints**: Department field is `string` (comma-separated); department names must not contain commas  
-**Scale/Scope**: Single feature — 1 new command, 1 new validator, 1 new endpoint, 1 updated API client method, 1 updated Razor component
+**Scale/Scope**: Single feature — existing command/validator foundation plus completed endpoint, Razor UI, client error handling, and focused application/web test coverage
 
-### Stack A (Node.js/React — pending)
+### Stack A (Node.js/React — implemented)
 **Language/Version**: TypeScript / Node.js 20+, React 18  
 **Primary Dependencies**: Express (routing), React (UI), shadcn/ui components, sonner (toasts)  
 **Storage**: KV store (key-value JSON arrays in Azure SQL or local) — users stored as JSON array under `AUTH_USERS` key  
@@ -54,7 +50,7 @@ string in the existing `User.Department` field — no schema migration needed.
 **Project Type**: Full-stack web application (Express API + React SPA)  
 **Performance Goals**: Edit save completes in <1s  
 **Constraints**: Same comma-separated department format; KV store requires read-modify-write pattern (`getArray` → mutate → `setArray`); `requireRole('admin')` middleware for authz  
-**Scale/Scope**: 1 new route handler in `users.ts`, 1 new API method in `api-real.ts`, 1 proxy method in `api.ts`, 1 updated React component (`UserManagementDialog.tsx`)
+**Scale/Scope**: Implemented with 1 route handler in `users.ts`, 1 API method in `api-real.ts`, 1 proxy method in `api.ts`, and 1 updated React component (`UserManagementDialog.tsx`)
 
 ---
 
@@ -89,24 +85,24 @@ specs/002-edit-user-departments/
 └── tasks.md             # Phase 2 output (created by /speckit.tasks)
 ```
 
-### Source Code — Stack B (files to create or modify) — COMPLETED
+### Source Code — Stack B (current state)
 
 ```text
 dotnet/src/
 ├── Application/Users/Commands/
-│   ├── UpdateUserCommand.cs         # NEW — command + handler
-│   └── UpdateUserValidator.cs       # NEW — FluentValidation rules
+│   ├── UpdateUserCommand.cs         # EXISTS — command + handler
+│   └── UpdateUserValidator.cs       # EXISTS — FluentValidation rules
 ├── Web.Server/Endpoints/
-│   └── UsersEndpoints.cs            # MODIFY — add PUT /{userId} route + UpdateUserRequest record
+│   └── UsersEndpoints.cs            # IMPLEMENTED — PUT /{userId} route + UpdateUserRequest record
 └── Web.Client/
     ├── Services/
-    │   └── ApiClient.cs             # MODIFY — add UpdateUserAsync method
+    │   └── ApiClient.cs             # IMPLEMENTED — UpdateUserAsync + improved error extraction for validation/problem details
     └── Components/
-        └── UserManagement.razor     # MODIFY — add Edit button, edit modal, tag-style department input
+        └── UserManagement.razor     # IMPLEMENTED — Edit button, edit modal, tag-style department input
 
 dotnet/tests/
-└── Application.Tests/Users/
-    └── UpdateUserCommandTests.cs    # NEW — unit tests for update handler + validator
+├── Application.Tests/               # IMPLEMENTED — UpdateUserCommand coverage
+└── Web.Tests/                       # IMPLEMENTED — component + integration coverage for edit-user flow
 ```
 
 ### Source Code — Stack A (files to modify)
@@ -131,5 +127,4 @@ tests/
 ```
 
 **Structure Decision**: Follows the existing Clean Architecture layout (Stack B) and existing
-Express route + React component patterns (Stack A). All new files go into the same directories
-as their Create/Delete counterparts. No new projects or layers required.
+Express route + React component patterns (Stack A). Both stacks now implement the planned surface; parity still requires checklist re-review rather than assumption. No new projects or layers required.

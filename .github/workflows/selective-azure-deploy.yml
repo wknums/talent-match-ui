@@ -1,0 +1,429 @@
+# =============================================================================
+# Selective Azure Deployment Workflow
+# =============================================================================
+# Deploys shared infrastructure, Stack A, Stack B, or both based on changed
+# paths or manual target selection.
+
+name: Selective Azure Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'server/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'tsconfig*.json'
+      - 'tailwind.config.js'
+      - 'dotnet/**'
+      - 'infra/**'
+      - '.github/workflows/selective-azure-deploy.yml'
+      - '.env_*.example'
+
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+        default: development
+      target:
+        description: 'Deployment target'
+        required: true
+        type: choice
+        options:
+          - shared-only
+          - stack-a
+          - stack-b
+          - both
+        default: both
+      action:
+        description: 'Terraform action'
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+        default: apply
+
+permissions:
+  id-token: write
+  contents: read
+
+# Prevent concurrent deployments to the same environment
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production') || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  # =========================================================================
+  # Job 1: Resolve deployment targets
+  # =========================================================================
+  resolve-targets:
+    name: Resolve Targets
+    runs-on: ubuntu-latest
+    outputs:
+      gh_environment: ${{ steps.resolve.outputs.gh_environment }}
+      tf_environment: ${{ steps.resolve.outputs.tf_environment }}
+      env_file: ${{ steps.resolve.outputs.env_file }}
+      deploy_shared: ${{ steps.resolve.outputs.deploy_shared }}
+      deploy_stack_a: ${{ steps.resolve.outputs.deploy_stack_a }}
+      deploy_stack_b: ${{ steps.resolve.outputs.deploy_stack_b }}
+      package_stack_a: ${{ steps.resolve.outputs.package_stack_a }}
+      package_stack_b: ${{ steps.resolve.outputs.package_stack_b }}
+      action: ${{ steps.set-action.outputs.action }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: changes
+        if: github.event_name == 'push'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            shared:
+              - 'infra/**'
+              - '.github/workflows/**'
+              - '.env_*.example'
+            stack_a:
+              - 'src/**'
+              - 'server/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'vite.config.ts'
+              - 'tsconfig*.json'
+              - 'tailwind.config.js'
+            stack_b:
+              - 'dotnet/**'
+
+      - name: Resolve targets
+        id: resolve
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
+          CHANGED_SHARED: ${{ steps.changes.outputs.shared || 'false' }}
+          CHANGED_STACK_A: ${{ steps.changes.outputs.stack_a || 'false' }}
+          CHANGED_STACK_B: ${{ steps.changes.outputs.stack_b || 'false' }}
+        run: |
+          chmod +x infra/scripts/resolve-targets.sh
+          bash infra/scripts/resolve-targets.sh
+
+      - name: Set action
+        id: set-action
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "action=${{ github.event.inputs.action }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "action=apply" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log resolved targets
+        run: |
+          echo "### Deployment Targets" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Setting | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Environment | ${{ steps.resolve.outputs.gh_environment }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| TF Environment | ${{ steps.resolve.outputs.tf_environment }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy Shared | ${{ steps.resolve.outputs.deploy_shared }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy Stack A | ${{ steps.resolve.outputs.deploy_stack_a }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Deploy Stack B | ${{ steps.resolve.outputs.deploy_stack_b }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Action | ${{ steps.set-action.outputs.action }} |" >> "$GITHUB_STEP_SUMMARY"
+
+  # =========================================================================
+  # Job 2: Plan/Apply shared infrastructure
+  # =========================================================================
+  plan-or-apply-shared:
+    name: Shared Infrastructure
+    needs: resolve-targets
+    if: needs.resolve-targets.outputs.deploy_shared == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-targets.outputs.gh_environment }}
+
+    outputs:
+      app_service_plan_id: ${{ steps.outputs.outputs.app_service_plan_id }}
+      sql_server_fqdn: ${{ steps.outputs.outputs.sql_server_fqdn }}
+      sql_database_name: ${{ steps.outputs.outputs.sql_database_name }}
+      key_vault_uri: ${{ steps.outputs.outputs.key_vault_uri }}
+      apim_gateway_url: ${{ steps.outputs.outputs.apim_gateway_url }}
+      identity_stack_a_id: ${{ steps.outputs.outputs.identity_stack_a_id }}
+      identity_stack_b_id: ${{ steps.outputs.outputs.identity_stack_b_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Deploy shared infrastructure
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          chmod +x infra/scripts/deploy.sh infra/scripts/lib/common.sh
+          cp ${{ needs.resolve-targets.outputs.env_file }}.example ${{ needs.resolve-targets.outputs.env_file }} 2>/dev/null || true
+          bash infra/scripts/deploy.sh \
+            "${{ needs.resolve-targets.outputs.env_file }}" \
+            "${{ needs.resolve-targets.outputs.tf_environment }}" \
+            "${{ needs.resolve-targets.outputs.action }}" \
+            shared-only
+
+      - name: Capture shared outputs
+        id: outputs
+        if: needs.resolve-targets.outputs.action == 'apply'
+        working-directory: infra/terraform/live/shared
+        run: |
+          # Capture outputs and mask sensitive values
+          ASP_ID=$(terraform output -raw app_service_plan_id)
+          SQL_FQDN=$(terraform output -raw sql_server_fqdn)
+          SQL_DB=$(terraform output -raw sql_database_name)
+          KV_URI=$(terraform output -raw key_vault_uri)
+          APIM_URL=$(terraform output -raw apim_gateway_url)
+          ID_A=$(terraform output -raw identity_stack_a_id)
+          ID_B=$(terraform output -raw identity_stack_b_id)
+
+          # Mask resource IDs to prevent leaking subscription details
+          echo "::add-mask::$ASP_ID"
+          echo "::add-mask::$ID_A"
+          echo "::add-mask::$ID_B"
+
+          echo "app_service_plan_id=$ASP_ID" >> "$GITHUB_OUTPUT"
+          echo "sql_server_fqdn=$SQL_FQDN" >> "$GITHUB_OUTPUT"
+          echo "sql_database_name=$SQL_DB" >> "$GITHUB_OUTPUT"
+          echo "key_vault_uri=$KV_URI" >> "$GITHUB_OUTPUT"
+          echo "apim_gateway_url=$APIM_URL" >> "$GITHUB_OUTPUT"
+          echo "identity_stack_a_id=$ID_A" >> "$GITHUB_OUTPUT"
+          echo "identity_stack_b_id=$ID_B" >> "$GITHUB_OUTPUT"
+
+  # =========================================================================
+  # Job 3: Package Stack A
+  # =========================================================================
+  package-stack-a:
+    name: Package Stack A
+    needs: resolve-targets
+    if: needs.resolve-targets.outputs.package_stack_a == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Package Stack A
+        run: |
+          chmod +x infra/scripts/package-stack-a.sh infra/scripts/lib/common.sh
+          bash infra/scripts/package-stack-a.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-a-artifact
+          path: artifacts/stack-a.zip
+          retention-days: 1
+
+  # =========================================================================
+  # Job 4: Package Stack B
+  # =========================================================================
+  package-stack-b:
+    name: Package Stack B
+    needs: resolve-targets
+    if: needs.resolve-targets.outputs.package_stack_b == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Package Stack B
+        run: |
+          chmod +x infra/scripts/package-stack-b.sh infra/scripts/lib/common.sh
+          bash infra/scripts/package-stack-b.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-b-artifact
+          path: artifacts/stack-b.zip
+          retention-days: 1
+
+  # =========================================================================
+  # Job 5: Deploy Stack A
+  # =========================================================================
+  deploy-stack-a:
+    name: Deploy Stack A
+    needs:
+      - resolve-targets
+      - plan-or-apply-shared
+      - package-stack-a
+    if: |
+      always() &&
+      needs.resolve-targets.outputs.deploy_stack_a == 'true' &&
+      (needs.plan-or-apply-shared.result == 'success' || needs.plan-or-apply-shared.result == 'skipped') &&
+      needs.package-stack-a.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-targets.outputs.gh_environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Download Stack A artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: stack-a-artifact
+          path: artifacts/
+
+      - name: Deploy Stack A
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_app_service_plan_id: ${{ needs.plan-or-apply-shared.outputs.app_service_plan_id }}
+          TF_VAR_identity_id: ${{ needs.plan-or-apply-shared.outputs.identity_stack_a_id }}
+          TF_VAR_key_vault_uri: ${{ needs.plan-or-apply-shared.outputs.key_vault_uri }}
+          TF_VAR_sql_server_fqdn: ${{ needs.plan-or-apply-shared.outputs.sql_server_fqdn }}
+          TF_VAR_sql_database_name: ${{ needs.plan-or-apply-shared.outputs.sql_database_name }}
+          TF_VAR_apim_gateway_url: ${{ needs.plan-or-apply-shared.outputs.apim_gateway_url }}
+        run: |
+          chmod +x infra/scripts/deploy.sh infra/scripts/lib/common.sh
+          cp ${{ needs.resolve-targets.outputs.env_file }}.example ${{ needs.resolve-targets.outputs.env_file }} 2>/dev/null || true
+          bash infra/scripts/deploy.sh \
+            "${{ needs.resolve-targets.outputs.env_file }}" \
+            "${{ needs.resolve-targets.outputs.tf_environment }}" \
+            "${{ needs.resolve-targets.outputs.action }}" \
+            stack-a
+
+      - name: Deploy artifact to App Service
+        if: needs.resolve-targets.outputs.action == 'apply'
+        run: |
+          APP_NAME="app-talentmatch-node-${{ needs.resolve-targets.outputs.tf_environment }}"
+          RG="${{ needs.resolve-targets.outputs.tf_environment == 'dev' && 'rg-talentmatch-dev' || needs.resolve-targets.outputs.tf_environment == 'test' && 'rg-talentmatch-test' || 'rg-talentmatch-prod' }}"
+          az webapp deploy \
+            --resource-group "$RG" \
+            --name "$APP_NAME" \
+            --src-path artifacts/stack-a.zip \
+            --type zip \
+            --async true
+
+  # =========================================================================
+  # Job 6: Deploy Stack B
+  # =========================================================================
+  deploy-stack-b:
+    name: Deploy Stack B
+    needs:
+      - resolve-targets
+      - plan-or-apply-shared
+      - package-stack-b
+    if: |
+      always() &&
+      needs.resolve-targets.outputs.deploy_stack_b == 'true' &&
+      (needs.plan-or-apply-shared.result == 'success' || needs.plan-or-apply-shared.result == 'skipped') &&
+      needs.package-stack-b.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-targets.outputs.gh_environment }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Download Stack B artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: stack-b-artifact
+          path: artifacts/
+
+      - name: Deploy Stack B
+        env:
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ARM_USE_OIDC: "true"
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_app_service_plan_id: ${{ needs.plan-or-apply-shared.outputs.app_service_plan_id }}
+          TF_VAR_identity_id: ${{ needs.plan-or-apply-shared.outputs.identity_stack_b_id }}
+          TF_VAR_key_vault_uri: ${{ needs.plan-or-apply-shared.outputs.key_vault_uri }}
+          TF_VAR_sql_server_fqdn: ${{ needs.plan-or-apply-shared.outputs.sql_server_fqdn }}
+          TF_VAR_sql_database_name: ${{ needs.plan-or-apply-shared.outputs.sql_database_name }}
+          TF_VAR_apim_gateway_url: ${{ needs.plan-or-apply-shared.outputs.apim_gateway_url }}
+        run: |
+          chmod +x infra/scripts/deploy.sh infra/scripts/lib/common.sh
+          cp ${{ needs.resolve-targets.outputs.env_file }}.example ${{ needs.resolve-targets.outputs.env_file }} 2>/dev/null || true
+          bash infra/scripts/deploy.sh \
+            "${{ needs.resolve-targets.outputs.env_file }}" \
+            "${{ needs.resolve-targets.outputs.tf_environment }}" \
+            "${{ needs.resolve-targets.outputs.action }}" \
+            stack-b
+
+      - name: Deploy artifact to App Service
+        if: needs.resolve-targets.outputs.action == 'apply'
+        run: |
+          APP_NAME="app-talentmatch-blazor-${{ needs.resolve-targets.outputs.tf_environment }}"
+          RG="${{ needs.resolve-targets.outputs.tf_environment == 'dev' && 'rg-talentmatch-dev' || needs.resolve-targets.outputs.tf_environment == 'test' && 'rg-talentmatch-test' || 'rg-talentmatch-prod' }}"
+          az webapp deploy \
+            --resource-group "$RG" \
+            --name "$APP_NAME" \
+            --src-path artifacts/stack-b.zip \
+            --type zip \
+            --async true

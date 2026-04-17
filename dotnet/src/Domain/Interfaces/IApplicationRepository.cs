@@ -18,4 +18,5 @@ public interface IApplicationRepository
     Task<ExtractionArtifact?> GetExtractionAsync(string applicationId, CancellationToken cancellationToken = default);
     Task SetManualReviewAsync(ManualReviewData review, CancellationToken cancellationToken = default);
     Task<ManualReviewData?> GetManualReviewAsync(string applicationId, CancellationToken cancellationToken = default);
+    Task DeleteAsync(string id, CancellationToken cancellationToken = default);
 }

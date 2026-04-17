@@ -27,7 +27,7 @@ public class UpdateUserCommandTests
         _userRepoMock.Setup(r => r.UpdateAsync(It.IsAny<User>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var handler = CreateHandler();
-        var command = new UpdateUserCommand(userId, "Jane Doe", "jane@test.com", "admin", "Engineering,HR");
+        var command = new UpdateUserCommand(userId, "Jane Doe", "jane@test.com", "business_panel", "Engineering,HR");
 
         var result = await handler.Handle(command, CancellationToken.None);
 
@@ -35,7 +35,7 @@ public class UpdateUserCommandTests
         _userRepoMock.Verify(r => r.UpdateAsync(It.Is<User>(u =>
             u.FullName == "Jane Doe" &&
             u.Email == "jane@test.com" &&
-            u.Role == "admin" &&
+            u.Role == "business_panel" &&
             u.Department == "Engineering,HR"
         ), It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -95,5 +95,36 @@ public class UpdateUserCommandTests
         var act = () => handler.Handle(command, CancellationToken.None);
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*already in use*");
+    }
+
+    [Fact]
+    public async Task Validator_AllowsBusinessPanelRole()
+    {
+        var validator = new UpdateUserValidator();
+
+        var result = await validator.ValidateAsync(new UpdateUserCommand(
+            "user-1",
+            "Jane Doe",
+            "jane@test.com",
+            "business_panel",
+            "Engineering,HR"));
+
+        result.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Validator_InvalidRole_ReturnsValidationError()
+    {
+        var validator = new UpdateUserValidator();
+
+        var result = await validator.ValidateAsync(new UpdateUserCommand(
+            "user-1",
+            "Jane Doe",
+            "jane@test.com",
+            "viewer",
+            "Engineering"));
+
+        result.IsValid.Should().BeFalse();
+        result.Errors.Should().Contain(error => error.PropertyName == "Role");
     }
 }

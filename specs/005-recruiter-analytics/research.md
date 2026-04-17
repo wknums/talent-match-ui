@@ -2,11 +2,11 @@
 
 **Feature**: Recruiter Analytics Dashboard  
 **Date**: 2026-03-12  
-**Status**: Complete
+**Status**: Revised after implementation audit
 
 ## R1: How to compute recruiter-level metrics from existing KV data
 
-**Decision**: Aggregate at request time from existing `jobs:all` and `jobs:{jobId}:applications` KV entries. No pre-computed analytics store.
+**Decision**: Aggregate at request time from existing `jobs:all` and `jobs:{jobId}:applications` KV entries, but normalize recruiter ownership before grouping. No pre-computed analytics store.
 
 **Rationale**: The data volume is small (tens of recruiters, hundreds of applications). Real-time aggregation from the KV store avoids data staleness and requires no schema changes. The `stats.ts` route already follows this pattern — iterating over jobs and their applications at request time.
 
@@ -18,7 +18,7 @@
 1. Load all jobs from `jobs:all`
 2. For each job, load applications from `jobs:{jobId}:applications`
 3. Load all users to get recruiter names and departments
-4. Group applications by `createdBy` (recruiter userId) to compute per-recruiter metrics:
+4. Resolve each job's stored owner identifier to a recruiter record before grouping metrics. Stack B stores recruiter `userId` in `CreatedBy`; Stack A currently stores username in `createdBy`, so Stack A analytics must normalize or backfill that identity before rollups are considered correct:
    - `applicationsInQueue`: count where status is `Queued`
    - `manualReviewsPerformed`: count where status is `NeedsManualReview` or where `flagged === true` and a manual review has been saved
    - `shortlistRecommendations`: count where `finalDecision === 'Eligible'` and `finalScore` >= job's `shortlistThreshold`
@@ -38,13 +38,13 @@
 
 ## R3: Mapping recruiter identity to job/application ownership
 
-**Decision**: Use `job.createdBy` field to associate jobs with recruiters. Each recruiter "owns" the jobs they created, and the applications under those jobs roll up to that recruiter's metrics.
+**Decision**: Use `job.createdBy` as the ownership source only after confirming what identifier is actually stored for the current stack. Each recruiter "owns" the jobs they created, and the applications under those jobs roll up to that recruiter only when `createdBy` is normalized to the recruiter identity used by the user repository.
 
-**Rationale**: The `Job` interface already has a `createdBy: string` field (userId). This is the natural ownership model — a recruiter creates a job and manages its applications. No new fields needed.
+**Rationale**: The ownership model is still correct, but the implementation differs by stack. Stack B stores recruiter `userId` and can group directly on `CreatedBy == user.Id`. Stack A job creation currently stores `req.user?.username` in `createdBy`, while analytics groups recruiters by `userId`, which produces incorrect rollups unless the code translates username to the corresponding recruiter record.
 
 **Alternatives considered**:
-- **Explicit recruiter assignment field on jobs**: Adds complexity without benefit — `createdBy` already represents ownership.
-- **Application-level recruiter field**: Applications don't have a direct recruiter field; they inherit it from their parent job. This is correct for the current model.
+- **Explicit recruiter assignment field on jobs**: Still unnecessary if both stacks converge on a stable `createdBy` identifier or normalize consistently at read time.
+- **Application-level recruiter field**: Applications don't have a direct recruiter field; they inherit ownership from their parent job, so fixing the job-to-recruiter mapping is the right repair point.
 
 ## R4: Stack B analytics implementation pattern
 

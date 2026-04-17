@@ -81,6 +81,38 @@ public class UserManagementIntegrationTests : IClassFixture<UserManagementIntegr
         loginResponse.StatusCode.Should().Be(HttpStatusCode.OK, "admin login should succeed with seeded credentials");
     }
 
+    private static string UniqueValue(string prefix)
+        => $"{prefix}-{Guid.NewGuid():N}"[..20];
+
+    private static async Task<string> CreateUserAsync(
+        HttpClient client,
+        string username,
+        string email,
+        string role = "recruiter",
+        string department = "Engineering",
+        string password = "test123",
+        string fullName = "Test User")
+    {
+        var response = await client.PostAsJsonAsync("/api/users", new
+        {
+            Username = username,
+            Role = role,
+            Department = department,
+            Password = password,
+            FullName = fullName,
+            Email = email,
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var users = await client.GetFromJsonAsync<List<UserDto>>("/api/users");
+        users.Should().NotBeNull();
+
+        return users!
+            .Single(user => user.Username == username)
+            .Id;
+    }
+
     [Fact]
     public async Task CreateUser_ThenListUsers_ThenLoginAsNewUser_ThenVerifyMe()
     {
@@ -174,5 +206,135 @@ public class UserManagementIntegrationTests : IClassFixture<UserManagementIntegr
         response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
     }
 
-    private record UserDto(string Id, string Username, string Role, string Department, string? FullName, string? Email);
+    [Fact]
+    public async Task UpdateUser_ReturnsUpdatedPayload_AndRoundTripsDepartments()
+    {
+        var client = CreateAuthenticatedAdminClient();
+        await LoginAsAdmin(client);
+
+        var username = UniqueValue("edituser");
+        var email = $"{username}@example.com";
+        var userId = await CreateUserAsync(client, username, email);
+
+        var response = await client.PutAsJsonAsync($"/api/users/{userId}", new
+        {
+            FullName = "Updated Recruiter",
+            Email = $"updated-{username}@example.com",
+            Role = "business_panel",
+            Department = "Engineering,HR",
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var updatedUser = await response.Content.ReadFromJsonAsync<UserDto>();
+        updatedUser.Should().NotBeNull();
+        updatedUser!.FullName.Should().Be("Updated Recruiter");
+        updatedUser.Email.Should().Be($"updated-{username}@example.com");
+        updatedUser.Role.Should().Be("business_panel");
+        updatedUser.Department.Should().Be("Engineering,HR");
+
+        var users = await client.GetFromJsonAsync<List<UserDto>>("/api/users");
+        users.Should().Contain(user =>
+            user.Id == userId &&
+            user.Role == "business_panel" &&
+            user.Department == "Engineering,HR");
+    }
+
+    [Fact]
+    public async Task UpdateUser_DuplicateEmail_Returns409Conflict()
+    {
+        var client = CreateAuthenticatedAdminClient();
+        await LoginAsAdmin(client);
+
+        var firstUsername = UniqueValue("first");
+        var secondUsername = UniqueValue("second");
+        var firstId = await CreateUserAsync(client, firstUsername, $"{firstUsername}@example.com");
+        _ = await CreateUserAsync(client, secondUsername, $"{secondUsername}@example.com");
+
+        var response = await client.PutAsJsonAsync($"/api/users/{firstId}", new
+        {
+            FullName = "First User",
+            Email = $"{secondUsername}@example.com",
+            Role = "recruiter",
+            Department = "Engineering",
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("already in use");
+    }
+
+    [Fact]
+    public async Task UpdateUser_NotFound_Returns404NotFound()
+    {
+        var client = CreateAuthenticatedAdminClient();
+        await LoginAsAdmin(client);
+
+        var response = await client.PutAsJsonAsync("/api/users/missing-user", new
+        {
+            FullName = "Missing User",
+            Email = "missing@example.com",
+            Role = "recruiter",
+            Department = "Engineering",
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task UpdateUser_InvalidPayload_Returns400BadRequest()
+    {
+        var client = CreateAuthenticatedAdminClient();
+        await LoginAsAdmin(client);
+
+        var username = UniqueValue("invalid");
+        var userId = await CreateUserAsync(client, username, $"{username}@example.com");
+
+        var response = await client.PutAsJsonAsync($"/api/users/{userId}", new
+        {
+            FullName = "",
+            Email = "not-an-email",
+            Role = "viewer",
+            Department = "Engineering",
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("FullName");
+        body.Should().Contain("Role");
+    }
+
+    [Fact]
+    public async Task UpdateUser_SelfRoleChange_PreservesAdminRole()
+    {
+        var client = CreateAuthenticatedAdminClient();
+        await LoginAsAdmin(client);
+
+        var currentUser = await client.GetFromJsonAsync<UserDto>("/api/auth/me");
+        currentUser.Should().NotBeNull();
+
+        var response = await client.PutAsJsonAsync($"/api/users/{currentUser!.Id}", new
+        {
+            FullName = "Administrator Updated",
+            Email = "admin-updated@example.com",
+            Role = "recruiter",
+            Department = "Leadership,Operations",
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var updatedUser = await response.Content.ReadFromJsonAsync<UserDto>();
+        updatedUser.Should().NotBeNull();
+        updatedUser!.Role.Should().Be("admin");
+        updatedUser.FullName.Should().Be("Administrator Updated");
+        updatedUser.Department.Should().Be("Leadership,Operations");
+
+        var users = await client.GetFromJsonAsync<List<UserDto>>("/api/users");
+        users.Should().Contain(user =>
+            user.Id == currentUser.Id &&
+            user.Role == "admin" &&
+            user.FullName == "Administrator Updated");
+    }
+
+    private record UserDto(string Id, string Username, string Role, string Department, string? FullName, string? Email, DateTime CreatedAt = default, DateTime? LastLogin = null);
 }

@@ -1,28 +1,47 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Router } from 'express'
-import type { StorageProvider } from '../storage/types.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import {
-  JOBS, jobApplicationsKey, appDocumentsKey, appExtractionKey,
-  appRunsKey, appResultKey, appManualReviewKey, appDocBlobKey
-} from '../storage/kv-keys.js'
-import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
-import { createAuditService } from '../services/audit.js'
+import { jobRepo, applicationRepo } from '../storage/repos/index.js'
+import { auditService } from '../services/audit.js'
 import type {
-  Application, ApplicationDocument, Job, ExtractionArtifact,
+  Application, ApplicationDocument, ExtractionArtifact,
   ScoringRun, AggregatedResult, ManualReviewData, ManualReviewAuditEntry
 } from '../../src/types/index.js'
 
-export function createApplicationsRouter(storage: StorageProvider) {
+function normalizeCategoryName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[_\-()&/,;:]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function findStoredRubricEntry(
+  rubricScores: Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>,
+  categoryId: string,
+  categoryName: string,
+): { score?: number; points?: number; maxPoints?: number; comment?: string } | undefined {
+  if (rubricScores[categoryId]) {
+    return rubricScores[categoryId]
+  }
+
+  if (rubricScores[categoryName]) {
+    return rubricScores[categoryName]
+  }
+
+  const normalizedCategoryName = normalizeCategoryName(categoryName)
+  return Object.entries(rubricScores).find(([key]) => normalizeCategoryName(key) === normalizedCategoryName)?.[1]
+}
+
+export function createApplicationsRouter() {
   const router = Router()
-  const audit = createAuditService(storage)
+  const audit = auditService
 
   // POST /api/jobs/:jobId/applications/upload - bulk upload
   router.post('/jobs/:jobId/applications/upload', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const jobs = await getArray<Job>(storage, JOBS)
-      const job = jobs.find(j => j.jobId === jobId)
+      const job = await jobRepo.getById(jobId)
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
@@ -37,7 +56,6 @@ export function createApplicationsRouter(storage: StorageProvider) {
 
       const applicationIds: string[] = []
       const warnings: string[] = []
-      const existingApps = await getArray<Application>(storage, jobApplicationsKey(jobId))
 
       for (const file of files) {
         // Type validation
@@ -54,12 +72,7 @@ export function createApplicationsRouter(storage: StorageProvider) {
         const fingerprint = createHash('sha256').update(file.content || '').digest('hex')
 
         // Duplicate detection
-        const allDocs: ApplicationDocument[] = []
-        for (const app of existingApps) {
-          const docs = await getArray<ApplicationDocument>(storage, appDocumentsKey(app.applicationId))
-          allDocs.push(...docs)
-        }
-        const duplicate = allDocs.find(d => d.sha256 === fingerprint)
+        const duplicate = await applicationRepo.findDuplicateFingerprint(jobId, fingerprint)
         if (duplicate) {
           warnings.push(`${file.fileName}: duplicate detected (matches ${duplicate.fileName})`)
         }
@@ -88,10 +101,10 @@ export function createApplicationsRouter(storage: StorageProvider) {
           documents: [doc],
         }
 
-        await pushToArray(storage, jobApplicationsKey(jobId), application)
-        await storage.set(appDocumentsKey(applicationId), [doc])
+        await applicationRepo.create(application)
+        await applicationRepo.createDocument(doc)
         // Persist raw file content as base64 blob (FR-056)
-        await storage.set(appDocBlobKey(applicationId, documentId), file.content)
+        await applicationRepo.storeBlob(documentId, file.content)
 
         applicationIds.push(applicationId)
       }
@@ -115,35 +128,17 @@ export function createApplicationsRouter(storage: StorageProvider) {
       const { jobId } = req.params
       const { status, list, sortField, sortOrder, varianceMin, page, pageSize } = req.query
 
-      const jobs = await getArray<Job>(storage, JOBS)
-      const job = jobs.find(j => j.jobId === jobId)
+      const job = await jobRepo.getById(jobId)
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
 
-      let apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-
-      // Enrich apps with scoring data
-      const enrichedApps = await Promise.all(apps.map(async (app) => {
-        const result = await storage.get<AggregatedResult>(appResultKey(app.applicationId))
-        if (result) {
-          return {
-            ...app,
-            finalScore: result.finalScore,
-            finalDecision: result.finalDecision,
-            variance: result.variance,
-          }
-        }
-        return app
-      }))
-
-      let filtered = enrichedApps
-
-      // Exclude test-case applications from production lists by default (FR-038)
       const includeTestCases = req.query.includeTestCases === 'true'
-      if (!includeTestCases) {
-        filtered = filtered.filter(a => !a.testRunId)
-      }
+      let apps = includeTestCases
+        ? await applicationRepo.getByJobIdAll(jobId)
+        : await applicationRepo.getByJobId(jobId)
+
+      let filtered = apps
 
       // Filter by status
       if (status) {
@@ -208,25 +203,16 @@ export function createApplicationsRouter(storage: StorageProvider) {
       const { applicationId } = req.params
 
       // Find application across all jobs
-      const jobs = await getArray<Job>(storage, JOBS)
-      let foundApp: Application | null = null
-      for (const job of jobs) {
-        const apps = await getArray<Application>(storage, jobApplicationsKey(job.jobId))
-        const app = apps.find(a => a.applicationId === applicationId)
-        if (app) {
-          foundApp = app
-          break
-        }
-      }
+      const foundApp = await applicationRepo.getById(applicationId)
 
       if (!foundApp) {
         return res.status(404).json({ error: 'Not Found', message: 'Application not found' })
       }
 
-      const documents = await getArray<ApplicationDocument>(storage, appDocumentsKey(applicationId))
-      const extraction = await storage.get<ExtractionArtifact>(appExtractionKey(applicationId))
-      const runs = await getArray<ScoringRun>(storage, appRunsKey(applicationId))
-      const result = await storage.get<AggregatedResult>(appResultKey(applicationId))
+      const documents = await applicationRepo.getDocuments(applicationId)
+      const extraction = await applicationRepo.getExtraction(applicationId)
+      const runs = await applicationRepo.getScoringRuns(applicationId)
+      const result = await applicationRepo.getAggregatedResult(applicationId)
 
       res.json({
         ...foundApp,
@@ -234,9 +220,6 @@ export function createApplicationsRouter(storage: StorageProvider) {
         extraction,
         scoringRuns: runs,
         aggregatedResult: result,
-        finalScore: result?.finalScore ?? foundApp.finalScore,
-        finalDecision: result?.finalDecision ?? foundApp.finalDecision,
-        variance: result?.variance ?? foundApp.variance,
       })
     } catch (err) {
       next(err)
@@ -247,7 +230,7 @@ export function createApplicationsRouter(storage: StorageProvider) {
   router.get('/applications/:applicationId/runs', async (req, res, next) => {
     try {
       const { applicationId } = req.params
-      const runs = await getArray<ScoringRun>(storage, appRunsKey(applicationId))
+      const runs = await applicationRepo.getScoringRuns(applicationId)
       res.json(runs)
     } catch (err) {
       next(err)
@@ -258,7 +241,7 @@ export function createApplicationsRouter(storage: StorageProvider) {
   router.get('/applications/:applicationId/result', async (req, res, next) => {
     try {
       const { applicationId } = req.params
-      const result = await storage.get<AggregatedResult>(appResultKey(applicationId))
+      const result = await applicationRepo.getAggregatedResult(applicationId)
       if (!result) {
         return res.status(404).json({ error: 'Not Found', message: 'No aggregated result yet' })
       }
@@ -272,7 +255,7 @@ export function createApplicationsRouter(storage: StorageProvider) {
   router.get('/applications/:applicationId/extraction', async (req, res, next) => {
     try {
       const { applicationId } = req.params
-      const extraction = await storage.get<ExtractionArtifact>(appExtractionKey(applicationId))
+      const extraction = await applicationRepo.getExtraction(applicationId)
       if (!extraction) {
         return res.status(404).json({ error: 'Not Found', message: 'No extraction artifact yet' })
       }
@@ -288,19 +271,21 @@ export function createApplicationsRouter(storage: StorageProvider) {
       const { applicationId, documentId } = req.params
 
       // Find the document metadata for MIME type
-      const documents = await getArray<ApplicationDocument>(storage, appDocumentsKey(applicationId))
+      const documents = await applicationRepo.getDocuments(applicationId)
       const doc = documents.find(d => d.documentId === documentId)
       if (!doc) {
         return res.status(404).json({ error: 'Not Found', message: 'Document not found' })
       }
 
       // Load raw content from blob storage
-      const rawContent = await storage.get<string>(appDocBlobKey(applicationId, documentId))
+      const rawContent = await applicationRepo.getBlob(documentId)
       if (!rawContent) {
         return res.status(404).json({ error: 'Not Found', message: 'Document content not available' })
       }
 
-      const buffer = Buffer.from(rawContent, 'base64')
+      // Detect whether stored content is base64 or raw text (legacy uploads used file.text())
+      const isBase64 = /^[A-Za-z0-9+/\r\n]+=*$/.test(rawContent.slice(0, 256)) && !rawContent.startsWith('%PDF')
+      const buffer = isBase64 ? Buffer.from(rawContent, 'base64') : Buffer.from(rawContent)
       res.set('Content-Type', doc.mimeType)
       res.set('Content-Disposition', `inline; filename="${doc.fileName}"`)
       res.set('Content-Length', String(buffer.length))
@@ -314,7 +299,7 @@ export function createApplicationsRouter(storage: StorageProvider) {
   router.get('/applications/:applicationId/manual-review', async (req, res, next) => {
     try {
       const { applicationId } = req.params
-      const review = await storage.get<ManualReviewData>(appManualReviewKey(applicationId))
+      const review = await applicationRepo.getManualReview(applicationId)
       if (!review) {
         return res.json(null)
       }
@@ -330,34 +315,83 @@ export function createApplicationsRouter(storage: StorageProvider) {
       const { applicationId } = req.params
       const { rubricScores, overallComment, adjustedFinalScore } = req.body
 
-      const existing = await storage.get<ManualReviewData>(appManualReviewKey(applicationId))
-      const auditTrail = existing?.auditTrail || []
+      const existing = await applicationRepo.getManualReview(applicationId)
+      const auditTrail = [...(existing?.auditTrail || [])]
+      const effectiveJobId = existing?.jobId || req.body.jobId || ''
+      const job = effectiveJobId ? await jobRepo.getById(effectiveJobId) : null
+      const rubricCategories = job?.currentVersion.rubric ?? []
+      const categoryNameById = new Map(job?.currentVersion.rubric.map(category => [category.id, category.name]) ?? [])
+      const existingRubricScores = (existing?.rubricScores || {}) as Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>
+      const incomingRubricScores = (rubricScores || {}) as Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>
+      const responseRubricScores: Record<string, { score: number; points: number; maxPoints: number; comment: string }> = {}
+      const storedRubricScores: Record<string, { score: number; points: number; maxPoints: number; comment: string }> = {}
 
-      // Generate audit entries for changed scores
-      if (existing?.rubricScores && rubricScores) {
-        for (const [categoryId, newScore] of Object.entries(rubricScores)) {
-          const prev = existing.rubricScores[categoryId]
-          const curr = newScore as { points: number; maxPoints: number; comment: string }
-          if (!prev || prev.points !== curr.points) {
-            const entry: ManualReviewAuditEntry = {
-              entryId: randomUUID(),
-              applicationId,
-              reviewerId: req.user?.userId || 'unknown',
-              reviewerName: req.user?.fullName || 'Unknown',
-              timestamp: new Date().toISOString(),
-              changeType: 'score_adjustment',
-              categoryId,
-              categoryName: categoryId,
-              previousValue: prev?.points,
-              newValue: curr.points,
-            }
-            auditTrail.push(entry)
+      for (const rubricCategory of rubricCategories) {
+        const categoryId = rubricCategory.id
+        const categoryName = rubricCategory.name
+        const curr = findStoredRubricEntry(incomingRubricScores, categoryId, categoryName)
+        if (!curr) {
+          continue
+        }
+
+        const prev = findStoredRubricEntry(existingRubricScores, categoryId, categoryName)
+        const maxPoints = Number.isFinite(curr.maxPoints) ? Number(curr.maxPoints) : Math.round(rubricCategory.weight * 100)
+        const points = Number.isFinite(curr.points)
+          ? Number(curr.points)
+          : (Number.isFinite(curr.score) ? Math.round((Number(curr.score) / 100) * maxPoints) : 0)
+        const score = Number.isFinite(curr.score)
+          ? Number(curr.score)
+          : (maxPoints > 0 ? (points / maxPoints) * 100 : 0)
+        const normalizedEntry = {
+          score,
+          points,
+          maxPoints,
+          comment: curr.comment || '',
+        }
+
+        responseRubricScores[categoryId] = normalizedEntry
+        storedRubricScores[categoryName] = normalizedEntry
+
+        const previousPoints = Number.isFinite(prev?.points)
+          ? Number(prev?.points)
+          : (Number.isFinite(prev?.score) && maxPoints > 0 ? Math.round((Number(prev?.score) / 100) * maxPoints) : 0)
+        const previousComment = prev?.comment || ''
+
+        if (!prev || previousPoints !== points) {
+          const entry: ManualReviewAuditEntry = {
+            entryId: randomUUID(),
+            applicationId,
+            reviewerId: req.user?.userId || 'unknown',
+            reviewerName: req.user?.fullName || 'Unknown',
+            timestamp: new Date().toISOString(),
+            changeType: 'score_adjustment',
+            categoryId,
+            categoryName,
+            previousValue: previousPoints,
+            newValue: points,
           }
+          auditTrail.push(entry)
+        }
+
+        if (previousComment.trim() !== normalizedEntry.comment.trim()) {
+          auditTrail.push({
+            entryId: randomUUID(),
+            applicationId,
+            reviewerId: req.user?.userId || 'unknown',
+            reviewerName: req.user?.fullName || 'Unknown',
+            timestamp: new Date().toISOString(),
+            changeType: 'comment_added',
+            categoryId,
+            categoryName,
+            previousValue: previousComment,
+            newValue: normalizedEntry.comment,
+            comment: normalizedEntry.comment,
+          })
         }
       }
 
       // Add comment audit entry if comment changed
-      if (existing?.overallComment !== overallComment && overallComment) {
+      if ((existing?.overallComment || '') !== (overallComment || '')) {
         auditTrail.push({
           entryId: randomUUID(),
           applicationId,
@@ -365,15 +399,17 @@ export function createApplicationsRouter(storage: StorageProvider) {
           reviewerName: req.user?.fullName || 'Unknown',
           timestamp: new Date().toISOString(),
           changeType: 'comment_added',
+          categoryName: 'overall',
           previousValue: existing?.overallComment,
           newValue: overallComment,
+          comment: overallComment,
         })
       }
 
       const reviewData: ManualReviewData = {
         applicationId,
-        jobId: existing?.jobId || req.body.jobId || '',
-        rubricScores: rubricScores || existing?.rubricScores || {},
+        jobId: effectiveJobId,
+        rubricScores: storedRubricScores,
         overallComment: overallComment || existing?.overallComment || '',
         adjustedFinalScore,
         auditTrail,
@@ -381,7 +417,12 @@ export function createApplicationsRouter(storage: StorageProvider) {
         lastModifiedBy: req.user?.username || 'unknown',
       }
 
-      await storage.set(appManualReviewKey(applicationId), reviewData)
+      const responseReviewData: ManualReviewData = {
+        ...reviewData,
+        rubricScores: responseRubricScores,
+      }
+
+      await applicationRepo.setManualReview(reviewData)
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -390,7 +431,7 @@ export function createApplicationsRouter(storage: StorageProvider) {
         { adjustedFinalScore }
       )
 
-      res.json(reviewData)
+      res.json(responseReviewData)
     } catch (err) {
       next(err)
     }

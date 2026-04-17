@@ -1,19 +1,36 @@
 import { Router } from 'express'
-import type { StorageProvider } from '../storage/types.js'
-import { DLQ } from '../storage/kv-keys.js'
-import { getArray, setArray } from '../storage/kv-helpers.js'
-import { createAuditService } from '../services/audit.js'
+import { applicationRepo, dlqRepo } from '../storage/repos/index.js'
+import { auditService } from '../services/audit.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import type { DLQItem } from '../../src/types/index.js'
 
-export function createDLQRouter(storage: StorageProvider) {
+export function createDLQRouter() {
   const router = Router()
-  const audit = createAuditService(storage)
+
+  const retryItem = async (itemId: string) => {
+    const item = await dlqRepo.getById(itemId)
+    if (!item || !item.canRetry) {
+      return false
+    }
+
+    await dlqRepo.remove(itemId)
+
+    try {
+      const { createPipelineOrchestrator } = await import('../services/pipeline.js')
+      const pipeline = createPipelineOrchestrator()
+      pipeline.processApplication(item.applicationId, item.jobId).catch(err => {
+        console.error(`Retry pipeline error for ${item.applicationId}:`, err)
+      })
+    } catch {
+      // Pipeline import may fail in some contexts, item is already removed from DLQ
+    }
+
+    return item
+  }
 
   // GET /api/dlq - list all failed items
   router.get('/', async (_req, res, next) => {
     try {
-      const items = await getArray<DLQItem>(storage, DLQ)
+      const items = await dlqRepo.getAll()
       res.json(items)
     } catch (err) {
       next(err)
@@ -24,33 +41,13 @@ export function createDLQRouter(storage: StorageProvider) {
   router.post('/:itemId/retry', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { itemId } = req.params
-      const items = await getArray<DLQItem>(storage, DLQ)
-      const item = items.find(i => i.itemId === itemId)
+      const item = await retryItem(itemId)
 
       if (!item) {
-        return res.status(404).json({ error: 'Not Found', message: 'DLQ item not found' })
+        return res.status(404).json({ error: 'Not Found', message: 'DLQ item not found or cannot be retried' })
       }
 
-      if (!item.canRetry) {
-        return res.status(400).json({ error: 'Validation Error', message: 'This item cannot be retried' })
-      }
-
-      // Remove from DLQ
-      const remaining = items.filter(i => i.itemId !== itemId)
-      await setArray(storage, DLQ, remaining)
-
-      // Re-trigger processing via pipeline
-      try {
-        const { createPipelineOrchestrator } = await import('../services/pipeline.js')
-        const pipeline = createPipelineOrchestrator(storage)
-        pipeline.processApplication(item.applicationId, item.jobId).catch(err => {
-          console.error(`Retry pipeline error for ${item.applicationId}:`, err)
-        })
-      } catch {
-        // Pipeline import may fail in some contexts, item is already removed from DLQ
-      }
-
-      await audit.appendEvent(
+      await auditService.appendEvent(
         req.user?.username || 'unknown',
         'dlq.retry',
         'Application', item.applicationId,
@@ -58,6 +55,66 @@ export function createDLQRouter(storage: StorageProvider) {
       )
 
       res.json({ success: true, message: `Item ${itemId} re-queued for processing` })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/dlq/bulk-retry - retry multiple DLQ items
+  router.post('/bulk-retry', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0) : []
+      let succeeded = 0
+
+      for (const id of ids) {
+        const item = await retryItem(id)
+        if (!item) {
+          continue
+        }
+
+        succeeded++
+        await auditService.appendEvent(
+          req.user?.username || 'unknown',
+          'dlq.retry',
+          'Application', item.applicationId,
+          { itemId: id, failureType: item.failureType, bulk: true }
+        )
+      }
+
+      res.json({ succeeded, total: ids.length })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/dlq/bulk-delete - remove multiple DLQ items and associated application rows
+  router.post('/bulk-delete', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.filter((id: unknown): id is string => typeof id === 'string' && id.length > 0) : []
+      let deleted = 0
+
+      for (const id of ids) {
+        const item = await dlqRepo.getById(id)
+        if (!item) {
+          continue
+        }
+
+        if (item.applicationId) {
+          await applicationRepo.delete(item.applicationId)
+        }
+
+        await dlqRepo.remove(id)
+        deleted++
+
+        await auditService.appendEvent(
+          req.user?.username || 'unknown',
+          'dlq.deleted',
+          'Application', item.applicationId || id,
+          { itemId: id, failureType: item.failureType, bulk: true }
+        )
+      }
+
+      res.json({ deleted, total: ids.length })
     } catch (err) {
       next(err)
     }

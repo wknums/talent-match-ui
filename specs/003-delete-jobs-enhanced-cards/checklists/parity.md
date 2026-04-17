@@ -8,8 +8,8 @@
 **Audience**: Reviewer (PR / implementation verification)
 
 **Stack Status**:
-- Stack B (.NET Blazor): T001–T015 complete, T016–T018 (polish/verification) pending
-- Stack A (Node.js/React): AT001–AT013 all pending
+- Stack B (.NET Blazor): delete flow and enhanced card metadata are implemented end-to-end
+- Stack A (Node.js/React): delete flow and enhanced card metadata are still missing, so cross-stack parity remains open
 
 ---
 
@@ -76,6 +76,7 @@
 ## Notes
 
 - Check items off as verified: `[x]`
-- Stack B is reference implementation — Stack A should match its behavior, not necessarily its code
+- Stack B is the reference implementation; Stack A must catch up before any parity items can be closed
 - Items are numbered CHK001–CHK033 for cross-reference in reviews
 - Add inline comments for any intentional divergences between stacks
+- Current review outcome: leave the checklist open until Stack A gains the delete endpoint, delete UI, and enhanced card/detail metadata already present in Stack B

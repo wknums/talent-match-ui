@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
-import type { StorageProvider } from '../storage/types.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import { JOBS, jobVersionsKey, jobApplicationsKey } from '../storage/kv-keys.js'
-import { getArray, setArray, pushToArray } from '../storage/kv-helpers.js'
-import { createAuditService } from '../services/audit.js'
+import { jobRepo, applicationRepo, dlqRepo } from '../storage/repos/index.js'
+import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
-import type { Job, JobConfigVersion, Application } from '../../src/types/index.js'
+import type { AggregatedResult, Job, JobConfigVersion } from '../../src/types/index.js'
 
 // FR-065: Spec extraction and rubric extraction ALWAYS use AWR_SEQ_API_ENDPOINT regardless of scoring mode
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
@@ -148,37 +146,24 @@ Output only valid JSON with no additional text:
   ]
 }`
 
-export function createJobsRouter(storage: StorageProvider) {
+export function createJobsRouter() {
   const router = Router()
-  const audit = createAuditService(storage)
+  const audit = auditService
 
   // GET /api/jobs - list jobs (department-filtered for recruiters)
   router.get('/', async (req: AuthenticatedRequest, res, next) => {
     try {
-      const jobs = await getArray<Job>(storage, JOBS)
-      let filtered = jobs
-
+      let jobs: Job[]
       if (req.user?.role === 'recruiter' && req.user.department) {
-        filtered = jobs.filter(j => j.department === req.user!.department)
+        jobs = await jobRepo.getByDepartment(req.user.department)
+      } else {
+        jobs = await jobRepo.getAll()
       }
 
-      // Compute stats for each job
+      // Compute stats for each job (exclude test scoring applications)
       const jobsWithStats = await Promise.all(
-        filtered.map(async (job) => {
-          const apps = await getArray<Application>(storage, jobApplicationsKey(job.jobId))
-          const config = job.currentVersion
-          const stats = {
-            totalApplications: apps.length,
-            queued: apps.filter(a => a.status === 'Queued').length,
-            extracting: apps.filter(a => a.status === 'Extracting').length,
-            scoring: apps.filter(a => a.status === 'Scoring').length,
-            completed: apps.filter(a => a.status === 'Completed').length,
-            failed: apps.filter(a => a.status === 'ExtractionFailed' || a.status === 'ScoringFailed').length,
-            needsManualReview: apps.filter(a => a.status === 'NeedsManualReview').length,
-            longlistCount: apps.filter(a => a.finalDecision === 'Eligible' && a.finalScore != null && a.finalScore >= config.longlistThreshold).length,
-            shortlistCount: apps.filter(a => a.finalDecision === 'Eligible' && a.finalScore != null && a.finalScore >= config.shortlistThreshold).length,
-            excludedCount: apps.filter(a => a.finalDecision === 'Excluded').length,
-          }
+        jobs.map(async (job) => {
+          const stats = await jobRepo.getJobStats(job.jobId, job.currentVersion)
           return { ...job, stats }
         })
       )
@@ -229,7 +214,7 @@ export function createJobsRouter(storage: StorageProvider) {
         department,
         organization: organization || '',
         postingDate: postingDate || new Date().toISOString(),
-        createdBy: req.user?.username || 'unknown',
+        createdBy: req.user?.userId || 'unknown',
         createdAt: new Date().toISOString(),
         status: 'Active',
         currentVersion: config,
@@ -243,10 +228,13 @@ export function createJobsRouter(storage: StorageProvider) {
         },
       }
 
-      const jobs = await getArray<Job>(storage, JOBS)
-      jobs.push(newJob)
-      await setArray(storage, JOBS, jobs)
-      await storage.set(jobVersionsKey(jobId), [config])
+      const jobs = await jobRepo.getAll()
+      // Check for duplicate job code
+      if (generatedCode && jobs.some(j => j.jobCode === generatedCode)) {
+        return res.status(409).json({ error: 'Conflict', message: 'Job code already exists' })
+      }
+
+      await jobRepo.create(newJob)
 
       await audit.appendEvent(req.user?.username || 'unknown', 'job.created', 'Job', jobId, { title, department })
 
@@ -391,8 +379,7 @@ export function createJobsRouter(storage: StorageProvider) {
   router.get('/:jobId', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const jobs = await getArray<Job>(storage, JOBS)
-      const job = jobs.find(j => j.jobId === jobId)
+      const job = await jobRepo.getById(jobId)
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
@@ -402,20 +389,7 @@ export function createJobsRouter(storage: StorageProvider) {
         return res.status(403).json({ error: 'Forbidden', message: 'Access denied to this job' })
       }
 
-      const apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-      const config = job.currentVersion
-      const stats = {
-        totalApplications: apps.length,
-        queued: apps.filter(a => a.status === 'Queued').length,
-        extracting: apps.filter(a => a.status === 'Extracting').length,
-        scoring: apps.filter(a => a.status === 'Scoring').length,
-        completed: apps.filter(a => a.status === 'Completed').length,
-        failed: apps.filter(a => a.status === 'ExtractionFailed' || a.status === 'ScoringFailed').length,
-        needsManualReview: apps.filter(a => a.status === 'NeedsManualReview').length,
-        longlistCount: apps.filter(a => a.finalDecision === 'Eligible' && a.finalScore != null && a.finalScore >= config.longlistThreshold).length,
-        shortlistCount: apps.filter(a => a.finalDecision === 'Eligible' && a.finalScore != null && a.finalScore >= config.shortlistThreshold).length,
-        excludedCount: apps.filter(a => a.finalDecision === 'Excluded').length,
-      }
+      const stats = await jobRepo.getJobStats(jobId, job.currentVersion)
 
       res.json({ ...job, stats })
     } catch (err) {
@@ -427,34 +401,31 @@ export function createJobsRouter(storage: StorageProvider) {
   router.put('/:jobId/config', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const { rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, rubricSource, rawExtractionResponse } = req.body
+      const { rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, rubricSource, rawExtractionResponse, rubricApprovalStatus } = req.body
 
-      const jobs = await getArray<Job>(storage, JOBS)
-      const jobIndex = jobs.findIndex(j => j.jobId === jobId)
-      if (jobIndex === -1) {
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
 
       const newVersion: JobConfigVersion = {
         versionId: randomUUID(),
         jobId,
-        rubric: rubric || jobs[jobIndex].currentVersion.rubric,
-        mustHaves: mustHaves || jobs[jobIndex].currentVersion.mustHaves,
-        desiredCriteria: desiredCriteria || jobs[jobIndex].currentVersion.desiredCriteria || [],
-        runsPerApplication: runsPerApplication || jobs[jobIndex].currentVersion.runsPerApplication,
-        aggregationStrategy: aggregationStrategy || jobs[jobIndex].currentVersion.aggregationStrategy,
-        longlistThreshold: longlistThreshold ?? jobs[jobIndex].currentVersion.longlistThreshold,
-        shortlistThreshold: shortlistThreshold ?? jobs[jobIndex].currentVersion.shortlistThreshold,
-        varianceThreshold: varianceThreshold ?? jobs[jobIndex].currentVersion.varianceThreshold,
-        rubricApprovalStatus: 'draft',
+        rubric: rubric || job.currentVersion.rubric,
+        mustHaves: mustHaves || job.currentVersion.mustHaves,
+        desiredCriteria: desiredCriteria || job.currentVersion.desiredCriteria || [],
+        runsPerApplication: runsPerApplication || job.currentVersion.runsPerApplication,
+        aggregationStrategy: aggregationStrategy || job.currentVersion.aggregationStrategy,
+        longlistThreshold: longlistThreshold ?? job.currentVersion.longlistThreshold,
+        shortlistThreshold: shortlistThreshold ?? job.currentVersion.shortlistThreshold,
+        varianceThreshold: varianceThreshold ?? job.currentVersion.varianceThreshold,
+        rubricApprovalStatus: rubricApprovalStatus || job.currentVersion.rubricApprovalStatus || 'draft',
         rubricSource: rubricSource || 'manual',
         rawExtractionResponse: rawExtractionResponse || undefined,
         createdAt: new Date().toISOString(),
       }
 
-      await pushToArray(storage, jobVersionsKey(jobId), newVersion)
-      jobs[jobIndex] = { ...jobs[jobIndex], currentVersion: newVersion }
-      await setArray(storage, JOBS, jobs)
+      await jobRepo.addConfigVersion(newVersion)
 
       await audit.appendEvent(req.user?.username || 'unknown', 'job.config-updated', 'Job', jobId, { versionId: newVersion.versionId })
 
@@ -474,29 +445,18 @@ export function createJobsRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: 'status must be "approved" or "draft"' })
       }
 
-      const jobs = await getArray<Job>(storage, JOBS)
-      const jobIndex = jobs.findIndex(j => j.jobId === jobId)
-      if (jobIndex === -1) {
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
 
-      const currentVersion = jobs[jobIndex].currentVersion
+      const currentVersion = job.currentVersion
       if (currentVersion.rubricApprovalStatus === status) {
         return res.status(400).json({ error: 'Validation Error', message: `Rubric is already ${status}` })
       }
 
       // In-place update (not a new config version per research.md R5)
-      currentVersion.rubricApprovalStatus = status
-      jobs[jobIndex] = { ...jobs[jobIndex], currentVersion }
-      await setArray(storage, JOBS, jobs)
-
-      // Also update the versions array
-      const versions = await getArray<JobConfigVersion>(storage, jobVersionsKey(jobId))
-      const versionIndex = versions.findIndex(v => v.versionId === currentVersion.versionId)
-      if (versionIndex !== -1) {
-        versions[versionIndex].rubricApprovalStatus = status
-        await setArray(storage, jobVersionsKey(jobId), versions)
-      }
+      await jobRepo.updateConfigVersionField(currentVersion.versionId, 'rubricApprovalStatus', status)
 
       const auditAction = status === 'approved' ? 'rubric.approved' : 'rubric.reverted-to-draft'
       await audit.appendEvent(
@@ -521,29 +481,177 @@ export function createJobsRouter(storage: StorageProvider) {
   router.post('/:jobId/process', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const jobs = await getArray<Job>(storage, JOBS)
-      const job = jobs.find(j => j.jobId === jobId)
+      const job = await jobRepo.getById(jobId)
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
 
-      const apps = await getArray<Application>(storage, jobApplicationsKey(jobId))
-      const queued = apps.filter(a => a.status === 'Queued')
+      const allApps = await applicationRepo.getByJobId(jobId)
+      // Only process production applications that are Queued
+      const queued = allApps.filter(a => a.status === 'Queued')
 
       // Import pipeline dynamically to avoid circular deps
       const { createPipelineOrchestrator } = await import('../services/pipeline.js')
-      const pipeline = createPipelineOrchestrator(storage)
+      const pipeline = createPipelineOrchestrator()
 
-      // Process in background
-      for (const app of queued) {
-        pipeline.processApplication(app.applicationId, jobId).catch(err => {
-          console.error(`Pipeline error for ${app.applicationId}:`, err)
-        })
-      }
+      // Process in background with concurrency control (AWR_MAX_PARALLEL)
+      const appIds = queued.map(a => a.applicationId)
+      pipeline.processApplicationsBatch(appIds, jobId).catch(err => {
+        console.error(`Pipeline batch error for job ${jobId}:`, err)
+      })
 
       await audit.appendEvent(req.user?.username || 'unknown', 'pipeline.triggered', 'Job', jobId, { queuedCount: queued.length })
 
       res.json({ message: `Processing started for ${queued.length} applications`, queuedCount: queued.length })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/jobs/:jobId/reaggregate - recompute decisions from existing scoring runs
+  router.post('/:jobId/reaggregate', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId } = req.params
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+
+      const varianceThreshold = job.currentVersion.varianceThreshold ?? 15
+      const longlistThreshold = job.currentVersion.longlistThreshold ?? 70
+      const scoredApps = (await applicationRepo.getByJobId(jobId)).filter(
+        (app) => (app.status === 'Completed' || app.status === 'NeedsManualReview') && app.finalScore !== undefined,
+      )
+
+      let updated = 0
+      for (const app of scoredApps) {
+        const runs = await applicationRepo.getScoringRuns(app.applicationId)
+        if (runs.length === 0) {
+          continue
+        }
+
+        const scores = runs.map((run) => run.overallScore)
+        const meanScore = scores.reduce((sum, value) => sum + value, 0) / scores.length
+        const variance = Math.sqrt(
+          scores.reduce((sum, value) => sum + Math.pow(value - meanScore, 2), 0) / scores.length,
+        )
+        const anyGateFailed = runs.some((run) => run.mustHaveResult?.passed === false)
+
+        let finalDecision: AggregatedResult['finalDecision']
+        let nextStatus: typeof app.status
+        if (anyGateFailed) {
+          finalDecision = 'Excluded'
+          nextStatus = 'Completed'
+        } else if (variance > varianceThreshold) {
+          finalDecision = 'NeedsManualReview'
+          nextStatus = 'NeedsManualReview'
+        } else if (meanScore >= longlistThreshold) {
+          finalDecision = 'Eligible'
+          nextStatus = 'Completed'
+        } else {
+          finalDecision = 'Excluded'
+          nextStatus = 'Completed'
+        }
+
+        const changed = app.finalDecision !== finalDecision || app.status !== nextStatus
+        if (!changed) {
+          continue
+        }
+
+        const aggregatedResult: AggregatedResult = {
+          resultId: randomUUID(),
+          applicationId: app.applicationId,
+          versionId: runs[0]?.versionId ?? job.currentVersion.versionId,
+          finalScore: meanScore,
+          finalSubScores: {},
+          confidence: 1,
+          variance,
+          finalDecision,
+          rationaleText: anyGateFailed
+            ? `Excluded: eligibility gate failed. Score: ${meanScore.toFixed(1)} (${scores.length} run(s), variance: ${variance.toFixed(1)}).`
+            : `Aggregated ${scores.length} scoring run(s). Mean score: ${meanScore.toFixed(1)}, Variance: ${variance.toFixed(1)}.`,
+          recommendationsText: '',
+          allRuns: [],
+          createdAt: new Date().toISOString(),
+        }
+
+        await applicationRepo.setAggregatedResult(aggregatedResult)
+        await applicationRepo.updateStatus(app.applicationId, nextStatus, {
+          finalScore: meanScore,
+          finalDecision,
+          variance,
+          flagged: nextStatus === 'NeedsManualReview',
+        })
+        updated++
+      }
+
+      await audit.appendEvent(req.user?.username || 'unknown', 'pipeline.reaggregated', 'Job', jobId, {
+        updated,
+        total: scoredApps.length,
+      })
+
+      res.json({ updated, total: scoredApps.length })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/jobs/:jobId/retry-failed - reset failed apps to Queued and re-process
+  router.post('/:jobId/retry-failed', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId } = req.params
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+
+      // Reset failed apps to Queued and get their IDs
+      const resetIds = await applicationRepo.bulkResetFailed(jobId)
+
+      if (resetIds.length === 0) {
+        return res.json({ message: 'No failed applications to retry', retriedCount: 0 })
+      }
+
+      // Remove matching DLQ items
+      await dlqRepo.removeByJobAndAppIds(jobId, resetIds)
+
+      // Re-process in background with concurrency control (AWR_MAX_PARALLEL)
+      const { createPipelineOrchestrator } = await import('../services/pipeline.js')
+      const pipeline = createPipelineOrchestrator()
+      pipeline.processApplicationsBatch(resetIds, jobId).catch(err => {
+        console.error(`Retry pipeline batch error for job ${jobId}:`, err)
+      })
+
+      await audit.appendEvent(req.user?.username || 'unknown', 'pipeline.retry-failed', 'Job', jobId, { retriedCount: resetIds.length })
+
+      res.json({ message: `Retrying ${resetIds.length} failed applications`, retriedCount: resetIds.length })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/jobs/:jobId/applications/:applicationId/rescore - re-score a single application
+  router.post('/:jobId/applications/:applicationId/rescore', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId, applicationId } = req.params
+      const app = await applicationRepo.getById(applicationId)
+      if (!app) {
+        return res.status(404).json({ error: 'Not Found', message: 'Application not found' })
+      }
+
+      // Reset app to Queued, clear previous runs and result
+      await applicationRepo.resetForRescore(applicationId)
+
+      // Re-process
+      const { createPipelineOrchestrator } = await import('../services/pipeline.js')
+      const pipeline = createPipelineOrchestrator()
+      pipeline.processApplication(applicationId, jobId).catch(err => {
+        console.error(`Rescore pipeline error for ${applicationId}:`, err)
+      })
+
+      await audit.appendEvent(req.user?.username || 'unknown', 'application.rescore', 'Application', applicationId, { jobId })
+
+      res.json({ success: true, message: `Application ${applicationId} queued for re-scoring` })
     } catch (err) {
       next(err)
     }

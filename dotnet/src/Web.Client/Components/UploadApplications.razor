@@ -88,7 +88,10 @@
         foreach (var entry in ValidFiles)
         {
             var stream = entry.File.OpenReadStream(maxAllowedSize: MaxFileSize);
-            content.Add(new StreamContent(stream), "files", entry.File.Name);
+            var streamContent = new StreamContent(stream);
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                entry.File.ContentType is { Length: > 0 } ct ? ct : InferMimeType(entry.File.Name));
+            content.Add(streamContent, "files", entry.File.Name);
         }
         uploadSuccess = await Api.UploadApplicationsAsync(JobId, content);
         if (uploadSuccess)
@@ -110,4 +113,14 @@
         public string? Error { get; set; }
         public bool Uploaded { get; set; }
     }
+
+    private static string InferMimeType(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc" => "application/msword",
+        ".md" => "text/markdown",
+        ".txt" => "text/plain",
+        _ => "application/octet-stream"
+    };
 }

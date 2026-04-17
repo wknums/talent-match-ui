@@ -32,7 +32,7 @@ Enable admin users to permanently delete jobs (with cascade removal of all assoc
 | III | Storage Abstraction | ✅ PASS | Stack A: all persistence via `StorageProvider` interface. Stack B: all persistence via `IJobRepository` (EF Core). No direct DB access. |
 | IV | Security Defaults | ✅ PASS | Delete restricted to admin role: `requireRole('admin')` middleware (Stack A), `RequireAuthorization("AdminOnly")` + `ICurrentUserService.IsAdmin` check (Stack B). Non-admin users never see delete controls. |
 | V | LLM Integration | N/A | No LLM calls in this feature. |
-| VI | UI Precision & Responsiveness | ✅ PASS | Optimistic delete with rollback on failure. Error handling with Sonner toasts (Stack A) and inline error messages (Stack B). Confirmation dialogs are resizable and draggable with scroll bars per constitution. |
+| VI | UI Precision & Responsiveness | ✅ PASS | Optimistic delete with rollback on failure. Error handling with Sonner toasts (Stack A) and inline error messages (Stack B). Confirmation dialogs follow existing modal patterns; draggable/resizable behavior is not a constitution requirement. |
 | VII | Simplicity & YAGNI | ✅ PASS | No unnecessary abstractions. Reuses existing `StorageProvider`, `IJobRepository`, and `requireRole` patterns. Single-purpose `ConfirmDeleteJobDialog` component (not over-abstracted). |
 | IX | Clean Architecture (.NET) | ✅ PASS | `DeleteJobCommand` in Application layer with handler. Endpoint in Presentation layer dispatches via MediatR. Repository in Infrastructure layer. Domain entities unchanged. Dependencies flow inward only. |
 
@@ -45,7 +45,7 @@ Enable admin users to permanently delete jobs (with cascade removal of all assoc
 | I | Typed & Auditable | ✅ PASS | `JobSummaryDto` fully typed. Delete audit event via `audit.appendEvent` (Stack A) and handler pattern (Stack B). |
 | II | Layered Architecture | ✅ PASS | No cross-layer references in design. |
 | III | Storage Abstraction | ✅ PASS | KV keys for cascade delete (`jobApplicationsKey`, `jobVersionsKey`) accessed through `StorageProvider`. |
-| VI | UI Precision | ✅ PASS | Dialogs draggable/resizable per constitution. Loading states and error toasts specified. |
+| VI | UI Precision | ✅ PASS | Loading states and error toasts are specified. Dialog behavior is treated as a local UI choice rather than a constitution rule. |
 | VII | YAGNI | ✅ PASS | No soft-delete, no undo, no recycle bin — only what's specified. |
 | IX | Clean Architecture | ✅ PASS | `GetJobSummariesQuery` follows same CQRS pattern as existing queries. |
 
@@ -123,7 +123,7 @@ dotnet/
 │       │   ├── Dashboard.razor                # DONE: delete button, creator name, date, progress
 │       │   └── JobDetail.razor                # DONE: delete button, dialog integration
 │       ├── Components/
-│       │   └── ConfirmDeleteJobDialog.razor   # DONE: draggable/resizable dialog
+│       │   └── ConfirmDeleteJobDialog.razor   # DONE: confirmation dialog
 │       └── Services/
 │           └── ApiClient.cs                   # DONE: DeleteJobAsync, JobSummaryDto
 └── tests/

@@ -1,6 +1,5 @@
 import type { Request, Response, NextFunction } from 'express'
-import type { StorageProvider } from '../storage/types.js'
-import { AUTH_CURRENT_USER } from '../storage/kv-keys.js'
+import { getCurrentUser } from '../session.js'
 
 export interface User {
   userId: string
@@ -18,10 +17,10 @@ export interface AuthenticatedRequest extends Request {
   user?: User
 }
 
-export function createAuthMiddleware(storage: StorageProvider) {
+export function createAuthMiddleware() {
   return async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     try {
-      const user = await storage.get<User>(AUTH_CURRENT_USER)
+      const user = getCurrentUser()
       if (!user) {
         return res.status(401).json({
           error: 'Unauthorized',

@@ -11,7 +11,7 @@ public class ApplicationDocument
     public long FileSize { get; set; }
     public string Fingerprint { get; set; } = string.Empty;
     public string? ContentBase64 { get; set; }
-    public DateTime UploadTimestamp { get; set; } = DateTime.UtcNow;
+    public DateTime? UploadTimestamp { get; set; }
     
     [JsonIgnore]
     public Application? Application { get; set; }

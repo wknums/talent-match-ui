@@ -5,13 +5,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+} from '@/components/DraggableResizableDialog'
 import { ApplicationsTable } from '@/components/ApplicationsTable'
 import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
 import { UploadRubricDialog } from '@/components/UploadRubricDialog'
 import { PromptManagement } from '@/components/PromptManagement'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText, Lightning } from '@phosphor-icons/react'
+import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText, Lightning, Play, SpinnerGap, ArrowClockwise } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import type { Job, Application, ScoringPrompt } from '@/types'
@@ -38,6 +43,10 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const [viewingDocument, setViewingDocument] = useState<'spec' | 'rubric' | null>(null)
   const [promptManagementOpen, setPromptManagementOpen] = useState(false)
   const [productionApprovedPrompt, setProductionApprovedPrompt] = useState<ScoringPrompt | null>(null)
+  const [processing, setProcessing] = useState(false)
+  const [retryingFailed, setRetryingFailed] = useState(false)
+  const [reaggregating, setReaggregating] = useState(false)
+  const [reaggregateMessage, setReaggregateMessage] = useState<string | null>(null)
 
   useEffect(() => {
     loadData()
@@ -192,10 +201,54 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
             Prompt Management
           </Button>
           {productionApprovedPrompt ? (
-            <Button onClick={onUploadApplications}>
-              <UploadSimple size={20} />
-              Upload Applications
-            </Button>
+            <>
+              <Button onClick={onUploadApplications}>
+                <UploadSimple size={20} />
+                Upload Applications
+              </Button>
+              {stats.queued > 0 && (
+                <Button
+                  variant="outline"
+                  disabled={processing}
+                  onClick={async () => {
+                    setProcessing(true)
+                    try {
+                      await api.processJob(jobId)
+                      toast.success(`Processing started for ${stats.queued} queued application(s)`)
+                      await loadData()
+                    } catch {
+                      toast.error('Failed to start processing')
+                    } finally {
+                      setProcessing(false)
+                    }
+                  }}
+                >
+                  {processing ? <SpinnerGap size={20} className="animate-spin" /> : <Play size={20} />}
+                  Process Queued ({stats.queued})
+                </Button>
+              )}
+              {stats.failed > 0 && (
+                <Button
+                  variant="outline"
+                  disabled={retryingFailed}
+                  onClick={async () => {
+                    setRetryingFailed(true)
+                    try {
+                      await api.retryFailedApplications(jobId)
+                      toast.success(`Retrying ${stats.failed} failed application(s)`)
+                      await loadData()
+                    } catch {
+                      toast.error('Failed to retry applications')
+                    } finally {
+                      setRetryingFailed(false)
+                    }
+                  }}
+                >
+                  {retryingFailed ? <SpinnerGap size={20} className="animate-spin" /> : <ArrowClockwise size={20} />}
+                  Retry Failed ({stats.failed})
+                </Button>
+              )}
+            </>
           ) : (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -211,8 +264,38 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
               </TooltipContent>
             </Tooltip>
           )}
+          <Button
+            variant="outline"
+            disabled={reaggregating}
+            onClick={async () => {
+              setReaggregating(true)
+              setReaggregateMessage(null)
+              try {
+                const result = await api.reaggregateJob(jobId)
+                setReaggregateMessage(`Updated ${result.updated} of ${result.total} applications.`)
+                toast.success('Re-aggregation completed')
+                await loadData()
+              } catch {
+                setReaggregateMessage('Failed to re-aggregate applications.')
+                toast.error('Failed to re-aggregate applications')
+              } finally {
+                setReaggregating(false)
+              }
+            }}
+          >
+            {reaggregating ? <SpinnerGap size={20} className="animate-spin" /> : <ArrowClockwise size={20} />}
+            Re-aggregate
+          </Button>
         </div>
       </div>
+
+      {reaggregateMessage && (
+        <Card className="border-yellow-300 bg-yellow-50">
+          <CardContent className="py-3 text-sm text-yellow-900">
+            {reaggregateMessage}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -377,18 +460,26 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
         </DialogContent>
       </Dialog>
 
-      <Dialog open={promptManagementOpen} onOpenChange={setPromptManagementOpen}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Scoring Prompt Management</DialogTitle>
-          </DialogHeader>
+      <DraggableResizableDialog
+        open={promptManagementOpen}
+        onOpenChange={setPromptManagementOpen}
+        defaultWidth={1200}
+        defaultHeight={820}
+        minWidth={900}
+        minHeight={600}
+      >
+        <DraggableDialogHeader>
+          <DialogTitle>Scoring Prompt Management</DialogTitle>
+        </DraggableDialogHeader>
+        <DraggableDialogBody className="px-6 pb-6">
           <PromptManagement
             jobId={jobId}
-            hasApprovedRubric={!!job.rubricDocumentId}
+            hasApprovedRubric={job.currentVersion.rubricApprovalStatus === 'approved'}
             onPromptStatusChange={() => loadData()}
+            onStartManualReview={onStartManualReview}
           />
-        </DialogContent>
-      </Dialog>
+        </DraggableDialogBody>
+      </DraggableResizableDialog>
     </div>
   )
 }

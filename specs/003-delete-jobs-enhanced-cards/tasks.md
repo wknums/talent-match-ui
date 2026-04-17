@@ -52,7 +52,7 @@
 
 ### Frontend — Confirmation Dialog & Dashboard Integration
 
-- [X] T009 Create `ConfirmDeleteJobDialog.razor` in `dotnet/src/Web.Client/Components/` — parameters: `JobTitle` (string), `ApplicationCount` (int), `Visible` (bool), `OnConfirm` (EventCallback), `OnCancel` (EventCallback). Shows job title, Confirm/Cancel buttons. If `ApplicationCount > 0`, shows cascade warning: "This will also permanently delete {count} applications and all associated scoring data." Must be draggable and resizable with scroll bars per constitution (per research R8)
+- [X] T009 Create `ConfirmDeleteJobDialog.razor` in `dotnet/src/Web.Client/Components/` — parameters: `JobTitle` (string), `ApplicationCount` (int), `Visible` (bool), `OnConfirm` (EventCallback), `OnCancel` (EventCallback). Shows job title, Confirm/Cancel buttons. If `ApplicationCount > 0`, shows cascade warning: "This will also permanently delete {count} applications and all associated scoring data."
 - [X] T010 Modify `dotnet/src/Web.Client/Pages/Dashboard.razor` — fetch `currentUser` via `Api.GetCurrentUserAsync()` in `OnInitializedAsync` to determine admin role (per research R7). Update job listing to use `JobSummaryDto`. Add delete button (🗑️) on each job card, visible only when `currentUser.Role == "admin"`. Wire delete button to open `ConfirmDeleteJobDialog` with the selected job's title and `TotalApplications`. On confirm: optimistically remove job from local list, call `Api.DeleteJobAsync(jobId)`, on failure re-insert job and show error toast (per research R9, FR-001, FR-003, FR-008, FR-010)
 
 **Checkpoint**: Admin can delete jobs (with no applications) from the Dashboard. Core delete flow is functional.

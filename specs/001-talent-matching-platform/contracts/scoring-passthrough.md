@@ -63,40 +63,51 @@ Body: Raw text — the LLM's output. Expected to be valid JSON matching the scor
 
 ## Scoring Output Schema (LLM JSON Response)
 
-The scoring prompt instructs the LLM to return this JSON structure, with details and rubric scores, categories showing example values here than must be replaced with the relevant values being passed :
+The scoring output schema is **prompt-defined, not platform-defined**. Each job's scoring prompt instructs the LLM to return a JSON structure with whatever categories, scores, and evidence fields are relevant for that job. The platform MUST NOT assume any fixed field names or structure.
+
+### Schema-Agnostic Parsing Rules
+
+The parser walks the JSON response generically by value type:
+
+| JSON Value Kind | Interpretation |
+|-----------------|---------------|
+| **Top-level number** | If the property name suggests a total/composite/overall score → `TotalScore`. Otherwise → category score. |
+| **Top-level string** | Classified as recommendation, notes, or general text based on the property name. |
+| **Top-level object** with a numeric sub-property | Treated as a category score entry. The object name is the category, the first numeric sub-field is the score, and the longest string sub-field is the evidence. |
+| **Top-level array of objects** with numeric fields | Treated as a rubric/category breakdown array. Each object's name/category field is the category, its numeric field is the score, and its longest string field is the evidence. |
+| **Top-level array of strings** | Treated as recommendations or improvement tips. |
+
+### Heuristic Property Name Detection
+
+The parser uses substring matching (case-insensitive) to classify property names — it does **not** require exact field names:
+
+- **Total score**: property name contains "total", "composite", "overall", "final", or "weighted"
+- **Recommendation**: property name contains "recommend", "suggestion", "tip", or "improvement"
+- **Notes**: property name contains "note", "summary", "rationale", or "comment"
+
+### Example (Illustrative Only)
+
+The following is one possible structure a prompt might produce. Other structures with different field names and nesting are equally valid:
 
 ```json
 {
-  "eligibility_gate": {
-    "passed": true,
-    "missing_criteria": [],
-    "details": {
-      "5+ years Python experience": true,
-      "Bachelor's degree in CS": true,
-      "AWS certification": false
-    }
-  },
   "rubric_scores": [
     {
       "category": "Technical Skills",
       "score": 85.0,
-      "evidence": "Candidate demonstrates 7 years of Python development including Django and FastAPI frameworks...",
-      "section": "Professional Experience",
-      "confidence": 0.92
+      "evidence": "Candidate demonstrates 7 years of Python development..."
     },
     {
       "category": "Leadership",
       "score": 70.0,
-      "evidence": "Led a team of 4 developers on the payment gateway project...",
-      "section": "Professional Experience",
-      "confidence": 0.85
+      "evidence": "Led a team of 4 developers..."
     }
   ],
   "composite_score": 78.5,
-  "notes": "Strong technical candidate with solid Python and cloud experience. Leadership experience is present but limited to small teams. Missing AWS certification is a noted gap but compensated by extensive cloud deployment experience.",
+  "notes": "Strong technical candidate with solid Python and cloud experience.",
   "improvement_recommendations": [
-    "Obtain AWS Solutions Architect certification to strengthen cloud credentials",
-    "Seek larger team leadership opportunities to demonstrate scalability"
+    "Obtain AWS Solutions Architect certification",
+    "Seek larger team leadership opportunities"
   ]
 }
 ```
@@ -117,6 +128,13 @@ The scoring prompt instructs the LLM to return this JSON structure, with details
 | `composite_score` | number | Yes | Weighted overall score 0–100 |
 | `notes` | string | Yes | Summary rationale for the scoring decision |
 | `improvement_recommendations` | string[] | Yes | Actionable improvement suggestions for the candidate |
+
+### Non-JSON Response Handling
+
+If the LLM response is not valid JSON, the system MUST:
+1. Store the raw text response for display to the user
+2. Flag the scoring run as failed with a clear error message
+3. Guide the user to edit the scoring prompt to ensure JSON output
 
 ## Combined Response Schema (Multi-Run with `runs` Parameter)
 
@@ -173,9 +191,13 @@ When `runs` > 1 is specified in the request, the response contains both individu
 | `aggregated.consolidated_rationale` | string | Summary rationale synthesised across all runs |
 | `aggregated.sub_score_averages` | Record<string, number> | Per-category score averages across all runs |
 
+When `runs` > 1 is specified in the request, the response contains both individual runs and an engine-aggregated result. Each individual run follows the schema-agnostic rules above — the structure is defined by the prompt, not the platform, but should still contain the information described in the structure above, but it may not be exact. The `aggregated` object is engine-provided and its structure may also vary.
+
+The parser applies the same generic JSON walking rules to both individual run objects and the aggregated result.
+
 ### Backward Compatibility
 
-When `runs` is omitted or set to `1`, the response is the original single-run schema (flat JSON object, no `runs` array or `aggregated` wrapper). This preserves backward compatibility with existing callers.
+When `runs` is omitted or set to `1`, the response is a single JSON object (no `runs` array or `aggregated` wrapper). This preserves backward compatibility with existing callers.
 
 ## Calling Convention (Stack A — TypeScript)
 

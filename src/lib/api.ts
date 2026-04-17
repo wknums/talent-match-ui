@@ -13,9 +13,11 @@ import type {
   DesiredCriteria,
   AggregationStrategy,
   RubricSource,
+  RubricApprovalStatus,
   ScoringPrompt,
   PromptTestRun,
   PromptTestRunDetail,
+  ManualReviewData,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
 import { realAPI } from '@/lib/api-real'
@@ -182,8 +184,8 @@ const getDefaultJobs = (): Job[] => {
         desiredCriteria: [],
         runsPerApplication: 3,
         aggregationStrategy: 'median',
-        longlistThreshold: 70,
-        shortlistThreshold: 85,
+        longlistThreshold: 60,
+        shortlistThreshold: 75,
         varianceThreshold: 10,
         rubricApprovalStatus: 'approved',
         rubricSource: 'manual',
@@ -471,6 +473,7 @@ const mockAPI = {
     jobCode?: string
     rubricSource?: RubricSource
     rawExtractionResponse?: string
+    rubricApprovalStatus?: RubricApprovalStatus
   }): Promise<Job> {
     await delay(500)
     const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
@@ -502,7 +505,7 @@ const mockAPI = {
         longlistThreshold: data.longlistThreshold,
         shortlistThreshold: data.shortlistThreshold,
         varianceThreshold: 15,
-        rubricApprovalStatus: 'draft',
+        rubricApprovalStatus: data.rubricApprovalStatus || existingJob.currentVersion.rubricApprovalStatus || 'draft',
         rubricSource: data.rubricSource || 'manual',
         rawExtractionResponse: data.rawExtractionResponse,
         createdAt: new Date().toISOString(),
@@ -692,6 +695,10 @@ const mockAPI = {
         firstFailedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
         lastAttemptedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
         canRetry: true,
+        entityType: 'Application',
+        entityId: 'app-job-001-042',
+        retryCount: 3,
+        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
       },
       {
         itemId: 'dlq-002',
@@ -704,6 +711,10 @@ const mockAPI = {
         lastAttemptedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
         canRetry: true,
         notes: 'Large document size (5MB+) may be causing timeout',
+        entityType: 'Application',
+        entityId: 'app-job-001-089',
+        retryCount: 2,
+        createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
       },
     ]
   },
@@ -712,11 +723,49 @@ const mockAPI = {
     await delay(500)
   },
 
+  async bulkRetryDLQItems(itemIds: string[]): Promise<{ succeeded: number; total: number }> {
+    await delay(500)
+    return { succeeded: itemIds.length, total: itemIds.length }
+  },
+
+  async bulkDeleteDLQItems(itemIds: string[]): Promise<{ deleted: number; total: number }> {
+    await delay(500)
+    return { deleted: itemIds.length, total: itemIds.length }
+  },
+
+  async processJob(_jobId: string): Promise<void> {
+    await delay(500)
+  },
+
+  async retryFailedApplications(_jobId: string): Promise<{ retriedCount: number }> {
+    await delay(500)
+    return { retriedCount: 0 }
+  },
+
+  async reaggregateJob(_jobId: string): Promise<{ updated: number; total: number }> {
+    await delay(500)
+    return { updated: 0, total: 0 }
+  },
+
+  async rescoreApplication(_jobId: string, _applicationId: string): Promise<void> {
+    await delay(500)
+  },
+
   async uploadApplications(jobId: string, files: File[]): Promise<{ applicationIds: string[] }> {
     await delay(2000)
     return {
       applicationIds: files.map((_, i) => `app-${jobId}-new-${i + 1}`),
     }
+  },
+
+  async getManualReview(_applicationId: string): Promise<ManualReviewData | null> {
+    await delay(200)
+    return null
+  },
+
+  async saveManualReview(_applicationId: string, reviewData: Partial<ManualReviewData>): Promise<ManualReviewData> {
+    await delay(300)
+    return reviewData as ManualReviewData
   },
 
   async getAuditEvents(filters?: {
@@ -988,6 +1037,10 @@ const mockAPI = {
       createdAt: new Date().toISOString(),
       completedAt: new Date().toISOString(),
     }
+  },
+
+  async rescoreTestRun(_jobId: string, _promptId: string, _testRunId: string): Promise<void> {
+    await delay(500)
   },
 }
 

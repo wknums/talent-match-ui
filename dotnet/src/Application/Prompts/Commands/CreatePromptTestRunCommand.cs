@@ -172,12 +172,13 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
 
                 // Score each test application
                 var appRepo = scope.ServiceProvider.GetRequiredService<IApplicationRepository>();
+                var failedCount = 0;
                 foreach (var appId in applicationIds)
                 {
                     try
                     {
                         await mediator.Send(new ScoreApplicationCommand(
-                            appId, jobId, runCount, promptId));
+                            appId, jobId, runCount, promptId, job?.JobDescription ?? job?.Title ?? "", config?.RubricJson));
 
                         // Update application status so approve validation passes
                         var app = await appRepo.GetByIdAsync(appId);
@@ -189,16 +190,26 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
                     }
                     catch (Exception ex)
                     {
+                        failedCount++;
                         logger.LogError(ex, "Test-run {TestRunId}: scoring failed for application {ApplicationId}",
                             testRunId, appId);
+
+                        // Mark the application as failed so the UI can show the error
+                        var failedApp = await appRepo.GetByIdAsync(appId);
+                        if (failedApp != null)
+                        {
+                            failedApp.Status = "ScoringFailed";
+                            failedApp.LastError = ex.Message;
+                            await appRepo.UpdateAsync(failedApp);
+                        }
                     }
                 }
 
-                // Update status to pending_review
+                // Update test run status based on results
                 var updatedRun = await testRunRepo.GetByIdAsync(testRunId);
                 if (updatedRun != null)
                 {
-                    updatedRun.Status = "pending_review";
+                    updatedRun.Status = failedCount > 0 ? "scoring_failed" : "pending_review";
                     await testRunRepo.UpdateAsync(updatedRun);
                 }
             }

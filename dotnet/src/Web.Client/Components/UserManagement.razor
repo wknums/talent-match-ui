@@ -1,5 +1,6 @@
 @page "/users"
 @using TalentMatch.Web.Client.Services
+@using Microsoft.AspNetCore.Components.Web
 @inject ApiClient Api
 
 <h4>User Management</h4>
@@ -47,6 +48,8 @@
     <thead>
         <tr style="border-bottom: 2px solid #ccc;">
             <th style="text-align: left; padding: 0.5rem;">Username</th>
+            <th style="text-align: left; padding: 0.5rem;">Full Name</th>
+            <th style="text-align: left; padding: 0.5rem;">Email</th>
             <th style="text-align: left; padding: 0.5rem;">Role</th>
             <th style="text-align: left; padding: 0.5rem;">Department</th>
             <th style="text-align: left; padding: 0.5rem;">Actions</th>
@@ -57,9 +60,34 @@
         {
             <tr style="border-bottom: 1px solid #eee;">
                 <td style="padding: 0.5rem;">@user.Username</td>
+                <td style="padding: 0.5rem;">@user.FullName</td>
+                <td style="padding: 0.5rem;">@user.Email</td>
                 <td style="padding: 0.5rem;">@user.Role</td>
-                <td style="padding: 0.5rem;">@user.Department</td>
                 <td style="padding: 0.5rem;">
+                    @{ var departments = GetDepartmentTags(user.Department); }
+                    @if (departments.Count == 0)
+                    {
+                        <span>—</span>
+                    }
+                    else if (departments.Count == 1)
+                    {
+                        <span>@departments[0]</span>
+                    }
+                    else
+                    {
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                            @foreach (var department in departments)
+                            {
+                                <span style="background: #edf2f7; color: #2d3748; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.8rem;">@department</span>
+                            }
+                        </div>
+                    }
+                </td>
+                <td style="padding: 0.5rem;">
+                    @if (CanManageUsers)
+                    {
+                        <button @onclick="() => ShowEditDialog(user)" disabled="@isSavingEdit">Edit</button>
+                    }
                     <button @onclick="() => ConfirmDelete(user)">Delete</button>
                     <button @onclick="() => ShowResetDialog(user)">Reset Password</button>
                 </td>
@@ -95,7 +123,70 @@
     </div>
 }
 }
-else
+
+@if (activeTab == "users" && editingUser != null)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 380px; max-width: 520px; width: 100%;">
+            <h5 style="margin-top: 0;">Edit User: @editingUser.Username</h5>
+            <div style="display: grid; gap: 0.75rem;">
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Full Name</label>
+                    <input value="@editFullName" @oninput="OnEditFullNameChanged" style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Email</label>
+                    <input value="@editEmail" @oninput="OnEditEmailChanged" style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Role</label>
+                    <select @bind="editRole" disabled="@IsEditingCurrentUser" style="width: 100%; padding: 0.5rem;">
+                        <option value="recruiter">Recruiter</option>
+                        <option value="admin">Admin</option>
+                        <option value="business_panel">Business Panel</option>
+                    </select>
+                    @if (IsEditingCurrentUser)
+                    {
+                        <div style="margin-top: 0.35rem; font-size: 0.85rem; color: #744210;">You cannot change your own role.</div>
+                    }
+                </div>
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Departments</label>
+                    @if (editDepartments.Any())
+                    {
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem;">
+                            @foreach (var department in editDepartments)
+                            {
+                                <span style="display: inline-flex; align-items: center; gap: 0.35rem; background: #edf2f7; color: #2d3748; padding: 0.25rem 0.5rem; border-radius: 999px; font-size: 0.85rem;">
+                                    @department
+                                    <button @onclick="() => RemoveEditDepartment(department)" style="background: none; border: none; color: #4a5568; cursor: pointer; padding: 0;">×</button>
+                                </span>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="margin-bottom: 0.5rem; font-size: 0.85rem; color: #666;">No departments assigned.</div>
+                    }
+                    <input
+                        value="@editDepartmentInput"
+                        @oninput="OnEditDepartmentInputChanged"
+                        @onkeydown="HandleEditDepartmentKeyDown"
+                        placeholder="Type a department and press Enter"
+                        style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button @onclick="CancelEdit">Cancel</button>
+                    <button @onclick="SaveEditUser" disabled="@isSavingEdit" style="background: #3182ce; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">
+                        @(isSavingEdit ? "Saving..." : "Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (activeTab != "users")
 {
     @if (resetRequests.Any())
     {
@@ -150,6 +241,14 @@ else
     private bool showCreateForm;
     private string activeTab = "users";
     private string newUsername = "", newFullName = "", newEmail = "", newRole = "recruiter", newDepartment = "", newPassword = "";
+    private UserInfo? currentUser;
+    private UserInfo? editingUser;
+    private string editFullName = "";
+    private string editEmail = "";
+    private string editRole = "recruiter";
+    private List<string> editDepartments = new();
+    private string editDepartmentInput = "";
+    private bool isSavingEdit;
     private UserInfo? userToDelete;
     private UserInfo? userToReset;
     private string resetNewPassword = "";
@@ -157,6 +256,9 @@ else
     private string approveNewPassword = "";
     private string? errorMessage;
     private string? successMessage;
+
+    private bool CanManageUsers => currentUser?.Role == "admin";
+    private bool IsEditingCurrentUser => editingUser != null && currentUser?.Id == editingUser.Id;
 
     private string UsersTabStyle => activeTab == "users" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
     private string RequestsTabStyle => activeTab == "requests" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
@@ -171,6 +273,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        currentUser = await Api.GetCurrentUserAsync();
         users = await Api.GetUsersAsync();
         resetRequests = await Api.GetResetRequestsAsync();
     }
@@ -193,6 +296,117 @@ else
     }
 
     private void ConfirmDelete(UserInfo user) => userToDelete = user;
+
+    private void ShowEditDialog(UserInfo user)
+    {
+        editingUser = user;
+        editFullName = user.FullName;
+        editEmail = user.Email;
+        editRole = user.Role;
+        editDepartments = GetDepartmentTags(user.Department);
+        editDepartmentInput = "";
+    }
+
+    private void CancelEdit()
+    {
+        editingUser = null;
+        editFullName = "";
+        editEmail = "";
+        editRole = "recruiter";
+        editDepartments = new();
+        editDepartmentInput = "";
+        isSavingEdit = false;
+    }
+
+    private void OnEditFullNameChanged(ChangeEventArgs args)
+        => editFullName = args.Value?.ToString() ?? "";
+
+    private void OnEditEmailChanged(ChangeEventArgs args)
+        => editEmail = args.Value?.ToString() ?? "";
+
+    private void OnEditDepartmentInputChanged(ChangeEventArgs args)
+        => editDepartmentInput = args.Value?.ToString() ?? "";
+
+    private void HandleEditDepartmentKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            AddEditDepartment();
+        }
+    }
+
+    private void AddEditDepartment()
+    {
+        var department = editDepartmentInput.Trim();
+        if (string.IsNullOrWhiteSpace(department))
+            return;
+
+        ClearMessages();
+
+        if (department.Contains(','))
+        {
+            errorMessage = "Department names cannot contain commas.";
+            return;
+        }
+
+        if (editDepartments.Any(existing => string.Equals(existing, department, StringComparison.OrdinalIgnoreCase)))
+        {
+            errorMessage = $"Department '{department}' has already been added.";
+            editDepartmentInput = "";
+            return;
+        }
+
+        editDepartments.Add(department);
+        editDepartmentInput = "";
+    }
+
+    private void RemoveEditDepartment(string department)
+    {
+        editDepartments = editDepartments
+            .Where(existing => !string.Equals(existing, department, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private async Task SaveEditUser()
+    {
+        if (editingUser == null)
+            return;
+
+        ClearMessages();
+        isSavingEdit = true;
+
+        var roleToSave = IsEditingCurrentUser ? editingUser.Role : editRole;
+        var departmentValue = string.Join(",", editDepartments
+            .Select(department => department.Trim())
+            .Where(department => !string.IsNullOrWhiteSpace(department)));
+
+        try
+        {
+            await Api.UpdateUserAsync(editingUser.Id, editFullName, editEmail, roleToSave, departmentValue);
+            users = await Api.GetUsersAsync();
+            currentUser = await Api.GetCurrentUserAsync();
+            CancelEdit();
+            successMessage = "User updated successfully.";
+        }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            users = await Api.GetUsersAsync();
+            CancelEdit();
+            errorMessage = "User not found.";
+        }
+        catch (ApiException ex) when (ex.StatusCode == 409 || ex.StatusCode == 400)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isSavingEdit = false;
+        }
+    }
 
     private async Task ConfirmDeleteUser()
     {
@@ -287,4 +501,10 @@ else
             errorMessage = ex.Message;
         }
     }
+
+    private static List<string> GetDepartmentTags(string? department)
+        => (department ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToList();
 }

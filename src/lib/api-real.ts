@@ -16,6 +16,14 @@ import type {
   PromptTestRunDetail,
 } from '@/types'
 
+function normalizeMustHaveResult(raw: any) {
+  return {
+    passed: raw?.passed ?? true,
+    missingCriteria: Array.isArray(raw?.missingCriteria) ? raw.missingCriteria : [],
+    details: raw?.details && typeof raw.details === 'object' ? raw.details : {},
+  }
+}
+
 function mapTestRun(raw: any): PromptTestRun {
   return {
     testRunId: raw.id ?? raw.testRunId,
@@ -36,30 +44,98 @@ function mapScoringRun(raw: any): ScoringRun {
   return {
     runId: raw.id ?? raw.runId,
     applicationId: raw.applicationId,
-    versionId: raw.aiModelId ?? '',
-    runIndex: raw.runIndex,
-    modelDeploymentId: raw.aiModelId ?? '',
-    promptVersionId: raw.promptVersion ?? '',
-    overallScore: raw.totalScore,
+    versionId: raw.versionId ?? raw.aiModelId ?? '',
+    runIndex: raw.runIndex ?? 0,
+    modelDeploymentId: raw.modelDeploymentId ?? raw.aiModelId ?? '',
+    promptVersionId: raw.promptVersionId ?? raw.promptVersion ?? '',
+    overallScore: raw.overallScore ?? raw.totalScore ?? 0,
     subScores: typeof raw.categoryScoresJson === 'string'
       ? JSON.parse(raw.categoryScoresJson)
       : (raw.subScores ?? {}),
-    mustHaveResult: typeof raw.mustHaveEvaluationJson === 'string'
-      ? JSON.parse(raw.mustHaveEvaluationJson)
-      : (raw.mustHaveResult ?? { passed: true, missingCriteria: [], details: {} }),
+    mustHaveResult: normalizeMustHaveResult(
+      typeof raw.mustHaveEvaluationJson === 'string'
+        ? JSON.parse(raw.mustHaveEvaluationJson)
+        : raw.mustHaveResult,
+    ),
     evidenceCitations: typeof raw.evidenceCitationsJson === 'string'
       ? JSON.parse(raw.evidenceCitationsJson)
       : (raw.evidenceCitations ?? []),
-    rationale: '',
+    rationale: raw.rationale ?? '',
     improvementRecommendations: typeof raw.improvementTipsJson === 'string'
       ? JSON.parse(raw.improvementTipsJson)
       : (raw.improvementRecommendations ?? []),
     createdAt: raw.createdAt,
-    durationMs: 0,
+    durationMs: raw.durationMs ?? 0,
     tokenUsage: raw.inputTokens || raw.outputTokens
       ? { promptTokens: raw.inputTokens ?? 0, completionTokens: raw.outputTokens ?? 0, totalTokens: (raw.inputTokens ?? 0) + (raw.outputTokens ?? 0) }
       : undefined,
-    status: 'Success',
+    status: raw.status ?? 'Success',
+    rawResponseText: raw.rawResponseText,
+    rawParsedResponse: raw.rawParsedResponse,
+    parserWarnings: raw.parserWarnings ?? [],
+    parserConfidence: raw.parserConfidence,
+  }
+}
+
+function mapAggregatedResult(raw: any): AggregatedResult {
+  const recommendations = typeof raw.mergedImprovementTipsJson === 'string'
+    ? JSON.parse(raw.mergedImprovementTipsJson)
+    : (typeof raw.recommendationsText === 'string'
+        ? raw.recommendationsText
+            .split(';')
+            .map((item: string) => item.trim())
+            .filter(Boolean)
+        : [])
+
+  return {
+    resultId: raw.id ?? raw.resultId,
+    applicationId: raw.applicationId,
+    versionId: raw.versionId ?? '',
+    finalScore: raw.finalScore ?? 0,
+    finalSubScores: raw.finalSubScores ?? {},
+    confidence: raw.confidence ?? 0,
+    variance: raw.variance ?? 0,
+    finalDecision: raw.decision ?? raw.finalDecision,
+    rationaleText: raw.consolidatedRationale ?? raw.rationaleText ?? '',
+    recommendationsText: Array.isArray(recommendations) ? recommendations.join('; ') : '',
+    allRuns: [],
+    createdAt: raw.createdAt ?? new Date().toISOString(),
+  }
+}
+
+function mapManualReview(raw: any): ManualReviewData {
+  return {
+    applicationId: raw.applicationId,
+    jobId: raw.jobId,
+    rubricScores: typeof raw.rubricScoresJson === 'string'
+      ? JSON.parse(raw.rubricScoresJson)
+      : (raw.rubricScores ?? {}),
+    overallComment: raw.overallComment ?? '',
+    adjustedFinalScore: raw.adjustedFinalScore,
+    auditTrail: typeof raw.auditTrailJson === 'string'
+      ? JSON.parse(raw.auditTrailJson)
+      : (raw.auditTrail ?? []),
+    lastModifiedAt: raw.lastModifiedAt ?? new Date().toISOString(),
+    lastModifiedBy: raw.lastModifiedBy ?? 'unknown',
+  }
+}
+
+function mapDLQItem(raw: any): DLQItem {
+  return {
+    itemId: raw.id ?? raw.itemId,
+    applicationId: raw.applicationId ?? (raw.entityType === 'Application' ? raw.entityId : ''),
+    jobId: raw.jobId ?? '',
+    failureType: raw.failureType ?? 'Scoring',
+    failureReason: raw.failureReason ?? '',
+    attemptCount: raw.attemptCount ?? raw.retryCount ?? 0,
+    firstFailedAt: raw.firstFailedAt ?? raw.createdAt ?? new Date().toISOString(),
+    lastAttemptedAt: raw.lastAttemptedAt ?? raw.updatedAt ?? raw.createdAt ?? new Date().toISOString(),
+    canRetry: raw.canRetry ?? true,
+    notes: raw.notes,
+    entityType: raw.entityType ?? 'Application',
+    entityId: raw.entityId ?? raw.applicationId ?? '',
+    retryCount: raw.retryCount ?? raw.attemptCount ?? 0,
+    createdAt: raw.createdAt ?? raw.firstFailedAt ?? new Date().toISOString(),
   }
 }
 
@@ -79,6 +155,7 @@ function mapApplication(raw: any): Application {
     variance: raw.variance,
     flagged: raw.flagged,
     testRunId: raw.testRunId,
+    lastError: raw.lastError,
   }
 }
 
@@ -245,6 +322,7 @@ export const realAPI = {
     jobCode?: string
     rubricSource?: import('@/types').RubricSource
     rawExtractionResponse?: string
+    rubricApprovalStatus?: import('@/types').RubricApprovalStatus
   }): Promise<Job> {
     // Update job config creates a new version
     await fetchJSON(`${API_BASE}/jobs/${jobId}/config`, {
@@ -302,20 +380,29 @@ export const realAPI = {
 
   async getApplication(applicationId: string): Promise<Application | null> {
     try {
-      return await fetchJSON(`${API_BASE}/applications/${applicationId}`)
+      const raw = await fetchJSON<any>(`${API_BASE}/applications/${applicationId}`)
+      return mapApplication(raw)
     } catch {
       return null
     }
   },
 
   async uploadApplications(jobId: string, files: File[]): Promise<{ applicationIds: string[] }> {
-    // Convert files to JSON payload since we're using JSON API
-    const fileData = await Promise.all(files.map(async (file) => ({
-      fileName: file.name,
-      content: await file.text(),
-      mimeType: file.type || 'application/octet-stream',
-      sizeBytes: file.size,
-    })))
+    // Convert files to base64 JSON payload for binary-safe transport
+    const fileData = await Promise.all(files.map(async (file) => {
+      const arrayBuffer = await file.arrayBuffer()
+      const bytes = new Uint8Array(arrayBuffer)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i])
+      }
+      return {
+        fileName: file.name,
+        content: btoa(binary),
+        mimeType: file.type || 'application/octet-stream',
+        sizeBytes: file.size,
+      }
+    }))
 
     return fetchJSON(`${API_BASE}/jobs/${jobId}/applications/upload`, {
       method: 'POST',
@@ -325,12 +412,14 @@ export const realAPI = {
 
   // Scoring
   async getScoringRuns(applicationId: string): Promise<ScoringRun[]> {
-    return fetchJSON(`${API_BASE}/applications/${applicationId}/runs`)
+    const raw = await fetchJSON<any[]>(`${API_BASE}/applications/${applicationId}/runs`)
+    return raw.map(mapScoringRun)
   },
 
   async getAggregatedResult(applicationId: string): Promise<AggregatedResult | null> {
     try {
-      return await fetchJSON(`${API_BASE}/applications/${applicationId}/result`)
+      const raw = await fetchJSON<any>(`${API_BASE}/applications/${applicationId}/result`)
+      return mapAggregatedResult(raw)
     } catch {
       return null
     }
@@ -357,26 +446,43 @@ export const realAPI = {
   // Manual Review
   async getManualReview(applicationId: string): Promise<ManualReviewData | null> {
     try {
-      return await fetchJSON(`${API_BASE}/applications/${applicationId}/manual-review`)
+      const raw = await fetchJSON<any>(`${API_BASE}/applications/${applicationId}/manual-review`)
+      return raw ? mapManualReview(raw) : null
     } catch {
       return null
     }
   },
 
   async saveManualReview(applicationId: string, reviewData: Partial<ManualReviewData>): Promise<ManualReviewData> {
-    return fetchJSON(`${API_BASE}/applications/${applicationId}/manual-review`, {
+    const raw = await fetchJSON<any>(`${API_BASE}/applications/${applicationId}/manual-review`, {
       method: 'POST',
       body: JSON.stringify(reviewData),
     })
+    return mapManualReview(raw)
   },
 
   // DLQ
   async getDLQItems(): Promise<DLQItem[]> {
-    return fetchJSON(`${API_BASE}/dlq`)
+    const raw = await fetchJSON<any[]>(`${API_BASE}/dlq`)
+    return raw.map(mapDLQItem)
   },
 
   async retryDLQItem(itemId: string): Promise<void> {
     await fetchJSON(`${API_BASE}/dlq/${itemId}/retry`, { method: 'POST' })
+  },
+
+  async bulkRetryDLQItems(itemIds: string[]): Promise<{ succeeded: number; total: number }> {
+    return fetchJSON(`${API_BASE}/dlq/bulk-retry`, {
+      method: 'POST',
+      body: JSON.stringify({ ids: itemIds }),
+    })
+  },
+
+  async bulkDeleteDLQItems(itemIds: string[]): Promise<{ deleted: number; total: number }> {
+    return fetchJSON(`${API_BASE}/dlq/bulk-delete`, {
+      method: 'POST',
+      body: JSON.stringify({ ids: itemIds }),
+    })
   },
 
   // Stats
@@ -417,6 +523,18 @@ export const realAPI = {
   // Pipeline
   async processJob(jobId: string): Promise<void> {
     await fetchJSON(`${API_BASE}/jobs/${jobId}/process`, { method: 'POST' })
+  },
+
+  async retryFailedApplications(jobId: string): Promise<{ retriedCount: number }> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/retry-failed`, { method: 'POST' })
+  },
+
+  async reaggregateJob(jobId: string): Promise<{ updated: number; total: number }> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/reaggregate`, { method: 'POST' })
+  },
+
+  async rescoreApplication(jobId: string, applicationId: string): Promise<void> {
+    await fetchJSON(`${API_BASE}/jobs/${jobId}/applications/${applicationId}/rescore`, { method: 'POST' })
   },
 
   // Scoring Prompts (US3a)
@@ -480,12 +598,22 @@ export const realAPI = {
     const applications = (raw.applications ?? []).map((a: any) => ({
       application: mapApplication(a.application ?? a),
       scoringRuns: (a.scoringRuns ?? []).map(mapScoringRun),
+      aggregatedResult: a.aggregatedResult ? mapAggregatedResult(a.aggregatedResult) : null,
+      manualReview: a.manualReview ? mapManualReview(a.manualReview) : null,
     }))
     return { ...testRun, applications }
   },
 
   async approveTestRun(jobId: string, promptId: string, testRunId: string): Promise<PromptTestRun> {
-    const raw = await fetchJSON<any>(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}/approve`)
+    const raw = await fetchJSON<any>(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}/approve`, {
+      method: 'POST',
+    })
     return mapTestRun(raw)
+  },
+
+  async rescoreTestRun(jobId: string, promptId: string, testRunId: string): Promise<void> {
+    await fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/test-runs/${testRunId}/rescore`, {
+      method: 'POST',
+    })
   },
 }

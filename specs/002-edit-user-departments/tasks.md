@@ -8,8 +8,8 @@
 **Organization**: Tasks are grouped by user story to enable independent implementation and testing of each story.
 
 **Scope**: Both stacks.
-- **Stack B** (.NET Blazor WASM / Clean Architecture) — **COMPLETED** ✅
-- **Stack A** (Node.js/Express + React/TypeScript) — tasks below
+- **Stack A** (Node.js/Express + React/TypeScript) — implemented ✅
+- **Stack B** (.NET Blazor WASM / Clean Architecture) — implemented; parity re-review pending
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -96,6 +96,16 @@
 
 ---
 
+## Phase 7: Stack B Parity Completion
+
+**Purpose**: Finish the missing Stack B web/API surface so the feature regains cross-stack parity.
+
+- [x] T014 Add `PUT /{userId}` to `dotnet/src/Web.Server/Endpoints/UsersEndpoints.cs` and introduce the request DTO needed to dispatch `UpdateUserCommand` through the existing `AdminOnly` route group.
+- [x] T015 Implement the edit-user flow in `dotnet/src/Web.Client/Components/UserManagement.razor` — add Edit controls, a pre-populated form/modal, save/cancel handling, and the multi-department tag input expected by the feature spec.
+- [x] T016 Add or update Stack B tests and manual verification so endpoint behavior, duplicate-email handling, self-role-change prevention, and multi-department editing are re-validated before parity is marked complete.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -176,4 +186,4 @@ Phase 5 (US3): Authorization verification (T010, T011)
 - Stack A roles include `business_panel` in addition to `admin` and `recruiter` — validation must accept all three.
 - Existing patterns to follow: create user handler for validation, delete user handler for admin RBAC, password reset handler for read-modify-write KV pattern.
 - The `api.ts` proxy layer auto-delegates via `Proxy.get` — adding `updateUser` to `realAPI` is typically sufficient; verify mock path handles gracefully.
-- All tasks modify existing files — no new files are created for Stack A (unlike Stack B which needed new command/validator files).
+- All tasks modify existing files — Stack A and Stack B implementation work are complete; the remaining work is parity checklist re-review against the shipped behavior.

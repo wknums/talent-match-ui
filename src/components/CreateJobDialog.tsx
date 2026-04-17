@@ -376,6 +376,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
           rubricDocumentId: editingJob.rubricDocumentId,
           rubricSource,
           rawExtractionResponse,
+          rubricApprovalStatus,
         })
         toast.success('Job updated successfully')
       } else {
@@ -683,7 +684,18 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
                       type="button"
                       variant="outline"
                       size="sm"
-                      onClick={() => setRubricApprovalStatus('approved')}
+                      onClick={async () => {
+                        setRubricApprovalStatus('approved')
+                        if (editingJob) {
+                          try {
+                            await api.updateRubricApproval(editingJob.jobId, 'approved')
+                            toast.success('Rubric approved')
+                          } catch {
+                            toast.error('Failed to persist rubric approval')
+                            setRubricApprovalStatus('draft')
+                          }
+                        }
+                      }}
                       className="text-green-700 border-green-300 hover:bg-green-50"
                     >
                       Approve Rubric

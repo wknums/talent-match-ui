@@ -21,7 +21,7 @@
         }
     </div>
     <div style="display: flex; gap: 0.5rem;">
-        @if (application?.FinalDecision is "NeedsManualReview" or "Eligible")
+        @if (application?.FinalDecision is "NeedsManualReview" or "Eligible" or "Excluded")
         {
             <button @onclick="NavigateToManualReview" style="padding: 0.4rem 0.8rem; background: #805ad5; color: white; border: none; border-radius: 4px; cursor: pointer;">
                 ✍️ Manual Review
@@ -128,14 +128,82 @@
                 </div>
             }
 
+            @* Aggregated Must-Have Requirements summary *@
+            @{
+                var firstRunGate = scoringRuns.Any() ? ParseGate(scoringRuns.OrderBy(r => r.RunIndex).First().MustHaveEvaluationJson) : null;
+                var firstRunEntries = scoringRuns.Any()
+                    ? ParseGateEntries(scoringRuns.OrderBy(r => r.RunIndex).First().MustHaveEvaluationJson)
+                    : null;
+            }
+            @if (firstRunGate != null && mustHaveCriteria.Any())
+            {
+                <div style="background: @(firstRunGate.Passed ? "#f0fff4" : "#fff5f5"); border: 1px solid @(firstRunGate.Passed ? "#c6f6d5" : "#fed7d7"); border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
+                    <h6 style="margin: 0 0 0.5rem;">Must-Have Requirements — @(firstRunGate.Passed ? "✅ Passed" : "❌ Failed")</h6>
+                    @if (!string.IsNullOrEmpty(firstRunGate.Recommendation))
+                    {
+                        <div style="font-size: 0.82rem; color: #555; margin-bottom: 0.5rem; font-style: italic;">@firstRunGate.Recommendation</div>
+                    }
+                    @if (firstRunEntries?.Any() == true)
+                    {
+                        @foreach (var entry in firstRunEntries)
+                        {
+                            <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                <span style="color: @(entry.Passed ? "#38a169" : "#e53e3e"); flex-shrink: 0;">@(entry.Passed ? "✅" : "❌")</span>
+                                <div>
+                                    <span style="font-size: 0.85rem;">@entry.Criterion</span>
+                                    @if (!string.IsNullOrEmpty(entry.Evidence))
+                                    {
+                                        <div style="font-size: 0.78rem; color: #718096; font-style: italic; margin-top: 0.15rem;">@entry.Evidence</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        @* Fallback: show must-have criteria from job config with overall pass/fail *@
+                        @foreach (var criterion in mustHaveCriteria)
+                        {
+                            var isMissing = firstRunGate.MissingCriteria?.Any(m =>
+                                m.Equals(criterion, StringComparison.OrdinalIgnoreCase) ||
+                                criterion.Contains(m, StringComparison.OrdinalIgnoreCase) ||
+                                m.Contains(criterion, StringComparison.OrdinalIgnoreCase)) == true;
+                            var criterionPassed = firstRunGate.Passed || !isMissing;
+                            <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                <span style="color: @(criterionPassed ? "#38a169" : "#e53e3e"); flex-shrink: 0;">@(criterionPassed ? "✅" : "❌")</span>
+                                <span style="font-size: 0.85rem;">@criterion</span>
+                            </div>
+                        }
+                        @if (!firstRunGate.Passed && (firstRunGate.MissingCriteria == null || !firstRunGate.MissingCriteria.Any()))
+                        {
+                            <div style="font-size: 0.82rem; color: #e53e3e; margin-top: 0.25rem;">
+                                ⚠️ Gate failed but specific missing criteria were not identified by the AI. Review the scoring runs below for details.
+                            </div>
+                        }
+                    }
+                </div>
+            }
+
             @* Individual scoring runs *@
             @if (scoringRuns.Any())
             {
-                @foreach (var run in scoringRuns.OrderBy(r => r.RunIndex))
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                    <span style="font-size: 0.82rem; color: #718096;">Sort by:</span>
+                    <button @onclick='() => SetRunSort("index")' style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: 1px solid @(runSortField == "index" ? "#3182ce" : "#cbd5e0"); background: @(runSortField == "index" ? "#ebf8ff" : "white"); border-radius: 4px; cursor: pointer;">Run #</button>
+                    <button @onclick='() => SetRunSort("score")' style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: 1px solid @(runSortField == "score" ? "#3182ce" : "#cbd5e0"); background: @(runSortField == "score" ? "#ebf8ff" : "white"); border-radius: 4px; cursor: pointer;">Score</button>
+                    <button @onclick='() => SetRunSort("date")' style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: 1px solid @(runSortField == "date" ? "#3182ce" : "#cbd5e0"); background: @(runSortField == "date" ? "#ebf8ff" : "white"); border-radius: 4px; cursor: pointer;">Date</button>
+                    <button @onclick="ToggleRunSortDir" style="padding: 0.2rem 0.4rem; font-size: 0.8rem; border: 1px solid #cbd5e0; background: white; border-radius: 4px; cursor: pointer;">@(runSortAsc ? "↑" : "↓")</button>
+                </div>
+                @foreach (var run in SortedRuns())
                 {
                     <details open style="border: 1px solid @(HasError(run.MustHaveEvaluationJson) ? "#feb2b2" : "#e2e8f0"); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; background: @(HasError(run.MustHaveEvaluationJson) ? "#fff5f5" : "white");">
                         <summary style="cursor: pointer; font-weight: bold; font-size: 0.9rem;">
-                            Run #@(run.RunIndex) — Score: @run.TotalScore.ToString("F1") @(HasError(run.MustHaveEvaluationJson) ? "⚠️" : "")
+                            Run #@(run.RunIndex) — Score: @run.TotalScore.ToString("F1")
+                            @if (run.CreatedAt != default)
+                            {
+                                <span style="font-weight: normal; font-size: 0.8rem; color: #718096; margin-left: 0.5rem;">@run.CreatedAt.ToString("yyyy-MM-dd HH:mm")</span>
+                            }
+                            @(HasError(run.MustHaveEvaluationJson) ? " ⚠️" : "")
                         </summary>
                         <div style="margin-top: 0.5rem; font-size: 0.85rem;">
 
@@ -167,7 +235,7 @@
                                 </div>
                             }
 
-                            @{ var gate = ParseGate(run.MustHaveEvaluationJson); }
+                            @{ var gate = ParseGate(run.MustHaveEvaluationJson); var gateEntries = ParseGateEntries(run.MustHaveEvaluationJson); }
                             @if (gate != null)
                             {
                                 <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
@@ -178,15 +246,29 @@
                                 else
                                 {
                                     <span style="color: #e53e3e;">❌ Failed</span>
-                                    @if (gate.MissingCriteria?.Any() == true)
-                                    {
-                                        <ul style="margin: 0.25rem 0 0 1rem; padding: 0;">
-                                            @foreach (var m in gate.MissingCriteria)
-                                            {
-                                                <li style="color: #e53e3e;">@m</li>
-                                            }
-                                        </ul>
-                                    }
+                                }
+                                @if (!string.IsNullOrEmpty(gate.Recommendation))
+                                {
+                                    <span style="font-size: 0.82rem; color: #718096; margin-left: 0.5rem;">— @gate.Recommendation</span>
+                                }
+
+                                @if (gateEntries?.Any() == true)
+                                {
+                                    <div style="margin-top: 0.5rem;">
+                                        @foreach (var entry in gateEntries)
+                                        {
+                                            <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                                <span style="color: @(entry.Passed ? "#38a169" : "#e53e3e"); flex-shrink: 0;">@(entry.Passed ? "✅" : "❌")</span>
+                                                <div>
+                                                    <span style="font-size: 0.85rem;">@entry.Criterion</span>
+                                                    @if (!string.IsNullOrEmpty(entry.Evidence))
+                                                    {
+                                                        <div style="font-size: 0.78rem; color: #718096; font-style: italic; margin-top: 0.15rem;">@entry.Evidence</div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
                                 }
                             }
                             else if (HasError(run.MustHaveEvaluationJson))
@@ -197,15 +279,15 @@
                                 </div>
                             }
 
-                            @{ var evidence = ParseStringDict(run.EvidenceCitationsJson); }
+                            @{ var evidence = ParseEvidenceList(run.EvidenceCitationsJson); }
                             @if (evidence?.Any() == true)
                             {
                                 <h6 style="margin: 0.75rem 0 0.25rem;">Evidence Citations</h6>
-                                @foreach (var kv in evidence)
+                                @foreach (var ev in evidence)
                                 {
                                     <div style="margin-bottom: 0.25rem;">
-                                        <span style="font-weight: 600; color: #4a5568;">@kv.Key:</span>
-                                        <span style="color: #718096;"> @kv.Value</span>
+                                        <span style="font-weight: 600; color: #4a5568;">@(ev.Category ?? "—"):</span>
+                                        <span style="color: #718096;"> @(ev.Snippet ?? "")</span>
                                     </div>
                                 }
                             }
@@ -259,6 +341,31 @@ else
     private AggregatedResultDto? aggregatedResult;
     private List<RubricCategoryItem> rubricCategories = new();
     private List<string> mustHaveCriteria = new();
+    private string runSortField = "index";
+    private bool runSortAsc = true;
+
+    private IEnumerable<ScoringRunDto> SortedRuns() => (runSortField, runSortAsc) switch
+    {
+        ("score", true) => scoringRuns.OrderBy(r => r.TotalScore),
+        ("score", false) => scoringRuns.OrderByDescending(r => r.TotalScore),
+        ("date", true) => scoringRuns.OrderBy(r => r.CreatedAt),
+        ("date", false) => scoringRuns.OrderByDescending(r => r.CreatedAt),
+        (_, true) => scoringRuns.OrderBy(r => r.RunIndex),
+        _ => scoringRuns.OrderByDescending(r => r.RunIndex),
+    };
+
+    private void SetRunSort(string field)
+    {
+        if (runSortField == field)
+            runSortAsc = !runSortAsc;
+        else
+        {
+            runSortField = field;
+            runSortAsc = true;
+        }
+    }
+
+    private void ToggleRunSortDir() => runSortAsc = !runSortAsc;
 
     private string StatusColor => application?.Status switch
     {
@@ -311,17 +418,24 @@ else
         catch { return null; }
     }
 
-    private Dictionary<string, string>? ParseStringDict(string? json)
+    private List<EvidenceItem>? ParseEvidenceList(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
-        try { return JsonSerializer.Deserialize<Dictionary<string, string>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        try { return JsonSerializer.Deserialize<List<EvidenceItem>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
         catch { return null; }
     }
 
     private GateResult? ParseGate(string? json)
     {
-        if (string.IsNullOrWhiteSpace(json)) return null;
-        try { return JsonSerializer.Deserialize<GateResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        if (string.IsNullOrWhiteSpace(json) || json == "{}") return null;
+        try
+        {
+            var result = JsonSerializer.Deserialize<GateResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            // Return null if gate has no meaningful data (all defaults)
+            if (result != null && !result.Passed && result.Recommendation == null && result.MissingCriteria == null && result.Details == null)
+                return null;
+            return result;
+        }
         catch { return null; }
     }
 
@@ -372,5 +486,90 @@ else
     private void NavigateToManualReview() => Navigation.NavigateTo($"/manual-review/{ApplicationId}");
     private void NavigateToJob() => Navigation.NavigateTo($"/jobs/{application?.JobId}");
 
-    private record GateResult(bool Passed, List<string>? MissingCriteria);
+    // Class (not positional record) so System.Text.Json handles extra/mismatched properties
+    private class GateResult
+    {
+        public bool Passed { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("missing_criteria")]
+        public List<string>? MissingCriteria { get; set; }
+        public string? Recommendation { get; set; }
+        public GateDetails? Details { get; set; }
+    }
+
+    private class GateDetails
+    {
+        public List<GateEntry>? Entries { get; set; }
+    }
+
+    private class GateEntry
+    {
+        public string? Criterion { get; set; }
+        public bool Passed { get; set; }
+        public string? Evidence { get; set; }
+    }
+
+    /// <summary>
+    /// Parse MustHaveEvaluationJson flexibly — handles multiple LLM output formats:
+    /// 1. { passed, details: { entries: [{criterion, passed, evidence}] } }
+    /// 2. { passed, details: { "criterion1": true, "criterion2": false } }
+    /// 3. { passed, missing_criteria: [...] }
+    /// Returns a GateResult with Entries populated when possible.
+    /// </summary>
+    private List<GateEntry>? ParseGateEntries(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // Try details.entries array first (preferred format)
+            if (root.TryGetProperty("details", out var details))
+            {
+                if (details.TryGetProperty("entries", out var entriesArr) && entriesArr.ValueKind == JsonValueKind.Array)
+                {
+                    var entries = new List<GateEntry>();
+                    foreach (var item in entriesArr.EnumerateArray())
+                    {
+                        entries.Add(new GateEntry
+                        {
+                            Criterion = item.TryGetProperty("criterion", out var c) ? c.GetString() : null,
+                            Passed = item.TryGetProperty("passed", out var p) && p.ValueKind == JsonValueKind.True,
+                            Evidence = item.TryGetProperty("evidence", out var e) ? e.GetString() : null
+                        });
+                    }
+                    if (entries.Any()) return entries;
+                }
+
+                // Fallback: details is a flat {criterion: bool} map
+                if (details.ValueKind == JsonValueKind.Object)
+                {
+                    var entries = new List<GateEntry>();
+                    foreach (var prop in details.EnumerateObject())
+                    {
+                        if (prop.Name == "source" || prop.Name == "entries") continue;
+                        if (prop.Value.ValueKind == JsonValueKind.True || prop.Value.ValueKind == JsonValueKind.False)
+                        {
+                            entries.Add(new GateEntry
+                            {
+                                Criterion = prop.Name,
+                                Passed = prop.Value.ValueKind == JsonValueKind.True,
+                                Evidence = null
+                            });
+                        }
+                    }
+                    if (entries.Any()) return entries;
+                }
+            }
+
+            return null;
+        }
+        catch { return null; }
+    }
+
+    private class EvidenceItem
+    {
+        public string? Category { get; set; }
+        public string? Snippet { get; set; }
+    }
 }

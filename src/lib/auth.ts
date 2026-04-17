@@ -1,214 +1,91 @@
-import type { User, PasswordResetRequest } from '@/types'
-import { kv } from '@/lib/spark-client'
+import type { PasswordResetRequest, User } from '@/types'
+import { realAPI } from '@/lib/api-real'
 
-const USERS_KEY = 'auth:users'
-const CURRENT_USER_KEY = 'auth:current-user'
-const RESET_REQUESTS_KEY = 'auth:reset-requests'
-
-const DEFAULT_ADMIN = {
-  userId: 'admin-001',
-  username: 'admin',
-  role: 'admin' as const,
-  fullName: 'System Administrator',
-  email: 'admin@company.com',
-  createdAt: new Date().toISOString(),
-}
-
-const DEFAULT_PASSWORD = 'adm1n99'
-
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder()
-  const data = encoder.encode(password)
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-  const hashArray = Array.from(new Uint8Array(hashBuffer))
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-}
-
-interface StoredUser extends User {
-  passwordHash: string
-}
-
-export async function initializeAuth() {
-  const users = await kv.get<StoredUser[]>(USERS_KEY)
-  
-  if (!users || users.length === 0) {
-    const adminPasswordHash = await hashPassword(DEFAULT_PASSWORD)
-    const defaultAdmin: StoredUser = {
-      ...DEFAULT_ADMIN,
-      passwordHash: adminPasswordHash,
-    }
-    await kv.set(USERS_KEY, [defaultAdmin])
-  }
+export async function initializeAuth(): Promise<void> {
+  // Auth bootstrap is now server-owned. Keep this as a no-op so callers do not
+  // trigger legacy KV reads during startup.
 }
 
 export async function login(username: string, password: string): Promise<User | null> {
-  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
-  const passwordHash = await hashPassword(password)
-  
-  const user = users.find(u => u.username === username && u.passwordHash === passwordHash)
-  
-  if (user) {
-    const { passwordHash, ...userWithoutPassword } = user
-    const updatedUser = {
-      ...userWithoutPassword,
-      lastLogin: new Date().toISOString(),
-    }
-    
-    const updatedUsers = users.map(u => 
-      u.userId === user.userId 
-        ? { ...u, lastLogin: updatedUser.lastLogin } 
-        : u
-    )
-    await kv.set(USERS_KEY, updatedUsers)
-    await kv.set(CURRENT_USER_KEY, updatedUser)
-    
-    return updatedUser
+  try {
+    return await realAPI.login(username, password)
+  } catch {
+    return null
   }
-  
-  return null
 }
 
-export async function logout() {
-  await kv.delete(CURRENT_USER_KEY)
+export async function logout(): Promise<void> {
+  await realAPI.logout()
 }
 
 export async function getCurrentUser(): Promise<User | null> {
-  return await kv.get<User>(CURRENT_USER_KEY) || null
+  return realAPI.getCurrentUser()
 }
 
-export async function changePassword(userId: string, oldPassword: string, newPassword: string): Promise<boolean> {
-  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
-  const oldPasswordHash = await hashPassword(oldPassword)
-  
-  const userIndex = users.findIndex(u => u.userId === userId && u.passwordHash === oldPasswordHash)
-  
-  if (userIndex === -1) {
+export async function changePassword(_userId: string, oldPassword: string, newPassword: string): Promise<boolean> {
+  try {
+    await realAPI.changePassword(oldPassword, newPassword)
+    return true
+  } catch {
     return false
   }
-  
-  const newPasswordHash = await hashPassword(newPassword)
-  users[userIndex].passwordHash = newPasswordHash
-  users[userIndex].passwordResetRequired = false
-  
-  await kv.set(USERS_KEY, users)
-  return true
 }
 
 export async function createUser(user: Omit<User, 'userId' | 'createdAt' | 'lastLogin'>, password: string): Promise<User> {
-  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
-  
-  const existingUser = users.find(u => u.username === user.username)
-  if (existingUser) {
-    throw new Error('Username already exists')
-  }
-  
-  const passwordHash = await hashPassword(password)
-  const newUser: StoredUser = {
-    userId: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    ...user,
-    passwordHash,
-    createdAt: new Date().toISOString(),
-  }
-  
-  await kv.set(USERS_KEY, [...users, newUser])
-  
-  const { passwordHash: _, ...userWithoutPassword } = newUser
-  return userWithoutPassword
+  return realAPI.createUser(
+    user.username,
+    user.role,
+    user.department ?? '',
+    password,
+    user.fullName,
+    user.email,
+  )
 }
 
 export async function getAllUsers(): Promise<User[]> {
-  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
-  return users.map(({ passwordHash, ...user }) => user)
+  return realAPI.getAllUsers()
 }
 
-export async function resetUserPassword(adminUserId: string, targetUserId: string, newPassword: string): Promise<boolean> {
-  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
-  
-  const admin = users.find(u => u.userId === adminUserId && u.role === 'admin')
-  if (!admin) {
+export async function resetUserPassword(_adminUserId: string, targetUserId: string, newPassword: string): Promise<boolean> {
+  try {
+    await realAPI.resetUserPassword(targetUserId, newPassword)
+    return true
+  } catch {
     return false
   }
-  
-  const userIndex = users.findIndex(u => u.userId === targetUserId)
-  if (userIndex === -1) {
-    return false
-  }
-  
-  const newPasswordHash = await hashPassword(newPassword)
-  users[userIndex].passwordHash = newPasswordHash
-  users[userIndex].passwordResetRequired = false
-  
-  await kv.set(USERS_KEY, users)
-  return true
 }
 
-export async function requestPasswordReset(userId: string): Promise<void> {
-  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
-  const user = users.find(u => u.userId === userId)
-  
-  if (!user) {
-    throw new Error('User not found')
-  }
-  
-  const requests = await kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
-  
-  const newRequest: PasswordResetRequest = {
-    requestId: `reset-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-    userId: user.userId,
-    username: user.username,
-    fullName: user.fullName,
-    requestedAt: new Date().toISOString(),
-    status: 'pending',
-  }
-  
-  await kv.set(RESET_REQUESTS_KEY, [...requests, newRequest])
+export async function requestPasswordReset(_userId: string): Promise<void> {
+  await realAPI.requestPasswordReset()
 }
 
 export async function getPasswordResetRequests(): Promise<PasswordResetRequest[]> {
-  return await kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
+  return realAPI.getPasswordResetRequests()
 }
 
 export async function resolvePasswordResetRequest(
-  requestId: string, 
-  adminUserId: string, 
+  requestId: string,
+  _adminUserId: string,
   newPassword: string,
-  status: 'completed' | 'rejected'
+  status: 'completed' | 'rejected',
 ): Promise<boolean> {
-  const requests = await kv.get<PasswordResetRequest[]>(RESET_REQUESTS_KEY) || []
-  const requestIndex = requests.findIndex(r => r.requestId === requestId)
-  
-  if (requestIndex === -1) {
+  try {
+    await realAPI.resolvePasswordResetRequest(
+      requestId,
+      status === 'completed' ? 'approve' : 'reject',
+      status === 'completed' ? newPassword : undefined,
+    )
+    return true
+  } catch {
     return false
   }
-  
-  if (status === 'completed') {
-    const success = await resetUserPassword(adminUserId, requests[requestIndex].userId, newPassword)
-    if (!success) {
-      return false
-    }
-  }
-  
-  requests[requestIndex].status = status
-  requests[requestIndex].resolvedAt = new Date().toISOString()
-  requests[requestIndex].resolvedBy = adminUserId
-  
-  await kv.set(RESET_REQUESTS_KEY, requests)
-  return true
 }
 
-export async function deleteUser(adminUserId: string, targetUserId: string): Promise<boolean> {
-  const users = await kv.get<StoredUser[]>(USERS_KEY) || []
-  
-  const admin = users.find(u => u.userId === adminUserId && u.role === 'admin')
-  if (!admin) {
+export async function deleteUser(_adminUserId: string, targetUserId: string): Promise<boolean> {
+  try {
+    await realAPI.deleteUser(targetUserId)
+    return true
+  } catch {
     return false
   }
-  
-  if (targetUserId === adminUserId) {
-    return false
-  }
-  
-  const filteredUsers = users.filter(u => u.userId !== targetUserId)
-  await kv.set(USERS_KEY, filteredUsers)
-  return true
 }

@@ -1,13 +1,12 @@
 @page "/manual-review/{ApplicationId}"
-@using TalentMatch.Web.Client.Services
 @using System.Text.Json
+@using TalentMatch.Web.Client.Services
 @inject ApiClient Api
 @inject NavigationManager Navigation
 
 <h3>Manual Review</h3>
 
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; height: calc(100vh - 150px);">
-    @* Left Pane: Original Document (FR-058) - uses DocumentViewer component (T184) *@
     <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
         <div style="padding: 0.75rem 1rem; border-bottom: 1px solid #ccc; background: #f9f9f9;">
             <h5 style="margin: 0;">Original Document</h5>
@@ -17,10 +16,41 @@
         </div>
     </div>
 
-
-    @* Centre Pane: Scoring Form *@
     <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
         <h5>Rubric Scoring</h5>
+        @if (aiPrePopulated)
+        {
+            <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; color: #1e40af; font-size: 0.85rem;">
+                <span>🤖</span>
+                <span>
+                    Pre-populated from AI scoring
+                    @if (aiOriginalScore.HasValue)
+                    {
+                        <text> (score: @aiOriginalScore.Value.ToString("F1"), variance: @(aiOriginalVariance?.ToString("F2") ?? "N/A"))</text>
+                    }
+                    . Please verify and adjust.
+                </span>
+            </div>
+        }
+        @if (aiScoringMismatch)
+        {
+            <div style="display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.75rem; margin-bottom: 0.75rem; background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; color: #92400e; font-size: 0.85rem;">
+                <span>⚠️</span>
+                <div>
+                    <strong>AI scoring categories do not match the rubric.</strong>
+                    The AI returned scores using different category names than the configured rubric.
+                    Pre-population is unavailable until the scoring prompt is regenerated with the correct rubric schema.
+                    <br />
+                    <button @onclick="RetryScoring" disabled="@isRetrying" style="margin-top: 0.5rem; padding: 0.35rem 0.75rem; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 0.82rem; cursor: pointer;">
+                        @(isRetrying ? "Re-scoring..." : "Re-score this job")
+                    </button>
+                    @if (!string.IsNullOrEmpty(retryMessage))
+                    {
+                        <span style="margin-left: 0.5rem;">@retryMessage</span>
+                    }
+                </div>
+            </div>
+        }
         @if (review != null)
         {
             @if (rubricCategories.Any())
@@ -30,17 +60,23 @@
                     <div style="margin-bottom: 0.75rem;">
                         <label style="font-weight: bold; display: block;">@cat.Name <span style="font-size: 0.8rem; color: #666;">(weight: @cat.Weight.ToString("F2"))</span></label>
                         <input type="number" value="@GetCategoryScore(cat.Name)" @oninput="(e) => SetCategoryScore(cat.Name, e)" min="0" max="100" step="1" style="width: 100%; padding: 0.25rem;" />
+                        <label style="display: block; margin-top: 0.35rem; font-size: 0.78rem; color: #4b5563;">Rubric notes</label>
+                        <textarea
+                            value="@GetCategoryComment(cat.Name)"
+                            @oninput="(e) => SetCategoryComment(cat.Name, e)"
+                            placeholder="Add or revise the AI pre-populated notes for this rubric category"
+                            style="width: 100%; min-height: 120px; margin-top: 0.2rem; padding: 0.5rem; background: #f0f7ff; border: 1px solid #d0e3f7; border-radius: 4px; font-size: 0.78rem; color: #1e3a5f; white-space: pre-wrap; word-break: break-word;"></textarea>
                     </div>
                 }
             }
 
             <div style="margin: 1rem 0; padding: 0.75rem; background: #f5f5f5; border-radius: 4px;">
-                <strong>Total Weighted Score: @CalculateWeightedScore().ToString("F1")</strong>
+                <strong>Total Weighted Score: @currentWeightedScore.ToString("F1")</strong>
             </div>
 
             <div style="margin-bottom: 1rem;">
                 <label style="font-weight: bold; display: block;">Overall Comment</label>
-                <textarea @bind="overallComment" style="width: 100%; min-height: 100px;"></textarea>
+                <textarea @bind="overallComment" @bind:event="oninput" style="width: 100%; min-height: 100px;"></textarea>
             </div>
             <button @onclick="SaveReview" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
                 @(isSaving ? "Saving..." : "Save Review")
@@ -50,15 +86,15 @@
                 <p style="color: green; margin-top: 0.5rem;">@saveMessage</p>
             }
 
-            @* Audit Trail *@
             @if (auditTrail.Any())
             {
                 <h6 style="margin-top: 1.5rem;">Audit Trail</h6>
-                <div style="max-height: 200px; overflow-y: auto; font-size: 0.8rem;">
+                <p style="margin: 0.25rem 0 0.5rem; color: #666; font-size: 0.8rem;">Manual overrides are recorded here for viewing only.</p>
+                <div style="max-height: 240px; overflow-y: auto; font-size: 0.8rem;">
                     @foreach (var entry in auditTrail.OrderByDescending(a => a.Timestamp))
                     {
-                        <div style="padding: 0.25rem 0; border-bottom: 1px solid #eee;">
-                            <strong>@entry.Reviewer</strong> changed <em>@entry.Category</em>: @entry.OldValue → @entry.NewValue
+                        <div style="padding: 0.5rem 0; border-bottom: 1px solid #eee;">
+                            <strong>@entry.Reviewer</strong> changed <em>@entry.Category</em>: @entry.OldValue -> @entry.NewValue
                             <span style="color: #999; margin-left: 0.5rem;">@entry.Timestamp.ToString("yyyy-MM-dd HH:mm")</span>
                         </div>
                     }
@@ -71,7 +107,6 @@
         }
     </div>
 
-    @* Right Pane: Job Specification *@
     <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; overflow-y: auto;">
         <h5>Job Specification</h5>
         @if (rubricCategories.Any())
@@ -117,14 +152,34 @@
 </div>
 
 <div style="margin-top: 1rem;">
-    <button @onclick="GoBack">← Back</button>
+    <button @onclick="GoBack">Back</button>
 </div>
 
 @code {
     [Parameter] public string ApplicationId { get; set; } = "";
 
     private ManualReviewDto? review;
+    private ApplicationDto? application;
+    private UserInfo? currentUser;
     private List<DocumentDto> documents = new();
+    private string overallComment = "";
+    private bool isSaving;
+    private string? saveMessage;
+    private double currentWeightedScore;
+    private Dictionary<string, double> categoryScores = new(StringComparer.Ordinal);
+    private Dictionary<string, string> categoryComments = new(StringComparer.Ordinal);
+    private Dictionary<string, double> baselineCategoryScores = new(StringComparer.Ordinal);
+    private Dictionary<string, string> baselineCategoryComments = new(StringComparer.Ordinal);
+    private string baselineOverallComment = "";
+    private List<RubricCategory> rubricCategories = new();
+    private List<string> mustHaveCriteria = new();
+    private List<AuditEntry> auditTrail = new();
+    private bool aiPrePopulated;
+    private double? aiOriginalScore;
+    private double? aiOriginalVariance;
+    private bool aiScoringMismatch;
+    private bool isRetrying;
+    private string? retryMessage;
 
     private List<DocumentViewer.DocumentDto> MapToDocumentDtos()
     {
@@ -136,17 +191,10 @@
             ContentBase64 = d.ContentBase64
         }).ToList();
     }
-    private ApplicationDto? application;
-    private string overallComment = "";
-    private bool isSaving;
-    private string? saveMessage;
-    private Dictionary<string, double> categoryScores = new();
-    private List<RubricCategory> rubricCategories = new();
-    private List<string> mustHaveCriteria = new();
-    private List<AuditEntry> auditTrail = new();
 
     protected override async Task OnInitializedAsync()
     {
+        currentUser = await Api.GetCurrentUserAsync();
         application = await Api.GetApplicationAsync(ApplicationId);
         review = await Api.GetManualReviewAsync(ApplicationId);
         documents = await Api.GetDocumentsAsync(ApplicationId);
@@ -158,12 +206,19 @@
             {
                 if (!string.IsNullOrEmpty(config.RubricJson))
                 {
-                    try { rubricCategories = JsonSerializer.Deserialize<List<RubricCategory>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
+                    try
+                    {
+                        rubricCategories = JsonSerializer.Deserialize<List<RubricCategory>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+                    }
                     catch { }
                 }
+
                 if (!string.IsNullOrEmpty(config.MustHaveCriteriaJson))
                 {
-                    try { mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHaveCriteriaJson) ?? new(); }
+                    try
+                    {
+                        mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHaveCriteriaJson) ?? new();
+                    }
                     catch { }
                 }
             }
@@ -174,28 +229,336 @@
             overallComment = review.OverallComment;
             if (!string.IsNullOrEmpty(review.RubricScoresJson))
             {
-                try { categoryScores = JsonSerializer.Deserialize<Dictionary<string, double>>(review.RubricScoresJson) ?? new(); }
-                catch { }
+                LoadRubricReviewState(review.RubricScoresJson);
             }
-            if (!string.IsNullOrEmpty(review.AuditTrailJson))
-            {
-                try { auditTrail = JsonSerializer.Deserialize<List<AuditEntry>>(review.AuditTrailJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
-                catch { }
-            }
+            LoadAuditTrail(review.AuditTrailJson);
         }
         else
         {
             review = new ManualReviewDto("{}", "", null, "[]");
+        }
+
+        var hasExistingReviewContent = categoryScores.Any()
+            || categoryComments.Values.Any(comment => !string.IsNullOrWhiteSpace(comment))
+            || !string.IsNullOrWhiteSpace(overallComment);
+
+        if (!hasExistingReviewContent && application != null && rubricCategories.Any())
+        {
+            await PrePopulateFromAiAsync();
+        }
+
+        RefreshWeightedScore();
+        CaptureBaselineReviewState();
+    }
+
+    private async Task PrePopulateFromAiAsync()
+    {
+        var scoringRuns = await Api.GetScoringRunsAsync(ApplicationId);
+        if (!scoringRuns.Any())
+        {
+            return;
+        }
+
+        var rubricNames = rubricCategories.Select(c => c.Name).ToList();
+
+        string? MatchCategory(string llmName)
+        {
+            var normLlm = NormalizeCategoryName(llmName);
+            var exact = rubricNames.FirstOrDefault(rn => NormalizeCategoryName(rn) == normLlm);
+            if (exact != null) return exact;
+
+            var contained = rubricNames.FirstOrDefault(rn =>
+            {
+                var normRn = NormalizeCategoryName(rn);
+                return normLlm.Contains(normRn) || normRn.Contains(normLlm);
+            });
+            if (contained != null) return contained;
+
+            var llmWords = new HashSet<string>(normLlm.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length > 2));
+            string? best = null;
+            var bestOverlap = 0;
+            foreach (var rubricName in rubricNames)
+            {
+                var rubricWords = NormalizeCategoryName(rubricName).Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(w => w.Length > 2).ToList();
+                var overlap = rubricWords.Count(w => llmWords.Contains(w));
+                if (overlap > bestOverlap && rubricWords.Count > 0 && (double)overlap / rubricWords.Count >= 0.4)
+                {
+                    bestOverlap = overlap;
+                    best = rubricName;
+                }
+            }
+
+            return best;
+        }
+
+        var avgScoresByCategory = new Dictionary<string, double>(StringComparer.Ordinal);
+        var categoryEvidenceMap = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+        foreach (var cat in rubricCategories)
+        {
+            var scores = new List<double>();
+            foreach (var run in scoringRuns)
+            {
+                if (!string.IsNullOrEmpty(run.CategoryScoresJson))
+                {
+                    try
+                    {
+                        var runScores = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson);
+                        if (runScores != null)
+                        {
+                            if (runScores.TryGetValue(cat.Name, out var catScore))
+                            {
+                                scores.Add(catScore);
+                            }
+                            else
+                            {
+                                foreach (var kvp in runScores)
+                                {
+                                    var matched = MatchCategory(kvp.Key);
+                                    if (matched == cat.Name)
+                                    {
+                                        scores.Add(kvp.Value);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                if (!string.IsNullOrEmpty(run.EvidenceCitationsJson))
+                {
+                    try
+                    {
+                        var citations = JsonSerializer.Deserialize<List<EvidenceCitationItem>>(run.EvidenceCitationsJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (citations != null)
+                        {
+                            foreach (var citation in citations.Where(c => !string.IsNullOrEmpty(c.Snippet)))
+                            {
+                                var matched = MatchCategory(citation.Category ?? string.Empty);
+                                if (matched == cat.Name)
+                                {
+                                    if (!categoryEvidenceMap.ContainsKey(cat.Name))
+                                    {
+                                        categoryEvidenceMap[cat.Name] = new();
+                                    }
+
+                                    if (!categoryEvidenceMap[cat.Name].Contains(citation.Snippet!))
+                                    {
+                                        categoryEvidenceMap[cat.Name].Add(citation.Snippet!);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            if (scores.Any())
+            {
+                avgScoresByCategory[cat.Name] = scores.Average();
+            }
+        }
+
+        if (!avgScoresByCategory.Any())
+        {
+            aiScoringMismatch = true;
+            return;
+        }
+
+        categoryScores = avgScoresByCategory;
+        aiPrePopulated = true;
+
+        var aggregatedResult = await Api.GetAggregatedResultAsync(ApplicationId);
+        aiOriginalScore = aggregatedResult?.FinalScore;
+        aiOriginalVariance = aggregatedResult?.Variance;
+
+        foreach (var cat in rubricCategories)
+        {
+            if (avgScoresByCategory.TryGetValue(cat.Name, out var score))
+            {
+                var parts = new List<string> { $"AI Score\n{score:F1} / 100" };
+                if (categoryEvidenceMap.TryGetValue(cat.Name, out var evidence) && evidence.Any())
+                {
+                    parts.Add($"\nEvidence\n{string.Join("\n", evidence.Select(e => $"- {e}"))}");
+                }
+                categoryComments[cat.Name] = string.Join("\n", parts);
+            }
+        }
+
+        if (string.IsNullOrEmpty(overallComment))
+        {
+            var commentParts = new List<string>
+            {
+                $"Pre-populated from AI scoring (score: {aiOriginalScore?.ToString("F1") ?? "N/A"}, variance: {aiOriginalVariance?.ToString("F2") ?? "N/A"}). Please verify and adjust."
+            };
+
+            if (!string.IsNullOrEmpty(aggregatedResult?.ConsolidatedRationale))
+            {
+                commentParts.Add($"\nAI Rationale:\n{aggregatedResult.ConsolidatedRationale}");
+            }
+
+            if (!string.IsNullOrEmpty(aggregatedResult?.MergedImprovementTipsJson))
+            {
+                try
+                {
+                    var mergedTips = JsonSerializer.Deserialize<List<string>>(aggregatedResult.MergedImprovementTipsJson);
+                    if (mergedTips?.Any() == true)
+                    {
+                        commentParts.Add($"\nAI Recommendations:\n{string.Join("\n", mergedTips.Select(t => $"- {t}"))}");
+                    }
+                }
+                catch { }
+            }
+
+            overallComment = string.Join(string.Empty, commentParts);
+        }
+    }
+
+    private void LoadAuditTrail(string? auditTrailJson)
+    {
+        if (string.IsNullOrEmpty(auditTrailJson))
+        {
+            auditTrail = new();
+            return;
+        }
+
+        try
+        {
+            auditTrail = JsonSerializer.Deserialize<List<AuditEntry>>(auditTrailJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+        }
+        catch
+        {
+            auditTrail = new();
         }
     }
 
     private double GetCategoryScore(string name) =>
         categoryScores.TryGetValue(name, out var score) ? score : 0;
 
+    private string GetCategoryComment(string name) =>
+        categoryComments.TryGetValue(name, out var comment) ? comment : string.Empty;
+
     private void SetCategoryScore(string name, ChangeEventArgs e)
     {
-        if (double.TryParse(e.Value?.ToString(), out var score))
-            categoryScores[name] = score;
+        if (!double.TryParse(e.Value?.ToString(), out var score))
+        {
+            return;
+        }
+
+        var previousScore = GetCategoryScore(name);
+        categoryScores[name] = score;
+        RefreshWeightedScore();
+    }
+
+    private void SetCategoryComment(string name, ChangeEventArgs e)
+    {
+        var newComment = e.Value?.ToString() ?? string.Empty;
+        categoryComments[name] = newComment;
+    }
+
+    private void LoadRubricReviewState(string rubricScoresJson)
+    {
+        try
+        {
+            var structured = JsonSerializer.Deserialize<Dictionary<string, ManualReviewRubricEntry>>(rubricScoresJson, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+            if (structured != null && structured.Count > 0)
+            {
+                categoryScores = structured.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Score, StringComparer.Ordinal);
+                categoryComments = structured.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.Comment ?? string.Empty, StringComparer.Ordinal);
+                return;
+            }
+        }
+        catch { }
+
+        try
+        {
+            categoryScores = JsonSerializer.Deserialize<Dictionary<string, double>>(rubricScoresJson) ?? new(StringComparer.Ordinal);
+        }
+        catch { }
+    }
+
+    private string BuildRubricReviewStateJson()
+    {
+        var allCategoryNames = rubricCategories.Select(cat => cat.Name)
+            .Concat(categoryScores.Keys)
+            .Concat(categoryComments.Keys)
+            .Distinct(StringComparer.Ordinal);
+
+        var rubricState = allCategoryNames.ToDictionary(
+            name => name,
+            name => new ManualReviewRubricEntry(
+                categoryScores.TryGetValue(name, out var score) ? score : 0,
+                categoryComments.TryGetValue(name, out var comment) ? comment : string.Empty),
+            StringComparer.Ordinal);
+
+        return JsonSerializer.Serialize(rubricState);
+    }
+
+    private void RefreshWeightedScore()
+    {
+        currentWeightedScore = CalculateWeightedScore();
+    }
+
+    private void CaptureBaselineReviewState()
+    {
+        baselineCategoryScores = new Dictionary<string, double>(categoryScores, StringComparer.Ordinal);
+        baselineCategoryComments = new Dictionary<string, string>(categoryComments, StringComparer.Ordinal);
+        baselineOverallComment = overallComment;
+    }
+
+    private List<AuditEntry> BuildUpdatedAuditTrail()
+    {
+        var updatedTrail = new List<AuditEntry>(auditTrail);
+        var reviewer = string.IsNullOrWhiteSpace(currentUser?.FullName)
+            ? currentUser?.Username ?? "Unknown Reviewer"
+            : currentUser.FullName;
+        var timestamp = DateTime.UtcNow;
+
+        foreach (var cat in rubricCategories)
+        {
+            var previousScore = baselineCategoryScores.TryGetValue(cat.Name, out var oldScore) ? oldScore : 0;
+            var newScore = categoryScores.TryGetValue(cat.Name, out var currentScore) ? currentScore : 0;
+            if (Math.Abs(previousScore - newScore) > 0.001)
+            {
+                updatedTrail.Add(new AuditEntry(
+                    reviewer,
+                    timestamp,
+                    $"{cat.Name} score",
+                    previousScore.ToString("F1"),
+                    newScore.ToString("F1")));
+            }
+
+            var previousComment = baselineCategoryComments.TryGetValue(cat.Name, out var oldComment) ? oldComment : string.Empty;
+            var newComment = categoryComments.TryGetValue(cat.Name, out var currentComment) ? currentComment : string.Empty;
+            if (!string.Equals(previousComment, newComment, StringComparison.Ordinal))
+            {
+                updatedTrail.Add(new AuditEntry(
+                    reviewer,
+                    timestamp,
+                    $"{cat.Name} notes",
+                    ToAuditValue(previousComment),
+                    ToAuditValue(newComment)));
+            }
+        }
+
+        if (!string.Equals(baselineOverallComment, overallComment, StringComparison.Ordinal))
+        {
+            updatedTrail.Add(new AuditEntry(
+                reviewer,
+                timestamp,
+                "Overall comment",
+                ToAuditValue(baselineOverallComment),
+                ToAuditValue(overallComment)));
+        }
+
+        return updatedTrail;
     }
 
     private double CalculateWeightedScore()
@@ -204,40 +567,105 @@
         foreach (var cat in rubricCategories)
         {
             if (categoryScores.TryGetValue(cat.Name, out var score))
+            {
                 total += score * cat.Weight;
+            }
         }
+
         return total;
+    }
+
+    private static string ToAuditValue(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "(empty)" : value;
     }
 
     private async Task SaveReview()
     {
         isSaving = true;
         saveMessage = null;
-        var scoresJson = JsonSerializer.Serialize(categoryScores);
-        var adjustedScore = CalculateWeightedScore();
-        var reviewData = new ManualReviewDto(scoresJson, overallComment, adjustedScore, review!.AuditTrailJson);
+
+        RefreshWeightedScore();
+
+        var scoresJson = BuildRubricReviewStateJson();
+        var updatedAuditTrail = BuildUpdatedAuditTrail();
+        var auditTrailJson = JsonSerializer.Serialize(updatedAuditTrail);
+        var reviewData = new ManualReviewDto(scoresJson, overallComment, currentWeightedScore, auditTrailJson);
+
         var success = await Api.SaveManualReviewAsync(ApplicationId, reviewData);
         saveMessage = success ? "Review saved successfully." : "Failed to save review.";
+
         if (success)
         {
-            review = await Api.GetManualReviewAsync(ApplicationId);
-            if (review != null && !string.IsNullOrEmpty(review.AuditTrailJson))
-            {
-                try { auditTrail = JsonSerializer.Deserialize<List<AuditEntry>>(review.AuditTrailJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
-                catch { }
-            }
+            auditTrail = updatedAuditTrail;
+            review = reviewData;
+            CaptureBaselineReviewState();
         }
+
         isSaving = false;
     }
 
     private void GoBack()
     {
         if (application != null)
+        {
             Navigation.NavigateTo($"/applications/{ApplicationId}");
+        }
         else
+        {
             Navigation.NavigateTo("/");
+        }
+    }
+
+    private async Task RetryScoring()
+    {
+        if (application == null)
+        {
+            return;
+        }
+
+        isRetrying = true;
+        retryMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await Api.ProcessJobAsync(application.JobId);
+            if (result.Errors.Any())
+            {
+                retryMessage = $"Completed with errors: {string.Join("; ", result.Errors)}";
+            }
+            else
+            {
+                retryMessage = $"Re-scored {result.Processed}/{result.Total} applications. Reloading...";
+            }
+
+            StateHasChanged();
+            await Task.Delay(1500);
+            Navigation.NavigateTo($"/manual-review/{ApplicationId}", forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            retryMessage = $"Failed: {ex.Message}";
+        }
+        finally
+        {
+            isRetrying = false;
+        }
     }
 
     private record RubricCategory(string Name, double Weight, string? Description);
+    private record ManualReviewRubricEntry(double Score, string Comment);
     private record AuditEntry(string Reviewer, DateTime Timestamp, string Category, string OldValue, string NewValue);
+    private record EvidenceCitationItem(string? Category, string? Snippet);
+
+    private static string NormalizeCategoryName(string name)
+    {
+        return System.Text.RegularExpressions.Regex.Replace(
+            name.ToLowerInvariant().Replace('_', ' ').Replace('-', ' ')
+                .Replace("(", " ").Replace(")", " ").Replace("&", " ")
+                .Replace("/", " ").Replace(",", " ").Replace(";", " ").Replace(":", " "),
+            "\\s+",
+            " ").Trim();
+    }
 }

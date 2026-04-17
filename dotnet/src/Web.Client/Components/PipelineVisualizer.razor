@@ -23,8 +23,8 @@
     {
         new StageInfo("Queued", Applications.Count(a => a.Status == "Queued"), "#2196f3", Applications.Count),
         new StageInfo("Scoring", Applications.Count(a => a.Status == "Scoring"), "#ff9800", Applications.Count),
-        new StageInfo("Aggregation", Applications.Count(a => a.Status == "Aggregating"), "#9c27b0", Applications.Count),
-        new StageInfo("Complete", Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", Applications.Count)
+        new StageInfo("Complete", Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", Applications.Count),
+        new StageInfo("Failed", Applications.Count(a => a.Status is "ScoringFailed" or "ExtractionFailed"), "#f44336", Applications.Count)
     };
 
     private record StageInfo(string Name, int Count, string Color, int Total)

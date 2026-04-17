@@ -48,9 +48,9 @@ public static class AuthEndpoints
         group.MapGet("/me", async (ISender mediator) =>
         {
             var user = await mediator.Send(new GetCurrentUserQuery());
-            if (user == null) return Results.Unauthorized();
+            if (user == null) return Results.Ok(null);
             return Results.Ok(new { user.Id, user.Username, user.Role, user.Department, user.FullName, user.Email });
-        }).RequireAuthorization();
+        }).AllowAnonymous();
 
         group.MapPost("/change-password", async (ChangePasswordRequest request, ISender mediator) =>
         {

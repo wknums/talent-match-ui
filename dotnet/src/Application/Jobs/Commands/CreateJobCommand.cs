@@ -1,4 +1,5 @@
 using MediatR;
+using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -25,10 +26,12 @@ public record CreateJobCommand(
 public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
 {
     private readonly IJobRepository _jobRepository;
+    private readonly ICurrentUserService _currentUser;
 
-    public CreateJobCommandHandler(IJobRepository jobRepository)
+    public CreateJobCommandHandler(IJobRepository jobRepository, ICurrentUserService currentUser)
     {
         _jobRepository = jobRepository;
+        _currentUser = currentUser;
     }
 
     public async Task<Job> Handle(CreateJobCommand request, CancellationToken cancellationToken)
@@ -41,7 +44,8 @@ public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
             Organisation = request.Organisation,
             PostingDate = request.PostingDate,
             Status = "active",
-            JobDescription = request.JobDescription
+            JobDescription = request.JobDescription,
+            CreatedBy = _currentUser.UserId ?? _currentUser.Username
         };
 
         var configVersion = new JobConfigVersion

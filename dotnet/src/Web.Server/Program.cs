@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Reflection;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Data.Sqlite;
 using TalentMatch.Application;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Infrastructure;
@@ -13,7 +15,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services
 builder.Services.AddApplication();
-builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.ContentRootPath);
 
 // Auth - using cookie-based auth for demo, Entra ID for production
 builder.Services.AddAuthentication("cookie")
@@ -61,9 +63,18 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
     if (app.Environment.IsEnvironment("Testing"))
+    {
         db.Database.EnsureCreated();
+    }
+    else if (db.Database.IsSqlite())
+    {
+        EnsureSharedSqliteSchemaIfNeeded(db, app.Environment.ContentRootPath);
+        BaselineSharedSqliteSchemaIfNeeded(db);
+    }
     else
+    {
         db.Database.Migrate();
+    }
 
     // Seed default admin user if no users exist (matches Stack A init-users.ts / AUTHENTICATION.md)
     if (!db.Users.Any())
@@ -78,6 +89,120 @@ using (var scope = app.Services.CreateScope())
             PasswordHash = hash
         });
         db.SaveChanges();
+    }
+}
+
+static bool BaselineSharedSqliteSchemaIfNeeded(AppDbContext db)
+{
+    string[] knownMigrationIds =
+    [
+        "20260305150916_InitialCreate",
+        "20260306155432_AddDesiredCriteriaAndJobDescription",
+        "20260309180812_AddScoringPromptAndPromptTestRun",
+        "20260310120500_AddCreatedByToJob",
+        "20260312120000_AddRubricApprovalStatus",
+        "20260313150938_AddRubricSourceToJobConfigVersion",
+        "20260323182030_AddLastErrorToApplication",
+    ];
+
+    if (!db.Database.IsSqlite())
+        return false;
+
+    var connection = (SqliteConnection)db.Database.GetDbConnection();
+    var shouldClose = connection.State != System.Data.ConnectionState.Open;
+    if (shouldClose)
+        connection.Open();
+
+    try
+    {
+        using var hasHistoryTableCommand = connection.CreateCommand();
+        hasHistoryTableCommand.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE name = '__EFMigrationsHistory' AND type = 'table';";
+        var hasHistoryTable = Convert.ToInt32(hasHistoryTableCommand.ExecuteScalar()) > 0;
+        if (hasHistoryTable)
+        {
+            using var historyRowCountCommand = connection.CreateCommand();
+            historyRowCountCommand.CommandText = "SELECT COUNT(*) FROM \"__EFMigrationsHistory\";";
+            var historyRowCount = Convert.ToInt32(historyRowCountCommand.ExecuteScalar());
+            if (historyRowCount > 0)
+                return false;
+        }
+
+        using var hasExistingSchemaCommand = connection.CreateCommand();
+        hasExistingSchemaCommand.CommandText = @"
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('Users', 'Jobs', 'Applications', 'ScoringRuns', 'AggregatedResults', 'FailureQueueItems');";
+        var hasExistingSchema = Convert.ToInt32(hasExistingSchemaCommand.ExecuteScalar()) > 0;
+        if (!hasExistingSchema)
+            return false;
+
+        db.Database.ExecuteSqlRaw(@"
+            CREATE TABLE IF NOT EXISTS ""__EFMigrationsHistory"" (
+                ""MigrationId"" TEXT NOT NULL CONSTRAINT ""PK___EFMigrationsHistory"" PRIMARY KEY,
+                ""ProductVersion"" TEXT NOT NULL
+            );");
+
+        var productVersion = typeof(DbContext).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion?
+            .Split('+')[0]
+            ?? "10.0.0";
+
+                foreach (var migrationId in knownMigrationIds)
+        {
+            db.Database.ExecuteSqlRaw(
+                @"INSERT OR IGNORE INTO ""__EFMigrationsHistory"" (""MigrationId"", ""ProductVersion"")
+                  VALUES ({0}, {1});",
+                migrationId,
+                productVersion);
+        }
+
+                using var appliedHistoryCountCommand = connection.CreateCommand();
+                appliedHistoryCountCommand.CommandText = "SELECT COUNT(*) FROM \"__EFMigrationsHistory\";";
+                return Convert.ToInt32(appliedHistoryCountCommand.ExecuteScalar()) > 0;
+    }
+    finally
+    {
+        if (shouldClose)
+            connection.Close();
+    }
+}
+
+static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRootPath)
+{
+    if (!db.Database.IsSqlite())
+        return;
+
+    var connection = (SqliteConnection)db.Database.GetDbConnection();
+    var shouldClose = connection.State != System.Data.ConnectionState.Open;
+    if (shouldClose)
+        connection.Open();
+
+    try
+    {
+        using var hasExistingSchemaCommand = connection.CreateCommand();
+        hasExistingSchemaCommand.CommandText = @"
+            SELECT COUNT(*)
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('Users', 'Jobs', 'Applications', 'ScoringRuns', 'AggregatedResults', 'FailureQueueItems');";
+        var hasExistingSchema = Convert.ToInt32(hasExistingSchemaCommand.ExecuteScalar()) > 0;
+        if (hasExistingSchema)
+            return;
+
+        var schemaPath = Path.GetFullPath(Path.Combine(contentRootPath, "..", "..", "..", "server", "storage", "schema-sqlite.sql"));
+        if (!File.Exists(schemaPath))
+            throw new FileNotFoundException($"Shared SQLite schema file not found: {schemaPath}");
+
+        using var initializeSchemaCommand = connection.CreateCommand();
+        initializeSchemaCommand.CommandText = File.ReadAllText(schemaPath);
+        initializeSchemaCommand.ExecuteNonQuery();
+    }
+    finally
+    {
+        if (shouldClose)
+            connection.Close();
     }
 }
 

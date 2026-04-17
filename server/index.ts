@@ -1,8 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import express from 'express'
-import { createStorageProvider } from './storage/factory.js'
-import { createKVRouter } from './routes/kv.js'
+import { initializeDatabase, isAzureSql } from './storage/db.js'
 import { createLLMRouter } from './routes/llm.js'
 import { createAuthRouter } from './routes/auth.js'
 import { createUsersRouter } from './routes/users.js'
@@ -46,10 +45,10 @@ async function main() {
     process.exit(1)
   }
 
-  const storage = await createStorageProvider()
+  await initializeDatabase()
 
   // Seed default admin user if none exist
-  await initializeUsers(storage)
+  await initializeUsers()
 
   const app = express()
 
@@ -57,8 +56,7 @@ async function main() {
   app.use(express.json({ limit: '10mb' }))
 
   // Public routes (no auth required)
-  app.use('/api/auth', createAuthRouter(storage))
-  app.use('/api/kv', createKVRouter(storage))
+  app.use('/api/auth', createAuthRouter())
   app.use('/api/llm', createLLMRouter())
 
   // Config endpoint (public)
@@ -70,22 +68,22 @@ async function main() {
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      storage: process.env.STORAGE_PROVIDER || 'local',
+      storage: isAzureSql ? 'azure-sql' : 'sqlite',
     })
   })
 
   // Auth middleware for protected routes
-  const authMiddleware = createAuthMiddleware(storage)
+  const authMiddleware = createAuthMiddleware()
 
   // Protected routes
-  const applicationsRouter = createApplicationsRouter(storage)
-  app.use('/api/users', authMiddleware, createUsersRouter(storage))
-  app.use('/api/jobs', authMiddleware, createJobsRouter(storage))
-  app.use('/api/jobs', authMiddleware, createPromptsRouter(storage))
+  const applicationsRouter = createApplicationsRouter()
+  app.use('/api/users', authMiddleware, createUsersRouter())
+  app.use('/api/jobs', authMiddleware, createJobsRouter())
+  app.use('/api/jobs', authMiddleware, createPromptsRouter())
   app.use('/api', authMiddleware, applicationsRouter)
-  app.use('/api/stats', authMiddleware, createStatsRouter(storage))
-  app.use('/api/audit', authMiddleware, createAuditRouter(storage))
-  app.use('/api/dlq', authMiddleware, createDLQRouter(storage))
+  app.use('/api/stats', authMiddleware, createStatsRouter())
+  app.use('/api/audit', authMiddleware, createAuditRouter())
+  app.use('/api/dlq', authMiddleware, createDLQRouter())
 
   // Error handler (must be last)
   app.use(errorHandler)

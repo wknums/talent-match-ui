@@ -88,6 +88,32 @@ public class UserManagementTests : BunitContext
         cut.Markup.Should().NotContain("Create New User",
             because: "the create form should close on success");
     }
+
+    [Fact]
+    public async Task EditUser_CurrentUserRoleChange_IsDisabledAndShowsHint()
+    {
+        var users = JsonSerializer.Serialize(new[]
+        {
+            new { Id = "admin-1", Username = "admin", Role = "admin", Department = "Leadership", FullName = "Administrator", Email = "admin@test.com" },
+            new { Id = "user-2", Username = "recruiter", Role = "recruiter", Department = "Engineering", FullName = "Recruiter User", Email = "recruiter@test.com" },
+        });
+
+        _handler.SetupResponse("GET", "/api/auth/me", HttpStatusCode.OK,
+            JsonSerializer.Serialize(new { Id = "admin-1", Username = "admin", Role = "admin", Department = "Leadership", FullName = "Administrator", Email = "admin@test.com" }));
+        _handler.SetupResponse("GET", "/api/users", HttpStatusCode.OK, users);
+        _handler.SetupResponse("GET", "/api/users/reset-requests", HttpStatusCode.OK, "[]");
+
+        var cut = Render<UserManagement>();
+
+        cut.WaitForAssertion(() =>
+            cut.FindAll("button").Any(button => button.TextContent.Trim() == "Edit").Should().BeTrue());
+
+        await cut.InvokeAsync(() => cut.FindAll("button").First(button => button.TextContent.Trim() == "Edit").Click());
+
+        cut.Markup.Should().Contain("Edit User: admin");
+        cut.Markup.Should().Contain("You cannot change your own role.");
+        cut.Find("select").GetAttribute("disabled").Should().NotBeNull();
+    }
 }
 
 public class MockHttpHandler : HttpMessageHandler

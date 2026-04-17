@@ -1,5 +1,6 @@
 @page "/jobs/{JobId}"
 @using TalentMatch.Web.Client.Services
+@implements IDisposable
 @inject ApiClient Api
 @inject NavigationManager Navigation
 
@@ -15,6 +16,9 @@
             <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">Manage Prompts</button>
             <button @onclick="ProcessJob" disabled="@(isProcessing || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
                 @(isProcessing ? "Processing..." : "Process Applications")
+            </button>
+            <button @onclick="ReAggregate" disabled="@isReAggregating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;" title="Recompute decisions from existing scoring runs (no API calls)">
+                @(isReAggregating ? "Re-aggregating..." : "🔄 Re-aggregate")
             </button>
             <button @onclick="() => showEditDialog = true" aria-label="Edit job configuration" style="padding: 0.5rem 1rem; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer;">✏️ Edit Job</button>
             @if (isAdmin)
@@ -33,6 +37,25 @@
         <PipelineVisualizer Applications="allApps" />
     </div>
 
+    @if (processingErrors.Any())
+    {
+        <div style="background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; color: #991b1b;">
+            <strong>Processing Errors (@processingErrors.Count):</strong>
+            <ul style="margin: 0.25rem 0 0 1rem; padding: 0;">
+                @foreach (var err in processingErrors)
+                {
+                    <li style="font-size: 0.85rem;">@err</li>
+                }
+            </ul>
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(reAggregateMessage))
+    {
+        <div style="background: #fefce8; border: 1px solid #fde68a; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; color: #854d0e; font-size: 0.9rem;">
+            🔄 @reAggregateMessage
+        </div>
+    }
+
     <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
         <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist (@longlist.Count)</button>
         <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist (@shortlist.Count)</button>
@@ -46,6 +69,7 @@
                 <th style="padding: 0.5rem;">Status</th>
                 <th style="padding: 0.5rem;">Decision</th>
                 <th style="padding: 0.5rem;">Variance</th>
+                <th style="padding: 0.5rem; cursor: pointer;" @onclick="SortByDate">Date ↕</th>
                 <th style="padding: 0.5rem;">Actions</th>
             </tr>
         </thead>
@@ -57,9 +81,10 @@
                     <td style="padding: 0.5rem;">@app.Status</td>
                     <td style="padding: 0.5rem;">@(app.FinalDecision ?? "—")</td>
                     <td style="padding: 0.5rem;">@(app.Variance?.ToString("F1") ?? "—")</td>
+                    <td style="padding: 0.5rem; font-size: 0.85rem; color: #718096;">@app.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
                     <td style="padding: 0.5rem;">
                         <button @onclick="@(() => Navigation.NavigateTo($"/applications/{app.Id}"))">View</button>
-                        @if (app.FinalDecision == "NeedsManualReview")
+                        @if (app.FinalDecision == "NeedsManualReview" || app.FinalDecision == "Excluded")
                         {
                             <button @onclick="@(() => Navigation.NavigateTo($"/manual-review/{app.Id}"))">Review</button>
                         }
@@ -126,6 +151,8 @@ else
     private bool showUpload;
     private bool showPrompts;
     private bool isProcessing;
+    private List<string> processingErrors = new();
+    private string sortField = "none";
     private bool sortAscending;
     private bool hasProductionApprovedPrompt;
     private bool hasApprovedRubric;
@@ -135,6 +162,9 @@ else
     private string? deleteError;
     private ScoringPromptDto? activePrompt;
     private JobConfigDto? jobConfig;
+    private System.Threading.Timer? _jobPollTimer;
+    private System.Threading.Timer? _bgRefreshTimer;
+    private bool _jobDisposed;
 
     private List<ApplicationDto> longlist => allApps.Where(a => a.FinalDecision == "Eligible").ToList();
     private List<ApplicationDto> shortlist => allApps.Where(a => a.FinalScore >= 85).ToList();
@@ -158,7 +188,18 @@ else
 
         job = await Api.GetJobAsync(JobId);
         allApps = await Api.GetApplicationsAsync(JobId);
+        ApplySort();
         await LoadPromptStatus();
+
+        // Start fast polling if apps are actively being processed (Scoring/Extracting/Aggregating)
+        if (HasActivelyProcessingApps)
+        {
+            isProcessing = true;
+            StartJobPolling();
+        }
+
+        // Always run a background refresh every 15 seconds for status freshness
+        StartBackgroundRefresh();
     }
 
     private async Task LoadPromptStatus()
@@ -180,24 +221,137 @@ else
 
     private void SortByScore()
     {
-        sortAscending = !sortAscending;
-        allApps = sortAscending
-            ? allApps.OrderBy(a => a.FinalScore).ToList()
-            : allApps.OrderByDescending(a => a.FinalScore).ToList();
+        if (sortField == "score") sortAscending = !sortAscending;
+        else { sortField = "score"; sortAscending = false; }
+        ApplySort();
+    }
+
+    private void SortByDate()
+    {
+        if (sortField == "date") sortAscending = !sortAscending;
+        else { sortField = "date"; sortAscending = false; }
+        ApplySort();
+    }
+
+    private void ApplySort()
+    {
+        allApps = (sortField, sortAscending) switch
+        {
+            ("score", true) => allApps.OrderBy(a => a.FinalScore).ToList(),
+            ("score", false) => allApps.OrderByDescending(a => a.FinalScore).ToList(),
+            ("date", true) => allApps.OrderBy(a => a.CreatedAt).ToList(),
+            ("date", false) => allApps.OrderByDescending(a => a.CreatedAt).ToList(),
+            _ => allApps
+        };
     }
 
     private async Task OnUploadCompleted()
     {
         showUpload = false;
         allApps = await Api.GetApplicationsAsync(JobId);
+        ApplySort();
     }
 
     private async Task ProcessJob()
     {
         isProcessing = true;
-        await Api.ProcessJobAsync(JobId);
-        isProcessing = false;
+        processingErrors.Clear();
+        try
+        {
+            var result = await Api.ProcessJobAsync(JobId);
+            if (result.Errors.Any())
+                processingErrors.AddRange(result.Errors);
+        }
+        catch (Exception ex)
+        {
+            processingErrors.Add($"Request failed: {ex.Message}");
+        }
         allApps = await Api.GetApplicationsAsync(JobId);
+        ApplySort();
+        StartJobPolling();
+    }
+
+    private bool isReAggregating;
+    private string? reAggregateMessage;
+
+    private async Task ReAggregate()
+    {
+        isReAggregating = true;
+        reAggregateMessage = null;
+        try
+        {
+            var result = await Api.ReAggregateJobAsync(JobId);
+            if (result.Error != null)
+                reAggregateMessage = result.Error;
+            else
+                reAggregateMessage = $"Updated {result.Updated} of {result.Total} applications.";
+        }
+        catch (Exception ex)
+        {
+            reAggregateMessage = $"Failed: {ex.Message}";
+        }
+        allApps = await Api.GetApplicationsAsync(JobId);
+        ApplySort();
+        isReAggregating = false;
+    }
+
+    private bool HasPendingApps => allApps.Any(a => a.Status is "Queued" or "Extracting" or "Scoring" or "Aggregating");
+    private bool HasActivelyProcessingApps => allApps.Any(a => a.Status is "Extracting" or "Scoring" or "Aggregating");
+
+    private void StartJobPolling()
+    {
+        if (_jobPollTimer != null) return;
+        _jobPollTimer = new System.Threading.Timer(async _ =>
+        {
+            if (_jobDisposed) return;
+            try
+            {
+                var updated = await Api.GetApplicationsAsync(JobId);
+                await InvokeAsync(() =>
+                {
+                    allApps = updated;
+                    ApplySort();
+                    StateHasChanged();
+                    if (!HasPendingApps)
+                    {
+                        isProcessing = false;
+                        StopJobPolling();
+                    }
+                });
+            }
+            catch { }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private void StopJobPolling()
+    {
+        _jobPollTimer?.Dispose();
+        _jobPollTimer = null;
+    }
+
+    private void StartBackgroundRefresh()
+    {
+        _bgRefreshTimer = new System.Threading.Timer(async _ =>
+        {
+            if (_jobDisposed) return;
+            try
+            {
+                var updated = await Api.GetApplicationsAsync(JobId);
+                await InvokeAsync(() =>
+                {
+                    allApps = updated;
+                    ApplySort();
+                    // If fast poll isn't running but there are now pending apps, start it
+                    if (HasPendingApps && _jobPollTimer == null)
+                    {
+                        isProcessing = true;
+                        StartJobPolling();
+                    }
+                    StateHasChanged();
+                });
+            }
+            catch { }
+        }, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
     }
 
     private void OpenDeleteDialog()
@@ -230,7 +384,16 @@ else
         showEditDialog = false;
         job = await Api.GetJobAsync(JobId);
         allApps = await Api.GetApplicationsAsync(JobId);
+        ApplySort();
         await LoadPromptStatus();
         StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _jobDisposed = true;
+        StopJobPolling();
+        _bgRefreshTimer?.Dispose();
+        _bgRefreshTimer = null;
     }
 }

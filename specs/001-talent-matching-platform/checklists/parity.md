@@ -3,8 +3,8 @@
 **Feature**: 001 — Talent Matching Platform  
 **Spec**: [spec.md](../spec.md)  
 **Created**: March 11, 2026  
-**Last Verified**: March 11, 2026  
-**Overall Status**: ✅ Verified (58/59)
+**Last Verified**: April 16, 2026  
+**Overall Status**: ⚠️ Re-review required (57/59)
 
 ---
 
@@ -13,7 +13,7 @@
 | Section | Items | Checked | Status |
 |---------|-------|---------|--------|
 | US1 — Authentication & Dashboard | 7 | 7/7 | ✅ |
-| US2 — User Management | 6 | 6/6 | ✅ |
+| US2 — User Management | 6 | 5/6 | ⚠️ |
 | US3 — Job Creation & Document Extraction | 8 | 8/8 | ✅ |
 | US3a — Prompt Management | 7 | 7/7 | ✅ |
 | US4 — Application Upload | 4 | 4/4 | ✅ |
@@ -23,7 +23,7 @@
 | US8 — Monitoring & Pipeline Visibility | 5 | 5/5 | ✅ |
 | Authorization & Security | 4 | 4/4 | ✅ |
 | Infrastructure & Storage | 4 | 3/4 | ⚠️ |
-| **Total** | **59** | **58/59** | **⚠️** |
+| **Total** | **59** | **57/59** | **⚠️** |
 
 ---
 
@@ -77,9 +77,9 @@
   _Stack A_: `src/components/ChangePasswordDialog.tsx` with toast feedback  
   _Stack B_: `AuthEndpoints.cs` POST `/change-password`; `ChangePasswordCommand`; UI dialog
 
-- [x] **CHK012** — Both stacks implement recruiter password-reset requests with admin approval workflow  
+- [ ] **CHK012** — Both stacks implement recruiter password-reset requests with admin approval workflow  
   _Stack A_: `server/routes/users.ts` request/resolve reset; `UserManagementDialog.tsx` pending requests  
-  _Stack B_: `UsersEndpoints.cs` GET/POST reset-requests; `RequestPasswordResetCommand`, `ResolveResetRequestCommand`; `UserManagement.razor` reset requests tab
+  _Stack B_: `UsersEndpoints.cs` exposes POST and resolve actions, but GET `/api/users/reset-requests` still returns an empty placeholder list, so admin approval parity is not complete
 
 - [x] **CHK013** — Both stacks display a user menu with name, role badge, department, and controls for logout, change password, and user management (admin-only)  
   _Stack A_: `src/components/UserMenu.tsx` dropdown with role display and action buttons  
@@ -310,7 +310,7 @@
 
 ## Notes
 
-- **Tasks.md vs Reality**: The `tasks.md` for feature 001 marks all ~170 tasks as `[ ]` unchecked, but this audit confirms **both stacks are essentially feature-complete** (Stack A: 44/45 = 97.8%, Stack B: 37/37 = 100%).
-- **Single Outstanding Item**: CHK059 requires verification of `UploadRubricDialog.tsx` completeness in Stack A. The component file exists but its full implementation was not audited.
+- **Tasks.md vs Reality**: The `tasks.md` for feature 001 marks all ~170 tasks as `[ ]` unchecked, but the implementation audit found the feature broadly complete with two re-review items still open.
+- **Outstanding Items**: CHK012 remains open because Stack B reset-request retrieval is stubbed, and CHK059 still requires verification of `UploadRubricDialog.tsx` completeness in Stack A.
 - **Architectural Differences**: Stack B uses Clean Architecture (Domain → Infrastructure → Application → Web) with CQRS/MediatR, while Stack A uses Express middleware with KV storage. These are expected structural differences per the constitution — behavioral parity is what matters.
 - **Real-Time Updates**: Stack B uses SignalR for real-time dashboard updates; Stack A uses polling. Both achieve the same user-facing behavior (stats refresh within 30 seconds per FR-015).

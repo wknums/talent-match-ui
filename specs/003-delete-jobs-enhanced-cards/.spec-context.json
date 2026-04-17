@@ -1,0 +1,20 @@
+{
+  "transitions": [
+    {
+      "step": "specify",
+      "substep": null,
+      "from": null,
+      "by": "extension",
+      "at": "2026-04-16T07:48:59.961Z"
+    }
+  ],
+  "currentStep": "specify",
+  "stepHistory": {
+    "specify": {
+      "startedAt": "2026-04-16T07:48:59.961Z",
+      "completedAt": null
+    }
+  },
+  "status": "active",
+  "specName": "Delete Jobs Enhanced Cards"
+}

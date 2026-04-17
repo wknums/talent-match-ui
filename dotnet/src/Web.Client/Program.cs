@@ -10,7 +10,10 @@ builder.RootComponents.Add<HeadOutlet>("head::after");
 
 builder.Services.AddScoped<CookieHandler>();
 builder.Services.AddHttpClient("API", client =>
-    client.BaseAddress = new Uri(builder.HostEnvironment.BaseAddress))
+{
+    client.BaseAddress = new Uri(builder.HostEnvironment.BaseAddress);
+    client.Timeout = TimeSpan.FromMinutes(10);
+})
     .AddHttpMessageHandler<CookieHandler>();
 builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("API"));
 builder.Services.AddScoped<ApiClient>();

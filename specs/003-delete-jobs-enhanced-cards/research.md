@@ -78,8 +78,7 @@ layout, rejected per YAGNI.
 ## R8: Confirmation Dialog Design
 
 **Decision**: Create a simple `ConfirmDeleteJobDialog.razor` component with parameters for job title
-and application count. Renders inline (not a separate page). Constitution requires dialogs to be
-resizable and draggable with scroll bars.
+and application count. Renders inline (not a separate page).
 **Rationale**: The existing codebase uses inline modal overlays (see `CreateJobDialog` usage in
 Dashboard, upload modal in JobDetail). A dedicated component keeps the Dashboard/JobDetail pages clean.
 The dialog shows: job title, optional cascade warning with count, Confirm/Cancel buttons.

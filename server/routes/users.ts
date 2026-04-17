@@ -1,38 +1,22 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { Router } from 'express'
-import type { StorageProvider } from '../storage/types.js'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import { AUTH_USERS, AUTH_RESET_REQUESTS } from '../storage/kv-keys.js'
-import { getArray, setArray, pushToArray, removeFromArray } from '../storage/kv-helpers.js'
+import { userRepo } from '../storage/repos/index.js'
 import { requireRole } from '../middleware/rbac.js'
-import { createAuditService } from '../services/audit.js'
-import type { PasswordResetRequest } from '../../src/types/index.js'
-
-interface StoredUser {
-  userId: string
-  username: string
-  role: 'admin' | 'recruiter' | 'business_panel'
-  department?: string
-  fullName: string
-  email?: string
-  createdAt: string
-  lastLogin?: string
-  passwordHash: string
-  passwordResetRequired?: boolean
-}
+import { auditService } from '../services/audit.js'
 
 function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex')
 }
 
-export function createUsersRouter(storage: StorageProvider) {
+export function createUsersRouter() {
   const router = Router()
-  const audit = createAuditService(storage)
+  const audit = auditService
 
   // GET /api/users - admin: list all users
   router.get('/', requireRole('admin'), async (_req: AuthenticatedRequest, res, next) => {
     try {
-      const users = await getArray<StoredUser>(storage, AUTH_USERS)
+      const users = await userRepo.getAll()
       const safeUsers = users.map(({ passwordHash, ...u }) => u)
       res.json(safeUsers)
     } catch (err) {
@@ -48,12 +32,12 @@ export function createUsersRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: 'username, role, and password are required' })
       }
 
-      const users = await getArray<StoredUser>(storage, AUTH_USERS)
-      if (users.find(u => u.username === username)) {
+      const existing = await userRepo.getByUsername(username)
+      if (existing) {
         return res.status(409).json({ error: 'Conflict', message: 'Username already exists' })
       }
 
-      const newUser: StoredUser = {
+      const newUser = {
         userId: randomUUID(),
         username,
         role,
@@ -64,8 +48,7 @@ export function createUsersRouter(storage: StorageProvider) {
         passwordHash: sha256(password),
       }
 
-      users.push(newUser)
-      await setArray(storage, AUTH_USERS, users)
+      await userRepo.create(newUser)
 
       await audit.appendEvent(req.user!.username, 'user.created', 'User', newUser.userId, { username, role, department })
 
@@ -98,31 +81,27 @@ export function createUsersRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: "Role must be 'admin', 'recruiter', or 'business_panel'" })
       }
 
-      const users = await getArray<StoredUser>(storage, AUTH_USERS)
-      const userIndex = users.findIndex(u => u.userId === userId)
-      if (userIndex === -1) {
+      const existingUser = await userRepo.getById(userId)
+      if (!existingUser) {
         return res.status(404).json({ error: 'Not Found', message: 'User not found' })
       }
 
       // Check email uniqueness across other users
-      const emailConflict = users.find(u => u.userId !== userId && u.email?.toLowerCase() === email.toLowerCase())
+      const allUsers = await userRepo.getAll()
+      const emailConflict = allUsers.find(u => u.userId !== userId && u.email?.toLowerCase() === email.toLowerCase())
       if (emailConflict) {
         return res.status(409).json({ error: 'Conflict', message: `Email '${email}' is already in use by another user.` })
       }
 
       // Self-role-change prevention: silently preserve existing role
-      const effectiveRole = req.user?.userId === userId ? users[userIndex].role : role
+      const effectiveRole = req.user?.userId === userId ? existingUser.role : role
 
-      const updatedUsers = users.map(u =>
-        u.userId === userId
-          ? { ...u, fullName: fullName.trim(), email: email.trim(), role: effectiveRole, department: department ?? u.department }
-          : u
-      )
-      await setArray(storage, AUTH_USERS, updatedUsers)
+      await userRepo.update(userId, { fullName: fullName.trim(), email: email.trim(), role: effectiveRole, department: department ?? existingUser.department })
 
       await audit.appendEvent(req.user!.username, 'user.updated', 'User', userId, { fullName, email, role: effectiveRole, department })
 
-      const updated = updatedUsers.find(u => u.userId === userId)!
+      const updated = await userRepo.getById(userId)
+      if (!updated) return res.status(404).json({ error: 'Not Found' })
       const { passwordHash, ...safeUser } = updated
       res.json(safeUser)
     } catch (err) {
@@ -138,14 +117,12 @@ export function createUsersRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: 'Cannot delete your own account' })
       }
 
-      const users = await getArray<StoredUser>(storage, AUTH_USERS)
-      const user = users.find(u => u.userId === userId)
+      const user = await userRepo.getById(userId)
       if (!user) {
         return res.status(404).json({ error: 'Not Found', message: 'User not found' })
       }
 
-      const remaining = users.filter(u => u.userId !== userId)
-      await setArray(storage, AUTH_USERS, remaining)
+      await userRepo.delete(userId)
 
       await audit.appendEvent(req.user!.username, 'user.deleted', 'User', userId, { username: user.username })
 
@@ -164,16 +141,12 @@ export function createUsersRouter(storage: StorageProvider) {
         return res.status(400).json({ error: 'Validation Error', message: 'newPassword is required' })
       }
 
-      const users = await getArray<StoredUser>(storage, AUTH_USERS)
-      const user = users.find(u => u.userId === userId)
+      const user = await userRepo.getById(userId)
       if (!user) {
         return res.status(404).json({ error: 'Not Found', message: 'User not found' })
       }
 
-      const updatedUsers = users.map(u =>
-        u.userId === userId ? { ...u, passwordHash: sha256(newPassword) } : u
-      )
-      await setArray(storage, AUTH_USERS, updatedUsers)
+      await userRepo.update(userId, { passwordHash: sha256(newPassword) })
 
       await audit.appendEvent(req.user!.username, 'user.password-reset', 'User', userId, { username: user.username })
 
@@ -186,8 +159,8 @@ export function createUsersRouter(storage: StorageProvider) {
   // GET /api/users/reset-requests - admin: list pending reset requests
   router.get('/reset-requests', requireRole('admin'), async (_req, res, next) => {
     try {
-      const requests = await getArray<PasswordResetRequest>(storage, AUTH_RESET_REQUESTS)
-      res.json(requests.filter(r => r.status === 'pending'))
+      const requests = await userRepo.getResetRequests('pending')
+      res.json(requests)
     } catch (err) {
       next(err)
     }
@@ -201,16 +174,16 @@ export function createUsersRouter(storage: StorageProvider) {
         return res.status(401).json({ error: 'Unauthorized' })
       }
 
-      const request: PasswordResetRequest = {
+      const request = {
         requestId: randomUUID(),
         userId: user.userId,
         username: user.username,
         fullName: user.fullName,
         requestedAt: new Date().toISOString(),
-        status: 'pending',
+        status: 'pending' as const,
       }
 
-      await pushToArray(storage, AUTH_RESET_REQUESTS, request)
+      await userRepo.createResetRequest(request)
       res.status(201).json(request)
     } catch (err) {
       next(err)
@@ -223,8 +196,8 @@ export function createUsersRouter(storage: StorageProvider) {
       const { requestId } = req.params
       const { action, newPassword } = req.body // action: 'approve' | 'reject'
 
-      const requests = await getArray<PasswordResetRequest>(storage, AUTH_RESET_REQUESTS)
-      const request = requests.find(r => r.requestId === requestId)
+      const allRequests = await userRepo.getResetRequests()
+      const request = allRequests.find(r => r.requestId === requestId)
       if (!request) {
         return res.status(404).json({ error: 'Not Found', message: 'Request not found' })
       }
@@ -233,20 +206,14 @@ export function createUsersRouter(storage: StorageProvider) {
         if (!newPassword) {
           return res.status(400).json({ error: 'Validation Error', message: 'newPassword required for approval' })
         }
-        // Update user password
-        const users = await getArray<StoredUser>(storage, AUTH_USERS)
-        const updatedUsers = users.map(u =>
-          u.userId === request.userId ? { ...u, passwordHash: sha256(newPassword) } : u
-        )
-        await setArray(storage, AUTH_USERS, updatedUsers)
+        await userRepo.update(request.userId, { passwordHash: sha256(newPassword) })
       }
 
-      const updatedRequests = requests.map(r =>
-        r.requestId === requestId
-          ? { ...r, status: action === 'approve' ? 'completed' as const : 'rejected' as const, resolvedAt: new Date().toISOString(), resolvedBy: req.user!.username }
-          : r
-      )
-      await setArray(storage, AUTH_RESET_REQUESTS, updatedRequests)
+      await userRepo.updateResetRequest(requestId, {
+        status: action === 'approve' ? 'completed' : 'rejected',
+        resolvedAt: new Date().toISOString(),
+        resolvedBy: req.user!.username,
+      })
 
       await audit.appendEvent(req.user!.username, `user.reset-request-${action}`, 'User', request.userId, { requestId })
 

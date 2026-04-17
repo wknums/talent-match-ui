@@ -24,22 +24,12 @@ public class EditPromptCommandHandler : IRequestHandler<EditPromptCommand, Scori
         var existing = await _promptRepo.GetByIdAsync(request.PromptId, ct)
             ?? throw new InvalidOperationException("Prompt not found");
 
-        // FR-035: Create a new revision with incremented version
-        var allVersions = await _promptRepo.GetByJobIdAsync(existing.JobId, ct);
-        var maxVersion = allVersions.Max(p => p.VersionNumber);
+        // Overwrite the existing prompt text in place
+        existing.PromptText = request.PromptText;
+        existing.Author = request.Author;
+        existing.LastModifiedAt = DateTime.UtcNow;
 
-        var newPrompt = new ScoringPrompt
-        {
-            JobId = existing.JobId,
-            VersionNumber = maxVersion + 1,
-            PromptText = request.PromptText,
-            Status = "draft",
-            Author = request.Author,
-            Source = existing.Source,
-            GenerationMetadataJson = existing.GenerationMetadataJson
-        };
-
-        await _promptRepo.AddAsync(newPrompt, ct);
-        return newPrompt;
+        await _promptRepo.UpdateAsync(existing, ct);
+        return existing;
     }
 }

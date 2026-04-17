@@ -10,6 +10,11 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog'
+import {
+  DraggableResizableDialog,
+  DraggableDialogHeader,
+  DraggableDialogBody,
+} from '@/components/DraggableResizableDialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Star,
@@ -24,8 +29,11 @@ import {
   CheckCircle,
   Play,
   ShieldCheck,
+  ArrowSquareOut,
+  ArrowClockwise,
 } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
+import { parseCategoryScores, parseGate, parseGateEntries } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { ScoringPrompt, PromptStatus, PromptTestRun, PromptTestRunDetail, Application } from '@/types'
@@ -34,7 +42,10 @@ interface PromptManagementProps {
   jobId: string
   hasApprovedRubric: boolean
   onPromptStatusChange?: () => void
+  onStartManualReview?: (applicationId: string, jobId: string) => void
 }
+
+const activeTestRunStatuses = new Set(['pending_scoring', 'scoring'])
 
 const statusColors: Record<PromptStatus, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -93,10 +104,12 @@ function PromptTestWorkflow({
   jobId,
   prompt,
   onProductionApproved,
+  onStartManualReview,
 }: {
   jobId: string
   prompt: ScoringPrompt
   onProductionApproved: () => void
+  onStartManualReview?: (applicationId: string, jobId: string) => void
 }) {
   const [testRuns, setTestRuns] = useState<PromptTestRun[]>([])
   const [loading, setLoading] = useState(false)
@@ -105,19 +118,59 @@ function PromptTestWorkflow({
   const [creating, setCreating] = useState(false)
   const [approving, setApproving] = useState(false)
   const [approvingProduction, setApprovingProduction] = useState(false)
+  const [rescoring, setRescoring] = useState(false)
   const [selectedTestRun, setSelectedTestRun] = useState<PromptTestRunDetail | null>(null)
+
+  const fileToBase64 = async (file: File): Promise<string> => {
+    const buffer = await file.arrayBuffer()
+    let binary = ''
+    const bytes = new Uint8Array(buffer)
+    const chunkSize = 0x8000
+
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize))
+    }
+
+    return btoa(binary)
+  }
 
   useEffect(() => {
     loadTestRuns()
   }, [jobId, prompt.promptId])
 
-  const loadTestRuns = async () => {
+  useEffect(() => {
+    if (!testRuns.some((run) => activeTestRunStatuses.has(run.status))) {
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      void loadTestRuns(false)
+    }, 3000)
+
+    return () => window.clearInterval(interval)
+  }, [testRuns, jobId, prompt.promptId])
+
+  useEffect(() => {
+    if (!selectedTestRun || !activeTestRunStatuses.has(selectedTestRun.status)) {
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      void viewTestRun(selectedTestRun, false)
+    }, 3000)
+
+    return () => window.clearInterval(interval)
+  }, [selectedTestRun, jobId, prompt.promptId])
+
+  const loadTestRuns = async (showErrorToast: boolean = true) => {
     setLoading(true)
     try {
       const runs = await api.getTestRuns(jobId, prompt.promptId)
       setTestRuns(runs)
     } catch {
-      toast.error('Failed to load test runs')
+      if (showErrorToast) {
+        toast.error('Failed to load test runs')
+      }
     } finally {
       setLoading(false)
     }
@@ -155,10 +208,9 @@ function PromptTestWorkflow({
     try {
       const fileData = await Promise.all(
         files.map(async (file) => {
-          const content = await file.text()
           return {
             fileName: file.name,
-            content: btoa(content),
+            content: await fileToBase64(file),
             mimeType: file.type,
             sizeBytes: file.size,
           }
@@ -175,23 +227,26 @@ function PromptTestWorkflow({
     }
   }
 
-  const handleApproveTestRun = async (testRun: PromptTestRun) => {
-    setApproving(true)
+  const handleRescore = async (testRun: PromptTestRun) => {
+    setRescoring(true)
     try {
-      const updated = await api.approveTestRun(jobId, prompt.promptId, testRun.testRunId)
-      setTestRuns((prev) => prev.map((r) => (r.testRunId === testRun.testRunId ? updated : r)))
-      toast.success('Test run approved')
+      await api.rescoreTestRun(jobId, prompt.promptId, testRun.testRunId)
+      toast.success('Re-scoring started')
+      setSelectedTestRun(null)
+      await loadTestRuns()
     } catch {
-      toast.error('Failed to approve test run')
+      toast.error('Failed to re-score test run')
     } finally {
-      setApproving(false)
+      setRescoring(false)
     }
   }
 
   const handleApproveForProduction = async (testRun: PromptTestRun) => {
     setApprovingProduction(true)
     try {
-      await api.approveTestRun(jobId, prompt.promptId, testRun.testRunId)
+      if (testRun.status !== 'approved') {
+        await api.approveTestRun(jobId, prompt.promptId, testRun.testRunId)
+      }
       await api.approvePromptForProduction(jobId, prompt.promptId)
       toast.success('Prompt approved for production')
       onProductionApproved()
@@ -202,12 +257,14 @@ function PromptTestWorkflow({
     }
   }
 
-  const viewTestRun = async (testRun: PromptTestRun) => {
+  const viewTestRun = async (testRun: PromptTestRun, showErrorToast: boolean = true) => {
     try {
       const detail = await api.getTestRun(jobId, prompt.promptId, testRun.testRunId)
       setSelectedTestRun(detail)
     } catch {
-      toast.error('Failed to load test run details')
+      if (showErrorToast) {
+        toast.error('Failed to load test run details')
+      }
     }
   }
 
@@ -321,15 +378,19 @@ function PromptTestWorkflow({
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={() => viewTestRun(run)}>
-                    View
+                    {run.status === 'pending_review' ? 'Review Results' : run.status === 'approved' || run.status === 'rejected' ? 'View Results' : 'View Progress'}
                   </Button>
-                  {run.status === 'pending_review' && (
-                    <Button size="sm" variant="outline" onClick={() => handleApproveTestRun(run)} disabled={approving}>
-                      {approving ? <SpinnerGap size={14} className="animate-spin" /> : <Check size={14} />}
-                      Approve
+                  {(run.status === 'pending_review' || run.status === 'scoring_failed') && (
+                    <Button variant="outline" size="sm" onClick={() => handleRescore(run)} disabled={rescoring}>
+                      {rescoring ? (
+                        <SpinnerGap size={14} className="animate-spin" />
+                      ) : (
+                        <ArrowClockwise size={14} />
+                      )}
+                      Re-score
                     </Button>
                   )}
-                  {run.status === 'approved' && prompt.status !== 'production-approved' && (
+                  {(run.status === 'pending_review' || run.status === 'approved') && prompt.status !== 'production-approved' && (
                     <Button size="sm" onClick={() => handleApproveForProduction(run)} disabled={approvingProduction}>
                       {approvingProduction ? (
                         <SpinnerGap size={14} className="animate-spin" />
@@ -348,12 +409,42 @@ function PromptTestWorkflow({
         <p className="text-xs text-muted-foreground">No test runs yet</p>
       )}
 
-      {/* Test run detail dialog */}
-      <Dialog open={selectedTestRun !== null} onOpenChange={() => setSelectedTestRun(null)}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
+      <DraggableResizableDialog
+        open={selectedTestRun !== null}
+        onOpenChange={() => setSelectedTestRun(null)}
+        defaultWidth={Math.round(window.innerWidth * 0.8)}
+        defaultHeight={860}
+        minWidth={900}
+        minHeight={650}
+      >
+        <DraggableDialogHeader>
+          <div className="flex items-center justify-between w-full pr-8">
             <DialogTitle>Test Run Details</DialogTitle>
-          </DialogHeader>
+            {selectedTestRun && (selectedTestRun.status === 'pending_review' || selectedTestRun.status === 'scoring_failed') && (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => handleRescore(selectedTestRun)} disabled={rescoring}>
+                  {rescoring ? (
+                    <SpinnerGap size={14} className="animate-spin" />
+                  ) : (
+                    <ArrowClockwise size={14} />
+                  )}
+                  Re-score All
+                </Button>
+                {selectedTestRun.status === 'pending_review' && prompt.status !== 'production-approved' && (
+                  <Button size="sm" onClick={() => handleApproveForProduction(selectedTestRun)} disabled={approvingProduction}>
+                    {approvingProduction ? (
+                      <SpinnerGap size={14} className="animate-spin" />
+                    ) : (
+                      <ShieldCheck size={14} />
+                    )}
+                    Approve for Production
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        </DraggableDialogHeader>
+        <DraggableDialogBody className="px-6 pb-6">
           {selectedTestRun && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2 text-sm">
@@ -375,6 +466,12 @@ function PromptTestWorkflow({
                   <span className="text-muted-foreground">Created:</span>{' '}
                   {new Date(selectedTestRun.createdAt).toLocaleString()}
                 </div>
+                {selectedTestRun.completedAt && (
+                  <div>
+                    <span className="text-muted-foreground">Completed:</span>{' '}
+                    {new Date(selectedTestRun.completedAt).toLocaleString()}
+                  </div>
+                )}
               </div>
 
               {/* Scoring results per application */}
@@ -383,60 +480,214 @@ function PromptTestWorkflow({
                   <p className="text-sm font-medium">
                     Applications ({selectedTestRun.applications.length})
                   </p>
-                  {selectedTestRun.applications.map(({ application, scoringRuns }) => (
+                  {selectedTestRun.applications.map(({ application, scoringRuns, aggregatedResult, manualReview }) => (
                     <Card key={application.applicationId} className="p-3">
-                      <div className="space-y-2">
+                      {(() => {
+                        const aggregatedCategoryScores = Object.keys(aggregatedResult?.finalSubScores ?? {}).length > 0
+                          ? aggregatedResult?.finalSubScores ?? {}
+                          : Object.fromEntries(
+                              Object.entries(
+                                scoringRuns.reduce<Record<string, number[]>>((accumulator, run) => {
+                                  for (const [category, score] of Object.entries(parseCategoryScores(run))) {
+                                    if (!accumulator[category]) accumulator[category] = []
+                                    accumulator[category].push(Number(score ?? 0))
+                                  }
+                                  return accumulator
+                                }, {}),
+                              ).map(([category, scores]) => [
+                                category,
+                                scores.reduce((sum, score) => sum + score, 0) / scores.length,
+                              ]),
+                            )
+
+                        return (
+                      <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-medium">
                             {application.candidateName || application.candidateRef || application.applicationId.slice(0, 8)}
                           </span>
-                          <Badge
-                            className={cn(
-                              application.status === 'Completed'
-                                ? 'bg-success text-success-foreground'
-                                : application.status === 'ScoringFailed' || application.status === 'ExtractionFailed'
-                                  ? 'bg-destructive text-destructive-foreground'
-                                  : 'bg-accent text-accent-foreground'
+                          <div className="flex items-center gap-2">
+                            {onStartManualReview && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => onStartManualReview(application.applicationId, application.jobId)}
+                              >
+                                <ArrowSquareOut size={14} />
+                                Open Manual Review
+                              </Button>
                             )}
-                          >
-                            {application.status}
-                          </Badge>
+                            <Badge
+                              className={cn(
+                                application.status === 'Completed'
+                                  ? 'bg-success text-success-foreground'
+                                  : application.status === 'ScoringFailed' || application.status === 'ExtractionFailed'
+                                    ? 'bg-destructive text-destructive-foreground'
+                                    : 'bg-accent text-accent-foreground'
+                              )}
+                            >
+                              {application.status}
+                            </Badge>
+                          </div>
                         </div>
+
+                        {(aggregatedResult || application.finalScore != null) && (
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs bg-muted/40 rounded p-3">
+                            <div>
+                              <div className="text-muted-foreground">Final Score</div>
+                              <div className="font-semibold">{Number(aggregatedResult?.finalScore ?? application.finalScore ?? 0).toFixed(1)}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Decision</div>
+                              <div className="font-semibold">{application.finalDecision ?? 'Unknown'}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Variance</div>
+                              <div className="font-semibold">{Number(aggregatedResult?.variance ?? application.variance ?? 0).toFixed(1)}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Confidence</div>
+                              <div className="font-semibold">{aggregatedResult?.confidence != null ? Number(aggregatedResult.confidence).toFixed(2) : 'N/A'}</div>
+                            </div>
+                          </div>
+                        )}
+
+                        {Object.keys(aggregatedCategoryScores).length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium">Aggregated Category Scores</p>
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                              {Object.entries(aggregatedCategoryScores).map(([category, score]) => (
+                                <div key={category} className="flex justify-between">
+                                  <span className="text-muted-foreground truncate mr-2">{category}</span>
+                                  <span className="font-medium">{Number(score ?? 0).toFixed(1)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {(aggregatedResult?.rationaleText || aggregatedResult?.recommendationsText) && (
+                          <div className="space-y-1 text-xs">
+                            {aggregatedResult?.rationaleText && (
+                              <div>
+                                <p className="font-medium">Aggregated Rationale</p>
+                                <pre className="whitespace-pre-wrap break-words rounded bg-muted/40 p-2">{aggregatedResult.rationaleText}</pre>
+                              </div>
+                            )}
+                            {aggregatedResult?.recommendationsText && (
+                              <div>
+                                <p className="font-medium">Aggregated Recommendations</p>
+                                <pre className="whitespace-pre-wrap break-words rounded bg-muted/40 p-2">{aggregatedResult.recommendationsText}</pre>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {manualReview && (
+                          <div className="rounded border border-success/30 bg-success/5 p-2 text-xs">
+                            Manual review saved. Adjusted final score: {manualReview.adjustedFinalScore != null ? Number(manualReview.adjustedFinalScore).toFixed(1) : 'N/A'}
+                          </div>
+                        )}
 
                         {scoringRuns.length > 0 ? (
                           <div className="space-y-2">
-                            {scoringRuns.map((run) => (
-                              <div key={run.runId} className="border rounded p-2 text-xs space-y-1.5 bg-muted/50">
+                            {scoringRuns.map((run) => {
+                              const runCategoryScores = parseCategoryScores(run)
+                              const runGate = parseGate(run)
+                              const runGateEntries = parseGateEntries(run)
+
+                              return (
+                              <div key={run.runId} className="border rounded p-3 text-xs space-y-2 bg-muted/50">
                                 <div className="flex items-center justify-between">
-                                  <span className="font-medium">Run #{run.runIndex}</span>
-                                  <span className="font-semibold text-sm">
-                                    Score: {run.overallScore.toFixed(1)}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium">Run #{run.runIndex}</span>
+                                    <Badge variant="outline">{run.status}</Badge>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="font-semibold text-sm">
+                                      Score: {Number(run.overallScore ?? 0).toFixed(1)}
+                                    </div>
+                                    <div className="text-muted-foreground">{run.durationMs ? `${run.durationMs} ms` : 'Duration N/A'}</div>
+                                  </div>
                                 </div>
 
+                                {run.parserConfidence != null && (
+                                  <div className="text-xs text-muted-foreground">
+                                    Parser confidence: {Math.round(run.parserConfidence * 100)}%
+                                  </div>
+                                )}
+
+                                {run.parserWarnings && run.parserWarnings.length > 0 && (
+                                  <div className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                                    <p className="font-medium mb-1">Parser warnings</p>
+                                    <ul className="list-disc list-inside space-y-0.5">
+                                      {run.parserWarnings.map((warning, index) => (
+                                        <li key={index}>{warning}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
                                 {/* Sub-scores */}
-                                {Object.keys(run.subScores).length > 0 && (
-                                  <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
-                                    {Object.entries(run.subScores).map(([category, score]) => (
+                                {Object.keys(runCategoryScores).length > 0 && (
+                                  <div>
+                                    <p className="font-medium mb-1">Category Scores</p>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                                    {Object.entries(runCategoryScores).map(([category, score]) => (
                                       <div key={category} className="flex justify-between">
                                         <span className="text-muted-foreground truncate mr-2">{category}:</span>
-                                        <span className="font-medium">{(score as number).toFixed(1)}</span>
+                                        <span className="font-medium">{Number(score ?? 0).toFixed(1)}</span>
                                       </div>
                                     ))}
+                                    </div>
                                   </div>
                                 )}
 
                                 {/* Must-have gate */}
-                                {run.mustHaveResult && (
-                                  <div className="flex items-center gap-1">
-                                    {run.mustHaveResult.passed ? (
+                                {runGate && (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-1">
+                                    {runGate.passed ? (
                                       <CheckCircle size={14} className="text-green-600" />
                                     ) : (
                                       <Warning size={14} className="text-red-600" />
                                     )}
                                     <span>
-                                      Eligibility: {run.mustHaveResult.passed ? 'Passed' : `Failed (${run.mustHaveResult.missingCriteria.join(', ')})`}
+                                      Eligibility: {runGate.passed ? 'Passed' : `Failed (${Array.isArray(runGate.missingCriteria) && runGate.missingCriteria.length > 0 ? runGate.missingCriteria.join(', ') : 'No criteria details provided'})`}
                                     </span>
+                                  </div>
+                                    {runGateEntries && runGateEntries.length > 0 && (
+                                      <div className="space-y-1">
+                                        {runGateEntries.map((entry, index) => (
+                                          <div key={`${entry.criterion}-${index}`} className="whitespace-pre-wrap break-words rounded bg-background p-2">
+                                            <div className="font-medium">{entry.criterion}</div>
+                                            <div className="text-muted-foreground">{entry.passed ? 'Passed' : 'Failed'}</div>
+                                            {entry.evidence && <div className="mt-1 italic">{entry.evidence}</div>}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
+                                {run.rationale && (
+                                  <div>
+                                    <p className="font-medium">Rationale</p>
+                                    <pre className="whitespace-pre-wrap break-words rounded bg-background p-2">{run.rationale}</pre>
+                                  </div>
+                                )}
+
+                                {run.evidenceCitations.length > 0 && (
+                                  <div className="space-y-1">
+                                    <p className="font-medium">Evidence</p>
+                                    <div className="space-y-1">
+                                      {run.evidenceCitations.map((citation, index) => (
+                                        <div key={`${citation.category}-${index}`} className="rounded bg-background p-2">
+                                          <div className="font-medium">{citation.category}</div>
+                                          <div className="whitespace-pre-wrap break-words text-muted-foreground">{citation.snippet || 'No snippet'}</div>
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
                                 )}
 
@@ -451,13 +702,22 @@ function PromptTestWorkflow({
                                     </ul>
                                   </div>
                                 )}
+
+                                {run.rawResponseText && (
+                                  <details className="rounded border bg-background p-2">
+                                    <summary className="cursor-pointer font-medium">Raw LLM Response</summary>
+                                    <pre className="mt-2 whitespace-pre-wrap break-words">{run.rawResponseText}</pre>
+                                  </details>
+                                )}
                               </div>
-                            ))}
+                            )})}
                           </div>
                         ) : (
                           <p className="text-xs text-muted-foreground">No scoring runs yet</p>
                         )}
                       </div>
+                        )
+                      })()}
                     </Card>
                   ))}
                 </div>
@@ -476,13 +736,13 @@ function PromptTestWorkflow({
               )}
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+        </DraggableDialogBody>
+      </DraggableResizableDialog>
     </div>
   )
 }
 
-export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChange }: PromptManagementProps) {
+export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChange, onStartManualReview }: PromptManagementProps) {
   const [prompts, setPrompts] = useState<ScoringPrompt[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedPrompt, setSelectedPrompt] = useState<ScoringPrompt | null>(null)
@@ -803,6 +1063,7 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
                   loadPrompts()
                   onPromptStatusChange?.()
                 }}
+                onStartManualReview={onStartManualReview}
               />
             </TabsContent>
           ))}
@@ -810,16 +1071,23 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
       )}
 
       {/* Prompt editor dialog */}
-      <Dialog open={editorOpen} onOpenChange={setEditorOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
+      <DraggableResizableDialog
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        defaultWidth={1100}
+        defaultHeight={800}
+        minWidth={850}
+        minHeight={600}
+      >
+        <DraggableDialogHeader>
             <DialogTitle>{editingPrompt ? `Edit Prompt v${editingPrompt.versionNumber}` : 'New Prompt'}</DialogTitle>
             <DialogDescription>
               {editingPrompt
                 ? 'Edit the prompt text. Saving will create a new revision.'
                 : `Create a new prompt revision (${editorSource})`}
             </DialogDescription>
-          </DialogHeader>
+        </DraggableDialogHeader>
+        <DraggableDialogBody className="px-6 pb-6">
           <div className="space-y-4 mt-2">
             <Textarea
               value={editorText}
@@ -846,8 +1114,8 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
               </Button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </DraggableDialogBody>
+      </DraggableResizableDialog>
 
       {/* Activate confirmation dialog */}
       <Dialog open={activateConfirmPrompt !== null} onOpenChange={() => setActivateConfirmPrompt(null)}>

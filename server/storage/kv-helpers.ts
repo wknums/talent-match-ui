@@ -1,8 +1,12 @@
 import type { StorageProvider } from './types.js'
 
 export async function getArray<T>(storage: StorageProvider, key: string): Promise<T[]> {
-  const value = await storage.get<T[]>(key)
-  return value ?? []
+  let value = await storage.get<T[] | string>(key)
+  // Guard against double-serialised values (stored as JSON string instead of array)
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value) } catch { return [] }
+  }
+  return Array.isArray(value) ? value : []
 }
 
 export async function setArray<T>(storage: StorageProvider, key: string, value: T[]): Promise<void> {

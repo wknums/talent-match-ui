@@ -77,7 +77,7 @@ dotnet test TalentMatch.slnx
 
 ### 4. Database
 
-Stack B uses SQLite by default (file: `talentmatch.db`). EF Core migrations are applied automatically on startup.
+Stack B uses SQLite by default at `shared-data/talentmatch.db` (repo root). EF Core migrations are applied automatically on startup.
 
 To use SQL Server, update `appsettings.json`:
 ```json

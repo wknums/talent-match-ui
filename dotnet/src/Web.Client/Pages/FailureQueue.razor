@@ -9,9 +9,26 @@
 
 @if (items.Any())
 {
+    @if (selectedIds.Count > 0)
+    {
+        <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 6px;">
+            <span style="font-size: 0.85rem; font-weight: 600;">@selectedIds.Count selected</span>
+            <button @onclick="BulkRetry" disabled="@isBulkProcessing" style="padding: 0.3rem 0.75rem; background: #3182ce; color: white; border: none; border-radius: 4px; font-size: 0.85rem;">
+                @(isBulkProcessing ? "Retrying..." : "🔄 Retry Selected")
+            </button>
+            <button @onclick="BulkDelete" disabled="@isBulkProcessing" style="padding: 0.3rem 0.75rem; background: #e53e3e; color: white; border: none; border-radius: 4px; font-size: 0.85rem;">
+                @(isBulkProcessing ? "Deleting..." : "🗑️ Delete Selected")
+            </button>
+            <button @onclick="ClearSelection" style="padding: 0.3rem 0.75rem; border: 1px solid #cbd5e0; background: white; border-radius: 4px; font-size: 0.85rem;">Clear</button>
+        </div>
+    }
+
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ccc;">
+                <th style="padding: 0.5rem; width: 2rem;">
+                    <input type="checkbox" checked="@allSelected" @onchange="ToggleSelectAll" />
+                </th>
                 <th style="text-align: left; padding: 0.5rem;">Entity Type</th>
                 <th style="text-align: left; padding: 0.5rem;">Entity ID</th>
                 <th style="text-align: left; padding: 0.5rem;">Failure Reason</th>
@@ -23,16 +40,20 @@
         <tbody>
             @foreach (var item in items)
             {
-                <tr style="border-bottom: 1px solid #eee;">
+                <tr style="border-bottom: 1px solid #eee; background: @(selectedIds.Contains(item.Id) ? "#ebf8ff" : "transparent");">
+                    <td style="padding: 0.5rem;">
+                        <input type="checkbox" checked="@selectedIds.Contains(item.Id)" @onchange="() => ToggleItem(item.Id)" />
+                    </td>
                     <td style="padding: 0.5rem;">@item.EntityType</td>
                     <td style="padding: 0.5rem; font-family: monospace; font-size: 0.85rem;">@item.EntityId</td>
                     <td style="padding: 0.5rem; color: #e53e3e;">@item.FailureReason</td>
                     <td style="padding: 0.5rem;">@item.RetryCount</td>
                     <td style="padding: 0.5rem;">@item.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                    <td style="padding: 0.5rem;">
+                    <td style="padding: 0.5rem; display: flex; gap: 0.25rem;">
                         <button @onclick="() => RetryItem(item.Id)" disabled="@retryingIds.Contains(item.Id)" style="padding: 0.25rem 0.5rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
-                            @(retryingIds.Contains(item.Id) ? "Retrying..." : "Retry")
+                            @(retryingIds.Contains(item.Id) ? "..." : "Retry")
                         </button>
+                        <button @onclick="() => DeleteItem(item.Id)" style="padding: 0.25rem 0.5rem; background: #e53e3e; color: white; border: none; border-radius: 4px;">Del</button>
                     </td>
                 </tr>
             }
@@ -49,9 +70,13 @@ else
 
 @code {
     private List<DlqItemDto> items = new();
+    private HashSet<string> selectedIds = new();
     private HashSet<string> retryingIds = new();
+    private bool isBulkProcessing;
     private DateTime lastUpdated;
     private System.Threading.Timer? refreshTimer;
+
+    private bool allSelected => items.Count > 0 && items.All(i => selectedIds.Contains(i.Id));
 
     protected override async Task OnInitializedAsync()
     {
@@ -66,14 +91,58 @@ else
     private async Task LoadItems()
     {
         items = await Api.GetDlqItemsAsync();
+        // Remove selections for items no longer in the list
+        selectedIds.IntersectWith(items.Select(i => i.Id));
         lastUpdated = DateTime.Now;
     }
+
+    private void ToggleSelectAll()
+    {
+        if (allSelected)
+            selectedIds.Clear();
+        else
+            selectedIds = items.Select(i => i.Id).ToHashSet();
+    }
+
+    private void ToggleItem(string id)
+    {
+        if (!selectedIds.Remove(id))
+            selectedIds.Add(id);
+    }
+
+    private void ClearSelection() => selectedIds.Clear();
 
     private async Task RetryItem(string itemId)
     {
         retryingIds.Add(itemId);
         await Api.RetryDlqItemAsync(itemId);
         retryingIds.Remove(itemId);
+        await LoadItems();
+    }
+
+    private async Task DeleteItem(string itemId)
+    {
+        await Api.BulkDeleteDlqAsync(new List<string> { itemId });
+        await LoadItems();
+    }
+
+    private async Task BulkRetry()
+    {
+        if (selectedIds.Count == 0) return;
+        isBulkProcessing = true;
+        await Api.BulkRetryDlqAsync(selectedIds.ToList());
+        selectedIds.Clear();
+        isBulkProcessing = false;
+        await LoadItems();
+    }
+
+    private async Task BulkDelete()
+    {
+        if (selectedIds.Count == 0) return;
+        isBulkProcessing = true;
+        await Api.BulkDeleteDlqAsync(selectedIds.ToList());
+        selectedIds.Clear();
+        isBulkProcessing = false;
         await LoadItems();
     }
 

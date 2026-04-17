@@ -7,7 +7,11 @@
       "launchBrowser": true,
       "applicationUrl": "http://localhost:5104",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "AWR_SEQ_API_ENDPOINT": "https://your-awr-service.your-region.azurecontainerapps.io/api",
+        "AWR_AUTH_MODE": "apikey",
+        "AWR_API_KEY": "your-api-key-here",
+        "AWR_MAX_PARALLEL": "3"
       }
     },
     "https": {
@@ -16,7 +20,11 @@
       "launchBrowser": true,
       "applicationUrl": "https://localhost:7190;http://localhost:5104",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "AWR_SEQ_API_ENDPOINT": "https://your-awr-service.your-region.azurecontainerapps.io/api",
+        "AWR_AUTH_MODE": "apikey",
+        "AWR_API_KEY": "your-api-key-here",
+        "AWR_MAX_PARALLEL": "3"
       }
     }
   }

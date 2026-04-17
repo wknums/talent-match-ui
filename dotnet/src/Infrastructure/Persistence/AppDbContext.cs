@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TalentMatch.Domain.Entities;
 
 namespace TalentMatch.Infrastructure.Persistence;
@@ -12,6 +13,7 @@ public class AppDbContext : DbContext
     public DbSet<JobConfigVersion> JobConfigVersions => Set<JobConfigVersion>();
     public DbSet<TalentMatch.Domain.Entities.Application> Applications => Set<TalentMatch.Domain.Entities.Application>();
     public DbSet<ApplicationDocument> ApplicationDocuments => Set<ApplicationDocument>();
+    public DbSet<DocumentBlob> DocumentBlobs => Set<DocumentBlob>();
     public DbSet<ScoringRun> ScoringRuns => Set<ScoringRun>();
     public DbSet<AggregatedResult> AggregatedResults => Set<AggregatedResult>();
     public DbSet<ExtractionArtifact> ExtractionArtifacts => Set<ExtractionArtifact>();
@@ -53,6 +55,8 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.AggregationStrategy).HasMaxLength(20);
+            e.Property(x => x.MustHaveCriteriaJson).HasColumnName("MustHavesJson");
+            e.Property(x => x.ScoringRunCount).HasColumnName("RunsPerApplication");
         });
 
         // Application
@@ -75,6 +79,23 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Fingerprint).HasMaxLength(64);
             e.Property(x => x.FileName).HasMaxLength(500);
+            e.Property(x => x.FileType).HasColumnName("MimeType");
+            e.Property(x => x.FileSize).HasColumnName("SizeBytes");
+            e.Property(x => x.UploadTimestamp)
+                .HasColumnName("UploadedAt")
+                .HasConversion(new ValueConverter<DateTime?, string?>(
+                    value => value.HasValue ? value.Value.ToString("O") : null,
+                    value => string.IsNullOrWhiteSpace(value) ? null : DateTime.Parse(value)));
+            e.Ignore(x => x.ContentBase64);
+        });
+
+        modelBuilder.Entity<DocumentBlob>(e =>
+        {
+            e.HasKey(x => x.DocumentId);
+            e.HasOne<ApplicationDocument>()
+                .WithOne()
+                .HasForeignKey<DocumentBlob>(x => x.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ScoringRun
@@ -98,6 +119,8 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.ApplicationId).IsUnique();
             e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.NormalisedText).HasColumnName("Markdown");
+            e.Property(x => x.ConfidenceScore).HasColumnName("Confidence");
         });
 
         // ManualReviewData
@@ -118,8 +141,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<ProcessingEvent>(e =>
         {
             e.HasKey(x => x.Id);
-            e.Property(x => x.EventType).HasMaxLength(50);
+            e.Property(x => x.EventType).HasColumnName("Action").HasMaxLength(50);
             e.Property(x => x.EntityType).HasMaxLength(50);
+            e.Property(x => x.PayloadJson).HasColumnName("DetailsJson");
             e.HasIndex(x => x.Timestamp);
         });
 

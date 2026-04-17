@@ -65,8 +65,10 @@ public class GetJobSummariesQueryHandler : IRequestHandler<GetJobSummariesQuery,
             var fullJob = await _jobRepository.GetByIdAsync(job.Id, cancellationToken);
             if (fullJob != null)
             {
-                var total = fullJob.Applications.Count;
-                var completed = fullJob.Applications.Count(a => a.Status == "Completed");
+                // Exclude test scoring run applications from production counts
+                var productionApps = fullJob.Applications.Where(a => a.TestRunId == null).ToList();
+                var total = productionApps.Count;
+                var completed = productionApps.Count(a => a.Status == "Completed");
                 jobsWithApps[job.Id] = (total, completed);
             }
         }

@@ -59,8 +59,8 @@ admin to clear the role field to save other changes, which is confusing.
 **Decision**: Use a modal dialog (same pattern as the existing delete confirmation and password reset
 modals in `UserManagement.razor`).  
 **Rationale**: The component already has modal patterns for delete confirmation and password reset. A modal
-keeps the table layout stable and provides a clear edit/cancel flow. Constitution requires dialogs to be
-resizable and draggable with scroll bars.  
+keeps the table layout stable and provides a clear edit/cancel flow. This remains a feature-level UI
+decision, not a constitution requirement.  
 **Alternatives considered**: Inline row editing — rejected because it would require significant table
 restructuring and doesn't match the existing UX patterns.
 
@@ -75,8 +75,9 @@ the project (the constitution marks it as "TBD at project start").
 
 ## R9: Authorization on PUT Endpoint
 
-**Decision**: Add the PUT route to the existing `group` in `UsersEndpoints.cs` which already has
-`.RequireAuthorization("AdminOnly")`.  
+**Decision**: The Stack B parity path is to add the PUT route to the existing `group` in `UsersEndpoints.cs`
+which already has `.RequireAuthorization("AdminOnly")`.  
 **Rationale**: The `MapGroup("/api/users")` already applies the `AdminOnly` policy to all routes in the
-group. Adding a new `MapPut` to the same group automatically inherits the policy.  
+group. Adding a new `MapPut` to the same group automatically inherits the policy, but that route is still
+missing in the current implementation.  
 **Alternatives considered**: None — this is the correct approach.

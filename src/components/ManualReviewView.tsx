@@ -7,13 +7,15 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, FloppyDisk } from '@phosphor-icons/react'
+import { ArrowLeft, FloppyDisk, Robot } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { getCurrentUser as authGetCurrentUser } from '@/lib/auth'
+import { buildStackBManualReviewPrepopulation, normalizeManualReviewForRubric } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { DocumentViewer } from '@/components/DocumentViewer'
-import type { Application, Job, ManualReviewData, ManualReviewAuditEntry } from '@/types'
+import type { Application, Job, AggregatedResult, ManualReviewData, ManualReviewAuditEntry, ScoringRun } from '@/types'
 
 interface ManualReviewViewProps {
   applicationId: string
@@ -22,13 +24,7 @@ interface ManualReviewViewProps {
 }
 
 export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewViewProps) {
-  const [application, setApplication] = useState<Application | null>(null)
-  const [job, setJob] = useState<Job | null>(null)
-  const [selectedDocIndex, setSelectedDocIndex] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [reviewData, setReviewData] = useState<ManualReviewData>({
+  const createEmptyReviewData = (): ManualReviewData => ({
     applicationId,
     jobId,
     rubricScores: {},
@@ -38,12 +34,22 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     lastModifiedBy: 'current-user',
   })
 
+  const [application, setApplication] = useState<Application | null>(null)
+  const [job, setJob] = useState<Job | null>(null)
+  const [selectedDocIndex, setSelectedDocIndex] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [aiPrePopulated, setAiPrePopulated] = useState(false)
+  const [aiScoringMismatch, setAiScoringMismatch] = useState(false)
+  const [aggregatedResult, setAggregatedResult] = useState<AggregatedResult | null>(null)
+  const [reviewData, setReviewData] = useState<ManualReviewData>(createEmptyReviewData)
+
   const [currentUser, setCurrentUser] = useState<{ login: string; name?: string } | null>(null)
 
   useEffect(() => {
     loadData()
     loadUser()
-    loadSavedReview()
   }, [applicationId, jobId])
 
   const loadUser = async () => {
@@ -54,17 +60,6 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       }
     } catch (error) {
       setCurrentUser({ login: 'reviewer', name: 'Reviewer' })
-    }
-  }
-
-  const loadSavedReview = async () => {
-    try {
-      const saved = await api.getManualReview(applicationId)
-      if (saved) {
-        setReviewData(saved)
-      }
-    } catch (error) {
-      console.error('Error loading saved review:', error)
     }
   }
 
@@ -90,28 +85,56 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       setApplication(appData)
       setJob(jobData)
 
+      // Fetch saved review, aggregated result, and scoring runs in parallel.
+      const [savedReview, aggResult, scoringRuns] = await Promise.all([
+        api.getManualReview(applicationId).catch(() => null),
+        api.getAggregatedResult(applicationId).catch(() => null),
+        api.getScoringRuns(applicationId).catch(() => [] as ScoringRun[]),
+      ])
+
+      if (aggResult) {
+        setAggregatedResult(aggResult)
+      }
+
       if (jobData) {
-        setReviewData((current) => {
-          const existingScores = current.rubricScores
-          const newScores: Record<string, { points: number; maxPoints: number; comment: string }> = {}
-
-          jobData.currentVersion.rubric.forEach((category) => {
-            if (existingScores[category.id]) {
-              newScores[category.id] = existingScores[category.id]
-            } else {
-              newScores[category.id] = {
-                points: 0,
-                maxPoints: Math.round(category.weight * 100),
-                comment: '',
-              }
-            }
-          })
-
-          return {
-            ...current,
-            rubricScores: newScores,
-          }
+        const rubricDefinition = jobData.currentVersion.rubric.map(category => ({
+          id: category.id,
+          name: category.name,
+          weight: category.weight,
+        }))
+        const normalizedSavedReview = normalizeManualReviewForRubric({
+          review: savedReview,
+          rubric: rubricDefinition,
         })
+        const base = normalizedSavedReview || createEmptyReviewData()
+        const prepopulated = buildStackBManualReviewPrepopulation({
+          scoringRuns,
+          aggregatedResult: aggResult,
+          rubric: rubricDefinition,
+          existingReview: base,
+        })
+
+        const rubricScores: Record<string, { points: number; maxPoints: number; comment: string }> = {}
+        for (const category of jobData.currentVersion.rubric) {
+          rubricScores[category.id] = prepopulated.rubricScores[category.id] ?? {
+            points: 0,
+            maxPoints: Math.round(category.weight * 100),
+            comment: '',
+          }
+        }
+
+        setAiPrePopulated(prepopulated.aiPrePopulated)
+        setAiScoringMismatch(prepopulated.aiScoringMismatch)
+
+        const nextReviewData = {
+          ...base,
+          applicationId,
+          jobId,
+          rubricScores,
+          overallComment: prepopulated.overallComment ?? base.overallComment,
+        }
+
+        setReviewData(nextReviewData)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -120,39 +143,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     }
   }
 
-  const addAuditEntry = (
-    changeType: ManualReviewAuditEntry['changeType'],
-    categoryId?: string,
-    categoryName?: string,
-    previousValue?: number | string,
-    newValue?: number | string,
-    comment?: string
-  ) => {
-    const entry: ManualReviewAuditEntry = {
-      entryId: `audit-${Date.now()}`,
-      applicationId,
-      reviewerId: currentUser?.login || 'unknown',
-      reviewerName: currentUser?.name || 'Unknown Reviewer',
-      timestamp: new Date().toISOString(),
-      changeType,
-      categoryId,
-      categoryName,
-      previousValue,
-      newValue,
-      comment,
-    }
-
-    setReviewData((current) => ({
-      ...current,
-      auditTrail: [...current.auditTrail, entry],
-      lastModifiedAt: new Date().toISOString(),
-      lastModifiedBy: currentUser?.login || 'unknown',
-    }))
-  }
-
   const updatePoints = (categoryId: string, categoryName: string, newPoints: number) => {
-    const previousPoints = reviewData.rubricScores[categoryId]?.points
-
     setReviewData((current) => ({
       ...current,
       rubricScores: {
@@ -162,9 +153,9 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
           points: newPoints,
         },
       },
+      lastModifiedAt: new Date().toISOString(),
+      lastModifiedBy: currentUser?.login || 'unknown',
     }))
-
-    addAuditEntry('points_allocated', categoryId, categoryName, previousPoints, newPoints)
   }
 
   const updateComment = (categoryId: string, categoryName: string, newComment: string) => {
@@ -177,15 +168,17 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
           comment: newComment,
         },
       },
+      lastModifiedAt: new Date().toISOString(),
+      lastModifiedBy: currentUser?.login || 'unknown',
     }))
-
-    addAuditEntry('comment_added', categoryId, categoryName, undefined, undefined, newComment)
   }
 
   const updateOverallComment = (newComment: string) => {
     setReviewData((current) => ({
       ...current,
       overallComment: newComment,
+      lastModifiedAt: new Date().toISOString(),
+      lastModifiedBy: currentUser?.login || 'unknown',
     }))
   }
 
@@ -202,6 +195,10 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
   }
 
   const handleSave = async () => {
+    if (!job) {
+      return
+    }
+
     setSaving(true)
     try {
       const finalScore = calculateTotalScore()
@@ -210,7 +207,16 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
         adjustedFinalScore: finalScore,
       }
       
-      await api.saveManualReview(applicationId, dataToSave)
+      const savedReview = await api.saveManualReview(applicationId, dataToSave)
+      const normalizedSavedReview = normalizeManualReviewForRubric({
+        review: savedReview,
+        rubric: job.currentVersion.rubric.map(category => ({
+          id: category.id,
+          name: category.name,
+          weight: category.weight,
+        })),
+      })
+      setReviewData(normalizedSavedReview ?? savedReview)
       toast.success('Manual review saved successfully')
     } catch (error) {
       toast.error('Failed to save review')
@@ -227,7 +233,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     return (
       <div className="min-h-screen bg-background">
         <div className="border-b bg-card sticky top-0 z-10">
-          <div className="container mx-auto px-6 py-4">
+          <div className="px-6 py-4">
             <div className="flex items-center gap-4">
               <Button variant="ghost" size="sm" onClick={onBack}>
                 <ArrowLeft size={20} />
@@ -238,7 +244,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
             </div>
           </div>
         </div>
-        <div className="container mx-auto px-6 py-12 text-center">
+        <div className="px-6 py-12 text-center">
           <p className="text-destructive text-lg">{error}</p>
           <Button onClick={onBack} className="mt-4">
             Go Back
@@ -257,7 +263,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
   return (
     <div className="min-h-screen bg-background">
       <div className="border-b bg-card sticky top-0 z-10">
-        <div className="container mx-auto px-6 py-4">
+        <div className="px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <Button variant="ghost" size="sm" onClick={onBack}>
@@ -286,43 +292,65 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
         </div>
       </div>
 
-      <div className="container mx-auto px-6 py-6">
-        <div className="grid grid-cols-3 gap-6" style={{ height: 'calc(100vh - 180px)' }}>
+      <div className="px-4 py-4" style={{ height: 'calc(100vh - 80px)' }}>
+        <ResizablePanelGroup direction="horizontal" className="h-full rounded-lg">
           {/* Left pane: Original Document (FR-058) */}
-          <Card className="flex flex-col h-full">
-            <CardHeader className="shrink-0">
-              <CardTitle className="text-lg">Original Document</CardTitle>
-              {application.documents.length > 1 && (
-                <div className="flex gap-1 mt-2">
-                  {application.documents.map((doc, idx) => (
-                    <Button
-                      key={doc.documentId}
-                      variant={idx === selectedDocIndex ? 'default' : 'outline'}
-                      size="sm"
-                      className="text-xs"
-                      onClick={() => setSelectedDocIndex(idx)}
-                    >
-                      {doc.fileName}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </CardHeader>
-            <CardContent className="flex-1 overflow-hidden p-0">
-              {application.documents[selectedDocIndex] && (
-                <DocumentViewer
-                  applicationId={application.applicationId}
-                  document={application.documents[selectedDocIndex]}
-                  className="h-full"
-                />
-              )}
-            </CardContent>
-          </Card>
+          <ResizablePanel defaultSize={33} minSize={15}>
+            <Card className="flex flex-col h-full rounded-none border-0">
+              <CardHeader className="shrink-0">
+                <CardTitle className="text-lg">Original Document</CardTitle>
+                {application.documents.length > 1 && (
+                  <div className="flex gap-1 mt-2">
+                    {application.documents.map((doc, idx) => (
+                      <Button
+                        key={doc.documentId}
+                        variant={idx === selectedDocIndex ? 'default' : 'outline'}
+                        size="sm"
+                        className="text-xs"
+                        onClick={() => setSelectedDocIndex(idx)}
+                      >
+                        {doc.fileName}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </CardHeader>
+              <CardContent className="flex-1 overflow-hidden p-0">
+                {application.documents[selectedDocIndex] && (
+                  <DocumentViewer
+                    applicationId={application.applicationId}
+                    document={application.documents[selectedDocIndex]}
+                    className="h-full"
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
 
           {/* Centre pane: Scoring Rubric */}
-          <Card className="flex flex-col h-full">
-            <CardHeader className="shrink-0">
-              <CardTitle className="text-lg">Scoring Rubric</CardTitle>
+          <ResizablePanel defaultSize={34} minSize={15}>
+            <Card className="flex flex-col h-full rounded-none border-0">
+              <CardHeader className="shrink-0">
+                <CardTitle className="text-lg">Scoring Rubric</CardTitle>
+              {aiPrePopulated && (
+                <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-300">
+                  <Robot size={16} />
+                  <span>
+                    Pre-populated from AI scoring
+                    {aggregatedResult && (
+                      <> (score: {aggregatedResult.finalScore.toFixed(1)}, variance: {aggregatedResult.variance.toFixed(2)})</>
+                    )}
+                    . Please verify and adjust.
+                  </span>
+                </div>
+              )}
+              {aiScoringMismatch && !aiPrePopulated && (
+                <div className="mt-2 px-3 py-2 rounded-md border border-amber-200 bg-amber-50 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  AI scoring exists for this application, but Stack B-compatible category scores were not available to pre-populate the rubric.
+                </div>
+              )}
             </CardHeader>
             <CardContent className="flex-1 overflow-hidden p-0">
               <ScrollArea className="h-full w-full">
@@ -343,9 +371,6 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
                               Weight: {(category.weight * 100).toFixed(0)}%
                             </Badge>
                           </div>
-                          <p className="text-xs text-muted-foreground mb-3">
-                            {category.description}
-                          </p>
 
                           <div className="space-y-2">
                             <div className="flex items-center gap-2">
@@ -398,12 +423,16 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
               </ScrollArea>
             </CardContent>
           </Card>
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
 
           {/* Right pane: Job Specification */}
-          <Card className="flex flex-col h-full">
-            <CardHeader className="shrink-0">
-              <CardTitle className="text-lg">Job Specification</CardTitle>
-            </CardHeader>
+          <ResizablePanel defaultSize={33} minSize={15}>
+            <Card className="flex flex-col h-full rounded-none border-0">
+              <CardHeader className="shrink-0">
+                <CardTitle className="text-lg">Job Specification</CardTitle>
+              </CardHeader>
             <CardContent className="flex-1 overflow-hidden p-0">
               <ScrollArea className="h-full w-full">
                 <div className="space-y-4 px-6 pb-6">
@@ -485,11 +514,12 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
               </ScrollArea>
             </CardContent>
           </Card>
-        </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
 
         {/* Audit Trail */}
         {reviewData.auditTrail.length > 0 && (
-          <Card className="mt-6">
+          <Card className="mt-4">
             <CardHeader>
               <CardTitle className="text-lg">Audit Trail</CardTitle>
             </CardHeader>

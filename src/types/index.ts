@@ -98,6 +98,7 @@ export interface Application {
   variance?: number
   flagged?: boolean
   testRunId?: string
+  lastError?: string
 }
 
 export interface ExtractionArtifact {
@@ -116,7 +117,7 @@ export interface ExtractionArtifact {
 export interface MustHaveResult {
   passed: boolean
   missingCriteria: string[]
-  details: Record<string, boolean>
+  details: Record<string, unknown>
 }
 
 export interface EvidenceCitation {
@@ -147,6 +148,10 @@ export interface ScoringRun {
     totalTokens: number
   }
   status: 'Success' | 'Failed'
+  rawResponseText?: string
+  rawParsedResponse?: Record<string, any>
+  parserWarnings?: string[]
+  parserConfidence?: number
 }
 
 export interface AggregatedResult {
@@ -197,6 +202,10 @@ export interface DLQItem {
   lastAttemptedAt: string
   canRetry: boolean
   notes?: string
+  entityType?: string
+  entityId?: string
+  retryCount?: number
+  createdAt?: string
 }
 
 export interface ManualReviewAuditEntry {
@@ -213,10 +222,17 @@ export interface ManualReviewAuditEntry {
   comment?: string
 }
 
+export interface ManualReviewRubricEntry {
+  score?: number
+  points: number
+  maxPoints: number
+  comment: string
+}
+
 export interface ManualReviewData {
   applicationId: string
   jobId: string
-  rubricScores: Record<string, { points: number; maxPoints: number; comment: string }>
+  rubricScores: Record<string, ManualReviewRubricEntry>
   overallComment: string
   adjustedFinalScore?: number
   auditTrail: ManualReviewAuditEntry[]
@@ -273,7 +289,7 @@ export interface PasswordResetRequest {
 // US3a: Scoring Prompt Management
 export type PromptStatus = 'draft' | 'active' | 'inactive' | 'production-approved'
 export type PromptSource = 'manual' | 'imported' | 'generated'
-export type TestRunStatus = 'pending_scoring' | 'scoring' | 'pending_review' | 'approved' | 'rejected'
+export type TestRunStatus = 'pending_scoring' | 'scoring' | 'scoring_failed' | 'pending_review' | 'approved' | 'rejected'
 
 export interface ScoringPrompt {
   promptId: string
@@ -305,6 +321,8 @@ export interface PromptTestRun {
 export interface TestRunApplicationDetail {
   application: Application
   scoringRuns: ScoringRun[]
+  aggregatedResult?: AggregatedResult | null
+  manualReview?: ManualReviewData | null
 }
 
 export interface PromptTestRunDetail extends PromptTestRun {

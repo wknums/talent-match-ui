@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using MediatR;
 using TalentMatch.Application.Prompts.Commands;
 using TalentMatch.Application.Prompts.Queries;
@@ -24,22 +25,25 @@ public static class PromptEndpoints
             return prompt != null ? Results.Ok(prompt) : Results.NotFound();
         });
 
-        group.MapPost("/", async (string jobId, CreatePromptRequest request, ISender mediator) =>
+        group.MapPost("/", async (string jobId, CreatePromptRequest request, HttpContext httpContext, ISender mediator) =>
         {
+            var actor = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
             var prompt = await mediator.Send(new CreatePromptCommand(
-                jobId, request.PromptText, request.Source, request.GenerationMetadataJson, "current-user"));
+                jobId, request.PromptText, request.Source, request.GenerationMetadataJson, actor));
             return Results.Created($"/api/jobs/{jobId}/prompts/{prompt.Id}", prompt);
         });
 
-        group.MapPost("/{promptId}/edit", async (string jobId, string promptId, EditPromptRequest request, ISender mediator) =>
+        group.MapPost("/{promptId}/edit", async (string jobId, string promptId, EditPromptRequest request, HttpContext httpContext, ISender mediator) =>
         {
-            var prompt = await mediator.Send(new EditPromptCommand(promptId, request.PromptText, "current-user"));
-            return Results.Created($"/api/jobs/{jobId}/prompts/{prompt.Id}", prompt);
+            var actor = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+            var prompt = await mediator.Send(new EditPromptCommand(promptId, request.PromptText, actor));
+            return Results.Ok(prompt);
         });
 
-        group.MapPost("/{promptId}/activate", async (string jobId, string promptId, ISender mediator) =>
+        group.MapPost("/{promptId}/activate", async (string jobId, string promptId, HttpContext httpContext, ISender mediator) =>
         {
-            var prompt = await mediator.Send(new ActivatePromptCommand(promptId, "current-user"));
+            var actor = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+            var prompt = await mediator.Send(new ActivatePromptCommand(promptId, actor));
             return Results.Ok(prompt);
         });
 
@@ -49,15 +53,24 @@ public static class PromptEndpoints
             return Results.Ok(prompt);
         });
 
-        group.MapPost("/generate", async (string jobId, ISender mediator) =>
+        group.MapPost("/generate", async (string jobId, HttpContext httpContext, ISender mediator) =>
         {
-            var prompt = await mediator.Send(new GeneratePromptCommand(jobId, "current-user"));
+            var actor = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+            var prompt = await mediator.Send(new GeneratePromptCommand(jobId, actor));
             return Results.Created($"/api/jobs/{jobId}/prompts/{prompt.Id}", prompt);
         });
 
-        group.MapPost("/{promptId}/approve-production", async (string jobId, string promptId, ISender mediator) =>
+        group.MapPost("/{promptId}/approve-production", async (string jobId, string promptId, HttpContext httpContext, ISender mediator) =>
         {
-            var prompt = await mediator.Send(new ApprovePromptForProductionCommand(promptId, "current-user"));
+            var actor = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+            var prompt = await mediator.Send(new ApprovePromptForProductionCommand(promptId, actor));
+            return Results.Ok(prompt);
+        });
+
+        group.MapPost("/{promptId}/set-production", async (string jobId, string promptId, HttpContext httpContext, ISender mediator) =>
+        {
+            var actor = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+            var prompt = await mediator.Send(new SetProductionPromptCommand(promptId, actor));
             return Results.Ok(prompt);
         });
 
@@ -91,11 +104,25 @@ public static class PromptEndpoints
         });
 
         testRunGroup.MapPost("/{testRunId}/approve", async (string jobId, string promptId, string testRunId,
-            ApproveTestRunRequest? request, ISender mediator) =>
+            ApproveTestRunRequest? request, HttpContext httpContext, ISender mediator) =>
         {
             try
             {
-                var testRun = await mediator.Send(new ApprovePromptTestRunCommand(testRunId, "current-user", request?.ReviewNotes));
+                var actor = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "unknown";
+                var testRun = await mediator.Send(new ApprovePromptTestRunCommand(testRunId, actor, request?.ReviewNotes));
+                return Results.Ok(testRun);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
+        testRunGroup.MapPost("/{testRunId}/retry", async (string jobId, string promptId, string testRunId, ISender mediator) =>
+        {
+            try
+            {
+                var testRun = await mediator.Send(new RetryTestRunCommand(testRunId));
                 return Results.Ok(testRun);
             }
             catch (InvalidOperationException ex)

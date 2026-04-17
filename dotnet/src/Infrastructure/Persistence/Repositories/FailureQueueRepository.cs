@@ -30,4 +30,7 @@ public class FailureQueueRepository : IFailureQueueRepository
             await _context.SaveChangesAsync(ct);
         }
     }
+
+    public async Task<HashSet<string>> GetEntityIdsAsync(CancellationToken ct = default)
+        => (await _context.FailureQueueItems.AsNoTracking().Select(i => i.EntityId).ToListAsync(ct)).ToHashSet();
 }

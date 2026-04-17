@@ -1,5 +1,6 @@
 @using TalentMatch.Web.Client.Services
 @using System.Text.Json
+@implements IDisposable
 @inject ApiClient Api
 @inject NavigationManager Navigation
 
@@ -44,8 +45,9 @@
                         <span>Test Run: @run.Id[..8]... | Apps: @GetAppCount(run.ApplicationIdsJson)</span>
                         <span style="@TestRunStatusStyle(run.Status)">@run.Status</span>
                     </div>
+                    <div style="font-size: 0.7rem; color: #a0aec0; margin-top: 0.25rem;">[DEBUG] raw status: '@run.Status'</div>
                     <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                        @if (run.Status is "pending_review" or "approved" or "rejected")
+                        @if (run.Status is "pending_review" or "approved" or "rejected" or "scoring_failed")
                         {
                             <button @onclick="() => ViewResults(run)" style="padding: 0.4rem 0.8rem; background: #4a5568; color: white; border: none; border-radius: 4px; cursor: pointer;">
                                 🔍 View Results
@@ -55,6 +57,12 @@
                         {
                             <button @onclick="() => ApproveTestRun(run.Id)" style="padding: 0.4rem 0.8rem; background: #38a169; color: white; border: none; border-radius: 4px; cursor: pointer;">
                                 ✅ Approve Test Run
+                            </button>
+                        }
+                        @if (run.Status is "scoring_failed" or "pending_scoring" or "scoring" or "pending_review")
+                        {
+                            <button @onclick="() => RetryTestRun(run.Id)" style="padding: 0.4rem 0.8rem; background: #dd6b20; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                🔄 @(run.Status == "scoring_failed" ? "Retry Failed Scoring" : "Re-trigger Scoring")
                             </button>
                         }
                         @if (run.Status == "approved" && ActivePrompt.Status != "production-approved")
@@ -74,7 +82,7 @@
             <div style="border: 2px solid #3182ce; border-radius: 8px; padding: 1rem; margin-top: 1rem; background: #f7fafc;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                     <h6 style="margin: 0;">📊 Test Run Results</h6>
-                    <button @onclick="() => selectedDetail = null" style="padding: 0.25rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">✕ Close</button>
+                    <button @onclick="CloseDetail" style="padding: 0.25rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">✕ Close</button>
                 </div>
 
                 <div style="margin-bottom: 0.75rem;">
@@ -103,6 +111,14 @@
                                     <span style="@AppStatusStyle(appDetail.Application.Status)">@appDetail.Application.Status</span>
                                 </div>
                             </div>
+
+                            @if (appDetail.Application.Status == "ScoringFailed" && !string.IsNullOrEmpty(appDetail.Application.LastError))
+                            {
+                                <div style="margin-bottom: 0.5rem; padding: 0.5rem; background: #fed7d7; border: 1px solid #feb2b2; border-radius: 4px; font-size: 0.85rem;">
+                                    <div style="font-weight: 600; color: #822727; margin-bottom: 0.25rem;">❌ Scoring Error</div>
+                                    <div style="color: #822727; white-space: pre-wrap; word-break: break-word;">@appDetail.Application.LastError</div>
+                                </div>
+                            }
 
                             @if (appDetail.Application.FinalScore.HasValue)
                             {
@@ -193,17 +209,17 @@
                                                 </div>
                                             }
 
-                                            @{ var evidence = ParseJson<Dictionary<string, string>>(run.EvidenceCitationsJson); }
+                                            @{ var evidence = ParseJson<List<EvidenceItem>>(run.EvidenceCitationsJson); }
                                             @if (evidence?.Any() == true)
                                             {
                                                 <details style="margin-top: 0.25rem;">
                                                     <summary style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #4a5568;">Evidence Citations (@evidence.Count)</summary>
                                                     <div style="margin-top: 0.15rem; padding: 0.25rem 0.5rem; background: #fffff0; border-radius: 4px; font-size: 0.8rem;">
-                                                        @foreach (var kv in evidence)
+                                                        @foreach (var ev in evidence)
                                                         {
                                                             <div style="margin-bottom: 0.25rem;">
-                                                                <span style="font-weight: 600; color: #4a5568;">@kv.Key:</span>
-                                                                <span style="color: #718096;"> @kv.Value</span>
+                                                                <span style="font-weight: 600; color: #4a5568;">@(ev.Category ?? "—"):</span>
+                                                                <span style="color: #718096;"> @(ev.Snippet ?? "")</span>
                                                             </div>
                                                         }
                                                     </div>
@@ -261,6 +277,11 @@
         if (ActivePrompt != null)
         {
             testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+            Console.WriteLine($"[PromptTestRunner] Loaded {testRuns.Count} test runs for prompt {ActivePrompt.Id}");
+            foreach (var r in testRuns)
+            {
+                Console.WriteLine($"[PromptTestRunner] Run {r.Id} status='{r.Status}' apps={r.ApplicationIdsJson}");
+            }
             StartOrStopPolling();
         }
         else
@@ -272,31 +293,57 @@
     }
 
     private bool HasActiveRuns => testRuns.Any(r => r.Status is "pending_scoring" or "scoring");
+    private string? _selectedDetailRunId;
+
+    private async Task RetryTestRun(string testRunId)
+    {
+        if (ActivePrompt == null) return;
+        await Api.RetryTestRunAsync(JobId, ActivePrompt.Id, testRunId);
+        testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+        StartPolling();
+    }
+
+    private void StartPolling()
+    {
+        if (_pollTimer != null) return;
+        _pollTimer = new System.Threading.Timer(async _ =>
+        {
+            if (_disposed || ActivePrompt == null) return;
+            try
+            {
+                var updated = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+                var wasActive = HasActiveRuns;
+                await InvokeAsync(async () =>
+                {
+                    testRuns = updated;
+
+                    // Auto-refresh the detail panel if it's open
+                    if (_selectedDetailRunId != null && ActivePrompt != null)
+                    {
+                        try
+                        {
+                            selectedDetail = await Api.GetTestRunDetailAsync(JobId, ActivePrompt.Id, _selectedDetailRunId);
+                        }
+                        catch { /* detail may not be ready yet */ }
+                    }
+
+                    StateHasChanged();
+
+                    // Stop polling when no active runs remain
+                    if (!HasActiveRuns)
+                        StopPolling();
+                });
+            }
+            catch { /* ignore transient errors during polling */ }
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
 
     private void StartOrStopPolling()
     {
-        if (HasActiveRuns && _pollTimer == null)
-        {
-            _pollTimer = new System.Threading.Timer(async _ =>
-            {
-                if (_disposed || ActivePrompt == null) return;
-                try
-                {
-                    var updated = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
-                    await InvokeAsync(() =>
-                    {
-                        testRuns = updated;
-                        StartOrStopPolling();
-                        StateHasChanged();
-                    });
-                }
-                catch { /* ignore transient errors during polling */ }
-            }, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
-        }
-        else if (!HasActiveRuns)
-        {
+        if (HasActiveRuns)
+            StartPolling();
+        else
             StopPolling();
-        }
     }
 
     private void StopPolling()
@@ -341,6 +388,7 @@
             showUpload = false;
             selectedFiles.Clear();
             testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+            StartPolling();
         }
         finally
         {
@@ -351,6 +399,7 @@
     private async Task ViewResults(PromptTestRunDto run)
     {
         if (ActivePrompt == null) return;
+        _selectedDetailRunId = run.Id;
         selectedDetail = await Api.GetTestRunDetailAsync(JobId, ActivePrompt.Id, run.Id);
     }
 
@@ -360,6 +409,7 @@
         await Api.ApproveTestRunAsync(JobId, ActivePrompt.Id, testRunId);
         testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
         selectedDetail = null;
+        _selectedDetailRunId = null;
     }
 
     private async Task ApproveForProduction()
@@ -367,6 +417,12 @@
         if (ActivePrompt == null) return;
         await Api.ApprovePromptForProductionAsync(JobId, ActivePrompt.Id);
         await OnPromptStatusChange.InvokeAsync();
+    }
+
+    private void CloseDetail()
+    {
+        selectedDetail = null;
+        _selectedDetailRunId = null;
     }
 
     private int GetAppCount(string applicationIdsJson)
@@ -432,6 +488,7 @@
         "rejected" => "padding: 2px 8px; background: #fed7d7; color: #822727; border-radius: 4px;",
         "pending_scoring" => "padding: 2px 8px; background: #bee3f8; color: #2a4365; border-radius: 4px;",
         "scoring" => "padding: 2px 8px; background: #bee3f8; color: #2a4365; border-radius: 4px;",
+        "scoring_failed" => "padding: 2px 8px; background: #fed7d7; color: #822727; border-radius: 4px;",
         _ => "padding: 2px 8px; background: #eee; border-radius: 4px;"
     };
 
@@ -446,5 +503,18 @@
 
     private void NavigateToManualReview(string appId) => Navigation.NavigateTo($"/manual-review/{appId}");
 
-    public record MustHaveDto(bool Passed, List<string>? MissingCriteria);
+    // Class (not positional record) so System.Text.Json handles extra/mismatched properties
+    public class MustHaveDto
+    {
+        public bool Passed { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("missing_criteria")]
+        public List<string>? MissingCriteria { get; set; }
+        public string? Recommendation { get; set; }
+    }
+
+    public class EvidenceItem
+    {
+        public string? Category { get; set; }
+        public string? Snippet { get; set; }
+    }
 }
