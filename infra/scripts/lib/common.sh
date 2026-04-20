@@ -265,7 +265,11 @@ run_terraform() {
 get_terraform_output() {
   local root_dir="${1:?}"
   local output_name="${2:?}"
-  terraform -chdir="$root_dir" output -raw "$output_name" 2>/dev/null || echo ""
+  pushd "$root_dir" > /dev/null
+  local output
+  output="$(terraform output -raw "$output_name" 2>/dev/null || true)"
+  popd > /dev/null
+  echo "$output"
 }
 
 # ---------------------------------------------------------------------------

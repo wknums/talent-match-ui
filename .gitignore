@@ -97,10 +97,12 @@ TestResult.xml
 
 # Terraform
 .terraform/
+.terraform-bin/
 *.tfstate
 *.tfstate.*
 .terraform.lock.hcl
 *.tfvars
+tfplan
 !*.tfvars.example
 crash.log
 override.tf
