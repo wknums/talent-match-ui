@@ -33,6 +33,13 @@ let _pool: any = null
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _sqliteDb: any = null
 
+const azureSqlRetryConfig = {
+  // Covers typical Azure SQL pay-as-you-go wake-up windows (~30-90s)
+  maxAttempts: Number(process.env.AZURE_SQL_WAKEUP_MAX_ATTEMPTS ?? 8),
+  initialDelayMs: Number(process.env.AZURE_SQL_WAKEUP_INITIAL_DELAY_MS ?? 2000),
+  maxDelayMs: Number(process.env.AZURE_SQL_WAKEUP_MAX_DELAY_MS ?? 15000),
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getPool(): Promise<any> {
   if (_pool) return _pool
@@ -48,11 +55,86 @@ export async function getPool(): Promise<any> {
 // Azure SQL (mssql) driver
 // ===========================================================================
 async function createMssqlPool() {
-  const mssql = await import('mssql')
+  const mssql = require('mssql')
   // Replace the stub type-tags with real mssql type objects
   sql = mssql.default
   const connStr = process.env.AZURE_SQL_CONNECTION_STRING!
-  return mssql.default.connect(connStr)
+
+  const startedAt = Date.now()
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= azureSqlRetryConfig.maxAttempts; attempt++) {
+    try {
+      const pool = await mssql.default.connect(connStr)
+      if (attempt > 1) {
+        const elapsedMs = Date.now() - startedAt
+        console.log(`[db] Azure SQL connection established after retry (attempt=${attempt}, elapsedMs=${elapsedMs})`)
+      }
+      return pool
+    } catch (error) {
+      lastError = error
+      const shouldRetry = isTransientAzureSqlConnectionError(error)
+      const hasAttemptsLeft = attempt < azureSqlRetryConfig.maxAttempts
+      const elapsedMs = Date.now() - startedAt
+
+      if (!shouldRetry || !hasAttemptsLeft) {
+        break
+      }
+
+      const delayMs = Math.min(
+        azureSqlRetryConfig.maxDelayMs,
+        azureSqlRetryConfig.initialDelayMs * Math.pow(2, attempt - 1),
+      )
+
+      const message = normalizeErrorMessage(error)
+      console.warn(
+        `[db] Azure SQL connect retry scheduled (attempt=${attempt}/${azureSqlRetryConfig.maxAttempts}, elapsedMs=${elapsedMs}, delayMs=${delayMs}, error="${message}")`,
+      )
+
+      await sleep(delayMs)
+    }
+  }
+
+  const finalMessage = normalizeErrorMessage(lastError)
+  console.error(
+    `[db] Azure SQL connect failed after retries (attempts=${azureSqlRetryConfig.maxAttempts}, elapsedMs=${Date.now() - startedAt}, error="${finalMessage}")`,
+  )
+  throw lastError
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function normalizeErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+function isTransientAzureSqlConnectionError(error: unknown): boolean {
+  const message = normalizeErrorMessage(error).toLowerCase()
+
+  const transientMessageFragments = [
+    'timeout',
+    'timed out',
+    'etimedout',
+    'econnreset',
+    'econnrefused',
+    'transient',
+    'temporarily unavailable',
+    'service is busy',
+    'could not open a connection',
+    'connection was denied',
+    'resource limit',
+    'throttle',
+    '40501',
+    '40613',
+    '40197',
+    '10928',
+    '10929',
+  ]
+
+  return transientMessageFragments.some(fragment => message.includes(fragment))
 }
 
 // ===========================================================================
@@ -246,7 +328,11 @@ export async function initializeDatabase(): Promise<void> {
   const pool = await getPool()
 
   if (isAzureSql) {
-    // Azure SQL — run the T-SQL schema with IF NOT EXISTS guards
+    // Azure SQL — ensure the talentmatch schema exists before running DDL
+    await pool.request().query(
+      "IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'talentmatch') EXEC('CREATE SCHEMA [talentmatch]')"
+    )
+    // Run the T-SQL schema with IF NOT EXISTS guards
     const schemaPath = resolve(import.meta.dirname, 'schema.sql')
     const schemaSql = readFileSync(schemaPath, 'utf-8')
     const batches = schemaSql

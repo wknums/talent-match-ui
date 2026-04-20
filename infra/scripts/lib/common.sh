@@ -124,12 +124,36 @@ export_tf_vars() {
   # APIM settings
   export TF_VAR_apim_sku="${APIM_SKU:-Consumption_0}"
   export TF_VAR_apim_publisher_name="${APIM_PUBLISHER_NAME:-TalentMatch}"
-  export TF_VAR_apim_publisher_email="${APIM_PUBLISHER_EMAIL:-admin@talentmatch.dev}"
+  export TF_VAR_apim_publisher_email="${APIM_PUBLISHER_EMAIL:-admin@example.com}"
 
   # Runtime settings (non-secret, safe to export)
   export TF_VAR_storage_provider="${STORAGE_PROVIDER:-azuresql}"
   export TF_VAR_awr_auth_mode="${AWR_AUTH_MODE:-none}"
   export TF_VAR_database_provider="${DATABASE_PROVIDER:-sqlserver}"
+
+  # VNet / Networking (US6)
+  export TF_VAR_reuse_vnet="$(bool_to_tf "${AZ_VNET_REUSE:-FALSE}")"
+  export TF_VAR_vnet_name="${AZ_VNET_NAME:-}"
+  export TF_VAR_vnet_resource_group="${AZ_VNET_RG:-}"
+  export TF_VAR_existing_integration_subnet_name="${AZ_INTEGRATION_SUBNET_NAME:-}"
+  export TF_VAR_integration_subnet_cidr="${AZ_INTEGRATION_SUBNET_CIDR:-}"
+  export TF_VAR_reuse_sql_private_endpoint="$(bool_to_tf "${AZ_SQL_PRIVATE_ENDPOINT_REUSE:-FALSE}")"
+
+  # IP Restrictions (US6)
+  # Convert comma-separated IPs to JSON array for Terraform list variable
+  if [[ -n "${AZ_ALLOWED_IPS:-}" ]]; then
+    IFS=',' read -ra IP_ARRAY <<< "$AZ_ALLOWED_IPS"
+    TF_IPS="["
+    for i in "${!IP_ARRAY[@]}"; do
+      ip=$(echo "${IP_ARRAY[$i]}" | xargs)
+      [[ $i -gt 0 ]] && TF_IPS+=","
+      TF_IPS+="\"$ip\""
+    done
+    TF_IPS+="]"
+    export TF_VAR_allowed_ips="$TF_IPS"
+  else
+    export TF_VAR_allowed_ips="[]"
+  fi
 
   log_info "Exported TF_VAR_* variables for environment=$ENVIRONMENT"
 }
@@ -169,6 +193,28 @@ validate_reuse_coordinates() {
     [[ -z "${AZ_IDENTITY_STACK_A_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_A_NAME required when AZ_IDENTITIES_REUSE=TRUE")
     [[ -z "${AZ_IDENTITY_STACK_B_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_B_NAME required when AZ_IDENTITIES_REUSE=TRUE")
     [[ -z "${AZ_IDENTITIES_RG:-}" ]]         && errors+=("AZ_IDENTITIES_RG required when AZ_IDENTITIES_REUSE=TRUE")
+  fi
+
+  # VNet / Networking (US6)
+  if [[ "${AZ_VNET_REUSE:-FALSE}" == "TRUE" ]]; then
+    [[ -z "${AZ_VNET_NAME:-}" ]]  && errors+=("AZ_VNET_NAME required when AZ_VNET_REUSE=TRUE")
+    [[ -z "${AZ_VNET_RG:-}" ]]    && errors+=("AZ_VNET_RG required when AZ_VNET_REUSE=TRUE")
+    # Exactly one of subnet name or CIDR must be set
+    if [[ -z "${AZ_INTEGRATION_SUBNET_NAME:-}" && -z "${AZ_INTEGRATION_SUBNET_CIDR:-}" ]]; then
+      errors+=("Either AZ_INTEGRATION_SUBNET_NAME or AZ_INTEGRATION_SUBNET_CIDR required when AZ_VNET_REUSE=TRUE")
+    fi
+    if [[ -n "${AZ_INTEGRATION_SUBNET_NAME:-}" && -n "${AZ_INTEGRATION_SUBNET_CIDR:-}" ]]; then
+      errors+=("Set only one of AZ_INTEGRATION_SUBNET_NAME or AZ_INTEGRATION_SUBNET_CIDR, not both")
+    fi
+    # CIDR size validation
+    if [[ -n "${AZ_INTEGRATION_SUBNET_CIDR:-}" ]]; then
+      PREFIX_LEN="${AZ_INTEGRATION_SUBNET_CIDR##*/}"
+      if [[ "$PREFIX_LEN" -gt 26 ]]; then
+        errors+=("AZ_INTEGRATION_SUBNET_CIDR prefix /$PREFIX_LEN is too small; minimum is /26 for App Service delegation")
+      fi
+    fi
+    # AZ_ALLOWED_IPS required when VNet is configured
+    [[ -z "${AZ_ALLOWED_IPS:-}" ]] && errors+=("AZ_ALLOWED_IPS is required — App Services must not be deployed without IP restrictions")
   fi
 
   if [[ ${#errors[@]} -gt 0 ]]; then

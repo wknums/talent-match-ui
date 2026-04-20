@@ -52,3 +52,26 @@ resource "azurerm_mssql_firewall_rule" "allow_azure" {
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
 }
+
+# --- Ensure the talentmatch schema exists (managed databases only) ---
+resource "terraform_data" "ensure_schema" {
+  count = var.reuse ? 0 : 1
+
+  # Re-run if the database resource changes
+  input = azurerm_mssql_database.main[0].id
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      az sql db query \
+        --server "${azurerm_mssql_server.main[0].name}" \
+        --name "${azurerm_mssql_database.main[0].name}" \
+        --resource-group "${var.resource_group_name}" \
+        --query "IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'talentmatch') EXEC('CREATE SCHEMA [talentmatch]')"
+    EOT
+  }
+
+  depends_on = [
+    azurerm_mssql_database.main,
+    azurerm_mssql_firewall_rule.allow_azure,
+  ]
+}

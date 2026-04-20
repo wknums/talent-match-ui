@@ -36,6 +36,10 @@ recruiter user scoped to "Engineering", log in, verify only Engineering jobs app
 7. **Given** the Web.Server is running, **When** a browser navigates to the root URL (`/`), **Then**
    the Blazor WebAssembly UI is served (not a 404 or blank page), and API endpoints remain
    accessible under their `/api/` prefix.
+8. **Given** Azure SQL is configured and the database is in a cold state, **When** the first
+   connection attempt takes 30-90 seconds or returns transient startup errors, **Then** the
+   system retries with bounded exponential backoff and eventually succeeds without requiring user
+   intervention unless the retry budget is exhausted.
 
 ---
 
@@ -368,6 +372,8 @@ simulate a failure and verify it appears in the failure queue with a retry optio
   link-or-separate.
 - Large document volumes: pagination, virtual scrolling, progressive content rendering.
 - Network interruptions: optimistic updates with rollback; visible sync status indicator.
+- Azure SQL cold-start wake-up delays (30-90 seconds): initial connection may time out or fail
+   with transient startup errors; system retries with bounded backoff and logs retry attempts.
 
 ---
 
@@ -440,6 +446,7 @@ If one or more test runs result in rejected status, the user must be returned to
 - **FR-065**: Non-scoring operations — prompt management, prompt generation (FR-034), test scoring runs (FR-038, FR-046), job spec extraction, and rubric extraction — MUST always use `AWR_SEQ_API_ENDPOINT/assess/passthrough` regardless of the scoring mode. The platform API endpoint is used exclusively for production and batch scoring operations.
 - **FR-066**: Both Stack A and Stack B MUST implement scoring mode detection with identical logic: read `AWR_PLATFORM_API_ENDPOINT` and `AWR_SEQ_API_ENDPOINT` from environment variables, compare them, and route production scoring accordingly. The mode detection logic MUST reside in the pipeline orchestrator layer (`server/services/pipeline.ts` in Stack A; equivalent orchestrator in Stack B) — not in individual workers or route handlers.
 - **FR-067**: Authentication for outbound requests to `AWR_PLATFORM_API_ENDPOINT` (platform mode) MUST use the same `AWR_AUTH_MODE` mechanism defined in FR-049 and FR-050. The existing `getAwrAuthHeaders()` (Stack A) and `AwrAuthHandler` (Stack B) MUST be reused with no changes to the auth layer.
+- **FR-068**: When Azure SQL is enabled, both Stack A and Stack B MUST treat initial connection failures caused by pay-as-you-go cold-start wake-up as transient and retry with bounded exponential backoff before surfacing a startup failure. The retry policy MUST tolerate a 30-90 second wake-up window, log each retry attempt with elapsed time and error reason, and fail fast only after the configured retry budget is exhausted.
 
 ### Key Entities
 

@@ -16,6 +16,9 @@ module "app_service" {
   dotnet_version = "10.0"
   always_on      = var.environment != "dev"
 
+  virtual_network_subnet_id = var.virtual_network_subnet_id
+  allowed_ips               = var.allowed_ips
+
   app_settings = merge(
     {
       "DatabaseProvider"                     = "sqlserver"

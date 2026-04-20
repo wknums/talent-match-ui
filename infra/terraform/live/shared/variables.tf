@@ -173,3 +173,46 @@ variable "existing_identities_rg" {
   type        = string
   default     = ""
 }
+
+# --- Networking (US6) ---
+variable "reuse_vnet" {
+  description = "Must be true for VNet Integration (VNet creation not supported)"
+  type        = bool
+  default     = false
+}
+
+variable "vnet_name" {
+  description = "Existing VNet name"
+  type        = string
+  default     = ""
+}
+
+variable "vnet_resource_group" {
+  description = "Existing VNet resource group"
+  type        = string
+  default     = ""
+}
+
+variable "existing_integration_subnet_name" {
+  description = "Existing delegated subnet name"
+  type        = string
+  default     = ""
+}
+
+variable "integration_subnet_cidr" {
+  description = "CIDR for new delegated subnet"
+  type        = string
+  default     = ""
+}
+
+variable "reuse_sql_private_endpoint" {
+  description = "Skip PE creation when true"
+  type        = bool
+  default     = false
+}
+
+variable "allowed_ips" {
+  description = "Allowed public IPs for App Service access"
+  type        = list(string)
+  default     = []
+}

@@ -26,5 +26,8 @@ module "stack_a" {
   sql_database_name   = var.sql_database_name
   apim_gateway_url    = var.apim_gateway_url
 
+  virtual_network_subnet_id = var.integration_subnet_id != "" ? var.integration_subnet_id : null
+  allowed_ips               = var.allowed_ips
+
   tags = local.tags
 }

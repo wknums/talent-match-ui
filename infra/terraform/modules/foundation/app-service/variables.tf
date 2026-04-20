@@ -47,6 +47,18 @@ variable "app_settings" {
   default     = {}
 }
 
+variable "virtual_network_subnet_id" {
+  description = "Integration subnet ID for VNet Integration. When set, enables outbound VNet connectivity."
+  type        = string
+  default     = null
+}
+
+variable "allowed_ips" {
+  description = "Public IPs to allow — when non-empty, deny-all default is enforced"
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Resource tags"
   type        = map(string)

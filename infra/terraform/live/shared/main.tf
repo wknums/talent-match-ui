@@ -101,3 +101,16 @@ module "identities" {
 
   tags = local.tags
 }
+
+# --- Networking (US6) ---
+module "networking" {
+  count  = var.reuse_vnet ? 1 : 0
+  source = "../../modules/foundation/networking"
+
+  vnet_name            = var.vnet_name
+  vnet_resource_group  = var.vnet_resource_group
+  existing_subnet_name = var.existing_integration_subnet_name
+  subnet_cidr          = var.integration_subnet_cidr
+
+  tags = local.tags
+}

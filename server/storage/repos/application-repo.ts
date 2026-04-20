@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getPool, sql } from '../db.js'
+import { T } from '../table-names.js'
 import type {
   Application, ApplicationDocument, ExtractionArtifact,
   ScoringRun, AggregatedResult, ManualReviewData
@@ -123,7 +124,7 @@ export const applicationRepo = {
     let where = 'WHERE JobId = @jobId'
     if (!options?.includeTestCases) where += ' AND TestRunId IS NULL'
     if (options?.status) { where += ' AND Status = @status'; req.input('status', sql.NVarChar, options.status) }
-    const result = await req.query(`SELECT * FROM Applications ${where} ORDER BY CreatedAt DESC`)
+    const result = await req.query(`SELECT * FROM ${T('Applications')} ${where} ORDER BY CreatedAt DESC`)
     return result.recordset.map(rowToApplication)
   },
 
@@ -131,7 +132,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query('SELECT * FROM Applications WHERE JobId = @jobId ORDER BY CreatedAt DESC')
+      .query(`SELECT * FROM ${T('Applications')} WHERE JobId = @jobId ORDER BY CreatedAt DESC`)
     return result.recordset.map(rowToApplication)
   },
 
@@ -139,7 +140,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('testRunId', sql.NVarChar, testRunId)
-      .query('SELECT * FROM Applications WHERE TestRunId = @testRunId ORDER BY CreatedAt DESC')
+      .query(`SELECT * FROM ${T('Applications')} WHERE TestRunId = @testRunId ORDER BY CreatedAt DESC`)
     return result.recordset.map(rowToApplication)
   },
 
@@ -147,7 +148,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('id', sql.NVarChar, applicationId)
-      .query('SELECT * FROM Applications WHERE Id = @id')
+      .query(`SELECT * FROM ${T('Applications')} WHERE Id = @id`)
     return result.recordset[0] ? rowToApplication(result.recordset[0]) : undefined
   },
 
@@ -158,7 +159,7 @@ export const applicationRepo = {
     try {
       const documentIdsResult = await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('SELECT Id FROM ApplicationDocuments WHERE ApplicationId = @applicationId')
+        .query(`SELECT Id FROM ${T('ApplicationDocuments')} WHERE ApplicationId = @applicationId`)
       const documentIds = documentIdsResult.recordset.map((row: any) => row.Id as string)
 
       if (documentIds.length > 0) {
@@ -167,30 +168,30 @@ export const applicationRepo = {
           deleteBlobRequest.input(`doc${index}`, sql.NVarChar, id)
           return `@doc${index}`
         })
-        await deleteBlobRequest.query(`DELETE FROM DocumentBlobs WHERE DocumentId IN (${placeholders.join(',')})`)
+        await deleteBlobRequest.query(`DELETE FROM ${T('DocumentBlobs')} WHERE DocumentId IN (${placeholders.join(',')})`)
       }
 
       await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('DELETE FROM ApplicationDocuments WHERE ApplicationId = @applicationId')
+        .query(`DELETE FROM ${T('ApplicationDocuments')} WHERE ApplicationId = @applicationId`)
       await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('DELETE FROM ExtractionArtifacts WHERE ApplicationId = @applicationId')
+        .query(`DELETE FROM ${T('ExtractionArtifacts')} WHERE ApplicationId = @applicationId`)
       await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('DELETE FROM ScoringRuns WHERE ApplicationId = @applicationId')
+        .query(`DELETE FROM ${T('ScoringRuns')} WHERE ApplicationId = @applicationId`)
       await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('DELETE FROM AggregatedResults WHERE ApplicationId = @applicationId')
+        .query(`DELETE FROM ${T('AggregatedResults')} WHERE ApplicationId = @applicationId`)
       await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('DELETE FROM ManualReviews WHERE ApplicationId = @applicationId')
+        .query(`DELETE FROM ${T('ManualReviews')} WHERE ApplicationId = @applicationId`)
       await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('DELETE FROM FailureQueueItems WHERE ApplicationId = @applicationId OR EntityId = @applicationId')
+        .query(`DELETE FROM ${T('FailureQueueItems')} WHERE ApplicationId = @applicationId OR EntityId = @applicationId`)
       await txn.request()
         .input('applicationId', sql.NVarChar, applicationId)
-        .query('DELETE FROM Applications WHERE Id = @applicationId')
+        .query(`DELETE FROM ${T('Applications')} WHERE Id = @applicationId`)
 
       await txn.commit()
     } catch (err) {
@@ -212,7 +213,7 @@ export const applicationRepo = {
             .input('updatedAt', sql.DateTime2, new Date(app.createdAt))
             .input('flagged', sql.Bit, app.flagged ? 1 : 0)
       .input('testRunId', sql.NVarChar, app.testRunId ?? null)
-            .query(`INSERT INTO Applications (Id, JobId, CandidateRef, CandidateName, CandidateEmail, Status, CreatedAt, UpdatedAt, Flagged, TestRunId)
+            .query(`INSERT INTO ${T('Applications')} (Id, JobId, CandidateRef, CandidateName, CandidateEmail, Status, CreatedAt, UpdatedAt, Flagged, TestRunId)
               VALUES (@id, @jobId, @candidateRef, @candidateName, @candidateEmail, @status, @createdAt, @updatedAt, @flagged, @testRunId)`)
   },
 
@@ -227,7 +228,7 @@ export const applicationRepo = {
     if (extra?.variance !== undefined) { sets += ', Variance = @variance'; req.input('variance', sql.Float, extra.variance) }
     if (extra?.flagged !== undefined) { sets += ', Flagged = @flagged'; req.input('flagged', sql.Bit, extra.flagged ? 1 : 0) }
     if (extra?.lastError !== undefined) { sets += ', LastError = @lastError'; req.input('lastError', sql.NVarChar, extra.lastError) }
-    await req.query(`UPDATE Applications SET ${sets} WHERE Id = @id`)
+    await req.query(`UPDATE ${T('Applications')} SET ${sets} WHERE Id = @id`)
   },
 
   async resetForRescore(applicationId: string): Promise<void> {
@@ -236,11 +237,11 @@ export const applicationRepo = {
     await txn.begin()
     try {
       await txn.request().input('id', sql.NVarChar, applicationId)
-        .query("UPDATE Applications SET Status = 'Queued', FinalScore = NULL, FinalDecision = NULL, Variance = NULL, Flagged = 0, UpdatedAt = SYSUTCDATETIME() WHERE Id = @id")
+        .query(`UPDATE ${T('Applications')} SET Status = 'Queued', FinalScore = NULL, FinalDecision = NULL, Variance = NULL, Flagged = 0, UpdatedAt = SYSUTCDATETIME() WHERE Id = @id`)
       await txn.request().input('id', sql.NVarChar, applicationId)
-        .query('DELETE FROM ScoringRuns WHERE ApplicationId = @id')
+        .query(`DELETE FROM ${T('ScoringRuns')} WHERE ApplicationId = @id`)
       await txn.request().input('id', sql.NVarChar, applicationId)
-        .query('DELETE FROM AggregatedResults WHERE ApplicationId = @id')
+        .query(`DELETE FROM ${T('AggregatedResults')} WHERE ApplicationId = @id`)
       await txn.commit()
     } catch (err) { await txn.rollback(); throw err }
   },
@@ -249,13 +250,13 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query(`SELECT Id FROM Applications WHERE JobId = @jobId AND TestRunId IS NULL AND Status IN ('ScoringFailed','ExtractionFailed')`)
+      .query(`SELECT Id FROM ${T('Applications')} WHERE JobId = @jobId AND TestRunId IS NULL AND Status IN ('ScoringFailed','ExtractionFailed')`)
     const ids = result.recordset.map((r: any) => r.Id as string)
     if (ids.length === 0) return []
     // Reset status
     await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query(`UPDATE Applications SET Status = 'Queued', UpdatedAt = SYSUTCDATETIME() WHERE JobId = @jobId AND TestRunId IS NULL AND Status IN ('ScoringFailed','ExtractionFailed')`)
+      .query(`UPDATE ${T('Applications')} SET Status = 'Queued', UpdatedAt = SYSUTCDATETIME() WHERE JobId = @jobId AND TestRunId IS NULL AND Status IN ('ScoringFailed','ExtractionFailed')`)
     return ids
   },
 
@@ -270,7 +271,7 @@ export const applicationRepo = {
       .input('sizeBytes', sql.BigInt, doc.sizeBytes)
       .input('fingerprint', sql.NVarChar, doc.sha256)
       .input('uploadedAt', sql.DateTime2, new Date(doc.uploadedAt))
-            .query(`INSERT INTO ApplicationDocuments (
+            .query(`INSERT INTO ${T('ApplicationDocuments')} (
               Id, ApplicationId, FileName, FileType, MimeType, FileSize, SizeBytes, Fingerprint, ContentBase64, UploadTimestamp, UploadedAt)
               VALUES (
               @id, @applicationId, @fileName, @mimeType, @mimeType, @sizeBytes, @sizeBytes, @fingerprint, '', @uploadedAt, @uploadedAt)`)
@@ -280,7 +281,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('applicationId', sql.NVarChar, applicationId)
-      .query('SELECT * FROM ApplicationDocuments WHERE ApplicationId = @applicationId')
+      .query(`SELECT * FROM ${T('ApplicationDocuments')} WHERE ApplicationId = @applicationId`)
     return result.recordset.map(rowToDocument)
   },
 
@@ -288,7 +289,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('id', sql.NVarChar, documentId)
-      .query('SELECT * FROM ApplicationDocuments WHERE Id = @id')
+      .query(`SELECT * FROM ${T('ApplicationDocuments')} WHERE Id = @id`)
     return result.recordset[0] ? rowToDocument(result.recordset[0]) : undefined
   },
 
@@ -297,8 +298,8 @@ export const applicationRepo = {
     const result = await pool.request()
       .input('jobId', sql.NVarChar, jobId)
       .input('fingerprint', sql.NVarChar, fingerprint)
-      .query(`SELECT d.* FROM ApplicationDocuments d
-              JOIN Applications a ON a.Id = d.ApplicationId
+      .query(`SELECT d.* FROM ${T('ApplicationDocuments')} d
+              JOIN ${T('Applications')} a ON a.Id = d.ApplicationId
               WHERE a.JobId = @jobId AND d.Fingerprint = @fingerprint`)
     return result.recordset[0] ? rowToDocument(result.recordset[0]) : undefined
   },
@@ -309,25 +310,25 @@ export const applicationRepo = {
     const updateResult = await pool.request()
       .input('documentId', sql.NVarChar, documentId)
       .input('content', sql.NVarChar, content)
-      .query('UPDATE DocumentBlobs SET Content = @content WHERE DocumentId = @documentId')
+      .query(`UPDATE ${T('DocumentBlobs')} SET Content = @content WHERE DocumentId = @documentId`)
     if ((updateResult.rowsAffected?.[0] ?? 0) === 0) {
       await pool.request()
         .input('documentId', sql.NVarChar, documentId)
         .input('content', sql.NVarChar, content)
-        .query('INSERT INTO DocumentBlobs (DocumentId, Content) VALUES (@documentId, @content)')
+        .query(`INSERT INTO ${T('DocumentBlobs')} (DocumentId, Content) VALUES (@documentId, @content)`)
     }
 
     await pool.request()
       .input('documentId', sql.NVarChar, documentId)
       .input('content', sql.NVarChar, content)
-      .query('UPDATE ApplicationDocuments SET ContentBase64 = @content WHERE Id = @documentId')
+      .query(`UPDATE ${T('ApplicationDocuments')} SET ContentBase64 = @content WHERE Id = @documentId`)
   },
 
   async getBlob(documentId: string): Promise<string | undefined> {
     const pool = await getPool()
     const blobResult = await pool.request()
       .input('documentId', sql.NVarChar, documentId)
-      .query('SELECT Content FROM DocumentBlobs WHERE DocumentId = @documentId')
+      .query(`SELECT Content FROM ${T('DocumentBlobs')} WHERE DocumentId = @documentId`)
     const blobContent = blobResult.recordset[0]?.Content
     if (blobContent) {
       return blobContent
@@ -335,7 +336,7 @@ export const applicationRepo = {
 
     const documentResult = await pool.request()
       .input('documentId', sql.NVarChar, documentId)
-      .query('SELECT ContentBase64 FROM ApplicationDocuments WHERE Id = @documentId')
+      .query(`SELECT ContentBase64 FROM ${T('ApplicationDocuments')} WHERE Id = @documentId`)
     const contentBase64 = documentResult.recordset[0]?.ContentBase64
     if (!contentBase64) {
       return undefined
@@ -344,9 +345,9 @@ export const applicationRepo = {
     await pool.request()
       .input('documentId', sql.NVarChar, documentId)
       .input('content', sql.NVarChar, contentBase64)
-      .query(`INSERT INTO DocumentBlobs (DocumentId, Content)
+      .query(`INSERT INTO ${T('DocumentBlobs')} (DocumentId, Content)
               SELECT @documentId, @content
-              WHERE NOT EXISTS (SELECT 1 FROM DocumentBlobs WHERE DocumentId = @documentId)`)
+              WHERE NOT EXISTS (SELECT 1 FROM ${T('DocumentBlobs')} WHERE DocumentId = @documentId)`)
 
     return contentBase64
   },
@@ -363,7 +364,7 @@ export const applicationRepo = {
       .input('extractedAt', sql.DateTime2, artifact.extractionMetadata.extractedAt ? new Date(artifact.extractionMetadata.extractedAt) : null)
       .input('status', sql.NVarChar, artifact.status)
       .input('createdAt', sql.DateTime2, new Date(artifact.createdAt))
-      .query(`UPDATE ExtractionArtifacts
+      .query(`UPDATE ${T('ExtractionArtifacts')}
               SET Markdown = @markdown, ToolVersion = @toolVersion, Confidence = @confidence, ExtractedAt = @extractedAt,
                   NormalisedText = @markdown, ConfidenceScore = @confidence, Status = @status
               WHERE ApplicationId = @applicationId`)
@@ -377,7 +378,7 @@ export const applicationRepo = {
         .input('extractedAt', sql.DateTime2, artifact.extractionMetadata.extractedAt ? new Date(artifact.extractionMetadata.extractedAt) : null)
         .input('status', sql.NVarChar, artifact.status)
         .input('createdAt', sql.DateTime2, new Date(artifact.createdAt))
-        .query(`INSERT INTO ExtractionArtifacts (
+        .query(`INSERT INTO ${T('ExtractionArtifacts')} (
                 Id, ApplicationId, Markdown, ToolVersion, Confidence, ExtractedAt, NormalisedText, ConfidenceScore, Status, CreatedAt)
                 VALUES (
                 @id, @applicationId, @markdown, @toolVersion, @confidence, @extractedAt, @markdown, @confidence, @status, @createdAt)`)
@@ -388,7 +389,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('applicationId', sql.NVarChar, applicationId)
-      .query('SELECT * FROM ExtractionArtifacts WHERE ApplicationId = @applicationId')
+      .query(`SELECT * FROM ${T('ExtractionArtifacts')} WHERE ApplicationId = @applicationId`)
     return result.recordset[0] ? rowToExtraction(result.recordset[0]) : undefined
   },
 
@@ -420,7 +421,7 @@ export const applicationRepo = {
       .input('rawParsedResponseJson', sql.NVarChar, run.rawParsedResponse ? JSON.stringify(run.rawParsedResponse) : null)
       .input('parserWarningsJson', sql.NVarChar, run.parserWarnings ? JSON.stringify(run.parserWarnings) : null)
       .input('parserConfidence', sql.Float, run.parserConfidence ?? null)
-            .query(`INSERT INTO ScoringRuns (
+            .query(`INSERT INTO ${T('ScoringRuns')} (
               Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, PromptVersionId,
               OverallScore, SubScoresJson, MustHaveResultJson, EvidenceCitationsJson, Rationale, ImprovementRecsJson,
               TotalScore, CategoryScoresJson, MustHaveEvaluationJson, ImprovementTipsJson, AiModelId, PromptVersion,
@@ -438,7 +439,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('applicationId', sql.NVarChar, applicationId)
-      .query('SELECT * FROM ScoringRuns WHERE ApplicationId = @applicationId ORDER BY RunIndex')
+      .query(`SELECT * FROM ${T('ScoringRuns')} WHERE ApplicationId = @applicationId ORDER BY RunIndex`)
     return result.recordset.map(rowToScoringRun)
   },
 
@@ -446,7 +447,7 @@ export const applicationRepo = {
     const pool = await getPool()
     await pool.request()
       .input('applicationId', sql.NVarChar, applicationId)
-      .query('DELETE FROM ScoringRuns WHERE ApplicationId = @applicationId')
+      .query(`DELETE FROM ${T('ScoringRuns')} WHERE ApplicationId = @applicationId`)
   },
 
   // Aggregated result
@@ -472,7 +473,7 @@ export const applicationRepo = {
       .input('allRunsJson', sql.NVarChar, JSON.stringify(result.allRuns))
       .input('mergedImprovementTipsJson', sql.NVarChar, mergedImprovementTipsJson)
       .input('createdAt', sql.DateTime2, new Date(result.createdAt))
-      .query(`UPDATE AggregatedResults
+      .query(`UPDATE ${T('AggregatedResults')}
               SET VersionId = @versionId, FinalScore = @finalScore, FinalSubScoresJson = @finalSubScoresJson,
                   Confidence = @confidence, Variance = @variance, FinalDecision = @finalDecision, Decision = @finalDecision,
                   RationaleText = @rationaleText, ConsolidatedRationale = @rationaleText,
@@ -494,7 +495,7 @@ export const applicationRepo = {
         .input('allRunsJson', sql.NVarChar, JSON.stringify(result.allRuns))
         .input('mergedImprovementTipsJson', sql.NVarChar, mergedImprovementTipsJson)
         .input('createdAt', sql.DateTime2, new Date(result.createdAt))
-        .query(`INSERT INTO AggregatedResults (
+        .query(`INSERT INTO ${T('AggregatedResults')} (
                 Id, ApplicationId, VersionId, FinalScore, FinalSubScoresJson, Confidence, Variance,
                 FinalDecision, Decision, RationaleText, ConsolidatedRationale, RecommendationsText,
                 MergedImprovementTipsJson, AllRunsJson, CreatedAt)
@@ -509,7 +510,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('applicationId', sql.NVarChar, applicationId)
-      .query('SELECT * FROM AggregatedResults WHERE ApplicationId = @applicationId')
+      .query(`SELECT * FROM ${T('AggregatedResults')} WHERE ApplicationId = @applicationId`)
     return result.recordset[0] ? rowToAggregatedResult(result.recordset[0]) : undefined
   },
 
@@ -517,7 +518,7 @@ export const applicationRepo = {
     const pool = await getPool()
     await pool.request()
       .input('applicationId', sql.NVarChar, applicationId)
-      .query('DELETE FROM AggregatedResults WHERE ApplicationId = @applicationId')
+      .query(`DELETE FROM ${T('AggregatedResults')} WHERE ApplicationId = @applicationId`)
   },
 
   // Manual review
@@ -533,7 +534,7 @@ export const applicationRepo = {
       .input('auditTrailJson', sql.NVarChar, JSON.stringify(review.auditTrail))
       .input('lastModifiedBy', sql.NVarChar, review.lastModifiedBy)
       .input('updatedAt', sql.DateTime2, new Date(now))
-      .query(`UPDATE ManualReviews
+      .query(`UPDATE ${T('ManualReviews')}
               SET JobId = @jobId, RubricScoresJson = @rubricScoresJson, OverallComment = @overallComment,
                   AdjustedFinalScore = @adjustedFinalScore, AuditTrailJson = @auditTrailJson,
                   UpdatedAt = @updatedAt, LastModifiedBy = @lastModifiedBy
@@ -550,7 +551,7 @@ export const applicationRepo = {
         .input('lastModifiedBy', sql.NVarChar, review.lastModifiedBy)
         .input('createdAt', sql.DateTime2, new Date(now))
         .input('updatedAt', sql.DateTime2, new Date(now))
-        .query(`INSERT INTO ManualReviews (
+        .query(`INSERT INTO ${T('ManualReviews')} (
                 Id, ApplicationId, JobId, RubricScoresJson, OverallComment, AdjustedFinalScore,
                 AuditTrailJson, CreatedAt, UpdatedAt, LastModifiedBy)
                 VALUES (
@@ -563,7 +564,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('applicationId', sql.NVarChar, applicationId)
-      .query('SELECT * FROM ManualReviews WHERE ApplicationId = @applicationId')
+      .query(`SELECT * FROM ${T('ManualReviews')} WHERE ApplicationId = @applicationId`)
     return result.recordset[0] ? rowToManualReview(result.recordset[0]) : undefined
   },
 }

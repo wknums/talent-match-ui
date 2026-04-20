@@ -95,6 +95,14 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
     export TF_VAR_apim_gateway_url="$(get_terraform_output "$TF_LIVE_DIR/shared" "apim_gateway_url")"
     export TF_VAR_identity_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_id")"
     export TF_VAR_identity_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_id")"
+
+    # Networking (US6): Capture integration subnet ID if networking is configured
+    local subnet_id
+    subnet_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "integration_subnet_id")"
+    if [[ -n "$subnet_id" ]]; then
+      export TF_VAR_integration_subnet_id="$subnet_id"
+      log_info "Captured integration_subnet_id from shared root"
+    fi
   fi
 fi
 

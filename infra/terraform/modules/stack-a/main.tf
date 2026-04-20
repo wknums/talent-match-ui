@@ -16,6 +16,9 @@ module "app_service" {
   node_version = "20-lts"
   always_on    = var.environment != "dev"
 
+  virtual_network_subnet_id = var.virtual_network_subnet_id
+  allowed_ips               = var.allowed_ips
+
   app_settings = merge(
     {
       "WEBSITE_NODE_DEFAULT_VERSION"   = "~20"

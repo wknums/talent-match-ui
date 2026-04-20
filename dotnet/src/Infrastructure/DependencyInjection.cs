@@ -1,4 +1,5 @@
 using System.IO;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,9 +20,14 @@ public static class DependencyInjection
 
         if (provider.Equals("sqlserver", StringComparison.OrdinalIgnoreCase))
         {
-            var connectionString = configuration.GetConnectionString("DefaultConnection");
+            var connectionString = BuildResilientSqlServerConnectionString(configuration.GetConnectionString("DefaultConnection"));
             services.AddDbContext<AppDbContext>(options =>
-                options.UseSqlServer(connectionString));
+                options.UseSqlServer(connectionString, sqlOptions =>
+                {
+                    // Cold-start aware retry profile for Azure SQL pay-as-you-go wake-up windows.
+                    sqlOptions.EnableRetryOnFailure(maxRetryCount: 6, maxRetryDelay: TimeSpan.FromSeconds(15), errorNumbersToAdd: null);
+                    sqlOptions.CommandTimeout(180);
+                }));
         }
         else
         {
@@ -52,6 +58,24 @@ public static class DependencyInjection
         services.AddHttpContextAccessor();
 
         return services;
+    }
+
+    private static string BuildResilientSqlServerConnectionString(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            return connectionString ?? string.Empty;
+        }
+
+        var builder = new SqlConnectionStringBuilder(connectionString);
+
+        // Ensure connection open waits long enough for Azure SQL cold-start wake-up.
+        if (builder.ConnectTimeout < 90)
+        {
+            builder.ConnectTimeout = 90;
+        }
+
+        return builder.ConnectionString;
     }
 
     private static string ResolveSqliteConnectionString(IConfiguration configuration, string contentRootPath)

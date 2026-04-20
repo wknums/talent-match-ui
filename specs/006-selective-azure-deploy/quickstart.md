@@ -196,3 +196,246 @@ The deprovision wrapper is required so reuse-flagged resources remain protected.
 | `target` | `shared`, `stack-a`, `stack-b`, `both` |
 | `--dry-run` | Preview without destroying |
 | `--force` | Skip confirmation (CI only) |
+
+## Database Schema Isolation (US5)
+
+All 15 application tables live under the `[talentmatch]` schema in Azure SQL. Local SQLite development is unaffected.
+
+### Verify Schema Exists After Deployment
+
+```bash
+# Connect to Azure SQL and verify the talentmatch schema
+az sql db query \
+  --server sql-talentmatch-dev \
+  --name sqldb-talentmatch-dev \
+  --resource-group rg-talentmatch-dev \
+  --query "SELECT name FROM sys.schemas WHERE name = 'talentmatch'"
+```
+
+Expected: One row with `name = talentmatch`.
+
+### Verify Table Count (Must Be 15)
+
+```bash
+az sql db query \
+  --server sql-talentmatch-dev \
+  --name sqldb-talentmatch-dev \
+  --resource-group rg-talentmatch-dev \
+  --query "SELECT COUNT(*) AS TableCount FROM sys.tables WHERE schema_id = SCHEMA_ID('talentmatch')"
+```
+
+Expected: `TableCount = 15`.
+
+### Verify All Tables Under talentmatch Schema
+
+```bash
+az sql db query \
+  --server sql-talentmatch-dev \
+  --name sqldb-talentmatch-dev \
+  --resource-group rg-talentmatch-dev \
+  --query "SELECT s.name AS [Schema], t.name AS [Table]
+           FROM sys.tables t
+           JOIN sys.schemas s ON t.schema_id = s.schema_id
+           WHERE s.name IN ('dbo','talentmatch')
+           ORDER BY s.name, t.name"
+```
+
+Expected: 15 rows with Schema = `talentmatch`, 0 rows with Schema = `dbo` (for application tables).
+
+### Verify Zero Application Tables in dbo
+
+```bash
+az sql db query \
+  --server sql-talentmatch-dev \
+  --name sqldb-talentmatch-dev \
+  --resource-group rg-talentmatch-dev \
+  --query "SELECT COUNT(*) AS DboCount FROM sys.tables
+           WHERE schema_id = SCHEMA_ID('dbo')
+             AND name IN ('Users','PasswordResetRequests','Jobs','JobConfigVersions',
+                          'Applications','ApplicationDocuments','DocumentBlobs',
+                          'ExtractionArtifacts','ScoringRuns','AggregatedResults',
+                          'ManualReviews','ScoringPrompts','PromptTestRuns',
+                          'FailureQueueItems','ProcessingEvents')"
+```
+
+Expected: `DboCount = 0`.
+
+### Verify SQLite Is Unaffected
+
+```bash
+# Local dev should work exactly as before
+npm run dev
+# Run tests to confirm SQLite path works
+npm test
+```
+
+All existing tests must pass with zero regressions — the `T()` helper returns plain table names for SQLite.
+
+### Verify .NET Stack Schema
+
+```bash
+# Deploy Stack B and verify EF Core uses talentmatch schema
+dotnet test dotnet/TalentMatch.slnx
+```
+
+All .NET tests must pass — `HasDefaultSchema("talentmatch")` is only applied when `Database.IsSqlServer()` returns true.
+
+### Migrate Existing Database (dbo → talentmatch)
+
+For databases that already have tables under `dbo`:
+
+```bash
+# Run the idempotent migration script
+az sql db query \
+  --server sql-talentmatch-dev \
+  --name sqldb-talentmatch-dev \
+  --resource-group rg-talentmatch-dev \
+  --query "$(cat infra/scripts/sql/migrate-schema-dbo-to-talentmatch.sql)"
+```
+
+The migration script is idempotent — re-running it on a database that already has tables under `talentmatch` is safe.
+
+**Dry-run check** (before migrating): Verify which tables are currently in `dbo`:
+
+```bash
+az sql db query \
+  --server sql-talentmatch-dev \
+  --name sqldb-talentmatch-dev \
+  --resource-group rg-talentmatch-dev \
+  --query "SELECT s.name AS [Schema], t.name AS [Table]
+           FROM sys.tables t
+           JOIN sys.schemas s ON t.schema_id = s.schema_id
+           WHERE t.name IN ('Users','PasswordResetRequests','Jobs','JobConfigVersions',
+                            'Applications','ApplicationDocuments','DocumentBlobs',
+                            'ExtractionArtifacts','ScoringRuns','AggregatedResults',
+                            'ManualReviews','ScoringPrompts','PromptTestRuns',
+                            'FailureQueueItems','ProcessingEvents')
+           ORDER BY s.name, t.name"
+```
+
+---
+
+## Private Network Connectivity (US6)
+
+### Configure Networking in Environment Profile
+
+Add the following to your `.env_qa` (or `.env_prod`):
+
+```ini
+# --- VNet Integration ---
+AZ_VNET_REUSE=TRUE
+AZ_VNET_NAME=vnet-awr-platform
+AZ_VNET_RG=rg-awr-networking
+
+# Option A: Reuse existing delegated subnet
+AZ_INTEGRATION_SUBNET_NAME=snet-appservice-integration
+
+# Option B: Create new delegated subnet (use this OR Option A, not both)
+# AZ_INTEGRATION_SUBNET_CIDR=10.0.4.0/26
+
+# --- SQL Private Endpoint ---
+AZ_SQL_PRIVATE_ENDPOINT_REUSE=TRUE
+
+# --- IP Access Restrictions (required) ---
+AZ_ALLOWED_IPS=203.0.113.10,198.51.100.20,192.0.2.50
+```
+
+### Deploy with Networking
+
+```bash
+./infra/scripts/deploy.sh .env_qa test apply both
+```
+
+The deploy script will:
+1. Validate VNet coordinates and IP restrictions
+2. Provision shared infrastructure (including networking module)
+3. Deploy Stack A and Stack B with VNet Integration and IP restrictions
+
+### Verify VNet Integration
+
+```bash
+# Check Stack A VNet Integration
+az webapp vnet-integration list \
+  --name app-talentmatch-node-test \
+  --resource-group rg-talentmatch-test \
+  --output table
+```
+
+Expected: One row showing the integration subnet.
+
+```bash
+# Check Stack B VNet Integration
+az webapp vnet-integration list \
+  --name app-talentmatch-blazor-test \
+  --resource-group rg-talentmatch-test \
+  --output table
+```
+
+Expected: Same integration subnet as Stack A (FR-028).
+
+### Verify IP Access Restrictions
+
+```bash
+# Check Stack A IP restrictions
+az webapp config access-restriction show \
+  --name app-talentmatch-node-test \
+  --resource-group rg-talentmatch-test \
+  --output table
+```
+
+Expected: Allow rules for each IP in `AZ_ALLOWED_IPS`, with a default Deny action.
+
+```bash
+# Test from an allowed IP
+curl -s -o /dev/null -w "%{http_code}" https://app-talentmatch-node-test.azurewebsites.net/api/health
+# Expected: 200
+
+# Test from a non-allowed IP (e.g., from a different machine)
+# Expected: 403
+```
+
+### Verify Private SQL Connectivity
+
+```bash
+# SSH into the App Service (Kudu console) and verify DNS resolution
+az webapp ssh --name app-talentmatch-node-test --resource-group rg-talentmatch-test
+
+# Inside the console:
+nslookup sql-talentmatch-test.database.windows.net
+# Expected: Resolves to a private IP (10.x.x.x) — NOT a public IP
+```
+
+### Verify Application Works Over Private Network
+
+```bash
+# After deploying, check the health endpoint
+curl https://app-talentmatch-node-test.azurewebsites.net/api/health
+# Expected: 200 OK with database connectivity confirmed
+
+# Check Stack B as well
+curl https://app-talentmatch-blazor-test.azurewebsites.net/api/health
+# Expected: 200 OK
+```
+
+### Verify No Public SQL Traffic
+
+The connection string remains unchanged. Private DNS resolution transparently routes all SQL traffic over the VNet. No application code or connection string changes are needed (SC-018).
+
+### Verify Terraform Outputs
+
+```bash
+terraform -chdir=infra/terraform/live/shared output integration_subnet_id
+# Expected: /subscriptions/.../subnets/snet-appservice-integration
+```
+
+### Backward Compatibility (No Networking)
+
+Deployments without `AZ_VNET_REUSE=TRUE` continue to work exactly as before. The `integration_subnet_id` output returns an empty string, and no VNet Integration or IP restrictions are applied. All new variables default to empty/false, so existing `.env_*` files do not require updates unless networking is desired.
+
+### RBAC Requirements
+
+| Scenario | Required Role | Scope |
+|----------|--------------|-------|
+| Create new subnet | Network Contributor | VNet resource group |
+| Reuse existing subnet | Reader | VNet resource group |
+| VNet Integration | Website Contributor | App Service resource group |

@@ -1,5 +1,6 @@
 import { getPool, sql } from '../db.js'
 import type { ProcessingEvent, DLQItem, SystemStats } from '../../../src/types/index.js'
+import { T } from '../table-names.js'
 
 function parseJson<T>(val: string | null | undefined, fallback: T): T {
   if (!val) return fallback
@@ -46,7 +47,7 @@ export const auditRepo = {
       .input('detailsJson', sql.NVarChar, JSON.stringify(event.details))
       .input('timestamp', sql.DateTime2, new Date(event.timestamp))
       .input('correlationId', sql.NVarChar, event.correlationId)
-            .query(`INSERT INTO ProcessingEvents (Id, Actor, EventType, Action, EntityType, EntityId, PayloadJson, DetailsJson, Timestamp, CorrelationId)
+            .query(`INSERT INTO ${T('ProcessingEvents')} (Id, Actor, EventType, Action, EntityType, EntityId, PayloadJson, DetailsJson, Timestamp, CorrelationId)
               VALUES (@id, @actor, @action, @action, @entityType, @entityId, @detailsJson, @detailsJson, @timestamp, @correlationId)`)
   },
 
@@ -63,7 +64,7 @@ export const auditRepo = {
     const p = filters.page ?? 1
     const ps = filters.pageSize ?? 50
 
-    const countResult = await req.query(`SELECT COUNT(*) AS total FROM ProcessingEvents ${where}`)
+    const countResult = await req.query(`SELECT COUNT(*) AS total FROM ${T('ProcessingEvents')} ${where}`)
     const total = countResult.recordset[0].total
 
     // Need a fresh request for the data query since inputs are consumed
@@ -76,7 +77,7 @@ export const auditRepo = {
     dataReq.input('pageSize', sql.Int, ps)
 
     const dataResult = await dataReq.query(`
-      SELECT * FROM ProcessingEvents ${where}
+      SELECT * FROM ${T('ProcessingEvents')} ${where}
       ORDER BY Timestamp DESC
       OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY
     `)
@@ -87,7 +88,7 @@ export const auditRepo = {
 export const dlqRepo = {
   async getAll(): Promise<DLQItem[]> {
     const pool = await getPool()
-    const result = await pool.request().query('SELECT * FROM FailureQueueItems ORDER BY LastAttemptedAt DESC')
+    const result = await pool.request().query(`SELECT * FROM ${T('FailureQueueItems')} ORDER BY LastAttemptedAt DESC`)
     return result.recordset.map(rowToDLQ)
   },
 
@@ -95,7 +96,7 @@ export const dlqRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('id', sql.NVarChar, itemId)
-      .query('SELECT * FROM FailureQueueItems WHERE Id = @id')
+      .query(`SELECT * FROM ${T('FailureQueueItems')} WHERE Id = @id`)
     return result.recordset[0] ? rowToDLQ(result.recordset[0]) : undefined
   },
 
@@ -112,7 +113,7 @@ export const dlqRepo = {
       .input('lastAttemptedAt', sql.DateTime2, new Date(item.lastAttemptedAt))
       .input('canRetry', sql.Bit, item.canRetry ? 1 : 0)
       .input('notes', sql.NVarChar, item.notes ?? null)
-            .query(`INSERT INTO FailureQueueItems (
+            .query(`INSERT INTO ${T('FailureQueueItems')} (
               Id, EntityType, EntityId, FailureReason, RetryCount, CreatedAt, UpdatedAt,
               ApplicationId, JobId, FailureType, AttemptCount, FirstFailedAt, LastAttemptedAt, CanRetry, Notes)
               VALUES (
@@ -124,7 +125,7 @@ export const dlqRepo = {
     const pool = await getPool()
     await pool.request()
       .input('id', sql.NVarChar, itemId)
-      .query('DELETE FROM FailureQueueItems WHERE Id = @id')
+      .query(`DELETE FROM ${T('FailureQueueItems')} WHERE Id = @id`)
   },
 
   async removeByJobAndAppIds(jobId: string, applicationIds: string[]): Promise<void> {
@@ -133,7 +134,7 @@ export const dlqRepo = {
     // Use a temp table approach for the IN clause to avoid SQL injection
     const req = pool.request().input('jobId', sql.NVarChar, jobId)
     const placeholders = applicationIds.map((id, i) => { req.input(`a${i}`, sql.NVarChar, id); return `@a${i}` })
-    await req.query(`DELETE FROM FailureQueueItems WHERE JobId = @jobId AND ApplicationId IN (${placeholders.join(',')})`)
+    await req.query(`DELETE FROM ${T('FailureQueueItems')} WHERE JobId = @jobId AND ApplicationId IN (${placeholders.join(',')})`)
   },
 }
 
@@ -142,13 +143,13 @@ export const statsRepo = {
     const pool = await getPool()
     const result = await pool.request().query(`
       SELECT
-        (SELECT COUNT(*) FROM Jobs) AS totalJobs,
-        (SELECT COUNT(*) FROM Jobs WHERE Status IN ('Active','Processing')) AS activeJobs,
-        (SELECT COUNT(*) FROM Applications WHERE TestRunId IS NULL) AS totalApplications,
-        (SELECT COUNT(*) FROM Applications WHERE TestRunId IS NULL AND Status = 'Queued') AS queuedApplications,
-        (SELECT COUNT(*) FROM Applications WHERE TestRunId IS NULL AND Status IN ('Extracting','Scoring','Aggregating')) AS processingApplications,
-        (SELECT COUNT(*) FROM Applications WHERE TestRunId IS NULL AND Status IN ('Completed','NeedsManualReview')) AS completedApplications,
-        (SELECT COUNT(*) FROM Applications WHERE TestRunId IS NULL AND Status IN ('ExtractionFailed','ScoringFailed')) AS failedApplications
+        (SELECT COUNT(*) FROM ${T('Jobs')}) AS totalJobs,
+        (SELECT COUNT(*) FROM ${T('Jobs')} WHERE Status IN ('Active','Processing')) AS activeJobs,
+        (SELECT COUNT(*) FROM ${T('Applications')} WHERE TestRunId IS NULL) AS totalApplications,
+        (SELECT COUNT(*) FROM ${T('Applications')} WHERE TestRunId IS NULL AND Status = 'Queued') AS queuedApplications,
+        (SELECT COUNT(*) FROM ${T('Applications')} WHERE TestRunId IS NULL AND Status IN ('Extracting','Scoring','Aggregating')) AS processingApplications,
+        (SELECT COUNT(*) FROM ${T('Applications')} WHERE TestRunId IS NULL AND Status IN ('Completed','NeedsManualReview')) AS completedApplications,
+        (SELECT COUNT(*) FROM ${T('Applications')} WHERE TestRunId IS NULL AND Status IN ('ExtractionFailed','ScoringFailed')) AS failedApplications
     `)
     const r = result.recordset[0]
     return {

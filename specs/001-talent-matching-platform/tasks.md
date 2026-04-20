@@ -397,6 +397,8 @@
 - [ ] T188 [P] Ensure no client-side API keys — verify all LLM/AWR calls are proxied through backend per FR-017
 - [ ] T189 Performance check — verify pagination for large tables (20K applications), progressive content rendering, ≤30s dashboard staleness per SC-001/SC-003
 - [ ] T190 [P] Code cleanup — remove deprecated extraction worker invocations from pipeline flow (retain files for backward compatibility) per FR-059
+- [ ] T191 Implement Azure SQL cold-start retry policy in Stack A and Stack B connection initialization paths — bounded exponential backoff, transient-error detection, and retry budget aligned to 30-90s wake-up window per FR-068
+- [ ] T192 [P] Validate Azure SQL cold-start behavior in both stacks by simulating first-connection transient failures/timeouts; verify retries, structured logs (attempt number, elapsed time, error), and final failure only after retry budget exhaustion per FR-068
 
 ---
 

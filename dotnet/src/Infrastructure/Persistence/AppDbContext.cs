@@ -28,6 +28,11 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        // Azure SQL: isolate all tables under the 'talentmatch' schema.
+        // SQLite does not support schemas, so this is a no-op for local dev.
+        if (Database.IsSqlServer())
+            modelBuilder.HasDefaultSchema("talentmatch");
+
         // User
         modelBuilder.Entity<User>(e =>
         {

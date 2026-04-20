@@ -1,4 +1,5 @@
 import { getPool, sql } from '../db.js'
+import { T } from '../table-names.js'
 
 export interface StoredUser {
   userId: string
@@ -55,7 +56,7 @@ function rowToResetRequest(r: any): PasswordResetRequestRow {
 export const userRepo = {
   async getAll(): Promise<StoredUser[]> {
     const pool = await getPool()
-    const result = await pool.request().query('SELECT * FROM Users ORDER BY CreatedAt')
+    const result = await pool.request().query(`SELECT * FROM ${T('Users')} ORDER BY CreatedAt`)
     return result.recordset.map(rowToUser)
   },
 
@@ -63,7 +64,7 @@ export const userRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('username', sql.NVarChar, username)
-      .query('SELECT * FROM Users WHERE Username = @username')
+      .query(`SELECT * FROM ${T('Users')} WHERE Username = @username`)
     return result.recordset[0] ? rowToUser(result.recordset[0]) : undefined
   },
 
@@ -71,7 +72,7 @@ export const userRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('id', sql.NVarChar, userId)
-      .query('SELECT * FROM Users WHERE Id = @id')
+      .query(`SELECT * FROM ${T('Users')} WHERE Id = @id`)
     return result.recordset[0] ? rowToUser(result.recordset[0]) : undefined
   },
 
@@ -87,7 +88,7 @@ export const userRepo = {
       .input('passwordHash', sql.NVarChar, user.passwordHash)
       .input('createdAt', sql.DateTime2, new Date(user.createdAt))
             .input('passwordResetRequired', sql.Bit, user.passwordResetRequired ? 1 : 0)
-            .query(`INSERT INTO Users (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, PasswordResetRequired)
+            .query(`INSERT INTO ${T('Users')} (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, PasswordResetRequired)
               VALUES (@id, @username, @role, @fullName, @email, @department, @passwordHash, @createdAt, @passwordResetRequired)`)
   },
 
@@ -103,26 +104,26 @@ export const userRepo = {
     if (fields.lastLogin !== undefined) { sets.push('LastLogin = @lastLogin'); req.input('lastLogin', sql.DateTime2, new Date(fields.lastLogin)) }
     if (fields.passwordResetRequired !== undefined) { sets.push('PasswordResetRequired = @pwr'); req.input('pwr', sql.Bit, fields.passwordResetRequired ? 1 : 0) }
     if (sets.length === 0) return
-    await req.query(`UPDATE Users SET ${sets.join(', ')} WHERE Id = @id`)
+    await req.query(`UPDATE ${T('Users')} SET ${sets.join(', ')} WHERE Id = @id`)
   },
 
   async delete(userId: string): Promise<void> {
     const pool = await getPool()
     await pool.request()
       .input('id', sql.NVarChar, userId)
-      .query('DELETE FROM Users WHERE Id = @id')
+      .query(`DELETE FROM ${T('Users')} WHERE Id = @id`)
   },
 
   async count(): Promise<number> {
     const pool = await getPool()
-    const result = await pool.request().query('SELECT COUNT(*) AS cnt FROM Users')
+    const result = await pool.request().query(`SELECT COUNT(*) AS cnt FROM ${T('Users')}`)
     return result.recordset[0].cnt
   },
 
   // Password reset requests
   async getResetRequests(statusFilter?: string): Promise<PasswordResetRequestRow[]> {
     const pool = await getPool()
-    let query = 'SELECT * FROM PasswordResetRequests'
+    let query = `SELECT * FROM ${T('PasswordResetRequests')}`
     const req = pool.request()
     if (statusFilter) {
       query += ' WHERE Status = @status'
@@ -143,7 +144,7 @@ export const userRepo = {
             .input('reason', sql.NVarChar, request.fullName)
       .input('status', sql.NVarChar, request.status)
       .input('requestedAt', sql.DateTime2, new Date(request.requestedAt))
-            .query(`INSERT INTO PasswordResetRequests (Id, UserId, Username, FullName, Reason, Status, RequestedAt, CreatedAt)
+            .query(`INSERT INTO ${T('PasswordResetRequests')} (Id, UserId, Username, FullName, Reason, Status, RequestedAt, CreatedAt)
               VALUES (@id, @userId, @username, @fullName, @reason, @status, @requestedAt, @requestedAt)`)
   },
 
@@ -154,6 +155,6 @@ export const userRepo = {
       .input('status', sql.NVarChar, fields.status)
       .input('resolvedAt', sql.DateTime2, fields.resolvedAt ? new Date(fields.resolvedAt) : null)
       .input('resolvedBy', sql.NVarChar, fields.resolvedBy || null)
-      .query('UPDATE PasswordResetRequests SET Status = @status, ResolvedAt = @resolvedAt, ResolvedBy = @resolvedBy WHERE Id = @id')
+      .query(`UPDATE ${T('PasswordResetRequests')} SET Status = @status, ResolvedAt = @resolvedAt, ResolvedBy = @resolvedBy WHERE Id = @id`)
   },
 }

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Reflection;
 using System.Text;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using TalentMatch.Application;
@@ -58,8 +59,9 @@ var app = builder.Build();
 AwrAuthHandler.ValidateConfiguration();
 
 // Ensure database is created and seed default admin
-using (var scope = app.Services.CreateScope())
+await ExecuteWithSqlWarmupRetryAsync(async () =>
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
     if (app.Environment.IsEnvironment("Testing"))
@@ -90,6 +92,93 @@ using (var scope = app.Services.CreateScope())
         });
         db.SaveChanges();
     }
+});
+
+static async Task ExecuteWithSqlWarmupRetryAsync(Func<Task> operation)
+{
+    const int maxAttempts = 8;
+    const int initialDelayMs = 2000;
+    const int maxDelayMs = 15000;
+
+    var startedAt = DateTimeOffset.UtcNow;
+    Exception? lastError = null;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            await operation();
+
+            if (attempt > 1)
+            {
+                var elapsedMs = (long)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds;
+                Console.WriteLine($"[startup] Azure SQL operation succeeded after retry (attempt={attempt}, elapsedMs={elapsedMs})");
+            }
+
+            return;
+        }
+        catch (Exception ex) when (IsTransientSqlWarmupError(ex) && attempt < maxAttempts)
+        {
+            lastError = ex;
+            var delayMs = Math.Min(maxDelayMs, initialDelayMs * (int)Math.Pow(2, attempt - 1));
+            var elapsedMs = (long)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds;
+
+            Console.WriteLine($"[startup] Azure SQL retry scheduled (attempt={attempt}/{maxAttempts}, elapsedMs={elapsedMs}, delayMs={delayMs}, error=\"{ex.Message}\")");
+            await Task.Delay(delayMs);
+        }
+        catch (Exception ex)
+        {
+            lastError = ex;
+            break;
+        }
+    }
+
+    var totalElapsedMs = (long)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds;
+    Console.WriteLine($"[startup] Azure SQL startup operation failed after retries (attempts={maxAttempts}, elapsedMs={totalElapsedMs}, error=\"{lastError?.Message}\")");
+    throw lastError ?? new InvalidOperationException("Azure SQL startup operation failed without an exception.");
+}
+
+static bool IsTransientSqlWarmupError(Exception ex)
+{
+    if (ex is TimeoutException)
+    {
+        return true;
+    }
+
+    if (ex is SqlException sqlEx)
+    {
+        var transientErrorNumbers = new HashSet<int>
+        {
+            40501, // Service busy
+            40613, // Database unavailable
+            40197, // Service encountered an error
+            10928, // Resource limit reached
+            10929, // Resource limit reached
+            49918,
+            49919,
+            49920,
+            -2,    // Client-side timeout
+        };
+
+        foreach (SqlError error in sqlEx.Errors)
+        {
+            if (transientErrorNumbers.Contains(error.Number))
+            {
+                return true;
+            }
+        }
+    }
+
+    if (ex is InvalidOperationException)
+    {
+        var msg = ex.Message.ToLowerInvariant();
+        if (msg.Contains("timeout") || msg.Contains("transient") || msg.Contains("temporarily"))
+        {
+            return true;
+        }
+    }
+
+    return ex.InnerException is not null && IsTransientSqlWarmupError(ex.InnerException);
 }
 
 static bool BaselineSharedSqliteSchemaIfNeeded(AppDbContext db)

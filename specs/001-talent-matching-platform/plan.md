@@ -7,6 +7,8 @@
 
 Build a dual-stack (React/TypeScript + .NET Blazor WASM) talent matching platform that enables recruiters to create jobs with scoring rubrics, upload candidate applications in bulk, run AI-powered multi-pass scoring via an external reasoning engine (`AWR_SEQ_API_ENDPOINT/assess/passthrough`), and review results through ranked lists and a three-pane manual review interface. The platform enforces a prompt test-and-approve workflow before production scoring, immutable audit trails for all state changes, and role-based access control. Shared API contracts remain the parity target, but Stack B still needs reset-request retrieval completion before feature parity can be re-verified.
 
+The platform must also tolerate Azure SQL pay-as-you-go cold-start behavior by implementing bounded retry with exponential backoff for initial SQL connections in both stacks so startup and first-request paths remain resilient during 30-90 second wake-up windows.
+
 Key technical decisions from research: reuse the existing passthrough API pattern for prompt generation and scoring (R3, R10); immutable integer-versioned prompts with single-active-per-job semantics (R4); reuse the existing upload/scoring pipeline for test runs with a `promptVersionId` override to bypass the production gate (R5, R11); auto-trigger scoring on test upload via fire-and-forget (R12); extended `PromptTestRun` status enum for pipeline progress visibility (R13); shared AWR auth helper per `AWR_AUTH_MODE` env var (R6).
 
 ## Technical Context
@@ -20,7 +22,7 @@ Key technical decisions from research: reuse the existing passthrough API patter
 **Target Platform**: Web browser (SPA) + Node.js 22+ server (Stack A) + .NET 10 server hosting Blazor WASM (Stack B)
 **Project Type**: Web application (dual-stack, frontend + backend)
 **Performance Goals**: 20K applications uploadable per job within 90 min (SC-001); each application scored within 15 min (SC-002); dashboard stats refresh ≤30s (SC-003); recruiter end-to-end flow within 10 min of first use (SC-006)
-**Constraints**: ≤30s dashboard stat staleness, WCAG ≥4.5:1 contrast ratio, RBAC enforced end-to-end, immutable audit trail for all decisions, no client-side API keys
+**Constraints**: ≤30s dashboard stat staleness, WCAG ≥4.5:1 contrast ratio, RBAC enforced end-to-end, immutable audit trail for all decisions, no client-side API keys, Azure SQL initial connection cold-start resilience (30-90 second wake-up window with bounded retry/backoff)
 **Scale/Scope**: 20K applications per job, single-tenant initial deployment, ~10 major UI views, 8 user stories (US1–US8), 60 functional requirements (FR-001–FR-060)
 
 ## Constitution Check

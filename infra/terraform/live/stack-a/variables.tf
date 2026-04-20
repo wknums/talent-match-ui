@@ -59,3 +59,16 @@ variable "apim_gateway_url" {
   description = "APIM gateway URL from shared root"
   type        = string
 }
+
+# --- Networking (US6) ---
+variable "integration_subnet_id" {
+  description = "Delegated subnet ID for VNet Integration from shared root"
+  type        = string
+  default     = ""
+}
+
+variable "allowed_ips" {
+  description = "Allowed public IPs for IP restrictions"
+  type        = list(string)
+  default     = []
+}

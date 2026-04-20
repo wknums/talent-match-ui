@@ -77,3 +77,8 @@ output "sql_server_name" {
   description = "SQL Server name"
   value       = module.sql.server_name
 }
+
+output "integration_subnet_id" {
+  description = "Delegated subnet ID for App Service VNet Integration"
+  value       = var.reuse_vnet ? module.networking[0].integration_subnet_id : ""
+}

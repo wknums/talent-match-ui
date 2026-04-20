@@ -1,4 +1,5 @@
 import { getPool, sql } from '../db.js'
+import { T } from '../table-names.js'
 import type { ScoringPrompt, PromptTestRun } from '../../../src/types/index.js'
 
 function parseJson<T>(val: string | null | undefined, fallback: T): T {
@@ -42,7 +43,7 @@ export const promptRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query('SELECT * FROM ScoringPrompts WHERE JobId = @jobId ORDER BY VersionNumber DESC')
+      .query(`SELECT * FROM ${T('ScoringPrompts')} WHERE JobId = @jobId ORDER BY VersionNumber DESC`)
     return result.recordset.map(rowToPrompt)
   },
 
@@ -50,7 +51,7 @@ export const promptRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('id', sql.NVarChar, promptId)
-      .query('SELECT * FROM ScoringPrompts WHERE Id = @id')
+      .query(`SELECT * FROM ${T('ScoringPrompts')} WHERE Id = @id`)
     return result.recordset[0] ? rowToPrompt(result.recordset[0]) : undefined
   },
 
@@ -58,7 +59,7 @@ export const promptRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query('SELECT ISNULL(MAX(VersionNumber), 0) AS maxVer FROM ScoringPrompts WHERE JobId = @jobId')
+      .query(`SELECT ISNULL(MAX(VersionNumber), 0) AS maxVer FROM ${T('ScoringPrompts')} WHERE JobId = @jobId`)
     return result.recordset[0].maxVer
   },
 
@@ -77,7 +78,7 @@ export const promptRepo = {
       .input('comments', sql.NVarChar, prompt.comments ?? null)
       .input('source', sql.NVarChar, prompt.source)
       .input('generationMetadataJson', sql.NVarChar, prompt.generationMetadata ? JSON.stringify(prompt.generationMetadata) : null)
-      .query(`INSERT INTO ScoringPrompts (Id, JobId, VersionNumber, PromptText, Status, CreatedAt, LastModifiedAt, Author, Rating, Comments, Source, GenerationMetadataJson)
+      .query(`INSERT INTO ${T('ScoringPrompts')} (Id, JobId, VersionNumber, PromptText, Status, CreatedAt, LastModifiedAt, Author, Rating, Comments, Source, GenerationMetadataJson)
               VALUES (@id, @jobId, @versionNumber, @promptText, @status, @createdAt, @lastModifiedAt, @author, @rating, @comments, @source, @generationMetadataJson)`)
   },
 
@@ -86,7 +87,7 @@ export const promptRepo = {
     await pool.request()
       .input('id', sql.NVarChar, promptId)
       .input('status', sql.NVarChar, status)
-      .query('UPDATE ScoringPrompts SET Status = @status, LastModifiedAt = SYSUTCDATETIME() WHERE Id = @id')
+      .query(`UPDATE ${T('ScoringPrompts')} SET Status = @status, LastModifiedAt = SYSUTCDATETIME() WHERE Id = @id`)
   },
 
   async updateRating(promptId: string, rating: number, comments?: string): Promise<void> {
@@ -95,21 +96,21 @@ export const promptRepo = {
       .input('id', sql.NVarChar, promptId)
       .input('rating', sql.Int, rating)
       .input('comments', sql.NVarChar, comments ?? null)
-      .query('UPDATE ScoringPrompts SET Rating = @rating, Comments = @comments, LastModifiedAt = SYSUTCDATETIME() WHERE Id = @id')
+      .query(`UPDATE ${T('ScoringPrompts')} SET Rating = @rating, Comments = @comments, LastModifiedAt = SYSUTCDATETIME() WHERE Id = @id`)
   },
 
   async deactivateAllForJob(jobId: string): Promise<void> {
     const pool = await getPool()
     await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query("UPDATE ScoringPrompts SET Status = 'inactive', LastModifiedAt = SYSUTCDATETIME() WHERE JobId = @jobId AND Status = 'active'")
+      .query(`UPDATE ${T('ScoringPrompts')} SET Status = 'inactive', LastModifiedAt = SYSUTCDATETIME() WHERE JobId = @jobId AND Status = 'active'`)
   },
 
   async getProductionApproved(jobId: string): Promise<ScoringPrompt | undefined> {
     const pool = await getPool()
     const result = await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query("SELECT * FROM ScoringPrompts WHERE JobId = @jobId AND Status = 'production-approved'")
+      .query(`SELECT * FROM ${T('ScoringPrompts')} WHERE JobId = @jobId AND Status = 'production-approved'`)
     return result.recordset[0] ? rowToPrompt(result.recordset[0]) : undefined
   },
 
@@ -123,7 +124,7 @@ export const promptRepo = {
       .input('status', sql.NVarChar, testRun.status)
       .input('applicationIdsJson', sql.NVarChar, JSON.stringify(testRun.applicationIds))
       .input('createdAt', sql.DateTime2, new Date(testRun.createdAt))
-      .query(`INSERT INTO PromptTestRuns (Id, JobId, PromptId, Status, ApplicationIdsJson, CreatedAt)
+      .query(`INSERT INTO ${T('PromptTestRuns')} (Id, JobId, PromptId, Status, ApplicationIdsJson, CreatedAt)
               VALUES (@id, @jobId, @promptId, @status, @applicationIdsJson, @createdAt)`)
   },
 
@@ -131,7 +132,7 @@ export const promptRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('id', sql.NVarChar, testRunId)
-      .query('SELECT * FROM PromptTestRuns WHERE Id = @id')
+      .query(`SELECT * FROM ${T('PromptTestRuns')} WHERE Id = @id`)
     return result.recordset[0] ? rowToTestRun(result.recordset[0]) : undefined
   },
 
@@ -139,7 +140,7 @@ export const promptRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('promptId', sql.NVarChar, promptId)
-      .query('SELECT * FROM PromptTestRuns WHERE PromptId = @promptId ORDER BY CreatedAt DESC')
+      .query(`SELECT * FROM ${T('PromptTestRuns')} WHERE PromptId = @promptId ORDER BY CreatedAt DESC`)
     return result.recordset.map(rowToTestRun)
   },
 
@@ -153,6 +154,6 @@ export const promptRepo = {
     if (fields.reviewNotes !== undefined) { sets.push('ReviewNotes = @reviewNotes'); req.input('reviewNotes', sql.NVarChar, fields.reviewNotes) }
     if (fields.applicationIds !== undefined) { sets.push('ApplicationIdsJson = @appIds'); req.input('appIds', sql.NVarChar, JSON.stringify(fields.applicationIds)) }
     if (sets.length === 0) return
-    await req.query(`UPDATE PromptTestRuns SET ${sets.join(', ')} WHERE Id = @id`)
+    await req.query(`UPDATE ${T('PromptTestRuns')} SET ${sets.join(', ')} WHERE Id = @id`)
   },
 }

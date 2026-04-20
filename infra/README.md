@@ -114,6 +114,89 @@ The workflow at `.github/workflows/selective-azure-deploy.yml` supports:
 5. **deploy-stack-a** — Deploys Stack A (after shared + package)
 6. **deploy-stack-b** — Deploys Stack B (after shared + package)
 
+## Database Schema Isolation
+
+All 15 application tables are isolated under the `[talentmatch]` schema in Azure SQL. Local SQLite development is completely unaffected.
+
+## Azure SQL Wake-Up Behavior
+
+Pay-as-you-go Azure SQL databases can pause when idle and may take 30-90 seconds to accept connections again. The application is documented and implemented to tolerate that wake-up window.
+
+### Runtime Behavior
+
+| Stack | Resilience Behavior | Defaults |
+|-------|---------------------|----------|
+| **Stack A (Node.js)** | Retries initial `mssql` connect with bounded exponential backoff in `server/storage/db.ts` | `8` attempts, `2000ms` initial delay, `15000ms` max delay |
+| **Stack B (.NET)** | Applies EF Core `EnableRetryOnFailure`, raises SQL connect timeout, and retries startup migration/seed work | `6` provider retries, `15s` max retry delay, minimum `90s` connect timeout |
+
+### Operator Guidance
+
+1. Keep the SQL connection string connect timeout at `90` seconds or higher for Azure-hosted environments.
+2. Expect startup logs showing retry scheduling, success-after-retry, or retry-budget exhaustion if the database is waking from idle.
+3. For Stack A, tune retry behavior with `AZURE_SQL_WAKEUP_MAX_ATTEMPTS`, `AZURE_SQL_WAKEUP_INITIAL_DELAY_MS`, and `AZURE_SQL_WAKEUP_MAX_DELAY_MS` if your environment has different idle resume characteristics.
+4. Store the Azure SQL connection string in Key Vault or deployment secrets exactly as issued, unless you intentionally need a higher `Connect Timeout`.
+
+### How It Works
+
+| Stack | Mechanism | Details |
+|-------|-----------|---------|
+| **Stack A (Node.js)** | `T()` helper in `server/storage/table-names.ts` | Returns `[talentmatch].[Table]` for Azure SQL, plain `Table` for SQLite |
+| **Stack B (.NET)** | `HasDefaultSchema("talentmatch")` in `AppDbContext.cs` | Applied only when `Database.IsSqlServer()` is true |
+| **Terraform** | `terraform_data.ensure_schema` in `modules/foundation/sql/main.tf` | Creates schema via `az sql db query` after database provisioning |
+
+### Schema Creation (Defense in Depth)
+
+The `talentmatch` schema is created at three levels:
+
+1. **Terraform provisioner** — `infra/terraform/modules/foundation/sql/main.tf` creates the schema immediately after database creation
+2. **Application startup** — `server/storage/db.ts` `initializeDatabase()` runs `CREATE SCHEMA` before DDL
+3. **DDL preamble** — `server/storage/schema.sql` includes a schema creation guard at the top
+
+### Adding a New Table (Node.js)
+
+```typescript
+import { T } from '../table-names.js'
+
+// In your repo file — one call per table reference:
+const result = await pool.request()
+  .query(`SELECT * FROM ${T('NewTable')} WHERE Id = @id`)
+```
+
+### Migration Script (dbo → talentmatch)
+
+For existing databases with tables under `[dbo]`, run the idempotent migration:
+
+```bash
+az sql db query \
+  --server sql-talentmatch-dev \
+  --name sqldb-talentmatch-dev \
+  --resource-group rg-talentmatch-dev \
+  --query "$(cat infra/scripts/sql/migrate-schema-dbo-to-talentmatch.sql)"
+```
+
+The script transfers all 15 tables via `ALTER SCHEMA`, skips tables already in the target schema, and prints a summary.
+
+### Verification Queries
+
+```sql
+-- Schema exists?
+SELECT name FROM sys.schemas WHERE name = 'talentmatch';
+
+-- All 15 tables under talentmatch?
+SELECT COUNT(*) FROM sys.tables WHERE schema_id = SCHEMA_ID('talentmatch');
+-- Expected: 15
+
+-- Zero application tables in dbo?
+SELECT COUNT(*) FROM sys.tables
+WHERE schema_id = SCHEMA_ID('dbo')
+  AND name IN ('Users','PasswordResetRequests','Jobs','JobConfigVersions',
+               'Applications','ApplicationDocuments','DocumentBlobs',
+               'ExtractionArtifacts','ScoringRuns','AggregatedResults',
+               'ManualReviews','ScoringPrompts','PromptTestRuns',
+               'FailureQueueItems','ProcessingEvents');
+-- Expected: 0
+```
+
 ## Safe Deprovisioning
 
 **Always use the deprovision wrapper** — never run raw `terraform destroy`.
@@ -156,6 +239,93 @@ SQL_RG=rg-shared-platform
 ```
 
 The deploying identity needs at least `Reader` access on external resource groups containing reused resources.
+
+## Private Network Connectivity (US6)
+
+Both App Services can be configured with VNet Integration and IP access restrictions for private Azure SQL connectivity.
+
+### Architecture
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│  Existing VNet (data source lookup — never created)          │
+│                                                              │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  Delegated Subnet (reuse or create)                  │   │
+│  │  Delegation: Microsoft.Web/serverFarms               │   │
+│  │                                                      │   │
+│  │  ┌─────────────┐    ┌─────────────┐                 │   │
+│  │  │  Stack A     │    │  Stack B     │                │   │
+│  │  │  App Service │    │  App Service │                │   │
+│  │  └──────┬──────┘    └──────┬──────┘                 │   │
+│  │         │                   │                        │   │
+│  └─────────┼───────────────────┼────────────────────────┘   │
+│            │  Private DNS      │                             │
+│            ▼                   ▼                             │
+│  ┌──────────────────────────────────────┐                   │
+│  │  SQL Private Endpoint (pre-existing) │                   │
+│  └──────────────────────────────────────┘                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Networking Foundation Module
+
+Path: `infra/terraform/modules/foundation/networking/`
+
+The module performs a data source lookup on an existing VNet (never creates one) and either:
+- **Reuse mode**: Looks up an existing delegated subnet by name (`existing_subnet_name`)
+- **Create mode**: Creates a new delegated subnet with the specified CIDR (`subnet_cidr`)
+
+The module outputs a stable `integration_subnet_id` regardless of mode.
+
+### Output Flow
+
+```
+shared root (networking module) → integration_subnet_id output
+    → TF_VAR_integration_subnet_id (captured by deploy.sh)
+        → stack-a/stack-b live roots → composition modules → app-service module
+```
+
+### Subnet Modes
+
+| Mode | Variable | Description |
+|------|----------|-------------|
+| Reuse | `AZ_INTEGRATION_SUBNET_NAME` | Looks up existing delegated subnet |
+| Create | `AZ_INTEGRATION_SUBNET_CIDR` | Creates new subnet with delegation (minimum /26) |
+
+These are mutually exclusive — set exactly one.
+
+### IP Access Restrictions
+
+When `AZ_ALLOWED_IPS` is set, all App Services enforce a **deny-all default** with explicit Allow rules for each listed IP. Traffic from non-listed IPs receives HTTP 403.
+
+### Environment Profile Configuration
+
+```ini
+# .env_qa or .env_prod
+AZ_VNET_REUSE=TRUE
+AZ_VNET_NAME=vnet-awr-platform
+AZ_VNET_RG=rg-awr-networking
+AZ_INTEGRATION_SUBNET_NAME=snet-appservice-integration
+AZ_SQL_PRIVATE_ENDPOINT_REUSE=TRUE
+AZ_ALLOWED_IPS=203.0.113.10,198.51.100.20
+```
+
+### Backward Compatibility
+
+Deployments that do not set `AZ_VNET_REUSE=TRUE` work exactly as before — no VNet Integration, no IP restrictions. All new variables default to empty/false.
+
+### Required Azure RBAC Permissions
+
+The deploying identity needs **Network Contributor** on the VNet resource group to create subnets or configure VNet Integration. For reuse-only mode (existing subnet), **Reader** access on the VNet resource group is sufficient.
+
+### Validation Rules
+
+The deploy script validates before any Terraform execution:
+- `AZ_VNET_NAME` and `AZ_VNET_RG` must be set when `AZ_VNET_REUSE=TRUE`
+- Exactly one of `AZ_INTEGRATION_SUBNET_NAME` or `AZ_INTEGRATION_SUBNET_CIDR` must be set
+- CIDR prefix must be ≤26 when creating a new subnet
+- `AZ_ALLOWED_IPS` must be non-empty when VNet is configured
 
 ## Scripts Reference
 

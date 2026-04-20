@@ -1,11 +1,16 @@
 -- ============================================================
 -- TalentMatch Unified Database Schema
 -- Single database shared by Stack A (Node/Express) and Stack B (.NET Blazor)
+-- All tables live under the [talentmatch] schema in Azure SQL.
 -- ============================================================
 
+-- Schema preamble — create the talentmatch schema if it does not exist
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'talentmatch')
+    EXEC('CREATE SCHEMA [talentmatch]')
+
 -- 1. USERS
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Users')
-CREATE TABLE Users (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Users' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].Users (
     Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
     Username        NVARCHAR(100)   NOT NULL,
     Role            NVARCHAR(20)    NOT NULL,
@@ -19,11 +24,11 @@ CREATE TABLE Users (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_Username')
-    CREATE UNIQUE INDEX UX_Users_Username ON Users (Username);
+    CREATE UNIQUE INDEX UX_Users_Username ON [talentmatch].Users (Username);
 
 -- 2. PASSWORD RESET REQUESTS
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PasswordResetRequests')
-CREATE TABLE PasswordResetRequests (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PasswordResetRequests' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].PasswordResetRequests (
     Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
     UserId          NVARCHAR(36)    NOT NULL,
     Username        NVARCHAR(100)   NOT NULL,
@@ -35,11 +40,11 @@ CREATE TABLE PasswordResetRequests (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PasswordResetRequests_Status')
-    CREATE INDEX IX_PasswordResetRequests_Status ON PasswordResetRequests (Status);
+    CREATE INDEX IX_PasswordResetRequests_Status ON [talentmatch].PasswordResetRequests (Status);
 
 -- 3. JOBS
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Jobs')
-CREATE TABLE Jobs (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Jobs' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].Jobs (
     Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
     JobCode                 NVARCHAR(50)    NOT NULL DEFAULT '',
     Title                   NVARCHAR(200)   NOT NULL,
@@ -57,17 +62,17 @@ CREATE TABLE Jobs (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Department')
-    CREATE INDEX IX_Jobs_Department ON Jobs (Department);
+    CREATE INDEX IX_Jobs_Department ON [talentmatch].Jobs (Department);
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_CreatedBy')
-    CREATE INDEX IX_Jobs_CreatedBy ON Jobs (CreatedBy);
+    CREATE INDEX IX_Jobs_CreatedBy ON [talentmatch].Jobs (CreatedBy);
 
 -- 4. JOB CONFIG VERSIONS
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobConfigVersions')
-CREATE TABLE JobConfigVersions (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobConfigVersions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].JobConfigVersions (
     Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    JobId                   NVARCHAR(36)    NOT NULL REFERENCES Jobs(Id) ON DELETE CASCADE,
+    JobId                   NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Jobs(Id) ON DELETE CASCADE,
     VersionNumber           INT             NOT NULL DEFAULT 1,
-    RubricJson              NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
+    RubricJsonNVARCHAR(MAX)   NOT NULL DEFAULT '[]',
     MustHavesJson           NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
     DesiredCriteriaJson     NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
     RunsPerApplication      INT             NOT NULL DEFAULT 3,
@@ -82,15 +87,15 @@ CREATE TABLE JobConfigVersions (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobConfigVersions_JobId')
-    CREATE INDEX IX_JobConfigVersions_JobId ON JobConfigVersions (JobId);
+    CREATE INDEX IX_JobConfigVersions_JobId ON [talentmatch].JobConfigVersions (JobId);
 
 -- 5. APPLICATIONS
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Applications')
-CREATE TABLE Applications (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Applications' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].Applications (
     Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    JobId           NVARCHAR(36)    NOT NULL REFERENCES Jobs(Id) ON DELETE CASCADE,
+    JobId           NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Jobs(Id) ON DELETE CASCADE,
     CandidateRef    NVARCHAR(100)   NOT NULL DEFAULT '',
-    CandidateName   NVARCHAR(200)   NULL,
+    CandidateNameNVARCHAR(200)   NULL,
     CandidateEmail  NVARCHAR(320)   NULL,
     Status          NVARCHAR(30)    NOT NULL DEFAULT 'Queued',
     FinalScore      FLOAT           NULL,
@@ -104,17 +109,17 @@ CREATE TABLE Applications (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_JobId')
-    CREATE INDEX IX_Applications_JobId ON Applications (JobId);
+    CREATE INDEX IX_Applications_JobId ON [talentmatch].Applications (JobId);
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_TestRunId')
-    CREATE INDEX IX_Applications_TestRunId ON Applications (TestRunId) WHERE TestRunId IS NOT NULL;
+    CREATE INDEX IX_Applications_TestRunId ON [talentmatch].Applications (TestRunId) WHERE TestRunId IS NOT NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_JobId_Status')
-    CREATE INDEX IX_Applications_JobId_Status ON Applications (JobId, Status);
+    CREATE INDEX IX_Applications_JobId_Status ON [talentmatch].Applications (JobId, Status);
 
 -- 6. APPLICATION DOCUMENTS (metadata only; blobs in Azure Blob Storage or DocumentBlobs table)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ApplicationDocuments')
-CREATE TABLE ApplicationDocuments (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ApplicationDocuments' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ApplicationDocuments (
     Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    ApplicationId   NVARCHAR(36)    NOT NULL REFERENCES Applications(Id) ON DELETE CASCADE,
+    ApplicationId   NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Applications(Id) ON DELETE CASCADE,
     FileName        NVARCHAR(500)   NOT NULL DEFAULT '',
     MimeType        NVARCHAR(100)   NOT NULL DEFAULT '',
     SizeBytes       BIGINT          NOT NULL DEFAULT 0,
@@ -123,20 +128,20 @@ CREATE TABLE ApplicationDocuments (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ApplicationDocuments_ApplicationId')
-    CREATE INDEX IX_ApplicationDocuments_ApplicationId ON ApplicationDocuments (ApplicationId);
+    CREATE INDEX IX_ApplicationDocuments_ApplicationId ON [talentmatch].ApplicationDocuments (ApplicationId);
 
 -- 7. DOCUMENT BLOBS (raw file content - interim until Azure Blob Storage integration)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'DocumentBlobs')
-CREATE TABLE DocumentBlobs (
-    DocumentId      NVARCHAR(36)    NOT NULL PRIMARY KEY REFERENCES ApplicationDocuments(Id) ON DELETE CASCADE,
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'DocumentBlobs' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].DocumentBlobs (
+    DocumentId      NVARCHAR(36)    NOT NULL PRIMARY KEY REFERENCES [talentmatch].ApplicationDocuments(Id) ON DELETE CASCADE,
     Content         NVARCHAR(MAX)   NOT NULL
 );
 
 -- 8. EXTRACTION ARTIFACTS (1:1 with Application)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ExtractionArtifacts')
-CREATE TABLE ExtractionArtifacts (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ExtractionArtifacts' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ExtractionArtifacts (
     Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    ApplicationId   NVARCHAR(36)    NOT NULL REFERENCES Applications(Id) ON DELETE CASCADE,
+    ApplicationId   NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Applications(Id) ON DELETE CASCADE,
     Markdown        NVARCHAR(MAX)   NOT NULL DEFAULT '',
     ToolVersion     NVARCHAR(50)    NOT NULL DEFAULT '',
     Confidence      FLOAT           NOT NULL DEFAULT 0,
@@ -146,13 +151,13 @@ CREATE TABLE ExtractionArtifacts (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_ExtractionArtifacts_ApplicationId')
-    CREATE UNIQUE INDEX UX_ExtractionArtifacts_ApplicationId ON ExtractionArtifacts (ApplicationId);
+    CREATE UNIQUE INDEX UX_ExtractionArtifacts_ApplicationId ON [talentmatch].ExtractionArtifacts (ApplicationId);
 
 -- 9. SCORING RUNS (N per application)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ScoringRuns')
-CREATE TABLE ScoringRuns (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ScoringRuns' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ScoringRuns (
     Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    ApplicationId           NVARCHAR(36)    NOT NULL REFERENCES Applications(Id) ON DELETE CASCADE,
+    ApplicationId           NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Applications(Id) ON DELETE CASCADE,
     VersionId               NVARCHAR(36)    NOT NULL DEFAULT '',
     RunIndex                INT             NOT NULL,
     ModelDeploymentId       NVARCHAR(100)   NOT NULL DEFAULT '',
@@ -174,13 +179,13 @@ CREATE TABLE ScoringRuns (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ScoringRuns_ApplicationId')
-    CREATE INDEX IX_ScoringRuns_ApplicationId ON ScoringRuns (ApplicationId);
+    CREATE INDEX IX_ScoringRuns_ApplicationId ON [talentmatch].ScoringRuns (ApplicationId);
 
 -- 10. AGGREGATED RESULTS (1:1 with Application)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'AggregatedResults')
-CREATE TABLE AggregatedResults (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'AggregatedResults' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].AggregatedResults (
     Id                          NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    ApplicationId               NVARCHAR(36)    NOT NULL REFERENCES Applications(Id) ON DELETE CASCADE,
+    ApplicationId               NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Applications(Id) ON DELETE CASCADE,
     VersionId                   NVARCHAR(36)    NOT NULL DEFAULT '',
     FinalScore                  FLOAT           NOT NULL,
     FinalSubScoresJson          NVARCHAR(MAX)   NOT NULL DEFAULT '{}',
@@ -194,13 +199,13 @@ CREATE TABLE AggregatedResults (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_AggregatedResults_ApplicationId')
-    CREATE UNIQUE INDEX UX_AggregatedResults_ApplicationId ON AggregatedResults (ApplicationId);
+    CREATE UNIQUE INDEX UX_AggregatedResults_ApplicationId ON [talentmatch].AggregatedResults (ApplicationId);
 
 -- 11. MANUAL REVIEWS (1:1 with Application)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ManualReviews')
-CREATE TABLE ManualReviews (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ManualReviews' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ManualReviews (
     Id                  NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    ApplicationId       NVARCHAR(36)    NOT NULL REFERENCES Applications(Id) ON DELETE CASCADE,
+    ApplicationId       NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Applications(Id) ON DELETE CASCADE,
     JobId               NVARCHAR(36)    NOT NULL DEFAULT '',
     RubricScoresJson    NVARCHAR(MAX)   NOT NULL DEFAULT '{}',
     OverallComment      NVARCHAR(MAX)   NOT NULL DEFAULT '',
@@ -212,13 +217,13 @@ CREATE TABLE ManualReviews (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_ManualReviews_ApplicationId')
-    CREATE UNIQUE INDEX UX_ManualReviews_ApplicationId ON ManualReviews (ApplicationId);
+    CREATE UNIQUE INDEX UX_ManualReviews_ApplicationId ON [talentmatch].ManualReviews (ApplicationId);
 
 -- 12. SCORING PROMPTS
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ScoringPrompts')
-CREATE TABLE ScoringPrompts (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ScoringPrompts' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ScoringPrompts (
     Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    JobId                   NVARCHAR(36)    NOT NULL REFERENCES Jobs(Id) ON DELETE CASCADE,
+    JobId                   NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Jobs(Id) ON DELETE CASCADE,
     VersionNumber           INT             NOT NULL,
     PromptText              NVARCHAR(MAX)   NOT NULL,
     Status                  NVARCHAR(30)    NOT NULL DEFAULT 'draft',
@@ -232,14 +237,14 @@ CREATE TABLE ScoringPrompts (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ScoringPrompts_JobId_Status')
-    CREATE INDEX IX_ScoringPrompts_JobId_Status ON ScoringPrompts (JobId, Status);
+    CREATE INDEX IX_ScoringPrompts_JobId_Status ON [talentmatch].ScoringPrompts (JobId, Status);
 
 -- 13. PROMPT TEST RUNS
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PromptTestRuns')
-CREATE TABLE PromptTestRuns (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PromptTestRuns' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].PromptTestRuns (
     Id                  NVARCHAR(36)    NOT NULL PRIMARY KEY,
-    JobId               NVARCHAR(36)    NOT NULL REFERENCES Jobs(Id),
-    PromptId            NVARCHAR(36)    NOT NULL REFERENCES ScoringPrompts(Id) ON DELETE CASCADE,
+    JobId               NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].Jobs(Id),
+    PromptId            NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].ScoringPrompts(Id) ON DELETE CASCADE,
     Status              NVARCHAR(30)    NOT NULL DEFAULT 'pending_scoring',
     ApplicationIdsJson  NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
     CreatedAt           DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
@@ -249,11 +254,11 @@ CREATE TABLE PromptTestRuns (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PromptTestRuns_PromptId')
-    CREATE INDEX IX_PromptTestRuns_PromptId ON PromptTestRuns (PromptId);
+    CREATE INDEX IX_PromptTestRuns_PromptId ON [talentmatch].PromptTestRuns (PromptId);
 
 -- 14. FAILURE QUEUE (DLQ)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'FailureQueueItems')
-CREATE TABLE FailureQueueItems (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'FailureQueueItems' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].FailureQueueItems (
     Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
     ApplicationId   NVARCHAR(36)    NOT NULL DEFAULT '',
     JobId           NVARCHAR(36)    NOT NULL DEFAULT '',
@@ -272,8 +277,8 @@ CREATE TABLE FailureQueueItems (
 );
 
 -- 15. PROCESSING EVENTS (audit ledger)
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ProcessingEvents')
-CREATE TABLE ProcessingEvents (
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ProcessingEvents' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ProcessingEvents (
     Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
     Actor           NVARCHAR(100)   NOT NULL DEFAULT '',
     Action          NVARCHAR(100)   NOT NULL DEFAULT '',
@@ -285,7 +290,7 @@ CREATE TABLE ProcessingEvents (
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProcessingEvents_Timestamp')
-    CREATE INDEX IX_ProcessingEvents_Timestamp ON ProcessingEvents (Timestamp DESC);
+    CREATE INDEX IX_ProcessingEvents_Timestamp ON [talentmatch].ProcessingEvents (Timestamp DESC);
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProcessingEvents_EntityType_Action')
-    CREATE INDEX IX_ProcessingEvents_EntityType_Action ON ProcessingEvents (EntityType, Action);
+    CREATE INDEX IX_ProcessingEvents_EntityType_Action ON [talentmatch].ProcessingEvents (EntityType, Action);
 

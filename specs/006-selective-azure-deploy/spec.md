@@ -84,6 +84,48 @@ The platform's shared services — database and AI gateway — must be provision
 
 ---
 
+### User Story 5 — Database Schema Isolation (Priority: P2)
+
+When deploying to Azure, all application database tables must reside under a dedicated "talentmatch" schema rather than the default "dbo" schema. This improves database organisation, prevents naming collisions in shared database servers, and follows enterprise database governance best practices. Local development using SQLite is unaffected since SQLite has no schema concept.
+
+**Why this priority**: Proper schema isolation is essential for database governance and multi-application readiness. It must be implemented during initial deployment setup — deploying without it means all tables land in "dbo" and require disruptive retroactive migration later. It shares P2 priority with CI/CD and configuration management because it is a prerequisite for production-ready database deployment.
+
+**Independent Test**: Can be tested by deploying the database schema to an Azure SQL instance and verifying all 14 application tables are created under the "talentmatch" schema (none under "dbo"), then running the full application test suite and verifying all data operations succeed in both stacks.
+
+**Acceptance Scenarios**:
+
+1. **Given** a fresh Azure SQL database, **When** the schema initialisation runs, **Then** a "talentmatch" schema is created and all application tables are created under it — zero tables exist under "dbo".
+2. **Given** the application is running against Azure SQL (either stack), **When** any data operation (create, read, update, delete) is performed, **Then** all queries correctly reference tables in the "talentmatch" schema.
+3. **Given** the application is running with local SQLite, **When** any data operation is performed, **Then** queries work without schema qualification — local development is completely unaffected.
+4. **Given** an existing production database with tables under the "dbo" schema, **When** the schema migration process runs, **Then** all tables and their data are transferred to the "talentmatch" schema without data loss.
+5. **Given** schema qualification is centralised (single point of change), **When** a new table is added to the system, **Then** the developer defines the table name in exactly one place for correct schema qualification across all queries in both stacks.
+6. **Given** both Stack A and Stack B are deployed against the same Azure SQL database, **When** either stack performs data operations, **Then** both stacks use the "talentmatch" schema consistently.
+
+---
+
+### User Story 6 — Private Network Connectivity (Priority: P2)
+
+The deployed App Services (Stack A and Stack B) must be publicly accessible on the internet but restricted to specific IP addresses only — all other inbound traffic is denied. Additionally, the App Services must communicate with Azure SQL Database exclusively over a private Virtual Network (VNet), since Azure SQL has public access disabled. The user already has an existing VNet used by the AWR service backend, and that VNet already has a Private Endpoint for Azure SQL on one of its subnets with a Private DNS zone (`privatelink.database.windows.net`) linked to the VNet. The deployment must integrate with this existing network infrastructure rather than creating new networking resources from scratch.
+
+**Why this priority**: Network security is a prerequisite for production readiness. Without IP restrictions, the App Services are open to the internet. Without VNet Integration, the App Services cannot reach Azure SQL at all (since public access is disabled). This must be implemented alongside the initial deployment (Stories 1–4) because deploying without it results in applications that cannot connect to their database. It shares P2 priority with CI/CD, configuration management, and schema isolation because it is a core infrastructure concern that blocks production use.
+
+**Independent Test**: Can be tested by deploying an App Service with VNet Integration and IP restrictions, verifying that the application can connect to Azure SQL over the private network, that requests from allowed IP addresses succeed, and that requests from non-allowed IP addresses are denied.
+
+**Acceptance Scenarios**:
+
+1. **Given** the deployment is configured with `AZ_VNET_REUSE=true` and the existing VNet details, **When** the infrastructure is provisioned, **Then** the App Services are configured with VNet Integration using a delegated subnet on the existing VNet — no new VNet is created.
+2. **Given** an existing delegated App Service subnet is specified via `AZ_INTEGRATION_SUBNET_NAME`, **When** the infrastructure is provisioned, **Then** the existing subnet is reused for VNet Integration — no new subnet is created.
+3. **Given** no existing integration subnet is specified but `AZ_INTEGRATION_SUBNET_CIDR` is provided, **When** the infrastructure is provisioned, **Then** a new subnet is created on the existing VNet with the specified CIDR, delegated to `Microsoft.Web/serverFarms`, and used for VNet Integration.
+4. **Given** `AZ_ALLOWED_IPS` contains a comma-separated list of public IP addresses, **When** the infrastructure is provisioned, **Then** the App Services have IP access restrictions configured that allow traffic only from those IP addresses — all other inbound traffic is denied by a catch-all deny rule.
+5. **Given** a request originates from an IP address not in the allowed list, **When** the request reaches the App Service, **Then** the request is denied with an HTTP 403 response.
+6. **Given** a request originates from an allowed IP address, **When** the request reaches the App Service, **Then** the request is processed normally.
+7. **Given** `AZ_SQL_PRIVATE_ENDPOINT_REUSE=true` is set, **When** the infrastructure is provisioned, **Then** no new Private Endpoint is created for Azure SQL — the existing Private Endpoint on the VNet is relied upon for connectivity.
+8. **Given** the App Service has VNet Integration configured and the Private DNS zone is linked to the VNet, **When** the application resolves the Azure SQL server hostname, **Then** DNS resolves to the private IP address of the existing Private Endpoint — the connection is established over the private network without any application code changes.
+9. **Given** both Stack A and Stack B are deployed, **When** VNet Integration is configured, **Then** both App Services use the same delegated integration subnet on the existing VNet.
+10. **Given** the integration subnet CIDR is smaller than /26, **When** the infrastructure provisioning runs, **Then** the deployment fails with a clear error indicating that the minimum subnet size for App Service delegation is /26.
+
+---
+
 ### Edge Cases
 
 - What happens when a deployment targets an environment where the other stack is already deployed? — The existing stack's deployment remains unaffected; only the targeted stack is provisioned or updated.
@@ -92,6 +134,16 @@ The platform's shared services — database and AI gateway — must be provision
 - What happens when both stacks are deployed and one needs to be removed? — Removing one stack's compute resources does not affect the other stack or shared infrastructure.
 - What happens when environment configuration references a secret that doesn't exist? — The deployment fails fast with a clear error identifying the missing secret before any resources are provisioned or updated.
 - What happens when `STORAGE_PROVIDER` is set to `local` in a cloud environment? — The system operates with local KV storage; the shared database is provisioned but unused until `STORAGE_PROVIDER` is changed to `azuresql`.
+- What happens when the schema migration runs against a database that already has tables in the "talentmatch" schema? — The migration is idempotent; tables already in the target schema are skipped without error.
+- What happens when the application connects to Azure SQL but the "talentmatch" schema doesn't exist yet? — Schema initialisation creates the schema automatically before any table creation or query execution.
+- What happens when a developer writes a new SQL query without using the centralised schema qualification mechanism? — The query fails in Azure SQL environments because unqualified table names resolve to "dbo" where no tables exist, surfacing the issue during testing.
+- What happens during migration if one table transfer fails midway? — The migration is transactional per table; successfully transferred tables remain in the target schema, and the failure is reported with the specific table name so the operator can re-run.
+- What happens when `AZ_VNET_REUSE=true` is set but `AZ_VNET_NAME` or `AZ_VNET_RG` is missing? — The deployment fails fast with a clear error identifying the missing VNet configuration variables before any resources are provisioned.
+- What happens when neither `AZ_INTEGRATION_SUBNET_NAME` nor `AZ_INTEGRATION_SUBNET_CIDR` is provided? — The deployment fails fast with a clear error explaining that either an existing subnet name or a CIDR for a new subnet must be specified.
+- What happens when the specified integration subnet CIDR overlaps with an existing subnet on the VNet? — The deployment fails with an error from Azure indicating the address space conflict, surfacing the issue before any App Service configuration is attempted.
+- What happens when the specified VNet does not exist or is in a different subscription? — The deployment fails with a clear error indicating the VNet could not be found in the specified resource group.
+- What happens when `AZ_ALLOWED_IPS` is empty or not set? — The deployment fails fast with a clear error, refusing to deploy an App Service without IP restrictions — a default-deny posture is enforced.
+- What happens when an App Service with existing VNet Integration is redeployed? — The redeployment is idempotent; VNet Integration and IP restrictions are applied as a desired-state configuration — existing settings are updated to match, not duplicated.
 
 ## Requirements *(mandatory)*
 
@@ -113,6 +165,22 @@ The platform's shared services — database and AI gateway — must be provision
 - **FR-014**: System MUST fail fast with clear, actionable error messages when required secrets, configuration, or prerequisites are missing.
 - **FR-015**: System MUST ensure removing one stack's deployment does not affect the other stack or shared infrastructure.
 - **FR-016**: System MUST enforce that secrets are never exposed in pipeline logs, build artifacts, or client-side bundles (consistent with constitution Principle IV — no secrets prefixed `VITE_`).
+- **FR-017**: System MUST create all Azure SQL database tables under a dedicated "talentmatch" schema — no application tables may reside in the default "dbo" schema.
+- **FR-018**: System MUST centralise table name qualification so that schema prefixes are managed from a single location rather than hardcoded across individual queries (~91 queries across the Node.js layer and additional queries in the .NET layer).
+- **FR-019**: System MUST automatically apply the correct schema context based on the active database provider — schema-qualified names for Azure SQL, unqualified names for SQLite — without divergent code paths in business logic.
+- **FR-020**: System MUST provide an idempotent migration path to transfer existing tables from the "dbo" schema to the "talentmatch" schema without data loss.
+- **FR-021**: System MUST ensure schema initialisation (creating the "talentmatch" schema if it doesn't exist) runs before any table creation or query execution during application startup.
+- **FR-022**: System MUST apply the dedicated schema consistently in both the Node.js data access layer (Stack A) and the .NET data access layer (Stack B).
+- **FR-023**: System MUST configure VNet Integration for both Stack A and Stack B App Services using a delegated subnet on an existing VNet, enabling private network communication with Azure SQL.
+- **FR-024**: System MUST configure IP access restrictions on both App Services that allow inbound traffic only from explicitly specified IP addresses — all other inbound traffic MUST be denied by a catch-all deny rule.
+- **FR-025**: System MUST support reusing an existing VNet (`AZ_VNET_REUSE=true`) by referencing it via name and resource group — creating a new VNet from scratch is not supported.
+- **FR-026**: System MUST support reusing an existing delegated App Service integration subnet (`AZ_INTEGRATION_SUBNET_NAME`) OR creating a new delegated subnet with a specified CIDR (`AZ_INTEGRATION_SUBNET_CIDR`) — exactly one of these options must be provided.
+- **FR-027**: System MUST support reusing an existing SQL Private Endpoint (`AZ_SQL_PRIVATE_ENDPOINT_REUSE=true`) by skipping Private Endpoint creation when the flag is set — the existing Private Endpoint and Private DNS zone handle connectivity.
+- **FR-028**: System MUST ensure both Stack A and Stack B App Services share the same delegated integration subnet for VNet Integration.
+- **FR-029**: System MUST require no application code changes for private network connectivity — Private DNS resolution transparently routes Azure SQL connections over the private network using existing connection strings.
+- **FR-030**: System MUST validate that any new integration subnet has a minimum CIDR prefix of /26, failing with a clear error if the specified CIDR is too small for App Service delegation.
+- **FR-031**: System MUST fail fast with clear, actionable error messages when required VNet configuration variables (`AZ_VNET_NAME`, `AZ_VNET_RG`) are missing while `AZ_VNET_REUSE=true` is set.
+- **FR-032**: System MUST fail fast with a clear error when `AZ_ALLOWED_IPS` is empty or not set, enforcing a default-deny posture — App Services must never be deployed without IP restrictions.
 
 ### Key Entities
 
@@ -120,6 +188,8 @@ The platform's shared services — database and AI gateway — must be provision
 - **Infrastructure Module**: A self-contained unit of infrastructure-as-code that provisions a specific set of Azure resources — categorised as "shared" (database, API gateway) or "stack-specific" (compute, networking per stack).
 - **Environment Configuration**: A set of key-value pairs and secret references specific to one environment (dev, staging, production) — includes `STORAGE_PROVIDER`, connection strings, API endpoints, and feature flags.
 - **Pipeline Workflow**: A CI/CD workflow definition that orchestrates build, infrastructure provisioning, and application deployment for one or more stacks — supports both automatic (push-triggered) and manual triggers.
+- **Database Schema**: A namespace grouping for database tables within Azure SQL — isolates application tables from the default "dbo" schema, supporting organised multi-application database usage and preventing naming collisions on shared database servers.
+- **VNet Integration**: A network configuration that connects App Services to an Azure Virtual Network via a delegated subnet, enabling private communication with resources on the VNet (such as Azure SQL via Private Endpoint) while the App Services themselves remain publicly accessible (subject to IP access restrictions).
 
 ## Success Criteria *(mandatory)*
 
@@ -133,6 +203,16 @@ The platform's shared services — database and AI gateway — must be provision
 - **SC-006**: A new environment (development, staging, or production) can be fully provisioned from scratch by running the infrastructure-as-code and deployment pipeline — no manual portal steps required.
 - **SC-007**: Shared infrastructure (database, API gateway) is provisioned exactly once per environment, regardless of how many stacks are deployed.
 - **SC-008**: 100% of Azure resources are defined in infrastructure-as-code — no manually created resources exist outside of IaC definitions.
+- **SC-009**: After deployment, 100% of application database tables in Azure SQL exist under the "talentmatch" schema — zero tables remain in the "dbo" schema.
+- **SC-010**: All data operations (create, read, update, delete) succeed identically in both Azure SQL (with schema qualification) and SQLite (without schema qualification) across both stacks — no business-logic code paths differ by database provider.
+- **SC-011**: Adding a new table to the system requires defining its name in exactly one location per stack for schema qualification to apply consistently across all queries referencing that table.
+- **SC-012**: Existing production databases can be migrated from "dbo" to "talentmatch" schema with zero data loss and the migration completes within a single deployment cycle.
+- **SC-013**: After deployment, both App Services connect to Azure SQL exclusively over the private VNet — no database traffic traverses the public internet.
+- **SC-014**: Requests from IP addresses not in the allowed list receive an HTTP 403 response — zero unauthorised IPs can access the App Services.
+- **SC-015**: Requests from allowed IP addresses are processed normally with no degradation compared to unrestricted access.
+- **SC-016**: VNet Integration and IP access restrictions are configured identically for both Stack A and Stack B App Services — no configuration drift between stacks.
+- **SC-017**: Deploying with an existing VNet and existing integration subnet completes without creating any new networking resources — only App Service configuration changes are applied.
+- **SC-018**: Application connection strings remain unchanged after VNet Integration is configured — Private DNS resolution transparently handles the switch to private connectivity.
 
 ## Assumptions
 
@@ -143,6 +223,16 @@ The platform's shared services — database and AI gateway — must be provision
 - Shared infrastructure includes the database and API gateway (with AI backend). Additional shared services (e.g., SignalR, Blob Storage referenced in the constitution's system communication diagram) will be added as future features require them.
 - The `main` branch targets production; feature branches or a `develop` branch target development/staging environments.
 - Deployment authentication uses federated credentials (OIDC) to avoid long-lived secrets for pipeline authentication.
+- The dedicated database schema name is "talentmatch" — this is a fixed convention, not a configurable setting.
+- Existing production databases (if any) currently have all tables under the default "dbo" schema and will require one-time migration.
+- The Node.js data access layer currently contains approximately 91 raw SQL queries across 5 repository files that will need schema-aware table references; the .NET layer uses an ORM plus a small number of raw SQL queries.
+- SQLite (used for local development) has no schema concept and requires no changes — schema qualification must be a no-op in local environments.
+- An existing VNet is available in the user's Azure subscription, used by the AWR service backend — VNet creation from scratch is not a supported scenario.
+- The existing VNet already has a Private Endpoint for Azure SQL on one of its subnets, and a Private DNS zone (`privatelink.database.windows.net`) is linked to the VNet.
+- The existing VNet may or may not already have a delegated App Service integration subnet — the system must handle both cases.
+- The integration subnet (whether existing or newly created) must be a minimum of /26 per Microsoft requirements for App Service VNet Integration delegation.
+- The Terraform service principal must have Network Contributor or equivalent permissions on the existing VNet's resource group to configure VNet Integration and (if needed) create subnets.
+- IP access restrictions use Azure App Service's built-in access restriction feature — no external firewall or WAF is required at this stage.
 
 ## Dependencies
 
@@ -157,10 +247,15 @@ The platform's shared services — database and AI gateway — must be provision
 - Custom domain names, DNS configuration, or SSL certificate management.
 - Monitoring, alerting, or observability setup (application performance monitoring, log analytics) — should be a separate feature.
 - Auto-scaling configuration beyond default hosting plan settings.
-- Database schema migrations or seed data — handled by application startup or separate migration tooling.
+- Database data migrations (row-level transformations), seed data, or ongoing schema evolution tooling — the one-time "dbo" to "talentmatch" schema transfer is in scope (Story 5, FR-020), but general-purpose migration frameworks are not.
 - Multi-region deployment or disaster recovery.
 - Cost optimisation or reserved instance planning.
 - Azure SignalR, Blob Storage, or Service Bus provisioning — referenced in the system communication architecture but deferred until features requiring them are implemented.
+- Creating a brand new VNet from scratch — only reusing an existing VNet is supported for private network connectivity.
+- Network Security Groups (NSGs) on the integration subnet — can be added as a future hardening measure.
+- Azure Front Door or Web Application Firewall (WAF) — can be layered on top of IP access restrictions later.
+- VPN Gateway or ExpressRoute connectivity — out of scope for this feature.
+- Creating new Private Endpoints for Azure SQL — only reusing existing Private Endpoints is supported (the common case where the AWR backend VNet already has one).
 
 ## Appendix A — Terraform Resource Reuse PRD
 
@@ -207,6 +302,8 @@ Allow each environment (local dev, QA/staging, production) to **selectively reus
 | `AZ_APIM_REUSE` | `reuse_apim` | `modules/apim` | `azurerm_api_management` |
 | `AZ_LOGANALYTICS_REUSE` | `reuse_loganalytics` | `modules/log_analytics` | `azurerm_log_analytics_workspace` |
 | `AZ_IDENTITIES_REUSE` | `reuse_identities` | `modules/identities` | `azurerm_user_assigned_identity` (×2) |
+| `AZ_VNET_REUSE` | `reuse_vnet` | `modules/networking` | `azurerm_virtual_network` + `azurerm_subnet` |
+| `AZ_SQL_PRIVATE_ENDPOINT_REUSE` | `reuse_sql_private_endpoint` | `modules/networking` | *(skip PE creation — existing PE on VNet is used)* |
 
 ### 3.3 Existing Resource Details
 
@@ -222,6 +319,9 @@ When a `*_REUSE` flag is `TRUE`, the corresponding resource details must be prov
 | APIM | `AZ_APIM_NAME`, `AZ_APIM_RG` |
 | Log Analytics | `AZ_LOGANALYTICS_NAME`, `AZ_LOGANALYTICS_RG` |
 | Identities | `AZ_IDENTITIES_API_NAME`, `AZ_IDENTITIES_FUNC_NAME`, `AZ_IDENTITIES_RG` |
+| VNet | `AZ_VNET_NAME`, `AZ_VNET_RG`, `AZ_INTEGRATION_SUBNET_NAME` *(if reusing existing subnet)*, `AZ_INTEGRATION_SUBNET_CIDR` *(if creating new subnet)* |
+| SQL Private Endpoint | *(no additional variables — flag only; existing PE is assumed on the VNet)* |
+| IP Restrictions | `AZ_ALLOWED_IPS` *(comma-separated list of allowed public IPs; required for all deployments)* |
 
 ### 3.4 Non-Functional Requirements
 

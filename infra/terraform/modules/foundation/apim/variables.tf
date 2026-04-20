@@ -43,7 +43,7 @@ variable "publisher_name" {
 variable "publisher_email" {
   description = "APIM publisher email"
   type        = string
-  default     = "admin@talentmatch.dev"
+  default     = "admin@example.com"
 }
 
 variable "sku_name" {

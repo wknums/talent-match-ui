@@ -1,4 +1,5 @@
 import { getPool, sql } from '../db.js'
+import { T } from '../table-names.js'
 import type { Job, JobConfigVersion, JobStats } from '../../../src/types/index.js'
 
 function parseJson<T>(val: string | null | undefined, fallback: T): T {
@@ -85,7 +86,7 @@ function rowToConfigVersion(r: any): JobConfigVersion {
 async function getNextVersionNumber(pool: any, jobId: string): Promise<number> {
   const result = await pool.request()
     .input('jobId', sql.NVarChar, jobId)
-    .query('SELECT ISNULL(MAX(VersionNumber), 0) AS maxVersion FROM JobConfigVersions WHERE JobId = @jobId')
+    .query(`SELECT ISNULL(MAX(VersionNumber), 0) AS maxVersion FROM ${T('JobConfigVersions')} WHERE JobId = @jobId`)
   return (result.recordset[0]?.maxVersion ?? 0) + 1
 }
 
@@ -115,8 +116,8 @@ export const jobRepo = {
              cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
              cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
              cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
-      FROM Jobs j
-      LEFT JOIN JobConfigVersions cv ON cv.Id = j.CurrentConfigVersionId
+      FROM ${T('Jobs')} j
+      LEFT JOIN ${T('JobConfigVersions')} cv ON cv.Id = j.CurrentConfigVersionId
       ORDER BY j.CreatedAt DESC
     `)
     return result.recordset.map((r: any) => {
@@ -134,8 +135,8 @@ export const jobRepo = {
                cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
                cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
                cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
-        FROM Jobs j
-        LEFT JOIN JobConfigVersions cv ON cv.Id = j.CurrentConfigVersionId
+        FROM ${T('Jobs')} j
+        LEFT JOIN ${T('JobConfigVersions')} cv ON cv.Id = j.CurrentConfigVersionId
         WHERE j.Department = @dept
         ORDER BY j.CreatedAt DESC
       `)
@@ -154,8 +155,8 @@ export const jobRepo = {
                cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
                cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
                cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
-        FROM Jobs j
-        LEFT JOIN JobConfigVersions cv ON cv.Id = j.CurrentConfigVersionId
+        FROM ${T('Jobs')} j
+        LEFT JOIN ${T('JobConfigVersions')} cv ON cv.Id = j.CurrentConfigVersionId
         WHERE j.Id = @id
       `)
     if (!result.recordset[0]) return undefined
@@ -188,7 +189,7 @@ export const jobRepo = {
         .input('rubricSource', sql.NVarChar, cv.rubricSource)
         .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
         .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
-        .query(`INSERT INTO JobConfigVersions (
+        .query(`INSERT INTO ${T('JobConfigVersions')} (
           Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
           ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
           VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
@@ -212,7 +213,7 @@ export const jobRepo = {
         .input('createdAt', sql.DateTime2, new Date(job.createdAt))
         .input('specDocumentId', sql.NVarChar, job.specDocumentId ?? null)
         .input('rubricDocumentId', sql.NVarChar, job.rubricDocumentId ?? null)
-        .query(`INSERT INTO Jobs (Id, JobCode, Title, Department, Organisation, PostingDate, Status,
+        .query(`INSERT INTO ${T('Jobs')} (Id, JobCode, Title, Department, Organisation, PostingDate, Status,
                 JobDescription, CurrentConfigVersionId, CreatedBy, CreatedAt, SpecDocumentId, RubricDocumentId)
                 VALUES (@id, @jobCode, @title, @department, @organisation, @postingDate, @status,
                 @jobDescription, @currentConfigVersionId, @createdBy, @createdAt, @specDocumentId, @rubricDocumentId)`)
@@ -246,7 +247,7 @@ export const jobRepo = {
         .input('rubricSource', sql.NVarChar, version.rubricSource)
         .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
         .input('createdAt', sql.DateTime2, new Date(version.createdAt))
-        .query(`INSERT INTO JobConfigVersions (
+        .query(`INSERT INTO ${T('JobConfigVersions')} (
           Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
           ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
           VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
@@ -258,7 +259,7 @@ export const jobRepo = {
       await txn.request()
         .input('jobId', sql.NVarChar, version.jobId)
         .input('versionId', sql.NVarChar, version.versionId)
-        .query('UPDATE Jobs SET CurrentConfigVersionId = @versionId, UpdatedAt = SYSUTCDATETIME() WHERE Id = @jobId')
+        .query(`UPDATE ${T('Jobs')} SET CurrentConfigVersionId = @versionId, UpdatedAt = SYSUTCDATETIME() WHERE Id = @jobId`)
 
       await txn.commit()
     } catch (err) {
@@ -271,7 +272,7 @@ export const jobRepo = {
     const pool = await getPool()
     const result = await pool.request()
       .input('jobId', sql.NVarChar, jobId)
-      .query('SELECT * FROM JobConfigVersions WHERE JobId = @jobId ORDER BY CreatedAt')
+      .query(`SELECT * FROM ${T('JobConfigVersions')} WHERE JobId = @jobId ORDER BY CreatedAt`)
     return result.recordset.map(rowToConfigVersion)
   },
 
@@ -283,7 +284,7 @@ export const jobRepo = {
     await pool.request()
       .input('id', sql.NVarChar, versionId)
       .input('val', sql.NVarChar, value)
-      .query(`UPDATE JobConfigVersions SET ${field} = @val WHERE Id = @id`)
+      .query(`UPDATE ${T('JobConfigVersions')} SET ${field} = @val WHERE Id = @id`)
   },
 
   async delete(jobId: string): Promise<boolean> {
@@ -294,15 +295,15 @@ export const jobRepo = {
     try {
       await txn.request()
         .input('jobId', sql.NVarChar, jobId)
-        .query('DELETE FROM FailureQueueItems WHERE JobId = @jobId OR EntityId = @jobId')
+        .query(`DELETE FROM ${T('FailureQueueItems')} WHERE JobId = @jobId OR EntityId = @jobId`)
 
       await txn.request()
         .input('jobId', sql.NVarChar, jobId)
-        .query('DELETE FROM PromptTestRuns WHERE JobId = @jobId')
+        .query(`DELETE FROM ${T('PromptTestRuns')} WHERE JobId = @jobId`)
 
       const result = await txn.request()
         .input('jobId', sql.NVarChar, jobId)
-        .query('DELETE FROM Jobs WHERE Id = @jobId')
+        .query(`DELETE FROM ${T('Jobs')} WHERE Id = @jobId`)
 
       await txn.commit()
       return (result.rowsAffected?.[0] ?? 0) > 0
@@ -331,7 +332,7 @@ export const jobRepo = {
           SUM(CASE WHEN FinalDecision = 'Eligible' AND FinalScore >= @longlistThreshold THEN 1 ELSE 0 END)  AS longlistCount,
           SUM(CASE WHEN FinalDecision = 'Eligible' AND FinalScore >= @shortlistThreshold THEN 1 ELSE 0 END) AS shortlistCount,
           SUM(CASE WHEN FinalDecision = 'Excluded' THEN 1 ELSE 0 END)       AS excludedCount
-        FROM Applications
+        FROM ${T('Applications')}
         WHERE JobId = @jobId AND TestRunId IS NULL
       `)
     const r = result.recordset[0]
