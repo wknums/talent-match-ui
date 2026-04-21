@@ -1,0 +1,67 @@
+{
+  "workflow": "speckit",
+  "specName": "007-fix-stackb-sql-endpoint",
+  "branch": "007-fix-stackb-sql-endpoint",
+  "selectedAt": "2026-04-21T15:07:18.938Z",
+  "currentStep": "completed",
+  "status": "completed",
+  "stepHistory": {
+    "tasks": {
+      "startedAt": "2026-04-21T15:44:27.144Z",
+      "completedAt": "2026-04-21T15:44:27.144Z"
+    },
+    "implement": {
+      "startedAt": "2026-04-21T15:44:27.193Z",
+      "completedAt": "2026-04-21T15:44:50.163Z",
+      "substeps": [
+        {
+          "name": "run-tests",
+          "startedAt": "2026-04-21T15:44:50.163Z",
+          "completedAt": "2026-04-21T15:44:50.163Z"
+        }
+      ]
+    }
+  },
+  "transitions": [
+    {
+      "step": "tasks",
+      "substep": null,
+      "from": {
+        "step": "tasks",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-21T15:44:27.144Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "from": {
+        "step": "specify",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-21T15:44:27.193Z"
+    },
+    {
+      "step": "implement",
+      "substep": "run-tests",
+      "from": {
+        "step": "implement",
+        "substep": null
+      },
+      "by": "ai",
+      "at": "2026-04-21T15:44:50.163Z"
+    },
+    {
+      "step": "completed",
+      "substep": null,
+      "from": {
+        "step": "implement",
+        "substep": "run-tests"
+      },
+      "by": "ai",
+      "at": "2026-04-21T15:44:50.163Z"
+    }
+  ]
+}

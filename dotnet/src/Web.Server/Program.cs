@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
@@ -58,27 +59,50 @@ var app = builder.Build();
 // Validate AWReason API auth configuration at startup
 AwrAuthHandler.ValidateConfiguration();
 
-// Ensure database is created and seed default admin
-await ExecuteWithSqlWarmupRetryAsync(async () =>
+var useBackgroundAzureSqlWarmup =
+    !app.Environment.IsEnvironment("Testing")
+    && string.Equals(builder.Configuration["DatabaseProvider"], "sqlserver", StringComparison.OrdinalIgnoreCase);
+
+if (useBackgroundAzureSqlWarmup)
 {
-    using var scope = app.Services.CreateScope();
+    Console.WriteLine("[startup] Azure SQL detected; continuing startup while database initialization runs in the background.");
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await ExecuteWithSqlWarmupRetryAsync(() => InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment));
+            Console.WriteLine("[startup] Background database initialization complete.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[startup] Background Azure SQL initialization failed: {ex.Message}");
+        }
+    });
+}
+else
+{
+    await InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment);
+}
+
+static Task InitializeApplicationDataAsync(IServiceProvider services, string contentRootPath, IHostEnvironment environment)
+{
+    using var scope = services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    if (app.Environment.IsEnvironment("Testing"))
+    if (environment.IsEnvironment("Testing"))
     {
         db.Database.EnsureCreated();
     }
     else if (db.Database.IsSqlite())
     {
-        EnsureSharedSqliteSchemaIfNeeded(db, app.Environment.ContentRootPath);
+        EnsureSharedSqliteSchemaIfNeeded(db, contentRootPath);
         BaselineSharedSqliteSchemaIfNeeded(db);
     }
     else
     {
-        db.Database.Migrate();
+        EnsureSharedAzureSqlSchemaIfNeeded(db, contentRootPath);
     }
 
-    // Seed default admin user if no users exist (matches Stack A init-users.ts / AUTHENTICATION.md)
     if (!db.Users.Any())
     {
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("adm1n99")));
@@ -92,7 +116,9 @@ await ExecuteWithSqlWarmupRetryAsync(async () =>
         });
         db.SaveChanges();
     }
-});
+
+    return Task.CompletedTask;
+}
 
 static async Task ExecuteWithSqlWarmupRetryAsync(Func<Task> operation)
 {
@@ -280,7 +306,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         if (hasExistingSchema)
             return;
 
-        var schemaPath = Path.GetFullPath(Path.Combine(contentRootPath, "..", "..", "..", "server", "storage", "schema-sqlite.sql"));
+        var schemaPath = ResolveSharedSchemaPath(contentRootPath, "schema-sqlite.sql");
         if (!File.Exists(schemaPath))
             throw new FileNotFoundException($"Shared SQLite schema file not found: {schemaPath}");
 
@@ -293,6 +319,56 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         if (shouldClose)
             connection.Close();
     }
+}
+
+static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRootPath)
+{
+    if (!db.Database.IsSqlServer())
+        return;
+
+    var schemaPath = ResolveSharedSchemaPath(contentRootPath, "schema.sql");
+    if (!File.Exists(schemaPath))
+        throw new FileNotFoundException($"Shared Azure SQL schema file not found: {schemaPath}");
+
+    var schemaSql = File.ReadAllText(schemaPath);
+    var batches = Regex.Split(schemaSql, @"\r?\n(?=IF NOT EXISTS|CREATE (?:UNIQUE )?INDEX)")
+        .Select(batch => batch.Trim())
+        .Where(batch => batch.Length > 0 && !batch.StartsWith("--"));
+
+    // Use ADO.NET DbCommand instead of ExecuteSqlRaw to avoid FormatException
+    // on SQL containing curly braces (e.g. DEFAULT '{}') which ExecuteSqlRaw
+    // misinterprets as parameter placeholders. Mirrors the SQLite bootstrap pattern.
+    var connection = db.Database.GetDbConnection();
+    var shouldClose = connection.State != System.Data.ConnectionState.Open;
+    if (shouldClose)
+        connection.Open();
+
+    try
+    {
+        foreach (var batch in batches)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = batch;
+            command.ExecuteNonQuery();
+        }
+    }
+    finally
+    {
+        if (shouldClose)
+            connection.Close();
+    }
+}
+
+static string ResolveSharedSchemaPath(string contentRootPath, string fileName)
+{
+    var candidates = new[]
+    {
+        Path.GetFullPath(Path.Combine(contentRootPath, "server", "storage", fileName)),
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "server", "storage", fileName)),
+        Path.GetFullPath(Path.Combine(contentRootPath, "..", "..", "..", "server", "storage", fileName)),
+    };
+
+    return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
 }
 
 if (app.Environment.IsDevelopment())
@@ -310,6 +386,7 @@ app.UseAuthorization();
 
 // Map endpoints
 app.MapAuthEndpoints();
+app.MapHealthEndpoints();
 app.MapUsersEndpoints();
 app.MapJobsEndpoints();
 app.MapApplicationsEndpoints();
