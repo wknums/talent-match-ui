@@ -26,6 +26,12 @@
             {
                 <div style="border: 2px dashed #ccc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
                     <InputFile OnChange="OnFilesSelected" multiple />
+                    @if (!string.IsNullOrWhiteSpace(uploadError))
+                    {
+                        <div style="margin-top: 0.75rem; padding: 0.75rem; background: #fed7d7; color: #822727; border: 1px solid #feb2b2; border-radius: 4px; white-space: pre-wrap; word-break: break-word;">
+                            @uploadError
+                        </div>
+                    }
                     <button @onclick="SubmitTestFiles" disabled="@isUploading" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
                         @(isUploading ? "Uploading..." : "Start Test Run")
                     </button>
@@ -271,6 +277,7 @@
     private List<IBrowserFile> selectedFiles = new();
     private System.Threading.Timer? _pollTimer;
     private bool _disposed;
+    private string? uploadError;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -361,12 +368,14 @@
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
         selectedFiles = e.GetMultipleFiles(20).ToList();
+        uploadError = null;
     }
 
     private async Task SubmitTestFiles()
     {
         if (ActivePrompt == null || !selectedFiles.Any()) return;
         isUploading = true;
+        uploadError = null;
         StateHasChanged();
         try
         {
@@ -389,6 +398,14 @@
             selectedFiles.Clear();
             testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
             StartPolling();
+        }
+        catch (ApiException ex)
+        {
+            uploadError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            uploadError = ex.Message;
         }
         finally
         {

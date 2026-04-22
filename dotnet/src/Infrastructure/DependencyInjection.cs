@@ -20,7 +20,7 @@ public static class DependencyInjection
 
         if (provider.Equals("sqlserver", StringComparison.OrdinalIgnoreCase))
         {
-            var connectionString = BuildResilientSqlServerConnectionString(configuration.GetConnectionString("DefaultConnection"));
+            var connectionString = BuildResilientSqlServerConnectionString(ResolveSqlServerConnectionString(configuration));
             services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlServer(connectionString, sqlOptions =>
                 {
@@ -73,6 +73,46 @@ public static class DependencyInjection
         if (builder.ConnectTimeout < 90)
         {
             builder.ConnectTimeout = 90;
+        }
+
+        return builder.ConnectionString;
+    }
+
+    private static string? ResolveSqlServerConnectionString(IConfiguration configuration)
+    {
+        var configuredConnectionString = configuration.GetConnectionString("DefaultConnection");
+        if (!string.IsNullOrWhiteSpace(configuredConnectionString))
+        {
+            return configuredConnectionString;
+        }
+
+        var authMode = configuration["AZURE_SQL_AUTH_MODE"];
+        var server = configuration["AZURE_SQL_SERVER_FQDN"];
+        var database = configuration["AZURE_SQL_DATABASE_NAME"];
+        if (!string.Equals(authMode, "entra", StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(database)))
+        {
+            throw new InvalidOperationException("DatabaseProvider=sqlserver requires either ConnectionStrings__DefaultConnection or the Entra settings AZURE_SQL_AUTH_MODE=entra, AZURE_SQL_SERVER_FQDN, and AZURE_SQL_DATABASE_NAME.");
+        }
+
+        if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(database))
+        {
+            throw new InvalidOperationException("AZURE_SQL_SERVER_FQDN and AZURE_SQL_DATABASE_NAME are required when Azure SQL Entra authentication is enabled.");
+        }
+
+        var builder = new SqlConnectionStringBuilder
+        {
+            DataSource = server,
+            InitialCatalog = database,
+            Encrypt = true,
+            TrustServerCertificate = false,
+            Authentication = SqlAuthenticationMethod.ActiveDirectoryManagedIdentity,
+        };
+
+        var clientId = configuration["AZURE_CLIENT_ID"];
+        if (!string.IsNullOrWhiteSpace(clientId))
+        {
+            builder.UserID = clientId;
         }
 
         return builder.ConnectionString;

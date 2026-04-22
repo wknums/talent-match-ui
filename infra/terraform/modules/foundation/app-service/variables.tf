@@ -47,6 +47,12 @@ variable "app_settings" {
   default     = {}
 }
 
+variable "app_command_line" {
+  description = "Optional startup command for Linux App Service"
+  type        = string
+  default     = ""
+}
+
 variable "virtual_network_subnet_id" {
   description = "Integration subnet ID for VNet Integration. When set, enables outbound VNet connectivity."
   type        = string

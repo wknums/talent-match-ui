@@ -13,8 +13,6 @@ public class ApplicationRepository : IApplicationRepository
 
     public async Task<IReadOnlyList<TalentMatch.Domain.Entities.Application>> GetByJobIdAsync(string jobId, CancellationToken ct = default)
         => await _context.Applications
-            .Include(a => a.Documents)
-            .Include(a => a.ScoringRuns)
             .Where(a => a.JobId == jobId)
             .AsNoTracking()
             .ToListAsync(ct);
@@ -45,6 +43,14 @@ public class ApplicationRepository : IApplicationRepository
     public async Task AddDocumentAsync(ApplicationDocument document, CancellationToken ct = default)
     {
         var blobContent = document.ContentBase64;
+        document.UploadTimestamp ??= DateTime.UtcNow;
+
+        if (_context.Database.IsSqlite())
+        {
+            await InsertSqliteDocumentAsync(document, blobContent, ct);
+            return;
+        }
+
         await _context.ApplicationDocuments.AddAsync(document, ct);
         if (!string.IsNullOrEmpty(blobContent))
         {
@@ -55,6 +61,115 @@ public class ApplicationRepository : IApplicationRepository
             }, ct);
         }
         await _context.SaveChangesAsync(ct);
+    }
+
+    private async Task InsertSqliteDocumentAsync(ApplicationDocument document, string? blobContent, CancellationToken ct)
+    {
+        var docColumns = await GetSqliteTableColumnsAsync("ApplicationDocuments", ct);
+        var connection = _context.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+
+        if (shouldClose)
+            await connection.OpenAsync(ct);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            var columns = new List<string>();
+            var values = new List<string>();
+
+            void AddValue(string columnName, object value)
+            {
+                if (!docColumns.Contains(columnName))
+                    return;
+
+                var parameterName = $"${columnName}";
+                columns.Add($"\"{columnName}\"");
+                values.Add(parameterName);
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = parameterName;
+                parameter.Value = value;
+                command.Parameters.Add(parameter);
+            }
+
+            var fileType = string.IsNullOrWhiteSpace(document.FileType)
+                ? "application/octet-stream"
+                : document.FileType;
+            var uploadedAtInstant = document.UploadTimestamp ?? DateTime.UtcNow;
+            document.UploadTimestamp = uploadedAtInstant;
+            var uploadedAt = uploadedAtInstant.ToString("O", CultureInfo.InvariantCulture);
+
+            AddValue("Id", document.Id);
+            AddValue("ApplicationId", document.ApplicationId);
+            AddValue("FileName", document.FileName);
+            AddValue("MimeType", fileType);
+            AddValue("FileType", fileType);
+            AddValue("SizeBytes", document.FileSize);
+            AddValue("FileSize", document.FileSize);
+            AddValue("Fingerprint", document.Fingerprint);
+            AddValue("UploadedAt", uploadedAt);
+            AddValue("UploadTimestamp", uploadedAt);
+
+            command.CommandText = $"INSERT INTO \"ApplicationDocuments\" ({string.Join(", ", columns)}) VALUES ({string.Join(", ", values)});";
+            await command.ExecuteNonQueryAsync(ct);
+
+            if (!string.IsNullOrEmpty(blobContent))
+            {
+                var blobColumns = await GetSqliteTableColumnsAsync("DocumentBlobs", ct);
+                if (blobColumns.Contains("DocumentId") && blobColumns.Contains("Content"))
+                {
+                    await using var blobCommand = connection.CreateCommand();
+                    blobCommand.CommandText = "INSERT OR REPLACE INTO \"DocumentBlobs\" (\"DocumentId\", \"Content\") VALUES ($DocumentId, $Content);";
+
+                    var idParameter = blobCommand.CreateParameter();
+                    idParameter.ParameterName = "$DocumentId";
+                    idParameter.Value = document.Id;
+                    blobCommand.Parameters.Add(idParameter);
+
+                    var contentParameter = blobCommand.CreateParameter();
+                    contentParameter.ParameterName = "$Content";
+                    contentParameter.Value = blobContent;
+                    blobCommand.Parameters.Add(contentParameter);
+
+                    await blobCommand.ExecuteNonQueryAsync(ct);
+                }
+            }
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
+    }
+
+    private async Task<HashSet<string>> GetSqliteTableColumnsAsync(string tableName, CancellationToken ct)
+    {
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var connection = _context.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+
+        if (shouldClose)
+            await connection.OpenAsync(ct);
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA table_info(\"{tableName}\");";
+
+            await using var reader = await command.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                if (!reader.IsDBNull(1))
+                    columns.Add(reader.GetString(1));
+            }
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
+
+        return columns;
     }
 
     public async Task<IReadOnlyList<ApplicationDocument>> GetDocumentsAsync(string applicationId, CancellationToken ct = default)
@@ -187,6 +302,12 @@ public class ApplicationRepository : IApplicationRepository
 
     public async Task SetExtractionAsync(ExtractionArtifact extraction, CancellationToken ct = default)
     {
+        if (_context.Database.IsSqlite())
+        {
+            await UpsertSqliteExtractionAsync(extraction, ct);
+            return;
+        }
+
         var existing = await _context.ExtractionArtifacts
             .FirstOrDefaultAsync(e => e.ApplicationId == extraction.ApplicationId, ct);
 
@@ -203,6 +324,106 @@ public class ApplicationRepository : IApplicationRepository
         }
 
         await _context.SaveChangesAsync(ct);
+    }
+
+    private async Task UpsertSqliteExtractionAsync(ExtractionArtifact extraction, CancellationToken ct)
+    {
+        var columns = await GetSqliteTableColumnsAsync("ExtractionArtifacts", ct);
+        var connection = _context.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+
+        if (shouldClose)
+            await connection.OpenAsync(ct);
+
+        try
+        {
+            string? existingId = null;
+            await using (var selectCommand = connection.CreateCommand())
+            {
+                selectCommand.CommandText = "SELECT \"Id\" FROM \"ExtractionArtifacts\" WHERE \"ApplicationId\" = $ApplicationId LIMIT 1;";
+                var appIdParameter = selectCommand.CreateParameter();
+                appIdParameter.ParameterName = "$ApplicationId";
+                appIdParameter.Value = extraction.ApplicationId;
+                selectCommand.Parameters.Add(appIdParameter);
+
+                var value = await selectCommand.ExecuteScalarAsync(ct);
+                existingId = value as string;
+            }
+
+            if (!string.IsNullOrWhiteSpace(existingId))
+                extraction.Id = existingId;
+
+            var normalisedText = extraction.NormalisedText ?? string.Empty;
+            var createdAt = extraction.CreatedAt.ToString("O", CultureInfo.InvariantCulture);
+            var assignments = new List<string>();
+
+            await using var command = connection.CreateCommand();
+
+            void AddParam(string name, object value)
+            {
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = name;
+                parameter.Value = value;
+                command.Parameters.Add(parameter);
+            }
+
+            void AddAssignment(string columnName, string parameterName, object value)
+            {
+                if (!columns.Contains(columnName))
+                    return;
+
+                assignments.Add($"\"{columnName}\" = {parameterName}");
+                AddParam(parameterName, value);
+            }
+
+            if (!string.IsNullOrWhiteSpace(existingId))
+            {
+                AddAssignment("Markdown", "$Markdown", normalisedText);
+                AddAssignment("NormalisedText", "$NormalisedText", normalisedText);
+                AddAssignment("Confidence", "$Confidence", extraction.ConfidenceScore);
+                AddAssignment("ConfidenceScore", "$ConfidenceScore", extraction.ConfidenceScore);
+                AddAssignment("Status", "$Status", extraction.Status);
+
+                if (assignments.Count > 0)
+                {
+                    AddParam("$Id", extraction.Id);
+                    command.CommandText = $"UPDATE \"ExtractionArtifacts\" SET {string.Join(", ", assignments)} WHERE \"Id\" = $Id;";
+                    await command.ExecuteNonQueryAsync(ct);
+                }
+
+                return;
+            }
+
+            var insertColumns = new List<string>();
+            var insertValues = new List<string>();
+
+            void AddInsert(string columnName, string parameterName, object value)
+            {
+                if (!columns.Contains(columnName))
+                    return;
+
+                insertColumns.Add($"\"{columnName}\"");
+                insertValues.Add(parameterName);
+                AddParam(parameterName, value);
+            }
+
+            AddInsert("Id", "$Id", extraction.Id);
+            AddInsert("ApplicationId", "$ApplicationId", extraction.ApplicationId);
+            AddInsert("Markdown", "$Markdown", normalisedText);
+            AddInsert("NormalisedText", "$NormalisedText", normalisedText);
+            AddInsert("Confidence", "$Confidence", extraction.ConfidenceScore);
+            AddInsert("ConfidenceScore", "$ConfidenceScore", extraction.ConfidenceScore);
+            AddInsert("Status", "$Status", extraction.Status);
+            AddInsert("CreatedAt", "$CreatedAt", createdAt);
+
+            command.CommandText = $"INSERT INTO \"ExtractionArtifacts\" ({string.Join(", ", insertColumns)}) VALUES ({string.Join(", ", insertValues)});";
+            await command.ExecuteNonQueryAsync(ct);
+        }
+        finally
+        {
+            if (shouldClose)
+                await connection.CloseAsync();
+        }
     }
 
     public async Task<ExtractionArtifact?> GetExtractionAsync(string applicationId, CancellationToken ct = default)

@@ -26,8 +26,8 @@ export function T(tableName: string): string
 
 | Condition | Input | Output |
 |-----------|-------|--------|
-| `AZURE_SQL_CONNECTION_STRING` is set (Azure SQL) | `T('Users')` | `[talentmatch].[Users]` |
-| `AZURE_SQL_CONNECTION_STRING` is unset (SQLite) | `T('Users')` | `Users` |
+| `STORAGE_PROVIDER=azuresql` with Azure SQL metadata configured | `T('Users')` | `[talentmatch].[Users]` |
+| Azure SQL metadata is unset / local SQLite path | `T('Users')` | `Users` |
 
 ### Constants
 

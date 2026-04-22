@@ -171,7 +171,8 @@ public class ApiClient
     public async Task<bool> CreateJobAsync(CreateJobDto job)
     {
         var response = await _http.PostAsJsonAsync("/api/jobs", job);
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to create job.");
+        return true;
     }
 
     public async Task UpdateJobConfigAsync(string jobId, UpdateConfigDto config)
@@ -239,7 +240,15 @@ public class ApiClient
 
     // Applications
     public async Task<List<ApplicationDto>> GetApplicationsAsync(string jobId, string? list = null)
-        => await _http.GetFromJsonAsync<List<ApplicationDto>>($"/api/jobs/{jobId}/applications?list={list}") ?? new();
+    {
+        var requestUri = string.IsNullOrWhiteSpace(list)
+            ? $"/api/jobs/{jobId}/applications"
+            : $"/api/jobs/{jobId}/applications?list={Uri.EscapeDataString(list)}";
+
+        var response = await _http.GetAsync(requestUri);
+        await EnsureSuccessOrThrowAsync(response, "Failed to load job applications.");
+        return await response.Content.ReadFromJsonAsync<List<ApplicationDto>>() ?? new();
+    }
 
     public async Task<ApplicationDto?> GetApplicationAsync(string applicationId)
         => await _http.GetFromJsonAsync<ApplicationDto>($"/api/applications/{applicationId}");
@@ -356,7 +365,7 @@ public class ApiClient
     public async Task<PromptTestRunDto?> CreateTestRunAsync(string jobId, string promptId, object files)
     {
         var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs", new { Files = files });
-        if (!response.IsSuccessStatusCode) return null;
+        await EnsureSuccessOrThrowAsync(response, "Failed to create prompt test run.");
         return await response.Content.ReadFromJsonAsync<PromptTestRunDto>();
     }
 

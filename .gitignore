@@ -50,7 +50,19 @@ coverage/
 # Build artifacts
 build/
 *.tmp
+.tmp-*
 Thumbs.db
+
+# Runtime / live diagnostic snapshots (may contain infra hostnames or tokens)
+health-live.json
+deployment_logs.json
+curl_cookies.txt
+
+# Local build/deploy artifacts
+artifacts/
+
+# Misplaced nested specs copy
+specs/specs/
 
 .spark-workbench-id
 .spark-initial-sha

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
-import { jobRepo, applicationRepo, userRepo } from '../storage/repos/index.js'
+import { jobRepo, applicationRepo, userRepo, dlqRepo } from '../storage/repos/index.js'
 import { requireRole } from '../middleware/rbac.js'
 import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'

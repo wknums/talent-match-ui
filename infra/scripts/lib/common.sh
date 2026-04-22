@@ -129,7 +129,17 @@ export_tf_vars() {
   # Runtime settings (non-secret, safe to export)
   export TF_VAR_storage_provider="${STORAGE_PROVIDER:-azuresql}"
   export TF_VAR_awr_auth_mode="${AWR_AUTH_MODE:-none}"
+  export TF_VAR_awr_max_parallel="${AWR_MAX_PARALLEL:-1}"
+  export TF_VAR_awr_seq_api_endpoint="${AWR_SEQ_API_ENDPOINT:-}"
+  export TF_VAR_api_mode="${API_MODE:-mock}"
   export TF_VAR_database_provider="${DATABASE_PROVIDER:-sqlserver}"
+  local use_key_vault_default="TRUE"
+  if [[ "${ENVIRONMENT:-}" != "prod" ]]; then
+    use_key_vault_default="FALSE"
+  fi
+  export TF_VAR_use_key_vault_secret_refs="$(bool_to_tf "${USE_KEY_VAULT_SECRET_REFS:-$use_key_vault_default}")"
+  export TF_VAR_awr_api_key="${AWR_API_KEY:-}"
+  export TF_VAR_openai_api_key="${OPENAI_API_KEY:-}"
 
   # VNet / Networking (US6)
   export TF_VAR_reuse_vnet="$(bool_to_tf "${AZ_VNET_REUSE:-FALSE}")"
@@ -281,4 +291,83 @@ print_banner() {
   echo -e "${CYAN} $*${NC}"
   echo -e "${CYAN}=============================================================================${NC}"
   echo ""
+}
+
+# ---------------------------------------------------------------------------
+# create_zip_artifact — Create a zip file from a directory
+# ---------------------------------------------------------------------------
+create_zip_artifact() {
+  local source_dir="${1:?Usage: create_zip_artifact <source_dir> <artifact_path>}"
+  local artifact_path="${2:?Usage: create_zip_artifact <source_dir> <artifact_path>}"
+
+  rm -f "$artifact_path"
+
+  # Prefer Python zipfile for deterministic, cross-platform archives.
+  # This avoids Windows backslash path issues and works on GitHub Actions runners.
+  if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+    local py_exec="python"
+    if command -v python3 >/dev/null 2>&1; then
+      py_exec="python3"
+    fi
+
+    "$py_exec" - "$source_dir" "$artifact_path" <<'PY'
+import os
+import sys
+import zipfile
+
+source_dir = os.path.abspath(sys.argv[1])
+artifact_path = os.path.abspath(sys.argv[2])
+
+os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+
+with zipfile.ZipFile(artifact_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    for root, dirs, files in os.walk(source_dir):
+        dirs[:] = [d for d in dirs if ".git" not in d]
+        for filename in files:
+            if ".git" in filename:
+                continue
+            full_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(full_path, source_dir)
+            # Ensure Linux-compatible forward slashes in archive entries.
+            arcname = rel_path.replace(os.sep, "/")
+            zf.write(full_path, arcname)
+PY
+    return
+  fi
+
+  if command -v zip >/dev/null 2>&1; then
+    (
+      cd "$source_dir"
+      zip -r "$artifact_path" . -x "*.git*"
+    )
+    return
+  fi
+
+  if command -v powershell.exe >/dev/null 2>&1; then
+    local source_dir_win="$source_dir"
+    local artifact_path_win="$artifact_path"
+
+    if command -v cygpath >/dev/null 2>&1; then
+      source_dir_win="$(cygpath -w "$source_dir")"
+      artifact_path_win="$(cygpath -w "$artifact_path")"
+    fi
+
+    powershell.exe -NoProfile -Command "& {
+      \$source = '$source_dir_win\\*'
+      \$destination = '$artifact_path_win'
+      if (Test-Path \$destination) { Remove-Item \$destination -Force }
+      Compress-Archive -Path \$source -DestinationPath \$destination -Force
+    }"
+    return
+  fi
+
+  if command -v tar >/dev/null 2>&1; then
+    (
+      cd "$source_dir"
+      tar -a -cf "$artifact_path" .
+    )
+    return
+  fi
+
+  log_fatal "No supported archiver found (python3/python, zip, powershell, tar) for $artifact_path"
 }

@@ -14,6 +14,15 @@ locals {
   stack_b_extra_app_settings = var.awr_seq_api_endpoint != "" ? {
     AWR_SEQ_API_ENDPOINT = var.awr_seq_api_endpoint
   } : {}
+
+  stack_b_runtime_app_settings = merge(
+    local.stack_b_extra_app_settings,
+    {
+      AWR_AUTH_MODE    = var.awr_auth_mode
+      AWR_MAX_PARALLEL = tostring(var.awr_max_parallel)
+      API_MODE         = var.api_mode
+    }
+  )
 }
 
 module "stack_b" {
@@ -33,7 +42,7 @@ module "stack_b" {
   use_key_vault_secret_refs = var.use_key_vault_secret_refs
   awr_api_key               = var.awr_api_key
   openai_api_key            = var.openai_api_key
-  extra_app_settings        = local.stack_b_extra_app_settings
+  extra_app_settings        = local.stack_b_runtime_app_settings
 
   virtual_network_subnet_id = var.integration_subnet_id != "" ? var.integration_subnet_id : null
   allowed_ips               = var.allowed_ips

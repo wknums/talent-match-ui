@@ -118,10 +118,10 @@ Per-environment vault for shared runtime secrets.
 |----------|------|-------------|
 | name | string | `kv-talentmatch-{env}` or reused vault name |
 | enableRbacAuthorization | bool | `true` |
-| secrets | list | `sql-connection-string`, `openai-api-key`, `awr-api-key` |
+| secrets | list | `openai-api-key`, `awr-api-key` |
 | reuse | bool | Whether the vault is looked up instead of created |
 
-**Relationships**: Referenced by both app hosts for runtime secret resolution.
+**Relationships**: Referenced by both app hosts for runtime secret resolution (non-SQL secrets only).
 **Ownership Rule**: Secrets and role assignments are managed only when the vault is created by this feature.
 
 ---

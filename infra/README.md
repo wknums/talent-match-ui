@@ -90,6 +90,127 @@ cp .env_prod.example .env_prod
 | `action` | `plan`, `apply` |
 | `target` | `shared-only`, `stack-a`, `stack-b`, `both` |
 
+## Full Local Azure Deployment (Infra + Packaging + App Deploy)
+
+This runbook mirrors the CI workflow but executes manually from your terminal.
+
+### Prerequisites
+
+- Azure CLI, Terraform, Node.js/npm, and .NET SDK installed.
+- Run from repo root.
+- Use Git Bash on Windows.
+- Target environment profile exists (`.env_local`, `.env_qa`, or `.env_prod`).
+
+```bash
+# Authenticate and select subscription
+az login
+
+# Optional but recommended: set your active subscription explicitly
+az account set --subscription "<subscription-id-or-name>"
+```
+
+### Stack A: Full Deploy (Shared Infra + Stack A Infra + Package + Zip Deploy)
+
+```bash
+# 1) Provision/update shared + Stack A infrastructure
+./infra/scripts/deploy.sh .env_qa test apply stack-a
+
+# 2) Build/package Stack A artifact (artifacts/stack-a.zip)
+./infra/scripts/package-stack-a.sh
+
+# 3) Load resource group from profile and resolve deployed app name
+set -a
+source .env_qa
+set +a
+STACK_A_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-a output -raw app_name)"
+
+# 4) Deploy packaged zip to App Service
+az webapp deploy \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$STACK_A_APP_NAME" \
+  --src-path artifacts/stack-a.zip \
+  --type zip \
+  --async true
+```
+
+### Stack B: Full Deploy (Shared Infra + Stack B Infra + Package + Zip Deploy)
+
+```bash
+# 1) Provision/update shared + Stack B infrastructure
+./infra/scripts/deploy.sh .env_qa test apply stack-b
+
+# 2) Publish/package Stack B artifact (artifacts/stack-b.zip)
+./infra/scripts/package-stack-b.sh
+
+# 3) Load resource group from profile and resolve deployed app name
+set -a
+source .env_qa
+set +a
+STACK_B_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-b output -raw app_name)"
+
+# 4) Deploy packaged zip to App Service
+az webapp deploy \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$STACK_B_APP_NAME" \
+  --src-path artifacts/stack-b.zip \
+  --type zip \
+  --async true
+```
+
+### Both Stacks: Full Deploy (One Infra Pass + Both Packages + Both App Deploys)
+
+```bash
+# 1) Provision/update shared + both stack infrastructures
+./infra/scripts/deploy.sh .env_qa test apply both
+
+# 2) Build both deployable artifacts
+./infra/scripts/package-stack-a.sh
+./infra/scripts/package-stack-b.sh
+
+# 3) Load resource group and resolve app names
+set -a
+source .env_qa
+set +a
+STACK_A_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-a output -raw app_name)"
+STACK_B_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-b output -raw app_name)"
+
+# 4) Deploy both artifacts
+az webapp deploy \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$STACK_A_APP_NAME" \
+  --src-path artifacts/stack-a.zip \
+  --type zip \
+  --async true
+
+az webapp deploy \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$STACK_B_APP_NAME" \
+  --src-path artifacts/stack-b.zip \
+  --type zip \
+  --async true
+```
+
+### Plan-Only Flow (No Packaging/App Deploy)
+
+`plan` only validates infrastructure changes. Packaging and `az webapp deploy` are only needed for `apply` when you are publishing app code.
+
+```bash
+./infra/scripts/deploy.sh .env_qa test plan both
+```
+
+## Stack A Startup Command (Azure App Service)
+
+Stack A is deployed as a Linux App Service and should use this startup command:
+
+```bash
+npm start
+```
+
+Important notes:
+- Do not use `npm run` without a script name. It fails at startup.
+- The startup command is managed by Terraform in `infra/terraform/modules/stack-a/main.tf` via `app_command_line`.
+- If you change startup command in the Azure portal, the next Terraform apply can overwrite it.
+
 ## GitHub Actions Workflow
 
 The workflow at `.github/workflows/selective-azure-deploy.yml` supports:
@@ -134,7 +255,7 @@ Pay-as-you-go Azure SQL databases can pause when idle and may take 30-90 seconds
 1. Keep the SQL connection string connect timeout at `90` seconds or higher for Azure-hosted environments.
 2. Expect startup logs showing retry scheduling, success-after-retry, or retry-budget exhaustion if the database is waking from idle.
 3. For Stack A, tune retry behavior with `AZURE_SQL_WAKEUP_MAX_ATTEMPTS`, `AZURE_SQL_WAKEUP_INITIAL_DELAY_MS`, and `AZURE_SQL_WAKEUP_MAX_DELAY_MS` if your environment has different idle resume characteristics.
-4. Store the Azure SQL connection string in Key Vault or deployment secrets exactly as issued, unless you intentionally need a higher `Connect Timeout`.
+4. For Azure-hosted deployments, prefer Entra managed identity auth with `AZURE_SQL_SERVER_FQDN`, `AZURE_SQL_DATABASE_NAME`, and `AZURE_CLIENT_ID` instead of a password-based SQL connection string secret.
 
 ### How It Works
 

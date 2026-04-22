@@ -60,8 +60,23 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.AggregationStrategy).HasMaxLength(20);
-            e.Property(x => x.MustHaveCriteriaJson).HasColumnName("MustHavesJson");
-            e.Property(x => x.ScoringRunCount).HasColumnName("RunsPerApplication");
+
+            if (Database.IsSqlServer())
+            {
+                // Azure SQL schema uses Stack A names.
+                e.Property(x => x.ScoringRunCount).HasColumnName("RunsPerApplication");
+                e.Property(x => x.MustHaveCriteriaJson).HasColumnName("MustHavesJson");
+            }
+            else
+            {
+                // Existing local SQLite DBs still require legacy Stack B column names.
+                e.Property(x => x.ScoringRunCount).HasColumnName("ScoringRunCount");
+                e.Property(x => x.MustHaveCriteriaJson).HasColumnName("MustHaveCriteriaJson");
+            }
+
+            // Avoid mapping duplicate compatibility alias properties.
+            e.Ignore(x => x.RunsPerApplication);
+            e.Ignore(x => x.MustHavesJson);
         });
 
         // Application

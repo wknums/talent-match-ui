@@ -9,8 +9,12 @@ public class JobConfigVersion
     public int VersionNumber { get; set; } = 1;
     public string RubricJson { get; set; } = "[]"; // JSON array of RubricCategory
     public string MustHaveCriteriaJson { get; set; } = "[]";
+    // Compatibility column used by Stack A persistence.
+    public string MustHavesJson { get; set; } = "[]";
     public string DesiredCriteriaJson { get; set; } = "[]"; // JSON array of { qualification, description }
     public int ScoringRunCount { get; set; } = 3;
+    // Compatibility column used by Stack A persistence.
+    public int RunsPerApplication { get; set; } = 3;
     public string AggregationStrategy { get; set; } = "median"; // median, mean, weighted
     public double LonglistThreshold { get; set; } = 70;
     public double ShortlistThreshold { get; set; } = 85;

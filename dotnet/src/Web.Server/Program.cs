@@ -332,12 +332,17 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
 
     var schemaSql = File.ReadAllText(schemaPath);
     var batches = Regex.Split(schemaSql, @"\r?\n(?=IF NOT EXISTS|CREATE (?:UNIQUE )?INDEX)")
-        .Select(batch => batch.Trim())
-        .Where(batch => batch.Length > 0 && !batch.StartsWith("--"));
+        .Select(batch => 
+        {
+            // Remove all comment-only lines from the batch to avoid SQL parse errors
+            var lines = batch.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            var nonCommentLines = lines
+                .Where(line => !line.Trim().StartsWith("--"))
+                .ToList();
+            return string.Join("\n", nonCommentLines).Trim();
+        })
+        .Where(batch => batch.Length > 0);
 
-    // Use ADO.NET DbCommand instead of ExecuteSqlRaw to avoid FormatException
-    // on SQL containing curly braces (e.g. DEFAULT '{}') which ExecuteSqlRaw
-    // misinterprets as parameter placeholders. Mirrors the SQLite bootstrap pattern.
     var connection = db.Database.GetDbConnection();
     var shouldClose = connection.State != System.Data.ConnectionState.Open;
     if (shouldClose)
@@ -349,8 +354,45 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
         {
             using var command = connection.CreateCommand();
             command.CommandText = batch;
+            command.CommandTimeout = 180;
             command.ExecuteNonQuery();
         }
+
+        // Backward compatibility for environments created with Stack A naming.
+        // Some deployments may run older Stack B binaries that still query the
+        // legacy column names, so ensure both names exist and are synchronized.
+        using var compatibilityCommand = connection.CreateCommand();
+        compatibilityCommand.CommandTimeout = 180;
+        compatibilityCommand.CommandText = @"
+IF COL_LENGTH('talentmatch.JobConfigVersions', 'MustHaveCriteriaJson') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].JobConfigVersions
+        ADD [MustHaveCriteriaJson] NVARCHAR(MAX) NOT NULL CONSTRAINT DF_JobConfigVersions_MustHaveCriteriaJson DEFAULT N'[]';
+
+    UPDATE [talentmatch].JobConfigVersions
+    SET [MustHaveCriteriaJson] = ISNULL([MustHavesJson], N'[]')
+    WHERE [MustHaveCriteriaJson] IS NULL OR [MustHaveCriteriaJson] = N'[]';
+END;
+
+IF COL_LENGTH('talentmatch.JobConfigVersions', 'ScoringRunCount') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].JobConfigVersions
+        ADD [ScoringRunCount] INT NOT NULL CONSTRAINT DF_JobConfigVersions_ScoringRunCount DEFAULT 3;
+
+    UPDATE [talentmatch].JobConfigVersions
+    SET [ScoringRunCount] = ISNULL([RunsPerApplication], 3)
+    WHERE [ScoringRunCount] IS NULL OR [ScoringRunCount] = 3;
+END;
+
+UPDATE [talentmatch].JobConfigVersions
+SET [MustHaveCriteriaJson] = ISNULL([MustHavesJson], N'[]')
+WHERE [MustHaveCriteriaJson] IS NULL;
+
+UPDATE [talentmatch].JobConfigVersions
+SET [ScoringRunCount] = ISNULL([RunsPerApplication], 3)
+WHERE [ScoringRunCount] IS NULL;
+";
+        compatibilityCommand.ExecuteNonQuery();
     }
     finally
     {

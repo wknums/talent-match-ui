@@ -79,14 +79,20 @@ dotnet test TalentMatch.slnx
 
 Stack B uses SQLite by default at `shared-data/talentmatch.db` (repo root). EF Core migrations are applied automatically on startup.
 
-To use SQL Server, update `appsettings.json`:
+To use Azure SQL with Entra auth in Azure-hosted environments, configure:
 ```json
 {
-  "DatabaseProvider": "sqlserver",
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=.;Database=TalentMatch;Trusted_Connection=true;TrustServerCertificate=true"
-  }
+  "DatabaseProvider": "sqlserver"
 }
+```
+
+And set environment variables:
+
+```bash
+AZURE_SQL_AUTH_MODE=entra
+AZURE_SQL_SERVER_FQDN=your-server.database.windows.net
+AZURE_SQL_DATABASE_NAME=TalentMatch
+AZURE_CLIENT_ID=<user-assigned-managed-identity-client-id>
 ```
 
 ## Running Both Stacks

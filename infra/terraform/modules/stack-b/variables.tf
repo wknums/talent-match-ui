@@ -29,6 +29,11 @@ variable "identity_id" {
   type        = string
 }
 
+variable "identity_client_id" {
+  description = "Stack B managed identity client ID"
+  type        = string
+}
+
 variable "key_vault_uri" {
   description = "Key Vault URI for secret references"
   type        = string
@@ -47,6 +52,26 @@ variable "sql_database_name" {
 variable "apim_gateway_url" {
   description = "APIM gateway URL"
   type        = string
+}
+
+variable "use_key_vault_secret_refs" {
+  description = "When true, app settings use Key Vault references for runtime secrets"
+  type        = bool
+  default     = true
+}
+
+variable "awr_api_key" {
+  description = "Direct AWR API key value for non-sensitive environments"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "openai_api_key" {
+  description = "Direct OpenAI API key value for non-sensitive environments"
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "extra_app_settings" {

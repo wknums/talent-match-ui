@@ -91,6 +91,24 @@ variable "awr_seq_api_endpoint" {
   default     = ""
 }
 
+variable "awr_auth_mode" {
+  description = "AWReason auth mode passed to app settings"
+  type        = string
+  default     = "none"
+}
+
+variable "awr_max_parallel" {
+  description = "Maximum parallel AWR operations allowed at runtime"
+  type        = number
+  default     = 1
+}
+
+variable "api_mode" {
+  description = "Application API mode"
+  type        = string
+  default     = "mock"
+}
+
 # --- Networking (US6) ---
 variable "integration_subnet_id" {
   description = "Delegated subnet ID for VNet Integration from shared root"

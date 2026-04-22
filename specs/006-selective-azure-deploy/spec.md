@@ -51,7 +51,7 @@ A team wants code changes merged to specific branches to automatically trigger d
 
 ### User Story 3 — Environment Configuration and Secrets Management (Priority: P2)
 
-A developer or DevOps engineer needs to configure environment-specific settings (connection strings, API keys, feature flags) and secrets for each stack and each target environment (development, staging, production). Secrets must never appear in source code or build logs.
+A developer or DevOps engineer needs to configure environment-specific settings (Azure SQL server/database metadata, API keys, feature flags) and secrets for each stack and each target environment (development, staging, production). Secrets must never appear in source code or build logs.
 
 **Why this priority**: Secure configuration management is a prerequisite for any production deployment and is tightly coupled with Stories 1 and 2. It shares priority with Story 2 because neither automated deployment nor manual deployment is production-ready without it.
 
@@ -59,10 +59,10 @@ A developer or DevOps engineer needs to configure environment-specific settings 
 
 **Acceptance Scenarios**:
 
-1. **Given** a stack deployment is configured, **When** the deployment runs, **Then** environment-specific configuration values (`STORAGE_PROVIDER`, connection strings, API endpoints) are injected into the deployed application without hardcoding.
+1. **Given** a stack deployment is configured, **When** the deployment runs, **Then** environment-specific configuration values (`STORAGE_PROVIDER`, Azure SQL server/database metadata, API endpoints) are injected into the deployed application without hardcoding.
 2. **Given** secrets are stored in the secrets management system, **When** the CI/CD pipeline runs, **Then** secrets are available to the deployment process but are never printed in logs or artifacts.
 3. **Given** multiple environments exist (development, staging, production), **When** the same stack is deployed to different environments, **Then** each environment uses its own isolated set of configuration values and secrets.
-4. **Given** a shared secret (e.g., database connection string) is needed by both stacks, **When** both stacks are deployed to the same environment, **Then** both stacks reference the same shared secret without duplication.
+4. **Given** shared runtime secrets (e.g., API keys) are needed by both stacks, **When** both stacks are deployed to the same environment, **Then** both stacks reference the same shared secret without duplication while Azure SQL access uses Entra managed identity instead of password secrets.
 5. **Given** a secret value needs to be rotated, **When** the secret is updated in the secrets management system, **Then** the next deployment picks up the new value without code changes.
 
 ---
@@ -157,8 +157,8 @@ The deployed App Services (Stack A and Stack B) must be publicly accessible on t
 - **FR-006**: System MUST provide infrastructure-as-code definitions for all Azure resources, enabling repeatable and version-controlled provisioning.
 - **FR-007**: System MUST provide CI/CD pipeline configuration that detects which stack(s) were affected by code changes and deploys only those stacks.
 - **FR-008**: System MUST support manual pipeline triggers with explicit stack selection (Stack A, Stack B, or both).
-- **FR-009**: System MUST inject environment-specific configuration (`STORAGE_PROVIDER`, connection strings, API endpoints) into deployed applications without hardcoding values in source code.
-- **FR-010**: System MUST store and manage secrets (API keys, connection strings, certificates) in a centralised secrets management system, never in source code or build logs.
+- **FR-009**: System MUST inject environment-specific configuration (`STORAGE_PROVIDER`, Azure SQL server/database metadata, identity client IDs, API endpoints) into deployed applications without hardcoding values in source code.
+- **FR-010**: System MUST store and manage secrets (API keys, certificates) in a centralised secrets management system, never in source code or build logs. Azure SQL authentication for deployed apps MUST use Entra managed identity rather than password-based connection string secrets.
 - **FR-011**: System MUST support at least three isolated environments: development, staging, and production.
 - **FR-012**: System MUST ensure all infrastructure provisioning is idempotent — re-running a deployment produces the same result without duplicating resources or losing data.
 - **FR-013**: System MUST provide deployment outputs (endpoint URLs, resource identifiers) after successful provisioning for verification and integration.
@@ -177,16 +177,18 @@ The deployed App Services (Stack A and Stack B) must be publicly accessible on t
 - **FR-026**: System MUST support reusing an existing delegated App Service integration subnet (`AZ_INTEGRATION_SUBNET_NAME`) OR creating a new delegated subnet with a specified CIDR (`AZ_INTEGRATION_SUBNET_CIDR`) — exactly one of these options must be provided.
 - **FR-027**: System MUST support reusing an existing SQL Private Endpoint (`AZ_SQL_PRIVATE_ENDPOINT_REUSE=true`) by skipping Private Endpoint creation when the flag is set — the existing Private Endpoint and Private DNS zone handle connectivity.
 - **FR-028**: System MUST ensure both Stack A and Stack B App Services share the same delegated integration subnet for VNet Integration.
-- **FR-029**: System MUST require no application code changes for private network connectivity — Private DNS resolution transparently routes Azure SQL connections over the private network using existing connection strings.
+- **FR-029**: System MUST require no application code changes for private network connectivity — Private DNS resolution transparently routes Azure SQL connections over the private network using the deployed Azure SQL host metadata.
+- **FR-033**: After the shared root creates or resolves the stack managed identities, the deployment flow MUST ensure each app identity exists as a contained user in the target Azure SQL database and is granted the minimum roles required for schema initialization, migrations, and normal CRUD operations.
 - **FR-030**: System MUST validate that any new integration subnet has a minimum CIDR prefix of /26, failing with a clear error if the specified CIDR is too small for App Service delegation.
 - **FR-031**: System MUST fail fast with clear, actionable error messages when required VNet configuration variables (`AZ_VNET_NAME`, `AZ_VNET_RG`) are missing while `AZ_VNET_REUSE=true` is set.
 - **FR-032**: System MUST fail fast with a clear error when `AZ_ALLOWED_IPS` is empty or not set, enforcing a default-deny posture — App Services must never be deployed without IP restrictions.
+- **FR-034**: System MUST stamp each Stack A and Stack B deployment artifact with a unique deployment version and UTC creation timestamp, and expose that stamp in the browser console at application startup for operator verification.
 
 ### Key Entities
 
 - **Deployment Target**: Represents a specific stack (A, B, or both) being deployed to a specific environment — includes stack selection, environment name, and configuration parameters.
 - **Infrastructure Module**: A self-contained unit of infrastructure-as-code that provisions a specific set of Azure resources — categorised as "shared" (database, API gateway) or "stack-specific" (compute, networking per stack).
-- **Environment Configuration**: A set of key-value pairs and secret references specific to one environment (dev, staging, production) — includes `STORAGE_PROVIDER`, connection strings, API endpoints, and feature flags.
+- **Environment Configuration**: A set of key-value pairs and secret references specific to one environment (dev, staging, production) — includes `STORAGE_PROVIDER`, Azure SQL server/database metadata, identity client IDs, API endpoints, and feature flags.
 - **Pipeline Workflow**: A CI/CD workflow definition that orchestrates build, infrastructure provisioning, and application deployment for one or more stacks — supports both automatic (push-triggered) and manual triggers.
 - **Database Schema**: A namespace grouping for database tables within Azure SQL — isolates application tables from the default "dbo" schema, supporting organised multi-application database usage and preventing naming collisions on shared database servers.
 - **VNet Integration**: A network configuration that connects App Services to an Azure Virtual Network via a delegated subnet, enabling private communication with resources on the VNet (such as Azure SQL via Private Endpoint) while the App Services themselves remain publicly accessible (subject to IP access restrictions).
@@ -212,7 +214,8 @@ The deployed App Services (Stack A and Stack B) must be publicly accessible on t
 - **SC-015**: Requests from allowed IP addresses are processed normally with no degradation compared to unrestricted access.
 - **SC-016**: VNet Integration and IP access restrictions are configured identically for both Stack A and Stack B App Services — no configuration drift between stacks.
 - **SC-017**: Deploying with an existing VNet and existing integration subnet completes without creating any new networking resources — only App Service configuration changes are applied.
-- **SC-018**: Application connection strings remain unchanged after VNet Integration is configured — Private DNS resolution transparently handles the switch to private connectivity.
+- **SC-018**: Application Azure SQL host metadata remains unchanged after VNet Integration is configured — Private DNS resolution transparently handles the switch to private connectivity.
+- **SC-019**: After each deployment, both Stack A and Stack B browser clients log a deployment build stamp in console output containing a unique version value and UTC creation timestamp, allowing operators to distinguish the currently served deployment from previous ones.
 
 ## Assumptions
 
