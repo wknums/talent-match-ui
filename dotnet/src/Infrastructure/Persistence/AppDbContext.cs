@@ -101,11 +101,15 @@ public class AppDbContext : DbContext
             e.Property(x => x.FileName).HasMaxLength(500);
             e.Property(x => x.FileType).HasColumnName("MimeType");
             e.Property(x => x.FileSize).HasColumnName("SizeBytes");
-            e.Property(x => x.UploadTimestamp)
-                .HasColumnName("UploadedAt")
-                .HasConversion(new ValueConverter<DateTime?, string?>(
+            var uploadTimestampProp = e.Property(x => x.UploadTimestamp)
+                .HasColumnName("UploadedAt");
+            // SQLite stores timestamps as ISO-8601 strings; SQL Server uses DATETIME2 natively.
+            if (Database.IsSqlite())
+            {
+                uploadTimestampProp.HasConversion(new ValueConverter<DateTime?, string?>(
                     value => value.HasValue ? value.Value.ToString("O") : null,
                     value => string.IsNullOrWhiteSpace(value) ? null : DateTime.Parse(value)));
+            }
             e.Ignore(x => x.ContentBase64);
         });
 
@@ -123,6 +127,21 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.AiModelId).HasMaxLength(100);
+
+            if (Database.IsSqlServer())
+            {
+                // Azure SQL uses Stack A names for these fields.
+                e.Property(x => x.TotalScore).HasColumnName("OverallScore");
+                e.Property(x => x.CategoryScoresJson).HasColumnName("SubScoresJson");
+                e.Property(x => x.MustHaveEvaluationJson).HasColumnName("MustHaveResultJson");
+                e.Property(x => x.ImprovementTipsJson).HasColumnName("ImprovementRecsJson");
+                e.Property(x => x.AiModelId).HasColumnName("ModelDeploymentId");
+                e.Property(x => x.PromptVersion).HasColumnName("PromptVersionId");
+
+                // Shared Azure SQL schema stores token usage as JSON only.
+                e.Ignore(x => x.InputTokens);
+                e.Ignore(x => x.OutputTokens);
+            }
         });
 
         // AggregatedResult
@@ -131,6 +150,14 @@ public class AppDbContext : DbContext
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.ApplicationId).IsUnique();
             e.Property(x => x.Decision).HasMaxLength(30);
+
+            if (Database.IsSqlServer())
+            {
+                // Azure SQL uses Stack A names for these fields.
+                e.Property(x => x.Decision).HasColumnName("FinalDecision");
+                e.Property(x => x.ConsolidatedRationale).HasColumnName("RationaleText");
+                e.Property(x => x.MergedImprovementTipsJson).HasColumnName("RecommendationsText");
+            }
         });
 
         // ExtractionArtifact

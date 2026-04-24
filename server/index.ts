@@ -36,6 +36,8 @@ if (existsSync(envPath)) {
 
 const PORT = parseInt(process.env.PORT || '3001', 10)
 const API_MODE = (process.env.API_MODE || 'mock') as 'mock' | 'real'
+const DIST_DIR = resolve(process.cwd(), 'dist')
+const INDEX_HTML_PATH = resolve(DIST_DIR, 'index.html')
 
 async function initializeAppState() {
   await initializeDatabase()
@@ -95,6 +97,18 @@ async function main() {
   app.use('/api/stats', authMiddleware, createStatsRouter())
   app.use('/api/audit', authMiddleware, createAuditRouter())
   app.use('/api/dlq', authMiddleware, createDLQRouter())
+
+  // Serve the built SPA when available (production packaging places it in ./dist).
+  if (existsSync(INDEX_HTML_PATH)) {
+    app.use(express.static(DIST_DIR))
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path === '/healthz') {
+        next()
+        return
+      }
+      res.sendFile(INDEX_HTML_PATH)
+    })
+  }
 
   // Error handler (must be last)
   app.use(errorHandler)

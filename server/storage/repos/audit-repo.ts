@@ -1,4 +1,4 @@
-import { getPool, sql } from '../db.js'
+import { getPool, isAzureSql, sql } from '../db.js'
 import type { ProcessingEvent, DLQItem, SystemStats } from '../../../src/types/index.js'
 import { T } from '../table-names.js'
 
@@ -38,7 +38,7 @@ function rowToDLQ(r: any): DLQItem {
 export const auditRepo = {
   async appendEvent(event: ProcessingEvent): Promise<void> {
     const pool = await getPool()
-    await pool.request()
+    const request = pool.request()
       .input('id', sql.NVarChar, event.eventId)
       .input('actor', sql.NVarChar, event.actor)
       .input('action', sql.NVarChar, event.action)
@@ -47,8 +47,15 @@ export const auditRepo = {
       .input('detailsJson', sql.NVarChar, JSON.stringify(event.details))
       .input('timestamp', sql.DateTime2, new Date(event.timestamp))
       .input('correlationId', sql.NVarChar, event.correlationId)
-            .query(`INSERT INTO ${T('ProcessingEvents')} (Id, Actor, EventType, Action, EntityType, EntityId, PayloadJson, DetailsJson, Timestamp, CorrelationId)
-              VALUES (@id, @actor, @action, @action, @entityType, @entityId, @detailsJson, @detailsJson, @timestamp, @correlationId)`)
+
+    if (isAzureSql) {
+      await request.query(`INSERT INTO ${T('ProcessingEvents')} (Id, Actor, EventType, Action, EntityType, EntityId, DetailsJson, Timestamp, CorrelationId)
+        VALUES (@id, @actor, @action, @action, @entityType, @entityId, @detailsJson, @timestamp, @correlationId)`)
+      return
+    }
+
+    await request.query(`INSERT INTO ${T('ProcessingEvents')} (Id, Actor, EventType, Action, EntityType, EntityId, PayloadJson, DetailsJson, Timestamp, CorrelationId)
+      VALUES (@id, @actor, @action, @action, @entityType, @entityId, @detailsJson, @detailsJson, @timestamp, @correlationId)`)
   },
 
   async query(filters: { entityType?: string; eventType?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number }): Promise<{ events: ProcessingEvent[]; total: number }> {

@@ -2,7 +2,9 @@
 
 **Feature**: 001-talent-matching-platform | **Date**: 2026-03-09
 
-Base URL: `/api` | Auth: Cookie-based (ASP.NET Core Authentication) | Content-Type: `application/json`
+Base URL: `/api` | Auth: Cookie-based (`CLIENT_AUTH_MODE=simple`) or Entra token-based (`CLIENT_AUTH_MODE=entra`) | Content-Type: `application/json`
+
+Auth mode selection MUST match Stack A for the same environment (see spec FR-001, FR-071).
 
 The Stack B API mirrors the Stack A contract to maintain feature parity. Both stacks implement the same endpoints with the same request/response shapes. This document notes Stack B-specific implementation details.
 

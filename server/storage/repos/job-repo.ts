@@ -1,4 +1,4 @@
-import { getPool, sql } from '../db.js'
+import { getPool, isAzureSql, sql } from '../db.js'
 import { T } from '../table-names.js'
 import type { Job, JobConfigVersion, JobStats } from '../../../src/types/index.js'
 
@@ -83,6 +83,8 @@ function rowToConfigVersion(r: any): JobConfigVersion {
   }
 }
 
+const legacyMustHaveCriteriaSelectSql = isAzureSql ? '' : ', cv.MustHaveCriteriaJson'
+
 async function getNextVersionNumber(pool: any, jobId: string): Promise<number> {
   const result = await pool.request()
     .input('jobId', sql.NVarChar, jobId)
@@ -112,7 +114,7 @@ export const jobRepo = {
   async getAll(): Promise<Job[]> {
     const pool = await getPool()
     const result = await pool.request().query(`
-      SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson, cv.MustHaveCriteriaJson,
+      SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson${legacyMustHaveCriteriaSelectSql},
              cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
              cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
              cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
@@ -131,7 +133,7 @@ export const jobRepo = {
     const result = await pool.request()
       .input('dept', sql.NVarChar, department)
       .query(`
-        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson, cv.MustHaveCriteriaJson,
+        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson${legacyMustHaveCriteriaSelectSql},
                cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
                cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
                cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
@@ -151,7 +153,7 @@ export const jobRepo = {
     const result = await pool.request()
       .input('id', sql.NVarChar, jobId)
       .query(`
-        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson, cv.MustHaveCriteriaJson,
+        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson${legacyMustHaveCriteriaSelectSql},
                cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
                cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
                cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
@@ -189,14 +191,57 @@ export const jobRepo = {
         .input('rubricSource', sql.NVarChar, cv.rubricSource)
         .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
         .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
-        .query(`INSERT INTO ${T('JobConfigVersions')} (
-          Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
-          ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
-          VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
-          VALUES (
-          @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @mustHavesJson, @desiredCriteriaJson,
-          @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
-          @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+      if (isAzureSql) {
+        await txn.request()
+          .input('id', sql.NVarChar, cv.versionId)
+          .input('jobId', sql.NVarChar, job.jobId)
+          .input('versionNumber', sql.Int, versionNumber)
+          .input('rubricJson', sql.NVarChar, JSON.stringify(cv.rubric))
+          .input('mustHavesJson', sql.NVarChar, JSON.stringify(cv.mustHaves))
+          .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(cv.desiredCriteria))
+          .input('runsPerApplication', sql.Int, cv.runsPerApplication)
+          .input('aggregationStrategy', sql.NVarChar, cv.aggregationStrategy)
+          .input('longlistThreshold', sql.Float, cv.longlistThreshold)
+          .input('shortlistThreshold', sql.Float, cv.shortlistThreshold)
+          .input('varianceThreshold', sql.Float, cv.varianceThreshold)
+          .input('rubricApprovalStatus', sql.NVarChar, cv.rubricApprovalStatus)
+          .input('rubricSource', sql.NVarChar, cv.rubricSource)
+          .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
+          .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
+          .query(`INSERT INTO ${T('JobConfigVersions')} (
+            Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
+            RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VALUES (
+            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
+            @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+      } else {
+        await txn.request()
+          .input('id', sql.NVarChar, cv.versionId)
+          .input('jobId', sql.NVarChar, job.jobId)
+          .input('versionNumber', sql.Int, versionNumber)
+          .input('rubricJson', sql.NVarChar, JSON.stringify(cv.rubric))
+          .input('mustHavesJson', sql.NVarChar, JSON.stringify(cv.mustHaves))
+          .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(cv.desiredCriteria))
+          .input('runsPerApplication', sql.Int, cv.runsPerApplication)
+          .input('aggregationStrategy', sql.NVarChar, cv.aggregationStrategy)
+          .input('longlistThreshold', sql.Float, cv.longlistThreshold)
+          .input('shortlistThreshold', sql.Float, cv.shortlistThreshold)
+          .input('varianceThreshold', sql.Float, cv.varianceThreshold)
+          .input('rubricApprovalStatus', sql.NVarChar, cv.rubricApprovalStatus)
+          .input('rubricSource', sql.NVarChar, cv.rubricSource)
+          .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
+          .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
+          .query(`INSERT INTO ${T('JobConfigVersions')} (
+            Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
+            ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VALUES (
+            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @mustHavesJson, @desiredCriteriaJson,
+            @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+      }
 
       // Insert job
       await txn.request()
@@ -247,14 +292,57 @@ export const jobRepo = {
         .input('rubricSource', sql.NVarChar, version.rubricSource)
         .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
         .input('createdAt', sql.DateTime2, new Date(version.createdAt))
-        .query(`INSERT INTO ${T('JobConfigVersions')} (
-          Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
-          ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
-          VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
-          VALUES (
-          @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @mustHavesJson, @desiredCriteriaJson,
-          @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
-          @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+      if (isAzureSql) {
+        await txn.request()
+          .input('id', sql.NVarChar, version.versionId)
+          .input('jobId', sql.NVarChar, version.jobId)
+          .input('versionNumber', sql.Int, versionNumber)
+          .input('rubricJson', sql.NVarChar, JSON.stringify(version.rubric))
+          .input('mustHavesJson', sql.NVarChar, JSON.stringify(version.mustHaves))
+          .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(version.desiredCriteria))
+          .input('runsPerApplication', sql.Int, version.runsPerApplication)
+          .input('aggregationStrategy', sql.NVarChar, version.aggregationStrategy)
+          .input('longlistThreshold', sql.Float, version.longlistThreshold)
+          .input('shortlistThreshold', sql.Float, version.shortlistThreshold)
+          .input('varianceThreshold', sql.Float, version.varianceThreshold)
+          .input('rubricApprovalStatus', sql.NVarChar, version.rubricApprovalStatus)
+          .input('rubricSource', sql.NVarChar, version.rubricSource)
+          .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
+          .input('createdAt', sql.DateTime2, new Date(version.createdAt))
+          .query(`INSERT INTO ${T('JobConfigVersions')} (
+            Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
+            RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VALUES (
+            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
+            @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+      } else {
+        await txn.request()
+          .input('id', sql.NVarChar, version.versionId)
+          .input('jobId', sql.NVarChar, version.jobId)
+          .input('versionNumber', sql.Int, versionNumber)
+          .input('rubricJson', sql.NVarChar, JSON.stringify(version.rubric))
+          .input('mustHavesJson', sql.NVarChar, JSON.stringify(version.mustHaves))
+          .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(version.desiredCriteria))
+          .input('runsPerApplication', sql.Int, version.runsPerApplication)
+          .input('aggregationStrategy', sql.NVarChar, version.aggregationStrategy)
+          .input('longlistThreshold', sql.Float, version.longlistThreshold)
+          .input('shortlistThreshold', sql.Float, version.shortlistThreshold)
+          .input('varianceThreshold', sql.Float, version.varianceThreshold)
+          .input('rubricApprovalStatus', sql.NVarChar, version.rubricApprovalStatus)
+          .input('rubricSource', sql.NVarChar, version.rubricSource)
+          .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
+          .input('createdAt', sql.DateTime2, new Date(version.createdAt))
+          .query(`INSERT INTO ${T('JobConfigVersions')} (
+            Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
+            ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VALUES (
+            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @mustHavesJson, @desiredCriteriaJson,
+            @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+      }
 
       await txn.request()
         .input('jobId', sql.NVarChar, version.jobId)

@@ -281,7 +281,7 @@ Scoring → ScoringFailed (retry → failure queue after max retries)
 | overallScore | number | required, 0–100 | |
 | subScores | Record<string, number> | required | Per-category scores |
 | mustHaveResult | MustHaveResult | required | Pass/fail + details |
-| evidenceCitations | EvidenceCitation[] | required | |
+| evidenceCitations | EvidenceCitation[] | required | Per-category evidence snippets (direct CV quotes); used for manual review prepopulation — see §EvidenceCitation below |
 | rationale | string | required | |
 | improvementRecommendations | string[] | required | |
 | createdAt | ISO 8601 datetime | required, auto-set | |
@@ -338,6 +338,28 @@ Scoring → ScoringFailed (retry → failure queue after max retries)
 | previousValue | number \| string | optional |
 | newValue | number \| string | optional |
 | comment | string | optional |
+
+---
+
+### EvidenceCitation (sub-type of ScoringRun.evidenceCitations)
+
+Canonical schema used by both stacks. Stored in `ScoringRun.EvidenceCitationsJson` as a
+JSON array of lowercase-keyed objects.
+
+| Field | Type | Constraints | Notes |
+|-------|------|-------------|-------|
+| category | string | required | Rubric category name as returned by the LLM; may differ in casing or phrasing from the configured rubric — fuzzy matching is applied at display time |
+| snippet | string | required, non-empty | Direct quote or citation extracted from the CV supporting the score; MUST NOT be empty — citations with empty snippets are discarded |
+| section | string | optional | Document section the citation came from (e.g. "Work Experience") |
+| confidence | number | optional, 0–1 | LLM confidence for this citation |
+
+**Storage format** (both stacks): `[{"category":"Technical Skills","snippet":"5+ years C#..."}]`
+
+**Fuzzy matching** (manual review prepopulation): `category` is matched to rubric category names
+via three-tier fuzzy algorithm — exact (normalised) → substring containment → ≥40% word overlap.
+If no match is found the citation is silently dropped for that category; if all citations for a
+rubric category are dropped, the `mismatchedCategories` list in the prepopulation result is
+populated and a per-category warning is shown in the UI.
 
 ---
 

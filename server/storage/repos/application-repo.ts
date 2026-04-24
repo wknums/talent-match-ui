@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { getPool, sql } from '../db.js'
+import { getPool, isAzureSql, sql } from '../db.js'
 import { T } from '../table-names.js'
 import type {
   Application, ApplicationDocument, ExtractionArtifact,
@@ -355,6 +355,9 @@ export const applicationRepo = {
   // Extraction artifacts
   async setExtraction(artifact: ExtractionArtifact): Promise<void> {
     const pool = await getPool()
+    const extractionLegacyUpdateSql = isAzureSql ? '' : ', NormalisedText = @markdown, ConfidenceScore = @confidence'
+    const extractionLegacyInsertColumnsSql = isAzureSql ? '' : ', NormalisedText, ConfidenceScore'
+    const extractionLegacyInsertValuesSql = isAzureSql ? '' : ', @markdown, @confidence'
     const updateResult = await pool.request()
       .input('id', sql.NVarChar, artifact.artifactId)
       .input('applicationId', sql.NVarChar, artifact.applicationId)
@@ -366,7 +369,7 @@ export const applicationRepo = {
       .input('createdAt', sql.DateTime2, new Date(artifact.createdAt))
       .query(`UPDATE ${T('ExtractionArtifacts')}
               SET Markdown = @markdown, ToolVersion = @toolVersion, Confidence = @confidence, ExtractedAt = @extractedAt,
-                  NormalisedText = @markdown, ConfidenceScore = @confidence, Status = @status
+              Status = @status${extractionLegacyUpdateSql}
               WHERE ApplicationId = @applicationId`)
     if ((updateResult.rowsAffected?.[0] ?? 0) === 0) {
       await pool.request()
@@ -379,9 +382,9 @@ export const applicationRepo = {
         .input('status', sql.NVarChar, artifact.status)
         .input('createdAt', sql.DateTime2, new Date(artifact.createdAt))
         .query(`INSERT INTO ${T('ExtractionArtifacts')} (
-                Id, ApplicationId, Markdown, ToolVersion, Confidence, ExtractedAt, NormalisedText, ConfidenceScore, Status, CreatedAt)
+          Id, ApplicationId, Markdown, ToolVersion, Confidence, ExtractedAt, Status, CreatedAt${extractionLegacyInsertColumnsSql})
                 VALUES (
-                @id, @applicationId, @markdown, @toolVersion, @confidence, @extractedAt, @markdown, @confidence, @status, @createdAt)`)
+          @id, @applicationId, @markdown, @toolVersion, @confidence, @extractedAt, @status, @createdAt${extractionLegacyInsertValuesSql})`)
     }
   },
 
@@ -398,7 +401,7 @@ export const applicationRepo = {
     const pool = await getPool()
     const promptTokens = run.tokenUsage?.promptTokens ?? 0
     const completionTokens = run.tokenUsage?.completionTokens ?? 0
-    await pool.request()
+    const req = pool.request()
       .input('id', sql.NVarChar, run.runId)
       .input('applicationId', sql.NVarChar, run.applicationId)
       .input('versionId', sql.NVarChar, run.versionId)
@@ -421,18 +424,33 @@ export const applicationRepo = {
       .input('rawParsedResponseJson', sql.NVarChar, run.rawParsedResponse ? JSON.stringify(run.rawParsedResponse) : null)
       .input('parserWarningsJson', sql.NVarChar, run.parserWarnings ? JSON.stringify(run.parserWarnings) : null)
       .input('parserConfidence', sql.Float, run.parserConfidence ?? null)
-            .query(`INSERT INTO ${T('ScoringRuns')} (
-              Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, PromptVersionId,
-              OverallScore, SubScoresJson, MustHaveResultJson, EvidenceCitationsJson, Rationale, ImprovementRecsJson,
-              TotalScore, CategoryScoresJson, MustHaveEvaluationJson, ImprovementTipsJson, AiModelId, PromptVersion,
-              InputTokens, OutputTokens, CreatedAt, DurationMs, TokenUsageJson, Status, RawResponseText,
-              RawParsedResponseJson, ParserWarningsJson, ParserConfidence)
-              VALUES (
-              @id, @applicationId, @versionId, @runIndex, @modelDeploymentId, @promptVersionId,
-              @overallScore, @subScoresJson, @mustHaveResultJson, @evidenceCitationsJson, @rationale, @improvementRecsJson,
-              @overallScore, @subScoresJson, @mustHaveResultJson, @improvementRecsJson, @modelDeploymentId, @promptVersionId,
-              @inputTokens, @outputTokens, @createdAt, @durationMs, @tokenUsageJson, @status, @rawResponseText,
-              @rawParsedResponseJson, @parserWarningsJson, @parserConfidence)`)
+
+    if (isAzureSql) {
+      await req.query(`INSERT INTO ${T('ScoringRuns')} (
+        Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, PromptVersionId,
+        OverallScore, SubScoresJson, MustHaveResultJson, EvidenceCitationsJson, Rationale, ImprovementRecsJson,
+        CreatedAt, DurationMs, TokenUsageJson, Status, RawResponseText,
+        RawParsedResponseJson, ParserWarningsJson, ParserConfidence)
+        VALUES (
+        @id, @applicationId, @versionId, @runIndex, @modelDeploymentId, @promptVersionId,
+        @overallScore, @subScoresJson, @mustHaveResultJson, @evidenceCitationsJson, @rationale, @improvementRecsJson,
+        @createdAt, @durationMs, @tokenUsageJson, @status, @rawResponseText,
+        @rawParsedResponseJson, @parserWarningsJson, @parserConfidence)`)
+      return
+    }
+
+    await req.query(`INSERT INTO ${T('ScoringRuns')} (
+      Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, PromptVersionId,
+      OverallScore, SubScoresJson, MustHaveResultJson, EvidenceCitationsJson, Rationale, ImprovementRecsJson,
+      TotalScore, CategoryScoresJson, MustHaveEvaluationJson, ImprovementTipsJson, AiModelId, PromptVersion,
+      InputTokens, OutputTokens, CreatedAt, DurationMs, TokenUsageJson, Status, RawResponseText,
+      RawParsedResponseJson, ParserWarningsJson, ParserConfidence)
+      VALUES (
+      @id, @applicationId, @versionId, @runIndex, @modelDeploymentId, @promptVersionId,
+      @overallScore, @subScoresJson, @mustHaveResultJson, @evidenceCitationsJson, @rationale, @improvementRecsJson,
+      @overallScore, @subScoresJson, @mustHaveResultJson, @improvementRecsJson, @modelDeploymentId, @promptVersionId,
+      @inputTokens, @outputTokens, @createdAt, @durationMs, @tokenUsageJson, @status, @rawResponseText,
+      @rawParsedResponseJson, @parserWarningsJson, @parserConfidence)`)
   },
 
   async getScoringRuns(applicationId: string): Promise<ScoringRun[]> {
@@ -459,6 +477,16 @@ export const applicationRepo = {
         .map(part => part.trim())
         .filter(Boolean),
     )
+    const aggregatedLegacyUpdateSql = isAzureSql
+      ? ''
+      : ', Decision = @finalDecision, ConsolidatedRationale = @rationaleText, MergedImprovementTipsJson = @mergedImprovementTipsJson'
+    const aggregatedLegacyInsertColumnsSql = isAzureSql
+      ? ''
+      : ', Decision, ConsolidatedRationale, MergedImprovementTipsJson'
+    const aggregatedLegacyInsertValuesSql = isAzureSql
+      ? ''
+      : ', @finalDecision, @rationaleText, @mergedImprovementTipsJson'
+
     const updateResult = await pool.request()
       .input('id', sql.NVarChar, result.resultId)
       .input('applicationId', sql.NVarChar, result.applicationId)
@@ -475,10 +503,9 @@ export const applicationRepo = {
       .input('createdAt', sql.DateTime2, new Date(result.createdAt))
       .query(`UPDATE ${T('AggregatedResults')}
               SET VersionId = @versionId, FinalScore = @finalScore, FinalSubScoresJson = @finalSubScoresJson,
-                  Confidence = @confidence, Variance = @variance, FinalDecision = @finalDecision, Decision = @finalDecision,
-                  RationaleText = @rationaleText, ConsolidatedRationale = @rationaleText,
-                  RecommendationsText = @recommendationsText, MergedImprovementTipsJson = @mergedImprovementTipsJson,
-                  AllRunsJson = @allRunsJson
+                  Confidence = @confidence, Variance = @variance, FinalDecision = @finalDecision,
+                  RationaleText = @rationaleText, RecommendationsText = @recommendationsText,
+                  AllRunsJson = @allRunsJson${aggregatedLegacyUpdateSql}
               WHERE ApplicationId = @applicationId`)
     if ((updateResult.rowsAffected?.[0] ?? 0) === 0) {
       await pool.request()
@@ -497,12 +524,12 @@ export const applicationRepo = {
         .input('createdAt', sql.DateTime2, new Date(result.createdAt))
         .query(`INSERT INTO ${T('AggregatedResults')} (
                 Id, ApplicationId, VersionId, FinalScore, FinalSubScoresJson, Confidence, Variance,
-                FinalDecision, Decision, RationaleText, ConsolidatedRationale, RecommendationsText,
-                MergedImprovementTipsJson, AllRunsJson, CreatedAt)
+          FinalDecision, RationaleText, RecommendationsText,
+          AllRunsJson, CreatedAt${aggregatedLegacyInsertColumnsSql})
                 VALUES (
                 @id, @applicationId, @versionId, @finalScore, @finalSubScoresJson, @confidence, @variance,
-                @finalDecision, @finalDecision, @rationaleText, @rationaleText, @recommendationsText,
-                @mergedImprovementTipsJson, @allRunsJson, @createdAt)`)
+          @finalDecision, @rationaleText, @recommendationsText,
+          @allRunsJson, @createdAt${aggregatedLegacyInsertValuesSql})`)
     }
   },
 

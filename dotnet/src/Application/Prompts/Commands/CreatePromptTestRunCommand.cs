@@ -216,6 +216,19 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
             catch (Exception ex)
             {
                 logger.LogError(ex, "Test-run {TestRunId} auto-trigger scoring failed", testRunId);
+                try
+                {
+                    var failedRun = await testRunRepo.GetByIdAsync(testRunId);
+                    if (failedRun != null)
+                    {
+                        failedRun.Status = "scoring_failed";
+                        await testRunRepo.UpdateAsync(failedRun);
+                    }
+                }
+                catch (Exception statusEx)
+                {
+                    logger.LogError(statusEx, "Test-run {TestRunId} failed to update status to scoring_failed", testRunId);
+                }
             }
         }, CancellationToken.None);
 

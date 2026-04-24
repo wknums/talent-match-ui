@@ -4,7 +4,7 @@
 **Spec**: [spec.md](../spec.md)  
 **Created**: March 11, 2026  
 **Last Verified**: April 17, 2026  
-**Overall Status**: ⚠️ Minor structural differences remain (59/60)
+**Overall Status**: ⚠️ Minor structural differences remain (59/62)
 
 ---
 
@@ -19,11 +19,11 @@
 | US4 — Application Upload | 4 | 4/4 | ✅ |
 | US5 — Scoring Pipeline | 6 | 6/6 | ✅ |
 | US6 — Ranked Lists & Detail | 4 | 4/4 | ✅ |
-| US7 — Manual Review | 4 | 4/4 | ✅ |
+| US7 — Manual Review | 6 | 4/6 | ⚠️ |
 | US8 — Monitoring & Pipeline Visibility | 5 | 5/5 | ✅ |
 | Authorization & Security | 4 | 4/4 | ✅ |
 | Infrastructure & Storage | 3 | 3/3 | ✅ |
-| **Total** | **60** | **59/60** | **⚠️** |
+| **Total** | **62** | **59/62** | **⚠️** |
 
 ---
 
@@ -250,9 +250,13 @@
   _Stack A_: `ManualReviewView.tsx` audit trail of modifications  
   _Stack B_: `ProcessingEvent` entity appended for each manual review action
 
----
+- [ ] **CHK056** — Both stacks pre-populate the rubric scoring form with AI-assigned per-category scores (averaged across all scoring runs) when AI scoring results exist and no manual review has been previously saved. A banner MUST be visible indicating AI pre-population is active and showing the aggregated score and variance (US7 scenario 6, FR-014)  
+  _Stack A_: `src/lib/stackb-scoring.ts` `buildStackBManualReviewPrepopulation()` averages category scores and sets points; `ManualReviewView.tsx` renders pre-population banner  
+  _Stack B_: `ManualReview.razor` `PrePopulateFromAiAsync()` averages category scores — **⚠️ REGRESSION: currently pre-populates category scores but does NOT always surface evidence snippets per category in the notes field; see CHK057**
 
-## US8 — Monitoring & Pipeline Visibility
+- [ ] **CHK057** — Both stacks pre-populate each rubric category's notes/comment field with the AI evidence snippets (direct quotes/citations from the CV) associated with that category, sourced from `evidenceCitations` in the scoring runs (US7 scenario 6, FR-014)  
+  _Stack A_: `src/lib/stackb-scoring.ts` `collectEvidenceByRubricCategory()` + `buildStackBManualReviewPrepopulation()` appends evidence under an "Evidence" heading in each category comment  
+  _Stack B_: `ManualReview.razor` `PrePopulateFromAiAsync()` — **⚠️ REGRESSION: builds `categoryEvidenceMap` from `EvidenceCitationsJson` but only appends evidence if the map entry exists; regression likely caused by category name matching failure or missing evidence payload; must be verified and fixed to match Stack A**
 
 - [x] **CHK047** — Both stacks implement a pipeline visualiser showing stage counts (extraction → scoring → aggregation → complete)  
   _Stack A_: `src/components/PipelineVisualizer.tsx` visual stages with progress indicators  
@@ -298,15 +302,15 @@
 
 ## Infrastructure & Storage
 
-- [x] **CHK056** — Both stacks implement a swappable storage backend for local development and production (FR-018)  
+- [x] **CHK060** — Both stacks implement a swappable storage backend for local development and production (FR-018)  
   _Stack A_: `server/storage/factory.ts` selects `LocalKVStorage` or `AzureSQLStorage` via `STORAGE_PROVIDER` env  
   _Stack B_: EF Core with `AppDbContext`; SQLite for dev, Azure SQL for production via connection string
 
-- [x] **CHK057** — Both stacks implement structured error handling with consistent JSON error responses  
+- [x] **CHK061** — Both stacks implement structured error handling with consistent JSON error responses  
   _Stack A_: `server/middleware/error-handler.ts` returns `{ error, message, statusCode }`  
   _Stack B_: Exception handling middleware in ASP.NET pipeline; structured error DTOs
 
-- [x] **CHK058** — Both stacks implement request validation with descriptive error messages on invalid input  
+- [x] **CHK062** — Both stacks implement request validation with descriptive error messages on invalid input  
   _Stack A_: `server/middleware/validate.ts` Zod schema validation returns 400 with detail  
   _Stack B_: FluentValidation / MediatR pipeline behaviors; returns 400 with validation errors
 

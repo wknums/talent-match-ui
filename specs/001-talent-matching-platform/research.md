@@ -1,8 +1,69 @@
 # Research — Talent Matching Platform
 
-**Feature**: 001-talent-matching-platform | **Date**: 2026-03-09
+**Feature**: 001-talent-matching-platform | **Date**: 2026-03-09 (updated 2026-04-23)
 
 This document resolves all unknowns identified during Technical Context analysis.
+
+---
+
+## 2026-04-23 Addendum: Manual Review AI Evidence Prepopulation
+
+### Q1: Why is evidence missing from category notes in Stack B?
+
+**Decision**: Regression is in `ParseSingleRun` (`ScoreApplicationCommand.cs`), not in
+`PrePopulateFromAiAsync`. Two defects cause evidence citations to have empty or wrong snippets:
+
+1. **Case-sensitive `TryGetProperty("evidence")`** in the nested-object branch — if the LLM
+   returns `"Evidence"` (capitalised), zero citations are stored for that category.
+2. **Position-dependent `ExtractCategoryName` / `ExtractStringField`** in the array-of-objects
+   branch — if JSON field order puts the evidence string before the category name, the fields
+   are swapped, so citations are stored under the wrong key and `MatchCategory` can't find them.
+
+Stack A is unaffected because it uses already-stored and deserialized `evidenceCitations` from
+the API response; it does not re-derive evidence from raw LLM output at display time.
+
+**Alternatives considered**: Changing the prompt to force a fixed JSON structure — rejected;
+schema-agnostic parsing is intentional. Fix the parser's field-resolution logic instead.
+
+### Q2: Is Stack A working correctly per FR-014?
+
+**Decision**: Functionally correct for the score+evidence case. One spec gap: `aiScoringMismatch`
+is a boolean (overall) but FR-014 requires a per-category mismatch warning. Extend
+`StackBPrepopulationResult` to include `mismatchedCategories: string[]`.
+
+### Q3: Canonical `EvidenceCitation` schema
+
+```typescript
+interface EvidenceCitation {
+  category:    string    // rubric category name as returned by the LLM
+  snippet:     string    // direct quote from the CV
+  section?:    string    // optional: document section heading
+  confidence?: number    // optional: 0–1
+}
+```
+
+`EvidenceCitationsJson` stores lowercase-keyed JSON: `[{"category":"...","snippet":"..."}]`.
+`PropertyNameCaseInsensitive = true` on the Stack B deserializer handles this correctly.
+
+### Q4: Is `MatchCategory` / `matchCategoryToRubric` equivalent across stacks?
+
+**Decision**: Yes — both implement exact → substring containment → ≥40% word overlap. No change
+needed.
+
+### Q5: Existing test coverage for evidence prepopulation
+
+**Decision**: None. `Domain.Tests/JobTests.cs` only asserts `EvidenceCitationsJson = "[]"` for
+the error path. New unit tests required before fixing (test-then-fix).
+
+### Decision Summary
+
+| # | Decision |
+|---|----------|
+| 1 | Fix `TryGetProperty("evidence")` → case-insensitive enumeration in `ParseSingleRun` |
+| 2 | Fix field-resolution in array-of-objects branch (`ExtractCategoryName` / `ExtractStringField`) |
+| 3 | Add `mismatchedCategories: string[]` to `StackBPrepopulationResult`; render per-category warnings |
+| 4 | Write unit tests before fixing (regression capture first) |
+| 5 | No schema migration needed; no prompt change needed |
 
 ---
 

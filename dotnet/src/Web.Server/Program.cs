@@ -359,40 +359,43 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
         }
 
         // Backward compatibility for environments created with Stack A naming.
-        // Some deployments may run older Stack B binaries that still query the
-        // legacy column names, so ensure both names exist and are synchronized.
-        using var compatibilityCommand = connection.CreateCommand();
-        compatibilityCommand.CommandTimeout = 180;
-        compatibilityCommand.CommandText = @"
+        // Execute DDL and DML in separate round-trips so SQL Server can compile
+        // statements against newly-added columns.
+        ExecuteSql(@"
 IF COL_LENGTH('talentmatch.JobConfigVersions', 'MustHaveCriteriaJson') IS NULL
 BEGIN
     ALTER TABLE [talentmatch].JobConfigVersions
         ADD [MustHaveCriteriaJson] NVARCHAR(MAX) NOT NULL CONSTRAINT DF_JobConfigVersions_MustHaveCriteriaJson DEFAULT N'[]';
-
-    UPDATE [talentmatch].JobConfigVersions
-    SET [MustHaveCriteriaJson] = ISNULL([MustHavesJson], N'[]')
-    WHERE [MustHaveCriteriaJson] IS NULL OR [MustHaveCriteriaJson] = N'[]';
 END;
+");
 
+        ExecuteSql(@"
+UPDATE [talentmatch].JobConfigVersions
+SET [MustHaveCriteriaJson] = ISNULL([MustHavesJson], N'[]')
+WHERE [MustHaveCriteriaJson] IS NULL OR [MustHaveCriteriaJson] = N'[]';
+");
+
+        ExecuteSql(@"
 IF COL_LENGTH('talentmatch.JobConfigVersions', 'ScoringRunCount') IS NULL
 BEGIN
     ALTER TABLE [talentmatch].JobConfigVersions
         ADD [ScoringRunCount] INT NOT NULL CONSTRAINT DF_JobConfigVersions_ScoringRunCount DEFAULT 3;
-
-    UPDATE [talentmatch].JobConfigVersions
-    SET [ScoringRunCount] = ISNULL([RunsPerApplication], 3)
-    WHERE [ScoringRunCount] IS NULL OR [ScoringRunCount] = 3;
 END;
+");
 
-UPDATE [talentmatch].JobConfigVersions
-SET [MustHaveCriteriaJson] = ISNULL([MustHavesJson], N'[]')
-WHERE [MustHaveCriteriaJson] IS NULL;
-
+        ExecuteSql(@"
 UPDATE [talentmatch].JobConfigVersions
 SET [ScoringRunCount] = ISNULL([RunsPerApplication], 3)
-WHERE [ScoringRunCount] IS NULL;
-";
-        compatibilityCommand.ExecuteNonQuery();
+WHERE [ScoringRunCount] IS NULL OR [ScoringRunCount] = 3;
+");
+
+        void ExecuteSql(string sql)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.CommandTimeout = 180;
+            command.ExecuteNonQuery();
+        }
     }
     finally
     {

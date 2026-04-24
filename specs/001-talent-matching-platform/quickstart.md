@@ -138,3 +138,33 @@ Both stacks support the full prompt lifecycle:
 | `STORAGE_PROVIDER` | `local` or `azuresql` (Stack A) | Stack A only |
 | `API_MODE` | `mock` or `real` (Stack A) | Stack A only |
 | `DatabaseProvider` | `sqlite` or `sqlserver` (Stack B) | Stack B only |
+
+## Manual Review AI Prepopulation Verification (US7 / FR-014)
+
+Use this flow to verify the regression fix for AI category evidence prepopulation.
+
+### Preconditions
+
+- Application has completed scoring with at least one `ScoringRun`.
+- `ScoringRun.CategoryScoresJson` contains category scores.
+- `ScoringRun.EvidenceCitationsJson` contains category/snippet citations.
+- No existing `ManualReview` record for the application.
+
+### Verification Steps
+
+1. Open a scored application and click **Manual Review**.
+2. Confirm the AI prepopulation banner is shown with overall score and variance.
+3. For each rubric category, confirm:
+  - points/score input is pre-filled from averaged AI category score;
+  - notes/comment field includes an **AI Score** block and an **Evidence** block;
+  - evidence block contains one or more bullet snippets sourced from scoring citations.
+4. Save the manual review, refresh the page, and confirm saved values reload (persisted review),
+  not a fresh AI overwrite.
+5. Repeat with a scoring payload whose category names do not match rubric category names and
+  confirm mismatch warning is shown and prepopulation is skipped for unmatched categories.
+
+### Expected Results
+
+- First open (no prior review): AI score + evidence prepopulation is visible per category.
+- After save/reload: persisted manual review remains authoritative.
+- Category mismatch case: explicit warning shown; recruiter can re-score.

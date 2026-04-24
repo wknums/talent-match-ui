@@ -174,6 +174,32 @@ public class ApplicationRepository : IApplicationRepository
 
     public async Task<IReadOnlyList<ApplicationDocument>> GetDocumentsAsync(string applicationId, CancellationToken ct = default)
     {
+        // SQL Server: EF handles column mapping (MimeType→FileType, SizeBytes→FileSize, UploadedAt→UploadTimestamp).
+        if (!_context.Database.IsSqlite())
+        {
+            var efDocs = await _context.ApplicationDocuments
+                .Where(d => d.ApplicationId == applicationId)
+                .OrderBy(d => d.Id)
+                .AsNoTracking()
+                .ToListAsync(ct);
+
+            // Blob content lives in DocumentBlobs; load it in a second query and merge.
+            var docIds = efDocs.Select(d => d.Id).ToList();
+            var blobs = await _context.DocumentBlobs
+                .Where(b => docIds.Contains(b.DocumentId))
+                .AsNoTracking()
+                .ToDictionaryAsync(b => b.DocumentId, b => b.Content, ct);
+
+            foreach (var doc in efDocs)
+            {
+                if (blobs.TryGetValue(doc.Id, out var content))
+                    doc.ContentBase64 = content;
+            }
+
+            return efDocs;
+        }
+
+        // SQLite: use raw SQL to handle dual column-name schema (legacy + new names).
         var documents = new List<ApplicationDocument>();
         var connection = _context.Database.GetDbConnection();
         var shouldClose = connection.State != ConnectionState.Open;
