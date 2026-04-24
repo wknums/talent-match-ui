@@ -31,6 +31,7 @@ export interface StackBPrepopulatedCategory {
 export interface StackBPrepopulationResult {
   aiPrePopulated: boolean
   aiScoringMismatch: boolean
+  mismatchedCategories: string[]
   rubricScores: Record<string, ManualReviewRubricEntry>
   overallComment?: string
 }
@@ -216,7 +217,8 @@ export function collectEvidenceByRubricCategory(
     const snippet = value?.trim()
     if (!snippet) return
     if (!evidenceByCategory[categoryName]) evidenceByCategory[categoryName] = []
-    if (!evidenceByCategory[categoryName].includes(snippet)) {
+    const normalizedSnippet = snippet.toLowerCase()
+    if (!evidenceByCategory[categoryName].some(existing => existing.trim().toLowerCase() === normalizedSnippet)) {
       evidenceByCategory[categoryName].push(snippet)
     }
   }
@@ -267,15 +269,28 @@ export function buildStackBManualReviewPrepopulation(args: {
     return {
       aiPrePopulated: false,
       aiScoringMismatch: false,
+      mismatchedCategories: [],
       rubricScores: existingReview.rubricScores,
       overallComment: existingReview.overallComment,
     }
   }
 
+  // Compute which rubric categories had zero matched AI scores AND zero matched evidence
+  const mismatchedCategories: string[] = []
+  for (const category of rubric) {
+    const hasScore = avgScoresByCategory[category.name] != null
+    const hasEvidence = (evidenceByCategory[category.name]?.length ?? 0) > 0
+    if (!hasScore && !hasEvidence) {
+      mismatchedCategories.push(category.name)
+    }
+  }
+
   if (Object.keys(avgScoresByCategory).length === 0) {
+    const totalMismatch = scoringRuns.length > 0
     return {
       aiPrePopulated: false,
-      aiScoringMismatch: scoringRuns.length > 0,
+      aiScoringMismatch: totalMismatch,
+      mismatchedCategories: totalMismatch ? mismatchedCategories : [],
       rubricScores: existingReview.rubricScores,
       overallComment: existingReview.overallComment,
     }
@@ -331,6 +346,7 @@ export function buildStackBManualReviewPrepopulation(args: {
   return {
     aiPrePopulated: true,
     aiScoringMismatch: false,
+    mismatchedCategories,
     rubricScores,
     overallComment,
   }

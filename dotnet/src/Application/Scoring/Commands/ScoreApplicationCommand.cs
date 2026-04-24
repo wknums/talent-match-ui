@@ -124,7 +124,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     /// Scalar strings are collected as metadata (recommendation, summary, notes).
     /// Scalar numbers are candidates for the total/overall score.
     /// </summary>
-    private ScoringRun ParseSingleRun(JsonElement root, string applicationId, string promptId, int runIndex)
+    internal ScoringRun ParseSingleRun(JsonElement root, string applicationId, string promptId, int runIndex)
     {
         var categoryScores = new Dictionary<string, double>();
         var evidenceCitations = new List<object>();
@@ -182,7 +182,8 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                     {
                         categoryScores[name] = catScore.Value;
                         var evidence = ExtractStringField(val);
-                        evidenceCitations.Add(new { category = name, snippet = evidence });
+                        if (!string.IsNullOrWhiteSpace(evidence))
+                            evidenceCitations.Add(new { category = name, snippet = evidence });
                     }
                     else
                     {
@@ -195,13 +196,13 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                                 if (subScore.HasValue)
                                 {
                                     categoryScores[subProp.Name] = subScore.Value;
-                                    // Extract evidence array
-                                    if (subProp.Value.TryGetProperty("evidence", out var evArr) && evArr.ValueKind == JsonValueKind.Array)
+                                    // Extract evidence array (case-insensitive)
+                                    if (TryGetPropertyCaseInsensitive(subProp.Value, "evidence", out var evArr) && evArr.ValueKind == JsonValueKind.Array)
                                     {
                                         foreach (var ev in evArr.EnumerateArray())
                                         {
-                                            if (ev.ValueKind == JsonValueKind.String)
-                                                evidenceCitations.Add(new { category = subProp.Name, snippet = ev.GetString() ?? "" });
+                                            if (ev.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(ev.GetString()))
+                                                evidenceCitations.Add(new { category = subProp.Name, snippet = ev.GetString()! });
                                         }
                                     }
                                     // Extract improvement_recommendations
@@ -234,8 +235,29 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                                 if (catName != null && itemScore.HasValue)
                                 {
                                     categoryScores[catName] = itemScore.Value;
-                                    var ev = ExtractStringField(item);
-                                    evidenceCitations.Add(new { category = catName, snippet = ev });
+                                    // Check for evidence array first (handles { "category": "X", "score": 85, "evidence": ["a", "b"] })
+                                    if (TryGetPropertyCaseInsensitive(item, "evidence", out var evElement))
+                                    {
+                                        if (evElement.ValueKind == JsonValueKind.Array)
+                                        {
+                                            foreach (var ev in evElement.EnumerateArray())
+                                            {
+                                                if (ev.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(ev.GetString()))
+                                                    evidenceCitations.Add(new { category = catName, snippet = ev.GetString()! });
+                                            }
+                                        }
+                                        else if (evElement.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(evElement.GetString()))
+                                        {
+                                            evidenceCitations.Add(new { category = catName, snippet = evElement.GetString()! });
+                                        }
+                                    }
+                                    else
+                                    {
+                                        // Fallback: extract longest string field as evidence
+                                        var ev = ExtractStringField(item);
+                                        if (!string.IsNullOrWhiteSpace(ev))
+                                            evidenceCitations.Add(new { category = catName, snippet = ev });
+                                    }
                                 }
                             }
                         }
@@ -389,6 +411,22 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     /// Uses 3-tier fuzzy matching: exact normalised → substring containment → 40%+ word overlap.
     /// Mutates the ScoringRun in place before it is persisted.
     /// </summary>
+
+    /// <summary>Case-insensitive property lookup for JsonElement objects.</summary>
+    internal static bool TryGetPropertyCaseInsensitive(JsonElement obj, string name, out JsonElement value)
+    {
+        foreach (var prop in obj.EnumerateObject())
+        {
+            if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = prop.Value;
+                return true;
+            }
+        }
+        value = default;
+        return false;
+    }
+
     private static void RemapToRubric(ScoringRun run, string? rubricJson)
     {
         if (string.IsNullOrEmpty(rubricJson) || rubricJson == "[]")
@@ -481,7 +519,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
 
     private record RubricCategoryInfo(string Name, double Weight, string? Description);
 
-    private static double? ExtractNumericField(JsonElement obj)
+    internal static double? ExtractNumericField(JsonElement obj)
     {
         foreach (var prop in obj.EnumerateObject())
         {
@@ -495,9 +533,23 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         return null;
     }
 
-    /// <summary>Find the longest string property in an object (the "evidence/justification" field).</summary>
-    private static string ExtractStringField(JsonElement obj)
+    /// <summary>Find the longest string property in an object (the "evidence/justification" field), preferring semantically named properties.</summary>
+    internal static string ExtractStringField(JsonElement obj)
     {
+        // Prefer properties whose name contains evidence-related keywords
+        foreach (var prop in obj.EnumerateObject())
+        {
+            if (prop.Value.ValueKind == JsonValueKind.String)
+            {
+                var lower = prop.Name.ToLowerInvariant();
+                if (lower.Contains("evidence") || lower.Contains("justification") || lower.Contains("rationale") || lower.Contains("snippet"))
+                {
+                    var s = prop.Value.GetString() ?? "";
+                    if (s.Length > 0) return s;
+                }
+            }
+        }
+        // Fallback: longest string
         string best = "";
         foreach (var prop in obj.EnumerateObject())
         {
@@ -511,15 +563,29 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         return best;
     }
 
-    /// <summary>Find a name/category/label string property in an object (for array-of-objects format).</summary>
-    private static string? ExtractCategoryName(JsonElement obj)
+    /// <summary>Find a name/category/label string property in an object (for array-of-objects format), preferring semantically named properties.</summary>
+    internal static string? ExtractCategoryName(JsonElement obj)
     {
+        // Prefer properties whose name contains category/name/label keywords
+        foreach (var prop in obj.EnumerateObject())
+        {
+            if (prop.Value.ValueKind == JsonValueKind.String)
+            {
+                var lower = prop.Name.ToLowerInvariant();
+                if (lower.Contains("category") || lower.Contains("name") || lower.Contains("label"))
+                {
+                    var s = prop.Value.GetString() ?? "";
+                    if (s.Length > 0 && s.Length < 200)
+                        return s;
+                }
+            }
+        }
+        // Fallback: first short string field (likely a label, not a long evidence paragraph)
         foreach (var prop in obj.EnumerateObject())
         {
             if (prop.Value.ValueKind == JsonValueKind.String)
             {
                 var s = prop.Value.GetString() ?? "";
-                // Return the first short string field (likely a label, not a long evidence paragraph)
                 if (s.Length > 0 && s.Length < 200)
                     return s;
             }

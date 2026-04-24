@@ -250,13 +250,13 @@
   _Stack A_: `ManualReviewView.tsx` audit trail of modifications  
   _Stack B_: `ProcessingEvent` entity appended for each manual review action
 
-- [ ] **CHK056** — Both stacks pre-populate the rubric scoring form with AI-assigned per-category scores (averaged across all scoring runs) when AI scoring results exist and no manual review has been previously saved. A banner MUST be visible indicating AI pre-population is active and showing the aggregated score and variance (US7 scenario 6, FR-014)  
+- [x] **CHK056** — Both stacks pre-populate the rubric scoring form with AI-assigned per-category scores (averaged across all scoring runs) when AI scoring results exist and no manual review has been previously saved. A banner MUST be visible indicating AI pre-population is active and showing the aggregated score and variance (US7 scenario 6, FR-014)  
   _Stack A_: `src/lib/stackb-scoring.ts` `buildStackBManualReviewPrepopulation()` averages category scores and sets points; `ManualReviewView.tsx` renders pre-population banner  
-  _Stack B_: `ManualReview.razor` `PrePopulateFromAiAsync()` averages category scores — **⚠️ REGRESSION: currently pre-populates category scores but does NOT always surface evidence snippets per category in the notes field; see CHK057**
+  _Stack B_: `ManualReview.razor` `PrePopulateFromAiAsync()` averages category scores and pre-populates rubric with evidence snippets. Parser regression fixed: case-insensitive evidence extraction, semantic field name preference for category/evidence extraction.
 
-- [ ] **CHK057** — Both stacks pre-populate each rubric category's notes/comment field with the AI evidence snippets (direct quotes/citations from the CV) associated with that category, sourced from `evidenceCitations` in the scoring runs (US7 scenario 6, FR-014)  
+- [x] **CHK057** — Both stacks pre-populate each rubric category's notes/comment field with the AI evidence snippets (direct quotes/citations from the CV) associated with that category, sourced from `evidenceCitations` in the scoring runs (US7 scenario 6, FR-014)  
   _Stack A_: `src/lib/stackb-scoring.ts` `collectEvidenceByRubricCategory()` + `buildStackBManualReviewPrepopulation()` appends evidence under an "Evidence" heading in each category comment  
-  _Stack B_: `ManualReview.razor` `PrePopulateFromAiAsync()` — **⚠️ REGRESSION: builds `categoryEvidenceMap` from `EvidenceCitationsJson` but only appends evidence if the map entry exists; regression likely caused by category name matching failure or missing evidence payload; must be verified and fixed to match Stack A**
+  _Stack B_: `ManualReview.razor` `PrePopulateFromAiAsync()` — Fixed: parser now uses `TryGetPropertyCaseInsensitive` for evidence lookup, `ExtractCategoryName` prefers category/name/label properties, `ExtractStringField` prefers evidence/justification properties. Empty snippets filtered. Evidence dedup hardened with trim + case-insensitive comparison.
 
 - [x] **CHK047** — Both stacks implement a pipeline visualiser showing stage counts (extraction → scoring → aggregation → complete)  
   _Stack A_: `src/components/PipelineVisualizer.tsx` visual stages with progress indicators  

@@ -42,6 +42,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
   const [error, setError] = useState<string | null>(null)
   const [aiPrePopulated, setAiPrePopulated] = useState(false)
   const [aiScoringMismatch, setAiScoringMismatch] = useState(false)
+  const [mismatchedCategories, setMismatchedCategories] = useState<string[]>([])
   const [aggregatedResult, setAggregatedResult] = useState<AggregatedResult | null>(null)
   const [reviewData, setReviewData] = useState<ManualReviewData>(createEmptyReviewData)
 
@@ -125,6 +126,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
         setAiPrePopulated(prepopulated.aiPrePopulated)
         setAiScoringMismatch(prepopulated.aiScoringMismatch)
+        setMismatchedCategories(prepopulated.mismatchedCategories)
 
         const nextReviewData = {
           ...base,
@@ -349,6 +351,12 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
               {aiScoringMismatch && !aiPrePopulated && (
                 <div className="mt-2 px-3 py-2 rounded-md border border-amber-200 bg-amber-50 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
                   AI scoring exists for this application, but Stack B-compatible category scores were not available to pre-populate the rubric.
+                  {mismatchedCategories.length > 0 && (
+                    <div className="mt-1">
+                      <span className="font-medium">Unmatched categories: </span>
+                      {mismatchedCategories.join(', ')}
+                    </div>
+                  )}
                 </div>
               )}
             </CardHeader>
@@ -401,6 +409,11 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
                               }
                               className="min-h-[80px] text-sm"
                             />
+                            {mismatchedCategories.includes(category.name) && (
+                              <div className="mt-1 px-2 py-1.5 rounded border border-amber-200 bg-amber-50 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                                AI scoring data could not be matched to this category. You may need to re-score.
+                              </div>
+                            )}
                           </div>
                         </div>
                         <Separator />
