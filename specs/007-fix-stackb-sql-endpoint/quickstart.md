@@ -61,6 +61,16 @@ TF_VAR_awr_seq_api_endpoint="" terraform plan
 
 After the app restarts with the new code, verify all tables were created:
 
+Feature baseline expected table count: **17** `CREATE TABLE` statements in `server/storage/schema.sql`.
+
+Optional schema-derived count check from repo source:
+
+```bash
+grep -Eic '^CREATE TABLE' server/storage/schema.sql
+```
+
+Expected output: `17`
+
 ```sql
 -- Run against the Azure SQL database
 SELECT COUNT(*) AS table_count
@@ -69,7 +79,19 @@ WHERE TABLE_TYPE = 'BASE TABLE'
   AND TABLE_SCHEMA = 'dbo';
 ```
 
-**Expected**: Table count matches the number of `CREATE TABLE` statements in `server/storage/schema.sql`. Check application logs for absence of `FormatException` or format-related errors during startup.
+**Expected**: `table_count = 17` and it matches the schema-derived `CREATE TABLE` count from source. Check application logs for absence of `FormatException` or format-related errors during startup.
+
+### Step 4b: Verify Missing-Schema Diagnostic (NFR-002)
+
+Run a controlled validation using a temporary artifact variant where `server/storage/schema.sql` is intentionally excluded from deployment payload.
+
+**Expected**: Startup logs include a clear bootstrap error that the schema file was not found (actionable diagnostic, not a generic failure).
+
+### Step 4c: Verify SQL-Execution Diagnostic (NFR-002)
+
+Run a controlled validation using a temporary artifact variant with an intentionally invalid SQL statement in the bootstrap schema input.
+
+**Expected**: Startup logs include actionable SQL execution failure details (statement/batch context and error), not only a generic startup failure.
 
 ## Step 5: Verify AWR API Health Check (SC-003)
 
@@ -86,4 +108,10 @@ curl -s https://<stack-b-hostname>/api/health | jq '.dependencies[] | select(.na
 curl -s https://<stack-a-hostname>/api/health | jq .
 ```
 
-**Expected**: Stack A health endpoint returns the same results as before the changes. No Terraform changes appear for Stack A.
+Also verify no unintended Terraform drift outside Stack B root:
+
+```bash
+cd infra/terraform/live/stack-a && terraform plan
+```
+
+**Expected**: Stack A health endpoint returns the same results as before the changes. No unintended Terraform changes appear for Stack A or other non-target roots.
