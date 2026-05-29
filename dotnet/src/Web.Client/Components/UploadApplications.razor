@@ -4,7 +4,7 @@
 
 <div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; background: white; min-width: 400px;">
     <h4>Upload Applications</h4>
-    <p>Select PDF, DOCX, or MD files to upload (max 2 MB each).</p>
+    <p>Select PDF, MD, DOCX, TXT, JPG, or PNG files to upload (max 15 MB each).</p>
 
     <div style="border: 2px dashed @(isDragOver ? "#3182ce" : "#ccc"); border-radius: 8px; padding: 2rem; text-align: center; margin-bottom: 1rem; background: @(isDragOver ? "#ebf8ff" : "transparent"); transition: all 0.2s;"
          @ondragenter="() => isDragOver = true"
@@ -12,7 +12,7 @@
          @ondragover:preventDefault>
         <p style="margin: 0 0 0.5rem 0; font-size: 1.2rem;">📄</p>
         <p style="margin: 0;">Drag & drop files here, or click to browse</p>
-        <InputFile OnChange="HandleFileSelection" multiple style="margin-top: 0.5rem;" accept=".pdf,.docx,.md" />
+        <InputFile OnChange="HandleFileSelection" multiple style="margin-top: 0.5rem;" accept=".pdf,.md,.docx,.txt,.jpg,.png" />
     </div>
 
     @if (fileEntries.Any())
@@ -60,8 +60,8 @@
     private string? statusMessage;
     private bool uploadSuccess;
 
-    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".docx", ".md" };
-    private const long MaxFileSize = 2 * 1024 * 1024;
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".md", ".docx", ".txt", ".jpg", ".png" };
+    private const long MaxFileSize = 15 * 1024 * 1024;
 
     private IEnumerable<FileEntry> ValidFiles => fileEntries.Where(f => string.IsNullOrEmpty(f.Error));
 
@@ -75,7 +75,7 @@
             if (!AllowedExtensions.Contains(ext))
                 entry.Error = $"Invalid type: {ext}";
             else if (file.Size > MaxFileSize)
-                entry.Error = "File exceeds 2 MB limit";
+                entry.Error = "File exceeds 15 MB limit";
             fileEntries.Add(entry);
         }
     }
@@ -121,6 +121,8 @@
         ".doc" => "application/msword",
         ".md" => "text/markdown",
         ".txt" => "text/plain",
+        ".jpg" => "image/jpeg",
+        ".png" => "image/png",
         _ => "application/octet-stream"
     };
 }

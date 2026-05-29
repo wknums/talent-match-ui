@@ -5,6 +5,7 @@ import { jobRepo, applicationRepo, userRepo, dlqRepo } from '../storage/repos/in
 import { requireRole } from '../middleware/rbac.js'
 import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
+import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
 import type { AggregatedResult, Job, JobConfigVersion } from '../../src/types/index.js'
 
 // FR-065: Spec extraction and rubric extraction ALWAYS use AWR_SEQ_API_ENDPOINT regardless of scoring mode
@@ -294,11 +295,13 @@ export function createJobsRouter() {
       formData.append('specFile', docBlob, fileName)
 
       const awrHeaders = await getAwrAuthHeaders(req.user ? { username: req.user.username, role: req.user.role } : undefined)
+      const timeout = createAwrTimeoutSignal()
       const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
         method: 'POST',
         headers: awrHeaders,
         body: formData,
-      })
+        signal: timeout.signal,
+      }).finally(() => timeout.dispose())
 
       if (!extractionResponse.ok) {
         const errorText = await extractionResponse.text()
@@ -368,11 +371,13 @@ export function createJobsRouter() {
       formData.append('specFile', docBlob, fileName)
 
       const awrHeaders = await getAwrAuthHeaders(req.user ? { username: req.user.username, role: req.user.role } : undefined)
+      const timeout = createAwrTimeoutSignal()
       const extractionResponse = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
         method: 'POST',
         headers: awrHeaders,
         body: formData,
-      })
+        signal: timeout.signal,
+      }).finally(() => timeout.dispose())
 
       if (!extractionResponse.ok) {
         const errorText = await extractionResponse.text()
@@ -703,6 +708,45 @@ export function createJobsRouter() {
       await audit.appendEvent(req.user?.username || 'unknown', 'application.rescore', 'Application', applicationId, { jobId })
 
       res.json({ success: true, message: `Application ${applicationId} queued for re-scoring` })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // POST /api/jobs/:jobId/scoring/cancel - request cancellation of any in-flight
+  // platform-mode batches for this job (008-platform-mode-shift §7). Sequential
+  // mode is a no-op success: there are no batches and the work is already
+  // synchronous from the caller's perspective.
+  router.post('/:jobId/scoring/cancel', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId } = req.params
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+
+      const { scoringBatchRepo } = await import('../storage/repos/index.js')
+      await scoringBatchRepo.requestCancelProgress(jobId)
+      const affected = await scoringBatchRepo.requestCancelByJob(jobId)
+
+      await audit.appendEvent(req.user?.username || 'unknown', 'pipeline.cancel.requested', 'Job', jobId, {
+        affectedBatches: affected,
+      })
+
+      res.json({ success: true, message: `Cancellation requested for job ${jobId}`, affectedBatches: affected })
+    } catch (err) {
+      next(err)
+    }
+  })
+
+  // GET /api/jobs/:jobId/scoring/progress - platform-mode batched scoring progress.
+  // Returns null when the job has no batches (sequential mode or never enqueued).
+  router.get('/:jobId/scoring/progress', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const { jobId } = req.params
+      const { scoringBatchRepo } = await import('../storage/repos/index.js')
+      const progress = await scoringBatchRepo.getProgress(jobId)
+      res.json({ progress })
     } catch (err) {
       next(err)
     }

@@ -124,7 +124,13 @@ source .env_qa
 set +a
 STACK_A_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-a output -raw app_name)"
 
-# 4) Deploy packaged zip to App Service
+# 4) Ensure on-host build/install is enabled for zip deploy
+az webapp config appsettings set \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$STACK_A_APP_NAME" \
+  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true
+
+# 5) Deploy packaged zip to App Service
 az webapp deploy \
   --resource-group "$RESOURCE_GROUP" \
   --name "$STACK_A_APP_NAME" \
@@ -174,7 +180,13 @@ set +a
 STACK_A_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-a output -raw app_name)"
 STACK_B_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-b output -raw app_name)"
 
-# 4) Deploy both artifacts
+# 4) Ensure Stack A on-host build/install is enabled for zip deploy
+az webapp config appsettings set \
+  --resource-group "$RESOURCE_GROUP" \
+  --name "$STACK_A_APP_NAME" \
+  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true
+
+# 5) Deploy both artifacts
 az webapp deploy \
   --resource-group "$RESOURCE_GROUP" \
   --name "$STACK_A_APP_NAME" \
@@ -210,6 +222,20 @@ Important notes:
 - Do not use `npm run` without a script name. It fails at startup.
 - The startup command is managed by Terraform in `infra/terraform/modules/stack-a/main.tf` via `app_command_line`.
 - If you change startup command in the Azure portal, the next Terraform apply can overwrite it.
+
+## Stack A Packaging and On-Host Build Behavior
+
+`infra/scripts/package-stack-a.sh` now creates a lean zip artifact that excludes `node_modules` to speed packaging and reduce local zip CPU/file-count overhead.
+
+Deployment implications:
+- App Service must build on deploy (Oryx) so production dependencies are restored on-host.
+- Required app settings: `SCM_DO_BUILD_DURING_DEPLOYMENT=true` and `ENABLE_ORYX_BUILD=true`.
+- These are now managed by Terraform in `infra/terraform/modules/stack-a/main.tf`.
+
+Operational expectations:
+- Local packaging is significantly faster.
+- First deployment after a code change shifts part of the time to server-side build logs during Zip Deploy.
+- Runtime startup still uses the compiled server entrypoint (`node server/index.js`).
 
 ## GitHub Actions Workflow
 

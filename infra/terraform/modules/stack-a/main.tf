@@ -23,7 +23,8 @@ module "app_service" {
   app_settings = merge(
     {
       "WEBSITE_NODE_DEFAULT_VERSION"   = "~20"
-      "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
+      "SCM_DO_BUILD_DURING_DEPLOYMENT" = "true"
+      "ENABLE_ORYX_BUILD"              = "true"
       "STORAGE_PROVIDER"               = "azuresql"
       "AZURE_SQL_AUTH_MODE"            = "entra"
       "AZURE_SQL_SERVER_FQDN"          = var.sql_server_fqdn

@@ -264,6 +264,25 @@ public static class JobsEndpoints
             return Results.Ok(new { updated = result.Updated, total = result.Total });
         });
 
+        // Platform-mode cancellation: best-effort flips CancelRequested on all
+        // pending/submitted ScoringBatches for the job; the reconciler picks it
+        // up on its next tick. Sequential mode currently has no cancel — this
+        // endpoint still returns 200 with affectedBatches=0 in that case.
+        group.MapPost("/{jobId}/scoring/cancel", async (string jobId, ISender mediator) =>
+        {
+            var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.CancelJobScoringCommand(jobId));
+            return Results.Ok(new { affectedBatches = result.AffectedBatches });
+        });
+
+        // Platform-mode progress rollup. Returns null progress if no platform run
+        // is in flight for this job (caller treats that as sequential / idle).
+        group.MapGet("/{jobId}/scoring/progress", async (string jobId,
+            TalentMatch.Domain.Interfaces.IScoringBatchRepository batchRepo) =>
+        {
+            var progress = await batchRepo.GetProgressAsync(jobId);
+            return Results.Ok(new { progress });
+        });
+
         group.MapPut("/{jobId}/rubric-approval", async (string jobId, UpdateRubricApprovalRequest request, ISender mediator) =>
         {
             var result = await mediator.Send(new UpdateRubricApprovalCommand(jobId, request.Status));

@@ -11,6 +11,14 @@ public class ApplicationRepository : IApplicationRepository
     private readonly AppDbContext _context;
     public ApplicationRepository(AppDbContext context) => _context = context;
 
+    private string DocumentsTable => _context.Database.IsSqlServer()
+        ? "[talentmatch].[ApplicationDocuments]"
+        : "ApplicationDocuments";
+
+    private string DocumentBlobsTable => _context.Database.IsSqlServer()
+        ? "[talentmatch].[DocumentBlobs]"
+        : "DocumentBlobs";
+
     public async Task<IReadOnlyList<TalentMatch.Domain.Entities.Application>> GetByJobIdAsync(string jobId, CancellationToken ct = default)
         => await _context.Applications
             .Where(a => a.JobId == jobId)
@@ -258,6 +266,38 @@ public class ApplicationRepository : IApplicationRepository
         return documents;
     }
 
+    public async Task SetDocumentBlobReferenceAsync(string documentId, string blobUri, string contentSha256, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(documentId)) throw new ArgumentException("documentId is required", nameof(documentId));
+        if (string.IsNullOrWhiteSpace(blobUri)) throw new ArgumentException("blobUri is required", nameof(blobUri));
+
+        if (_context.Database.IsSqlite())
+        {
+            var columns = await GetSqliteTableColumnsAsync("ApplicationDocuments", ct);
+            var setClauses = new List<string> { "BlobUri = {0}", "ContentSha256 = {1}" };
+            var args = new List<object> { blobUri, contentSha256 };
+            if (columns.Contains("ContentBase64"))
+            {
+                setClauses.Add("ContentBase64 = NULL");
+            }
+
+            await _context.Database.ExecuteSqlRawAsync(
+                $"UPDATE {DocumentsTable} SET {string.Join(", ", setClauses)} WHERE Id = {{{args.Count}}}",
+                args.Concat(new object[] { documentId }).ToArray());
+        }
+        else
+        {
+            await _context.Database.ExecuteSqlRawAsync(
+                $"UPDATE {DocumentsTable} SET BlobUri = {{0}}, ContentSha256 = {{1}} WHERE Id = {{2}}",
+                blobUri, contentSha256, documentId);
+        }
+
+        // Canonical source for this row is now BlobUri, so remove DB-stored bytes.
+        await _context.Database.ExecuteSqlRawAsync(
+            $"DELETE FROM {DocumentBlobsTable} WHERE DocumentId = {{0}}",
+            documentId);
+    }
+
     private static DateTime? ParseOptionalDateTime(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -297,6 +337,7 @@ public class ApplicationRepository : IApplicationRepository
             existing.Confidence = result.Confidence;
             existing.ConsolidatedRationale = result.ConsolidatedRationale;
             existing.MergedImprovementTipsJson = result.MergedImprovementTipsJson;
+            existing.FinalSubScoresJson = result.FinalSubScoresJson;
             _context.AggregatedResults.Update(existing);
         }
         else
@@ -468,6 +509,7 @@ public class ApplicationRepository : IApplicationRepository
             existing.OverallComment = review.OverallComment;
             existing.AdjustedFinalScore = review.AdjustedFinalScore;
             existing.AuditTrailJson = review.AuditTrailJson;
+            existing.HumanEdited = review.HumanEdited;
             existing.UpdatedAt = DateTime.UtcNow;
             _context.ManualReviews.Update(existing);
         }

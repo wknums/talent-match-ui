@@ -1,97 +1,104 @@
-# Implementation Plan: Fix Stack B Azure SQL Bootstrap and Wire AWR Endpoint
+# Implementation Plan: [FEATURE]
 
-**Branch**: `007-fix-stackb-sql-endpoint` | **Date**: 2025-07-15 | **Spec**: [spec.md](spec.md)
-**Input**: Feature specification from `/specs/007-fix-stackb-sql-endpoint/spec.md`
+**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
+
+**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
 
 ## Summary
 
-Two co-P1 runtime bugs block Stack B Azure deployments:
-
-1. **SQL schema bootstrap failure** — `EnsureSharedAzureSqlSchemaIfNeeded` in `Program.cs` uses EF Core's `Database.ExecuteSqlRaw()`, which interprets `{}`/`{0}` tokens as parameter placeholders. The schema SQL contains `DEFAULT '{}'` for JSON columns (lines 166, 167, 191, 210, 287 of `schema.sql`), causing a `FormatException` that halts table creation mid-way. **Fix**: Replace `ExecuteSqlRaw` with ADO.NET `DbCommand.ExecuteNonQuery()`, which treats the SQL as a literal string with no parameter interpretation — matching the pattern already used by the SQLite bootstrap (`EnsureSharedSqliteSchemaIfNeeded`, lines 287–322).
-
-2. **Missing `AWR_SEQ_API_ENDPOINT` in Stack B Terraform** — The variable is declared in Stack A's live root and passed via `extra_app_settings` with conditional inclusion, but Stack B's live root omits both the variable declaration and the conditional local. **Fix**: Mirror Stack A's `variables.tf` declaration and `main.tf` conditional local into Stack B's live root — the module already accepts `extra_app_settings`.
+[Extract from feature spec: primary requirement + technical approach from research]
 
 ## Technical Context
 
-**Language/Version**: C# / .NET 10 (Stack B server), HCL / Terraform (infrastructure)
-**Primary Dependencies**: Microsoft.EntityFrameworkCore, Microsoft.Data.SqlClient, ASP.NET Core
-**Storage**: Azure SQL (production), SQLite (local dev) — shared schema via `server/storage/schema.sql`
-**Testing**: Manual verification — `terraform plan` for infra, health endpoint for runtime, table count for schema
-**Target Platform**: Azure App Service (Linux), .NET 10 runtime
-**Project Type**: Web service (Blazor WASM hosted) + infrastructure-as-code
-**Performance Goals**: N/A — bugfix, no new performance targets
-**Constraints**: Scoped to SQL execution method only; no schema SQL changes; no changes to `.env_qa` or `common.sh`; no changes to Stack A config or shared modules
-**Scale/Scope**: 4 files changed across 2 stacks (1 C#, 2 Terraform HCL in live root); zero new files
+<!--
+  ACTION REQUIRED: Replace the content in this section with the technical details
+  for the project. The structure here is presented in advisory capacity to guide
+  the iteration process.
+-->
+
+**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
+**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
+**Project Type**: [e.g., library/cli/web-service/mobile-app/compiler/desktop-app or NEEDS CLARIFICATION]  
+**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
+**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-| Principle | Status | Notes |
-|-----------|--------|-------|
-| **II. Layered Architecture** | ✅ PASS | Change is in `Program.cs` (startup/presentation layer); no business logic in bootstrap. |
-| **III. Storage Abstraction** | ✅ PASS | The schema bootstrap is a one-time DDL initializer, not data-access code. It does not bypass `StorageProvider`. |
-| **IV. Security Defaults** | ✅ PASS | No secrets exposed; `AWR_SEQ_API_ENDPOINT` is a URL, not a credential. |
-| **VII. Simplicity & YAGNI** | ✅ PASS | Minimal change; mirrors an existing proven pattern (SQLite bootstrap + Stack A Terraform). |
-| **IX. Clean Architecture** | ⚠️ JUSTIFIED | Using ADO.NET `DbCommand` directly in `Program.cs` instead of EF Core. Constitution IX allows direct ADO.NET for *"documented performance-critical paths"*. This is a startup DDL bootstrap, not data-access logic. The SQLite bootstrap at lines 287–322 already uses this exact pattern (`connection.CreateCommand()` + `ExecuteNonQuery()`), establishing project precedent. Documented in Complexity Tracking below. |
-| **FR-005: Schema SQL unchanged** | ✅ PASS | Only the execution mechanism changes; `schema.sql` is untouched. |
-| **FR-009: No .env_qa / common.sh changes** | ✅ PASS | Both already have the correct values. |
-
-**Gate result**: ✅ PASS — all principles satisfied; one justified deviation documented.
+[Gates determined based on constitution file]
 
 ## Project Structure
 
 ### Documentation (this feature)
 
 ```text
-specs/007-fix-stackb-sql-endpoint/
-├── plan.md              # This file
-├── research.md          # Phase 0: research findings
-├── data-model.md        # Phase 1: affected entities & schema
-├── quickstart.md        # Phase 1: verification runbook
-└── tasks.md             # Phase 2 output (created by /speckit.tasks)
+specs/[###-feature]/
+├── plan.md              # This file (/speckit.plan command output)
+├── research.md          # Phase 0 output (/speckit.plan command)
+├── data-model.md        # Phase 1 output (/speckit.plan command)
+├── quickstart.md        # Phase 1 output (/speckit.plan command)
+├── contracts/           # Phase 1 output (/speckit.plan command)
+└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
 ```
 
-### Source Code (files affected)
+### Source Code (repository root)
+<!--
+  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
+  for this feature. Delete unused options and expand the chosen structure with
+  real paths (e.g., apps/admin, packages/something). The delivered plan must
+  not include Option labels.
+-->
 
 ```text
-# Fix 1: SQL bootstrap (C#)
-dotnet/src/Web.Server/Program.cs                          # EnsureSharedAzureSqlSchemaIfNeeded method (~lines 324-342)
+# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
+src/
+├── models/
+├── services/
+├── cli/
+└── lib/
 
-# Fix 2: Terraform (Stack B live root only)
-infra/terraform/live/stack-b/variables.tf                 # Add awr_seq_api_endpoint variable
-infra/terraform/live/stack-b/main.tf                      # Add conditional local + pass extra_app_settings
+tests/
+├── contract/
+├── integration/
+└── unit/
 
-# Verification touchpoints (read-only — no changes)
-infra/terraform/modules/stack-b/variables.tf              # Confirm extra_app_settings exists (line 77)
-infra/terraform/modules/stack-b/main.tf                   # Confirm merge(... var.extra_app_settings) (line 35)
-infra/terraform/live/stack-a/main.tf                      # Reference pattern for conditional local
-infra/terraform/live/stack-a/variables.tf                  # Reference pattern for variable declaration
-infra/scripts/lib/common.sh                               # Confirm TF_VAR_awr_seq_api_endpoint export (line 132)
-server/storage/schema.sql                                  # Confirm curly-brace DEFAULT values
-infra/scripts/package-stack-b.sh                           # Build script for deployment artifact
-dotnet/src/Web.Server/Endpoints/HealthEndpoints.cs         # Health check reads AWR_SEQ_API_ENDPOINT
+# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
+backend/
+├── src/
+│   ├── models/
+│   ├── services/
+│   └── api/
+└── tests/
+
+frontend/
+├── src/
+│   ├── components/
+│   ├── pages/
+│   └── services/
+└── tests/
+
+# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
+api/
+└── [same as backend above]
+
+ios/ or android/
+└── [platform-specific structure: feature modules, UI flows, platform tests]
 ```
 
-**Structure Decision**: No new files or directories. Changes are isolated to 3 existing files:
-1 in the .NET server project, 2 in the Stack B Terraform live root.
+**Structure Decision**: [Document the selected structure and reference the real
+directories captured above]
 
 ## Complexity Tracking
 
+> **Fill ONLY if Constitution Check has violations that must be justified**
+
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| Direct ADO.NET in `Program.cs` (Principle IX permits EF Core as default ORM) | `ExecuteSqlRaw` interprets `{}` as parameter placeholders; there is no EF Core API that executes raw DDL without placeholder interpretation | The SQLite bootstrap already uses `DbCommand.ExecuteNonQuery()` at lines 313-315 of Program.cs — this is established project precedent, not a new pattern |
-
-## Post-Design Constitution Re-Check
-
-*Re-evaluated after Phase 1 design artifacts are complete.*
-
-| Principle | Status | Post-Design Notes |
-|-----------|--------|-------------------|
-| **II. Layered Architecture** | ✅ PASS | No change — `Program.cs` is presentation layer startup code. |
-| **III. Storage Abstraction** | ✅ PASS | No change — DDL bootstrap is infrastructure plumbing, not data access. |
-| **IV. Security Defaults** | ✅ PASS | No change — no secrets in code; endpoint URL is non-sensitive. |
-| **VII. Simplicity & YAGNI** | ✅ PASS | Design mirrors existing patterns exactly; zero new abstractions introduced. |
-| **IX. Clean Architecture** | ⚠️ JUSTIFIED (unchanged) | ADO.NET usage is minimal (3 lines replacing 1 line), follows SQLite precedent, and is documented above. |
-
-**Post-design gate result**: ✅ PASS — design is consistent with pre-research assessment. No new violations introduced.
+| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
+| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |

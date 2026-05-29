@@ -10,6 +10,7 @@ public interface IApplicationRepository
     Task UpdateAsync(Application application, CancellationToken cancellationToken = default);
     Task AddDocumentAsync(ApplicationDocument document, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ApplicationDocument>> GetDocumentsAsync(string applicationId, CancellationToken cancellationToken = default);
+    Task SetDocumentBlobReferenceAsync(string documentId, string blobUri, string contentSha256, CancellationToken cancellationToken = default);
     Task AddScoringRunAsync(ScoringRun run, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ScoringRun>> GetScoringRunsAsync(string applicationId, CancellationToken cancellationToken = default);
     Task SetAggregatedResultAsync(AggregatedResult result, CancellationToken cancellationToken = default);

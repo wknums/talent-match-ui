@@ -12,6 +12,7 @@ public class AggregatedResult
     public double Confidence { get; set; }
     public string ConsolidatedRationale { get; set; } = string.Empty;
     public string MergedImprovementTipsJson { get; set; } = "[]";
+    public string FinalSubScoresJson { get; set; } = "{}"; // JSON: { "CategoryName": avgScore, ... }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
     [JsonIgnore]

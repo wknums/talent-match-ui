@@ -304,7 +304,11 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
               AND name IN ('Users', 'Jobs', 'Applications', 'ScoringRuns', 'AggregatedResults', 'FailureQueueItems');";
         var hasExistingSchema = Convert.ToInt32(hasExistingSchemaCommand.ExecuteScalar()) > 0;
         if (hasExistingSchema)
+        {
+            EnsureSqliteManualReviewHumanEditedColumn(connection);
+            EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
             return;
+        }
 
         var schemaPath = ResolveSharedSchemaPath(contentRootPath, "schema-sqlite.sql");
         if (!File.Exists(schemaPath))
@@ -313,11 +317,61 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         using var initializeSchemaCommand = connection.CreateCommand();
         initializeSchemaCommand.CommandText = File.ReadAllText(schemaPath);
         initializeSchemaCommand.ExecuteNonQuery();
+        EnsureSqliteManualReviewHumanEditedColumn(connection);
+        EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
     }
     finally
     {
         if (shouldClose)
             connection.Close();
+    }
+}
+
+static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connection)
+{
+    using var columnCheckCommand = connection.CreateCommand();
+    columnCheckCommand.CommandText = "PRAGMA table_info('ManualReviews');";
+
+    using var reader = columnCheckCommand.ExecuteReader();
+    var hasHumanEdited = false;
+    while (reader.Read())
+    {
+        if (string.Equals(reader.GetString(1), "HumanEdited", StringComparison.OrdinalIgnoreCase))
+        {
+            hasHumanEdited = true;
+            break;
+        }
+    }
+
+    if (!hasHumanEdited)
+    {
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE ManualReviews ADD COLUMN HumanEdited INTEGER NOT NULL DEFAULT 0;";
+        alterCommand.ExecuteNonQuery();
+    }
+}
+
+static void EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(SqliteConnection connection)
+{
+    using var columnCheckCommand = connection.CreateCommand();
+    columnCheckCommand.CommandText = "PRAGMA table_info('AggregatedResults');";
+
+    using var reader = columnCheckCommand.ExecuteReader();
+    var hasColumn = false;
+    while (reader.Read())
+    {
+        if (string.Equals(reader.GetString(1), "FinalSubScoresJson", StringComparison.OrdinalIgnoreCase))
+        {
+            hasColumn = true;
+            break;
+        }
+    }
+
+    if (!hasColumn)
+    {
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE AggregatedResults ADD COLUMN FinalSubScoresJson TEXT NOT NULL DEFAULT '{}';";
+        alterCommand.ExecuteNonQuery();
     }
 }
 
@@ -387,6 +441,22 @@ END;
 UPDATE [talentmatch].JobConfigVersions
 SET [ScoringRunCount] = ISNULL([RunsPerApplication], 3)
 WHERE [ScoringRunCount] IS NULL OR [ScoringRunCount] = 3;
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.ManualReviews', 'HumanEdited') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].ManualReviews
+        ADD [HumanEdited] BIT NOT NULL CONSTRAINT DF_ManualReviews_HumanEdited DEFAULT 0;
+END;
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.AggregatedResults', 'FinalSubScoresJson') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].AggregatedResults
+        ADD [FinalSubScoresJson] NVARCHAR(MAX) NOT NULL CONSTRAINT DF_AggregatedResults_FinalSubScoresJson DEFAULT N'{}';
+END;
 ");
 
         void ExecuteSql(string sql)

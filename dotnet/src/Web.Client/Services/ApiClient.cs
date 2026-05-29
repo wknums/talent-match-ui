@@ -408,7 +408,7 @@ public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string C
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);
 public record DocumentDto(string Id, string FileName, string FileType, long FileSize, string? ContentBase64);
 public record ExtractionDto(string Id, string NormalisedText, double ConfidenceScore, string Status);
-public record ManualReviewDto(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson);
+public record ManualReviewDto(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson, bool HumanEdited = false);
 public record SystemStatsDto(int Queued, int Extracting, int Scoring, int Aggregating, int Completed, int NeedsManualReview, int Failed, int TotalJobs, int TotalApplications);
 public record DlqItemDto(string Id, string EntityType, string EntityId, string FailureReason, int RetryCount, DateTime CreatedAt);
 public record AuditEventDto(string Id, string Actor, string EventType, string EntityType, string EntityId, DateTime Timestamp, string CorrelationId);

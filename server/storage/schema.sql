@@ -211,6 +211,7 @@ CREATE TABLE [talentmatch].ManualReviews (
     OverallComment      NVARCHAR(MAX)   NOT NULL DEFAULT '',
     AdjustedFinalScore  FLOAT           NULL,
     AuditTrailJson      NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
+    HumanEdited         BIT             NOT NULL DEFAULT 0,
     CreatedAt           DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt           DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     LastModifiedBy      NVARCHAR(100)   NOT NULL DEFAULT ''
@@ -293,4 +294,51 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProcessingEvents_Times
     CREATE INDEX IX_ProcessingEvents_Timestamp ON [talentmatch].ProcessingEvents (Timestamp DESC);
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ProcessingEvents_EntityType_Action')
     CREATE INDEX IX_ProcessingEvents_EntityType_Action ON [talentmatch].ProcessingEvents (EntityType, Action);
+
+-- 16. SCORING BATCHES (platform-mode submissions; see specs/008-platform-mode-shift/platform-contract.md)
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ScoringBatches' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ScoringBatches (
+    BatchId             NVARCHAR(36)     NOT NULL PRIMARY KEY,
+    JobId               NVARCHAR(36)     NOT NULL,
+    PromptVersionId     NVARCHAR(36)     NOT NULL,
+    ApplicationIdsJson  NVARCHAR(MAX)    NOT NULL,
+    RunCount            INT              NOT NULL DEFAULT 1,
+    Status              NVARCHAR(20)     NOT NULL DEFAULT 'pending',
+    SubmissionId        NVARCHAR(128)    NULL,
+    PollUrl             NVARCHAR(512)    NULL,
+    Attempt             INT              NOT NULL DEFAULT 0,
+    SubmittedAt         DATETIME2        NULL,
+    LastPolledAt        DATETIME2        NULL,
+    NextPollAt          DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME(),
+    LastError           NVARCHAR(MAX)    NULL,
+    LeaseOwner          NVARCHAR(128)    NULL,
+    LeasedUntil         DATETIME2        NULL,
+    ResultJson          NVARCHAR(MAX)    NULL,
+    CancelRequested     BIT              NOT NULL DEFAULT 0,
+    CreatedAt           DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt           DATETIME2        NOT NULL DEFAULT SYSUTCDATETIME()
+);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ScoringBatches_JobId')
+    CREATE INDEX IX_ScoringBatches_JobId ON [talentmatch].ScoringBatches (JobId);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ScoringBatches_Status_NextPollAt')
+    CREATE INDEX IX_ScoringBatches_Status_NextPollAt ON [talentmatch].ScoringBatches (Status, NextPollAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_ScoringBatches_SubmissionId')
+    CREATE UNIQUE INDEX UX_ScoringBatches_SubmissionId ON [talentmatch].ScoringBatches (SubmissionId) WHERE SubmissionId IS NOT NULL;
+
+-- 17. SCORING JOB PROGRESS (job-level rollup, one row per job in platform mode)
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ScoringJobProgress' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ScoringJobProgress (
+    JobId             NVARCHAR(36)   NOT NULL PRIMARY KEY,
+    TotalApps         INT            NOT NULL DEFAULT 0,
+    BatchesPending    INT            NOT NULL DEFAULT 0,
+    BatchesSubmitted  INT            NOT NULL DEFAULT 0,
+    BatchesCompleted  INT            NOT NULL DEFAULT 0,
+    BatchesFailed     INT            NOT NULL DEFAULT 0,
+    AppsCompleted     INT            NOT NULL DEFAULT 0,
+    AppsFailed        INT            NOT NULL DEFAULT 0,
+    CancelRequested   BIT            NOT NULL DEFAULT 0,
+    StartedAt         DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt         DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME()
+);
 

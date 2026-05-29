@@ -14,6 +14,7 @@ function createEmptyReview(appId = 'app-1', jobId = 'job-1'): ManualReviewData {
     rubricScores: {},
     overallComment: '',
     auditTrail: [],
+    humanEdited: false,
     lastModifiedAt: new Date().toISOString(),
     lastModifiedBy: 'test',
   }
@@ -201,6 +202,49 @@ describe('buildStackBManualReviewPrepopulation', () => {
     expect(result.aiPrePopulated).toBe(true)
     expect(result.rubricScores['cat-1'].comment).toContain('AI Score')
     expect(result.rubricScores['cat-1'].comment).not.toContain('Evidence')
+  })
+
+  it('does not skip prepopulation when saved review is AI-only and humanEdited is false', () => {
+    const { scoringRuns, rubric } = fixtures.matchedCategories
+    const aiOnlySavedReview = {
+      ...createEmptyReview(),
+      rubricScores: {
+        'cat-1': { points: 51, maxPoints: 60, score: 85, comment: 'AI Score\n85 / 100' },
+      },
+      overallComment: 'Pre-populated from AI scoring...',
+      humanEdited: false,
+    }
+
+    const result = buildStackBManualReviewPrepopulation({
+      scoringRuns: scoringRuns as unknown as ScoringRun[],
+      aggregatedResult: null,
+      rubric: rubric as any,
+      existingReview: aiOnlySavedReview,
+    })
+
+    expect(result.aiPrePopulated).toBe(true)
+  })
+
+  it('skips prepopulation when humanEdited is true', () => {
+    const { scoringRuns, rubric } = fixtures.matchedCategories
+    const humanEditedReview = {
+      ...createEmptyReview(),
+      rubricScores: {
+        'cat-1': { points: 55, maxPoints: 60, score: 91.7, comment: 'Recruiter override' },
+      },
+      overallComment: 'Recruiter final decision notes',
+      humanEdited: true,
+    }
+
+    const result = buildStackBManualReviewPrepopulation({
+      scoringRuns: scoringRuns as unknown as ScoringRun[],
+      aggregatedResult: null,
+      rubric: rubric as any,
+      existingReview: humanEditedReview,
+    })
+
+    expect(result.aiPrePopulated).toBe(false)
+    expect(result.rubricScores['cat-1'].comment).toBe('Recruiter override')
   })
 })
 

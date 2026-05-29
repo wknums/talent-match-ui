@@ -147,15 +147,8 @@ export function parseGateEntries(run: ScoringRun): StackBCompatibleGateEntry[] |
 }
 
 export function hasMeaningfulManualReviewContent(review: ManualReviewData | null | undefined): boolean {
-  if (!review) return false
-
-  return Object.values(review.rubricScores ?? {}).some((entry) => {
-    const maxPoints = Number.isFinite(entry.maxPoints) ? entry.maxPoints : 0
-    const points = Number.isFinite(entry.points) ? entry.points : 0
-    const score = Number.isFinite(entry.score) ? entry.score ?? 0 : toPercentageScore(entry.points, maxPoints)
-
-    return points !== 0 || score !== 0 || (entry.comment || '').trim().length > 0
-  }) || Boolean(review.overallComment?.trim())
+  // Clarification (Option 1): only skip AI prepopulation when human edits are persisted.
+  return review?.humanEdited === true
 }
 
 export function normalizeManualReviewForRubric(args: {
@@ -203,6 +196,7 @@ export function normalizeManualReviewForRubric(args: {
 
   return {
     ...review,
+    humanEdited: review.humanEdited === true,
     rubricScores: normalizedRubricScores,
   }
 }
@@ -272,6 +266,15 @@ export function buildStackBManualReviewPrepopulation(args: {
       mismatchedCategories: [],
       rubricScores: existingReview.rubricScores,
       overallComment: existingReview.overallComment,
+    }
+  }
+
+  // Prioritize aggregatedResult.finalSubScores if available (ensures parity with Stack B behavior)
+  if (aggregatedResult?.finalSubScores && Object.keys(aggregatedResult.finalSubScores).length > 0) {
+    for (const category of rubric) {
+      if (category.name in aggregatedResult.finalSubScores) {
+        avgScoresByCategory[category.name] = aggregatedResult.finalSubScores[category.name]
+      }
     }
   }
 

@@ -23,6 +23,8 @@ public class AppDbContext : DbContext
     public DbSet<PasswordResetRequest> PasswordResetRequests => Set<PasswordResetRequest>();
     public DbSet<ScoringPrompt> ScoringPrompts => Set<ScoringPrompt>();
     public DbSet<PromptTestRun> PromptTestRuns => Set<PromptTestRun>();
+    public DbSet<ScoringBatch> ScoringBatches => Set<ScoringBatch>();
+    public DbSet<ScoringJobProgress> ScoringJobProgress => Set<ScoringJobProgress>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -101,6 +103,8 @@ public class AppDbContext : DbContext
             e.Property(x => x.FileName).HasMaxLength(500);
             e.Property(x => x.FileType).HasColumnName("MimeType");
             e.Property(x => x.FileSize).HasColumnName("SizeBytes");
+            e.Property(x => x.BlobUri).HasMaxLength(1024);
+            e.Property(x => x.ContentSha256).HasMaxLength(64);
             var uploadTimestampProp = e.Property(x => x.UploadTimestamp)
                 .HasColumnName("UploadedAt");
             // SQLite stores timestamps as ISO-8601 strings; SQL Server uses DATETIME2 natively.
@@ -175,6 +179,7 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.ApplicationId).IsUnique();
+            e.Property(x => x.HumanEdited).HasDefaultValue(false);
         });
 
         // FailureQueueItem
@@ -221,6 +226,31 @@ public class AppDbContext : DbContext
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
             e.HasIndex(x => x.PromptId);
             e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        // ScoringBatch (platform-mode batch row). PK column is BatchId in shared schema.
+        modelBuilder.Entity<ScoringBatch>(e =>
+        {
+            e.ToTable("ScoringBatches");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasColumnName("BatchId");
+            e.Property(x => x.JobId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.PromptVersionId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.ApplicationIdsJson).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.SubmissionId).HasMaxLength(128);
+            e.Property(x => x.PollUrl).HasMaxLength(512);
+            e.Property(x => x.LeaseOwner).HasMaxLength(128);
+            e.HasIndex(x => x.JobId);
+            e.HasIndex(x => new { x.Status, x.NextPollAt });
+        });
+
+        // ScoringJobProgress (job-level rollup)
+        modelBuilder.Entity<ScoringJobProgress>(e =>
+        {
+            e.ToTable("ScoringJobProgress");
+            e.HasKey(x => x.JobId);
+            e.Property(x => x.JobId).HasMaxLength(36).IsRequired();
         });
     }
 }

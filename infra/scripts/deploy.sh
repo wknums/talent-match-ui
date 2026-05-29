@@ -113,7 +113,12 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
     export STACK_B_IDENTITY_NAME
 
     print_banner "Shared Post-Provisioning: Azure SQL Entra Users"
-    node "$(cygpath -w "$SCRIPT_DIR/bootstrap-sql-entra-users.mjs")"
+    if command -v cygpath >/dev/null 2>&1; then
+      bootstrap_script="$(cygpath -w "$SCRIPT_DIR/bootstrap-sql-entra-users.mjs")"
+    else
+      bootstrap_script="$SCRIPT_DIR/bootstrap-sql-entra-users.mjs"
+    fi
+    node "$bootstrap_script"
   fi
 fi
 

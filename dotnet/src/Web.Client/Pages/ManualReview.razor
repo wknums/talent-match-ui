@@ -248,14 +248,11 @@
         }
         else
         {
-            review = new ManualReviewDto("{}", "", null, "[]");
+            review = new ManualReviewDto("{}", "", null, "[]", false);
         }
 
-        var hasExistingReviewContent = categoryScores.Any()
-            || categoryComments.Values.Any(comment => !string.IsNullOrWhiteSpace(comment))
-            || !string.IsNullOrWhiteSpace(overallComment);
-
-        if (!hasExistingReviewContent && application != null && rubricCategories.Any())
+        var skipAiPrepopulation = review?.HumanEdited == true;
+        if (!skipAiPrepopulation && application != null && rubricCategories.Any())
         {
             await PrePopulateFromAiAsync();
         }
@@ -611,7 +608,8 @@
         var scoresJson = BuildRubricReviewStateJson();
         var updatedAuditTrail = BuildUpdatedAuditTrail();
         var auditTrailJson = JsonSerializer.Serialize(updatedAuditTrail);
-        var reviewData = new ManualReviewDto(scoresJson, overallComment, currentWeightedScore, auditTrailJson);
+        var hasHumanEdits = (review?.HumanEdited ?? false) || updatedAuditTrail.Count > auditTrail.Count;
+        var reviewData = new ManualReviewDto(scoresJson, overallComment, currentWeightedScore, auditTrailJson, hasHumanEdits);
 
         var success = await Api.SaveManualReviewAsync(ApplicationId, reviewData);
         saveMessage = success ? "Review saved successfully." : "Failed to save review.";

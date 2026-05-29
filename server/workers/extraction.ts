@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { applicationRepo } from '../storage/repos/index.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
+import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
 import type { ExtractionArtifact } from '../../src/types/index.js'
 
 // FR-065: Extraction ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
@@ -45,11 +46,13 @@ export async function runExtraction(
         formData.append('specFile', docBlob, doc.fileName)
 
         const awrHeaders = await getAwrAuthHeaders({ username: 'system', role: 'pipeline' })
+        const timeout = createAwrTimeoutSignal()
         const response = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
           method: 'POST',
           headers: awrHeaders,
           body: formData,
-        })
+          signal: timeout.signal,
+        }).finally(() => timeout.dispose())
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => response.statusText)

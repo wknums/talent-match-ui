@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
@@ -34,15 +35,32 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     private readonly ILlmProxyService _llmService;
     private readonly IApplicationRepository _applicationRepo;
     private readonly IScoringPromptRepository _promptRepo;
+    private readonly IBlobStore _blobStore;
 
     public ScoreApplicationCommandHandler(
         ILlmProxyService llmService,
         IApplicationRepository applicationRepo,
-        IScoringPromptRepository promptRepo)
+        IScoringPromptRepository promptRepo,
+        IBlobStore blobStore)
     {
         _llmService = llmService;
         _applicationRepo = applicationRepo;
         _promptRepo = promptRepo;
+        _blobStore = blobStore;
+    }
+
+    private async Task<byte[]?> ResolveDocumentBytesAsync(ApplicationDocument doc, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(doc.BlobUri))
+        {
+            var fromBlob = await _blobStore.ReadByUriAsync(doc.BlobUri, ct);
+            if (fromBlob is { Length: > 0 }) return fromBlob;
+        }
+
+        if (string.IsNullOrEmpty(doc.ContentBase64)) return null;
+
+        try { return Convert.FromBase64String(doc.ContentBase64); }
+        catch { return Encoding.UTF8.GetBytes(doc.ContentBase64); }
     }
 
     public async Task<ScoreApplicationResult> Handle(ScoreApplicationCommand request, CancellationToken ct)
@@ -55,9 +73,8 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         if (!documents.Any())
             throw new InvalidOperationException($"No documents found for application {request.ApplicationId}");
         var primaryDoc = documents.First();
-        var docBytes = primaryDoc.ContentBase64 != null
-            ? Convert.FromBase64String(primaryDoc.ContentBase64)
-            : throw new InvalidOperationException($"No document content found for application {request.ApplicationId}");
+        var docBytes = await ResolveDocumentBytesAsync(primaryDoc, ct)
+            ?? throw new InvalidOperationException($"No document content found for application {request.ApplicationId}");
 
         // Resolve placeholders — job description passed in to avoid loading Job with tracked Applications
         var resolvedPrompt = prompt.PromptText
@@ -125,6 +142,13 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     /// Scalar numbers are candidates for the total/overall score.
     /// </summary>
     internal ScoringRun ParseSingleRun(JsonElement root, string applicationId, string promptId, int runIndex)
+        => ParseSingleRunStatic(root, applicationId, promptId, runIndex);
+
+    /// <summary>
+    /// Platform-mode reuses the same parsing logic without instantiating the handler.
+    /// Kept logically identical to the instance method body.
+    /// </summary>
+    public static ScoringRun ParseSingleRunStatic(JsonElement root, string applicationId, string promptId, int runIndex)
     {
         var categoryScores = new Dictionary<string, double>();
         var evidenceCitations = new List<object>();
@@ -427,7 +451,9 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         return false;
     }
 
-    private static void RemapToRubric(ScoringRun run, string? rubricJson)
+    private static void RemapToRubric(ScoringRun run, string? rubricJson) => RemapToRubricStatic(run, rubricJson);
+
+    public static void RemapToRubricStatic(ScoringRun run, string? rubricJson)
     {
         if (string.IsNullOrEmpty(rubricJson) || rubricJson == "[]")
             return;

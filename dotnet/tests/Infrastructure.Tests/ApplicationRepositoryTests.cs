@@ -172,4 +172,75 @@ public class ApplicationRepositoryTests
         reader.GetDouble(2).Should().Be(0.92);
         reader.GetDouble(3).Should().Be(0.92);
     }
+
+    [Fact]
+    public async Task SetManualReviewAsync_PersistsHumanEditedFlag()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        await using (var setupCommand = connection.CreateCommand())
+        {
+            setupCommand.CommandText = """
+                CREATE TABLE Applications (
+                    Id TEXT NOT NULL PRIMARY KEY,
+                    JobId TEXT NOT NULL,
+                    CandidateRef TEXT NOT NULL DEFAULT '',
+                    CandidateName TEXT NULL,
+                    CandidateEmail TEXT NULL,
+                    Status TEXT NOT NULL,
+                    FinalScore REAL NULL,
+                    FinalDecision TEXT NULL,
+                    Variance REAL NULL,
+                    Flagged INTEGER NOT NULL DEFAULT 0,
+                    CreatedAt TEXT NOT NULL,
+                    UpdatedAt TEXT NOT NULL,
+                    TestRunId TEXT NULL,
+                    LastError TEXT NULL
+                );
+
+                CREATE TABLE ManualReviews (
+                    Id TEXT NOT NULL PRIMARY KEY,
+                    ApplicationId TEXT NOT NULL,
+                    RubricScoresJson TEXT NOT NULL,
+                    OverallComment TEXT NOT NULL,
+                    AdjustedFinalScore REAL NULL,
+                    AuditTrailJson TEXT NOT NULL,
+                    HumanEdited INTEGER NOT NULL DEFAULT 0,
+                    CreatedAt TEXT NOT NULL,
+                    UpdatedAt TEXT NOT NULL
+                );
+                """;
+            await setupCommand.ExecuteNonQueryAsync();
+        }
+
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var context = new AppDbContext(options);
+        var repository = new ApplicationRepository(context);
+
+        var application = new TalentMatch.Domain.Entities.Application
+        {
+            JobId = "job-1",
+            Status = "Queued"
+        };
+        await repository.AddAsync(application);
+
+        var review = new ManualReviewData
+        {
+            ApplicationId = application.Id,
+            RubricScoresJson = "{}",
+            OverallComment = "Recruiter override",
+            AuditTrailJson = "[]",
+            HumanEdited = true,
+        };
+
+        await repository.SetManualReviewAsync(review);
+        var stored = await repository.GetManualReviewAsync(application.Id);
+
+        stored.Should().NotBeNull();
+        stored!.HumanEdited.Should().BeTrue();
+    }
 }

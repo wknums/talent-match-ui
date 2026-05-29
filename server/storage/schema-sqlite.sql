@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS ManualReviews (
     OverallComment      TEXT    NOT NULL DEFAULT '',
     AdjustedFinalScore  REAL    NULL,
     AuditTrailJson      TEXT    NOT NULL DEFAULT '[]',
+    HumanEdited         INTEGER NOT NULL DEFAULT 0,
     CreatedAt           TEXT    NOT NULL DEFAULT (datetime('now')),
     UpdatedAt           TEXT    NOT NULL DEFAULT (datetime('now')),
     LastModifiedBy      TEXT    NOT NULL DEFAULT ''
@@ -243,3 +244,46 @@ CREATE TABLE IF NOT EXISTS ProcessingEvents (
 );
 CREATE INDEX IF NOT EXISTS IX_ProcessingEvents_Timestamp ON ProcessingEvents (Timestamp);
 CREATE INDEX IF NOT EXISTS IX_ProcessingEvents_EntityType_Action ON ProcessingEvents (EntityType, Action);
+
+-- 16. SCORING BATCHES (platform-mode submissions)
+CREATE TABLE IF NOT EXISTS ScoringBatches (
+    BatchId             TEXT    NOT NULL PRIMARY KEY,
+    JobId               TEXT    NOT NULL,
+    PromptVersionId     TEXT    NOT NULL,
+    ApplicationIdsJson  TEXT    NOT NULL,
+    RunCount            INTEGER NOT NULL DEFAULT 1,
+    Status              TEXT    NOT NULL DEFAULT 'pending',
+    SubmissionId        TEXT    NULL,
+    PollUrl             TEXT    NULL,
+    Attempt             INTEGER NOT NULL DEFAULT 0,
+    SubmittedAt         TEXT    NULL,
+    LastPolledAt        TEXT    NULL,
+    NextPollAt          TEXT    NOT NULL DEFAULT (datetime('now')),
+    LastError           TEXT    NULL,
+    LeaseOwner          TEXT    NULL,
+    LeasedUntil         TEXT    NULL,
+    ResultJson          TEXT    NULL,
+    CancelRequested     INTEGER NOT NULL DEFAULT 0,
+    CreatedAt           TEXT    NOT NULL DEFAULT (datetime('now')),
+    UpdatedAt           TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS IX_ScoringBatches_JobId ON ScoringBatches (JobId);
+CREATE INDEX IF NOT EXISTS IX_ScoringBatches_Status_NextPollAt ON ScoringBatches (Status, NextPollAt);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_ScoringBatches_SubmissionId
+    ON ScoringBatches (SubmissionId) WHERE SubmissionId IS NOT NULL;
+
+-- 17. SCORING JOB PROGRESS
+CREATE TABLE IF NOT EXISTS ScoringJobProgress (
+    JobId             TEXT    NOT NULL PRIMARY KEY,
+    TotalApps         INTEGER NOT NULL DEFAULT 0,
+    BatchesPending    INTEGER NOT NULL DEFAULT 0,
+    BatchesSubmitted  INTEGER NOT NULL DEFAULT 0,
+    BatchesCompleted  INTEGER NOT NULL DEFAULT 0,
+    BatchesFailed     INTEGER NOT NULL DEFAULT 0,
+    AppsCompleted     INTEGER NOT NULL DEFAULT 0,
+    AppsFailed        INTEGER NOT NULL DEFAULT 0,
+    CancelRequested   INTEGER NOT NULL DEFAULT 0,
+    StartedAt         TEXT    NOT NULL DEFAULT (datetime('now')),
+    UpdatedAt         TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+

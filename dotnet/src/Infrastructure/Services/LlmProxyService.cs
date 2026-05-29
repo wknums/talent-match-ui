@@ -87,10 +87,10 @@ public class LlmProxyService : ILlmProxyService
         _ => "application/octet-stream"
     };
 
-    public async Task<IReadOnlyList<string>> ScoreWithDocumentAsync(string resolvedPrompt, byte[] documentBytes, string fileName, string mimeType, int runs = 1, CancellationToken cancellationToken = default, string? endpointOverride = null)
+    // FR-065/FR-066: Always uses AWR_SEQ_API_ENDPOINT — platform-mode scoring lives in IPlatformScoringService.
+    public async Task<IReadOnlyList<string>> ScoreWithDocumentAsync(string resolvedPrompt, byte[] documentBytes, string fileName, string mimeType, int runs = 1, CancellationToken cancellationToken = default)
     {
-        var endpoint = endpointOverride
-            ?? Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
+        var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
             ?? throw new InvalidOperationException("AWR_SEQ_API_ENDPOINT is not configured.");
 
         // Passthrough is single-run-per-call. Loop N times with batch params (matching Stack A pattern).

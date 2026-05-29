@@ -370,6 +370,10 @@ function ensureSqliteCompatibilitySchema(db: any): void {
   ensureSqliteColumn(db, 'ApplicationDocuments', 'MimeType', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ApplicationDocuments', 'SizeBytes', 'INTEGER NOT NULL DEFAULT 0')
   ensureSqliteColumn(db, 'ApplicationDocuments', 'UploadedAt', "TEXT NOT NULL DEFAULT ''")
+  // Platform mode (spec 008): blob-by-reference
+  ensureSqliteColumn(db, 'ApplicationDocuments', 'BlobUri', 'TEXT NULL')
+  ensureSqliteColumn(db, 'ApplicationDocuments', 'ContentSha256', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Applications', 'BatchId', 'TEXT NULL')
 
   ensureSqliteColumn(db, 'ExtractionArtifacts', 'Markdown', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ExtractionArtifacts', 'ToolVersion', "TEXT NOT NULL DEFAULT ''")
@@ -401,6 +405,7 @@ function ensureSqliteCompatibilitySchema(db: any): void {
 
   ensureSqliteColumn(db, 'ManualReviews', 'JobId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ManualReviews', 'LastModifiedBy', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'ManualReviews', 'HumanEdited', 'INTEGER NOT NULL DEFAULT 0')
 
   ensureSqliteColumn(db, 'FailureQueueItems', 'ApplicationId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'FailureQueueItems', 'JobId', "TEXT NOT NULL DEFAULT ''")
@@ -441,6 +446,25 @@ export async function initializeDatabase(): Promise<void> {
     for (const batch of batches) {
       await pool.request().query(batch)
     }
+
+    // Backward compatibility for existing Azure SQL environments.
+    await pool.request().query(`
+IF COL_LENGTH('talentmatch.ManualReviews', 'HumanEdited') IS NULL
+BEGIN
+  ALTER TABLE [talentmatch].ManualReviews
+    ADD [HumanEdited] BIT NOT NULL CONSTRAINT DF_ManualReviews_HumanEdited DEFAULT 0;
+END;
+`)
+
+    // Platform mode (spec 008): blob-by-reference + per-app batch linkage
+    await pool.request().query(`
+IF COL_LENGTH('talentmatch.ApplicationDocuments', 'BlobUri') IS NULL
+  ALTER TABLE [talentmatch].ApplicationDocuments ADD BlobUri NVARCHAR(1024) NULL;
+IF COL_LENGTH('talentmatch.ApplicationDocuments', 'ContentSha256') IS NULL
+  ALTER TABLE [talentmatch].ApplicationDocuments ADD ContentSha256 CHAR(64) NULL;
+IF COL_LENGTH('talentmatch.Applications', 'BatchId') IS NULL
+  ALTER TABLE [talentmatch].Applications ADD BatchId UNIQUEIDENTIFIER NULL;
+`)
   } else {
     // SQLite — run the DDL using the underlying db handle directly
     const schemaPath = resolve(import.meta.dirname, 'schema-sqlite.sql')

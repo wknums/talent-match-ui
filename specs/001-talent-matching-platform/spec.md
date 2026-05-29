@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-talent-matching-platform`
 **Created**: 2026-03-03
-**Updated**: 2026-03-14
+**Updated**: 2026-04-24
 **Status**: Active (brownfield — existing codebase)
 **Source**: PRD.md, INTEGRATION.md, README.md, AUTHENTICATION.md, MANUAL_REVIEW_SUMMARY.md
 
@@ -19,6 +19,45 @@ In scope for this iteration:
 Out of scope for this iteration:
 - New feature implementation for user stories outside US7
 - Broad platform refactors unrelated to manual review AI prepopulation
+
+## Clarification Amendment (2026-04-24)
+
+This clarification updates US7 behavior for AI prepopulation gating.
+
+Problem clarified:
+- The current "meaningful manual review content exists" gate can block AI prepopulation even when
+   saved content is only auto-generated AI text and no human edits were made.
+
+Required behavior (Option 1):
+- AI prepopulation MUST be skipped only when a manual review has been human-edited.
+- Presence of saved prepopulated AI content alone MUST NOT suppress future prepopulation.
+
+New persistent signal:
+- Introduce a persisted manual-review field `humanEdited` (boolean) used as the source of truth
+   for prepopulation skip behavior.
+- Default value MUST be `false` for newly created manual review records.
+- Value MUST transition to `true` when a user actually edits prepopulated manual-review content.
+
+Cross-stack/data-store parity requirements:
+- This field and behavior MUST be implemented in both stacks (Stack A Node/React and Stack B
+   .NET/Blazor).
+- This field MUST be supported in both database providers used by the platform:
+   SQLite and Azure SQL.
+- Read/write DTOs, API contracts, repository models, and persistence mappings MUST remain parity
+   aligned across stacks.
+
+Acceptance scenarios for this clarification:
+
+1. **Given** a manual review exists containing only AI-prepopulated content and `humanEdited=false`,
+    **When** manual review is opened, **Then** AI prepopulation runs and refreshes the prepopulated
+    fields.
+2. **Given** a reviewer edits any prepopulated manual review score/comment and saves, **When** the
+    review is persisted, **Then** `humanEdited` is stored as `true`.
+3. **Given** a saved manual review with `humanEdited=true`, **When** manual review is opened,
+    **Then** AI prepopulation is skipped and saved human-edited values are used.
+4. **Given** Stack A and Stack B target the same application data in SQLite or Azure SQL,
+    **When** manual review records are created/updated/read, **Then** `humanEdited` behavior is
+    consistent in both stacks and both providers.
 
 ---
 

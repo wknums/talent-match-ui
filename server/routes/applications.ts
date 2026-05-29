@@ -313,7 +313,7 @@ export function createApplicationsRouter() {
   router.post('/applications/:applicationId/manual-review', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { applicationId } = req.params
-      const { rubricScores, overallComment, adjustedFinalScore } = req.body
+      const { rubricScores, overallComment, adjustedFinalScore, humanEdited } = req.body
 
       const existing = await applicationRepo.getManualReview(applicationId)
       const auditTrail = [...(existing?.auditTrail || [])]
@@ -325,6 +325,7 @@ export function createApplicationsRouter() {
       const incomingRubricScores = (rubricScores || {}) as Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>
       const responseRubricScores: Record<string, { score: number; points: number; maxPoints: number; comment: string }> = {}
       const storedRubricScores: Record<string, { score: number; points: number; maxPoints: number; comment: string }> = {}
+      let detectedHumanEdit = false
 
       for (const rubricCategory of rubricCategories) {
         const categoryId = rubricCategory.id
@@ -358,6 +359,9 @@ export function createApplicationsRouter() {
         const previousComment = prev?.comment || ''
 
         if (!prev || previousPoints !== points) {
+          if (existing) {
+            detectedHumanEdit = true
+          }
           const entry: ManualReviewAuditEntry = {
             entryId: randomUUID(),
             applicationId,
@@ -374,6 +378,9 @@ export function createApplicationsRouter() {
         }
 
         if (previousComment.trim() !== normalizedEntry.comment.trim()) {
+          if (existing) {
+            detectedHumanEdit = true
+          }
           auditTrail.push({
             entryId: randomUUID(),
             applicationId,
@@ -392,6 +399,9 @@ export function createApplicationsRouter() {
 
       // Add comment audit entry if comment changed
       if ((existing?.overallComment || '') !== (overallComment || '')) {
+        if (existing) {
+          detectedHumanEdit = true
+        }
         auditTrail.push({
           entryId: randomUUID(),
           applicationId,
@@ -406,6 +416,8 @@ export function createApplicationsRouter() {
         })
       }
 
+      const nextHumanEdited = existing?.humanEdited === true || humanEdited === true || detectedHumanEdit
+
       const reviewData: ManualReviewData = {
         applicationId,
         jobId: effectiveJobId,
@@ -413,6 +425,7 @@ export function createApplicationsRouter() {
         overallComment: overallComment || existing?.overallComment || '',
         adjustedFinalScore,
         auditTrail,
+        humanEdited: nextHumanEdited,
         lastModifiedAt: new Date().toISOString(),
         lastModifiedBy: req.user?.username || 'unknown',
       }

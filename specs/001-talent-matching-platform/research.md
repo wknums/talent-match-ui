@@ -64,6 +64,22 @@ the error path. New unit tests required before fixing (test-then-fix).
 | 3 | Add `mismatchedCategories: string[]` to `StackBPrepopulationResult`; render per-category warnings |
 | 4 | Write unit tests before fixing (regression capture first) |
 | 5 | No schema migration needed; no prompt change needed |
+| 6 | `humanEdited` persisted boolean is the sole prepopulation skip gate (clarification 2026-04-24) |
+
+### 2026-04-24 Implementation Notes (T001–T033)
+
+**Files changed**:
+- `dotnet/src/Application/Scoring/Commands/ScoreApplicationCommand.cs` — `TryGetPropertyCaseInsensitive` helper (T007/T011); `ExtractCategoryName` prefers `category`/`name`/`label` properties (T012); `ExtractStringField` prefers `evidence`/`justification`/`snippet` properties (T012); empty-snippet guard added before appending to citation list (T013)
+- `dotnet/src/Web.Client/Pages/ManualReview.razor` — `mismatchedCategories`/`hasPerCategoryMismatch` state (T006/T015); evidence dedup with trim+case-insensitive comparison (T014); per-category amber warning rendering (T016); banner behavior hardened for PR-1/PR-2/PR-3/PR-4 (T017); `HumanEdited` gate replaces `hasMeaningfulContent` (T030/T031)
+- `src/lib/stackb-scoring.ts` — `mismatchedCategories` in `StackBPrepopulationResult` interface and `buildStackBManualReviewPrepopulation` return values (T004/T018); `hasMeaningfulManualReviewContent` now gates on `humanEdited === true` (T030)
+- `src/components/ManualReviewView.tsx` — `mismatchedCategories` state + per-category warnings (T005/T019); `humanEdited` delta detection on save (T031)
+- `server/storage/schema.sql`, `schema-sqlite.sql`, `db.ts`, `repos/application-repo.ts`, `routes/applications.ts` — `HumanEdited` column and full read/write pipeline (T027/T029)
+- `dotnet/src/Domain/Entities/ManualReviewData.cs`, `SaveManualReviewCommand.cs`, `ApplicationsEndpoints.cs`, `ApiClient.cs`, `AppDbContext.cs`, `ApplicationRepository.cs`, `Program.cs` — `HumanEdited` field across all Stack B layers (T026/T028/T029)
+
+**Test results** (all passing as of 2026-04-24):
+- Stack B: 17 `ScoreApplicationCommandEvidenceParsingTests` + `ManualReviewPrepopulationTests` ✅
+- Stack B: 3 `SaveManualReviewCommandTests` + 3 `ApplicationRepositoryTests` (includes `humanEdited` persistence) ✅
+- Stack A: 16 `stackb-scoring.test.ts` tests ✅
 
 ---
 

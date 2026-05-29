@@ -119,11 +119,21 @@ async function main() {
     console.log(`API mode: ${API_MODE}`)
   })
 
+  // Platform-mode reconciler: only starts when AWR_PLATFORM_API_ENDPOINT is
+  // configured (see detectScoringMode). Sequential deployments are a no-op.
+  const { startPlatformReconciler } = await import('./workers/reconciler.js')
+  if (isAzureSql) {
+    // Defer start until DB init completes so the first tick has a working pool.
+  } else {
+    startPlatformReconciler()
+  }
+
   if (isAzureSql) {
     console.log('[startup] Azure SQL detected; continuing startup while database initialization runs in the background')
     void initializeAppState()
       .then(() => {
         console.log('[startup] Background database initialization complete')
+        startPlatformReconciler()
       })
       .catch((err) => {
         console.error(`[startup] Background database initialization failed: ${(err as Error).message}`)

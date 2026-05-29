@@ -134,7 +134,12 @@ Both stacks support the full prompt lifecycle:
 | Variable | Purpose | Required |
 |----------|---------|----------|
 | `AWR_SEQ_API_ENDPOINT` | External API for document extraction and prompt generation | For US3/US3a AI features |
-| `AWR_PLATFORM_API_ENDPOINT` | Platform API for async production scoring. When unset or equal to `AWR_SEQ_API_ENDPOINT`, system uses sequential mode. When different, production scoring routes to the platform endpoint. Non-scoring ops always use `AWR_SEQ_API_ENDPOINT`. | Optional (FR-061) |
+| `AWR_PLATFORM_API_ENDPOINT` | Platform API for async production scoring. When unset or equal to `AWR_SEQ_API_ENDPOINT`, system uses sequential mode. When different, production scoring routes to the platform endpoint. Non-scoring ops always use `AWR_SEQ_API_ENDPOINT`. See **[specs/008-platform-mode-shift/platform-contract.md](../008-platform-mode-shift/platform-contract.md)** for the full client ↔ platform contract. | Optional (FR-061) |
+| `AWR_PLATFORM_BATCH_SIZE` | CVs per platform submission (default `2`). Configurable per spec 008. | Optional |
+| `AWR_PLATFORM_RECONCILE_INTERVAL_MS` | Reconciler tick interval in ms (default `15000`). | Optional |
+| `AWR_PLATFORM_LEASE_SECONDS` | Reconciler row-lease TTL in seconds (default `60`). | Optional |
+| `AWR_BLOB_STORAGE_ACCOUNT` | Azure Storage account name hosting `cv-uploads` container (required in platform mode). RBAC only — no SAS. | Platform mode |
+| `AWR_BLOB_CONTAINER` | Blob container for CV uploads (default `cv-uploads`). | Platform mode |
 | `STORAGE_PROVIDER` | `local` or `azuresql` (Stack A) | Stack A only |
 | `API_MODE` | `mock` or `real` (Stack A) | Stack A only |
 | `DatabaseProvider` | `sqlite` or `sqlserver` (Stack B) | Stack B only |

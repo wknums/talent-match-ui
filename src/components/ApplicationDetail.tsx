@@ -58,7 +58,9 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
 
       const [runsData, resultData, jobData] = await Promise.all([
         api.getScoringRuns(applicationId),
-        api.getAggregatedResult(applicationId),
+        (appData.status === 'Completed' || appData.status === 'NeedsManualReview')
+          ? api.getAggregatedResult(applicationId)
+          : Promise.resolve(null),
         api.getJob(appData.jobId),
       ])
       setApplication(appData)
@@ -162,6 +164,12 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
     || 'No recommendations available'
 
   const derivedCategoryScores = (() => {
+    // Prioritize aggregatedResult.finalSubScores if available
+    if (aggregatedResult?.finalSubScores && Object.keys(aggregatedResult.finalSubScores).length > 0) {
+      return aggregatedResult.finalSubScores
+    }
+
+    // Fallback: recalculate from individual scoring runs
     const groupedScores = new Map<string, number[]>()
     for (const [category, scores] of categoryDetails.scores.entries()) {
       if (!groupedScores.has(category)) groupedScores.set(category, [])

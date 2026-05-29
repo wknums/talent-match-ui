@@ -92,10 +92,10 @@ public static class ApplicationsEndpoints
         {
             var review = await mediator.Send(new SaveManualReviewCommand(
                 applicationId, request.RubricScoresJson, request.OverallComment,
-                request.AdjustedFinalScore, request.AuditTrailJson));
+                request.AdjustedFinalScore, request.AuditTrailJson, request.HumanEdited));
             return Results.Ok(review);
         });
     }
 }
 
-public record SaveManualReviewRequest(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson);
+public record SaveManualReviewRequest(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson, bool HumanEdited = false);

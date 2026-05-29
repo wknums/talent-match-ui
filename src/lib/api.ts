@@ -781,7 +781,17 @@ const mockAPI = {
 
   async saveManualReview(_applicationId: string, reviewData: Partial<ManualReviewData>): Promise<ManualReviewData> {
     await delay(300)
-    return reviewData as ManualReviewData
+    return {
+      applicationId: reviewData.applicationId ?? _applicationId,
+      jobId: reviewData.jobId ?? '',
+      rubricScores: reviewData.rubricScores ?? {},
+      overallComment: reviewData.overallComment ?? '',
+      adjustedFinalScore: reviewData.adjustedFinalScore,
+      auditTrail: reviewData.auditTrail ?? [],
+      humanEdited: reviewData.humanEdited === true,
+      lastModifiedAt: reviewData.lastModifiedAt ?? new Date().toISOString(),
+      lastModifiedBy: reviewData.lastModifiedBy ?? 'mock-user',
+    }
   },
 
   async getAuditEvents(filters?: {

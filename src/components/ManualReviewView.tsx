@@ -30,6 +30,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     rubricScores: {},
     overallComment: '',
     auditTrail: [],
+    humanEdited: false,
     lastModifiedAt: new Date().toISOString(),
     lastModifiedBy: 'current-user',
   })
@@ -45,6 +46,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
   const [mismatchedCategories, setMismatchedCategories] = useState<string[]>([])
   const [aggregatedResult, setAggregatedResult] = useState<AggregatedResult | null>(null)
   const [reviewData, setReviewData] = useState<ManualReviewData>(createEmptyReviewData)
+  const [baselineReviewData, setBaselineReviewData] = useState<ManualReviewData | null>(null)
 
   const [currentUser, setCurrentUser] = useState<{ login: string; name?: string } | null>(null)
 
@@ -128,15 +130,17 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
         setAiScoringMismatch(prepopulated.aiScoringMismatch)
         setMismatchedCategories(prepopulated.mismatchedCategories)
 
-        const nextReviewData = {
+        const nextReviewData: ManualReviewData = {
           ...base,
           applicationId,
           jobId,
           rubricScores,
           overallComment: prepopulated.overallComment ?? base.overallComment,
+          humanEdited: base.humanEdited === true,
         }
 
         setReviewData(nextReviewData)
+        setBaselineReviewData(nextReviewData)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
@@ -196,6 +200,25 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     return total
   }
 
+  const hasManualReviewEdits = (baseline: ManualReviewData | null, current: ManualReviewData): boolean => {
+    if (!baseline) return false
+
+    const categoryIds = new Set([...Object.keys(baseline.rubricScores ?? {}), ...Object.keys(current.rubricScores ?? {})])
+    for (const categoryId of categoryIds) {
+      const previous = baseline.rubricScores?.[categoryId]
+      const next = current.rubricScores?.[categoryId]
+      const previousPoints = Number.isFinite(previous?.points) ? Number(previous?.points) : 0
+      const nextPoints = Number.isFinite(next?.points) ? Number(next?.points) : 0
+      const previousComment = (previous?.comment ?? '').trim()
+      const nextComment = (next?.comment ?? '').trim()
+      if (previousPoints !== nextPoints || previousComment !== nextComment) {
+        return true
+      }
+    }
+
+    return (baseline.overallComment ?? '').trim() !== (current.overallComment ?? '').trim()
+  }
+
   const handleSave = async () => {
     if (!job) {
       return
@@ -204,11 +227,14 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     setSaving(true)
     try {
       const finalScore = calculateTotalScore()
-      const dataToSave = {
+      const editedThisSession = hasManualReviewEdits(baselineReviewData, reviewData)
+      const nextHumanEdited = reviewData.humanEdited === true || editedThisSession
+      const dataToSave: ManualReviewData = {
         ...reviewData,
         adjustedFinalScore: finalScore,
+        humanEdited: nextHumanEdited,
       }
-      
+
       const savedReview = await api.saveManualReview(applicationId, dataToSave)
       const normalizedSavedReview = normalizeManualReviewForRubric({
         review: savedReview,
@@ -218,7 +244,9 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
           weight: category.weight,
         })),
       })
-      setReviewData(normalizedSavedReview ?? savedReview)
+      const nextReview = (normalizedSavedReview ?? savedReview)
+      setReviewData(nextReview)
+      setBaselineReviewData(nextReview)
       toast.success('Manual review saved successfully')
     } catch (error) {
       toast.error('Failed to save review')

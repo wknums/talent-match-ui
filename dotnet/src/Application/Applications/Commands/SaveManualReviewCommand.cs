@@ -10,7 +10,8 @@ public record SaveManualReviewCommand(
     string RubricScoresJson,
     string OverallComment,
     double? AdjustedFinalScore,
-    string AuditTrailJson
+    string AuditTrailJson,
+    bool HumanEdited
 ) : IRequest<ManualReviewData>;
 
 public class SaveManualReviewCommandHandler : IRequestHandler<SaveManualReviewCommand, ManualReviewData>
@@ -33,6 +34,7 @@ public class SaveManualReviewCommandHandler : IRequestHandler<SaveManualReviewCo
         review.OverallComment = request.OverallComment;
         review.AdjustedFinalScore = request.AdjustedFinalScore;
         review.AuditTrailJson = request.AuditTrailJson;
+        review.HumanEdited = review.HumanEdited || request.HumanEdited;
         review.UpdatedAt = DateTime.UtcNow;
 
         await _applicationRepository.SetManualReviewAsync(review, cancellationToken);

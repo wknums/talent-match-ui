@@ -3,8 +3,8 @@
 **Feature**: 001 — Talent Matching Platform  
 **Spec**: [spec.md](../spec.md)  
 **Created**: March 11, 2026  
-**Last Verified**: April 17, 2026  
-**Overall Status**: ⚠️ Minor structural differences remain (59/62)
+**Last Verified**: April 24, 2026  
+**Overall Status**: ⚠️ Minor structural differences remain (61/62)
 
 ---
 
@@ -19,11 +19,11 @@
 | US4 — Application Upload | 4 | 4/4 | ✅ |
 | US5 — Scoring Pipeline | 6 | 6/6 | ✅ |
 | US6 — Ranked Lists & Detail | 4 | 4/4 | ✅ |
-| US7 — Manual Review | 6 | 4/6 | ⚠️ |
+| US7 — Manual Review | 6 | 6/6 | ✅ |
 | US8 — Monitoring & Pipeline Visibility | 5 | 5/5 | ✅ |
 | Authorization & Security | 4 | 4/4 | ✅ |
 | Infrastructure & Storage | 3 | 3/3 | ✅ |
-| **Total** | **62** | **59/62** | **⚠️** |
+| **Total** | **62** | **61/62** | **⚠️** |
 
 ---
 

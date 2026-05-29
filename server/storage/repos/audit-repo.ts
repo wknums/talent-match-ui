@@ -48,14 +48,8 @@ export const auditRepo = {
       .input('timestamp', sql.DateTime2, new Date(event.timestamp))
       .input('correlationId', sql.NVarChar, event.correlationId)
 
-    if (isAzureSql) {
-      await request.query(`INSERT INTO ${T('ProcessingEvents')} (Id, Actor, EventType, Action, EntityType, EntityId, DetailsJson, Timestamp, CorrelationId)
-        VALUES (@id, @actor, @action, @action, @entityType, @entityId, @detailsJson, @timestamp, @correlationId)`)
-      return
-    }
-
-    await request.query(`INSERT INTO ${T('ProcessingEvents')} (Id, Actor, EventType, Action, EntityType, EntityId, PayloadJson, DetailsJson, Timestamp, CorrelationId)
-      VALUES (@id, @actor, @action, @action, @entityType, @entityId, @detailsJson, @detailsJson, @timestamp, @correlationId)`)
+    await request.query(`INSERT INTO ${T('ProcessingEvents')} (Id, Actor, Action, EntityType, EntityId, DetailsJson, Timestamp, CorrelationId)
+      VALUES (@id, @actor, @action, @entityType, @entityId, @detailsJson, @timestamp, @correlationId)`)
   },
 
   async query(filters: { entityType?: string; eventType?: string; startDate?: string; endDate?: string; page?: number; pageSize?: number }): Promise<{ events: ProcessingEvent[]; total: number }> {
@@ -63,7 +57,7 @@ export const auditRepo = {
     const conditions: string[] = []
     const req = pool.request()
     if (filters.entityType) { conditions.push('EntityType = @entityType'); req.input('entityType', sql.NVarChar, filters.entityType) }
-    if (filters.eventType) { conditions.push('(Action = @action OR EventType = @action)'); req.input('action', sql.NVarChar, filters.eventType) }
+    if (filters.eventType) { conditions.push('Action = @action'); req.input('action', sql.NVarChar, filters.eventType) }
     if (filters.startDate) { conditions.push('Timestamp >= @startDate'); req.input('startDate', sql.DateTime2, new Date(filters.startDate)) }
     if (filters.endDate) { conditions.push('Timestamp <= @endDate'); req.input('endDate', sql.DateTime2, new Date(filters.endDate)) }
 

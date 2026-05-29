@@ -1,4 +1,5 @@
 ﻿@using System.Text
+@inject IJSRuntime JS
 
 <div style="display: flex; flex-direction: column; height: 100%;">
     @if (Documents != null && Documents.Any())
@@ -18,49 +19,60 @@
         }
 
         var doc = Documents[SelectedIndex];
+        var kind = ResolveKind(doc);
 
-        @if (doc.FileType == "application/pdf")
+        @if (kind == "pdf")
         {
             @* PDF via embedded iframe viewer (FR-058) *@
             <iframe src="@GetContentUrl(doc)" style="width: 100%; flex: 1; border: none; min-height: 300px;"></iframe>
         }
-        else if (doc.FileType != null && doc.FileType.StartsWith("image/"))
+        else if (kind == "image")
         {
-            @* Images (JPG/PNG) inline via img tag (FR-058) *@
+            @* Images (JPG/PNG/etc.) inline via img tag (FR-058) *@
             <div style="text-align: center; padding: 1rem; overflow: auto; flex: 1;">
                 <img src="@GetContentUrl(doc)" alt="@doc.FileName" style="max-width: 100%;" />
             </div>
         }
-        else if (doc.FileType == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && !string.IsNullOrEmpty(doc.ContentBase64))
+        else if (kind == "docx" && !string.IsNullOrEmpty(doc.ContentBase64))
         {
-            @* DOCX — rendered as preformatted text (client-side HTML conversion placeholder) *@
             <div style="padding: 1rem; overflow: auto; flex: 1; font-size: 0.9rem; line-height: 1.6;">
                 <div style="padding: 0.5rem; background: #f0f4f8; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.8rem; color: #666;">
-                    📄 DOCX Document — @doc.FileName
+                    📄 @doc.FileName
                 </div>
-                <pre style="white-space: pre-wrap; margin: 0;">@DecodeBase64(doc.ContentBase64)</pre>
+                @if (_docxHtml != null)
+                {
+                    <div class="prose">@((MarkupString)_docxHtml)</div>
+                }
+                else if (_docxConverting)
+                {
+                    <p style="color: #666;">Converting document…</p>
+                }
+                else
+                {
+                    <p style="color: #999;">Unable to render this Word document. <a href="@GetContentUrl(doc)" target="_blank">Download</a></p>
+                }
             </div>
         }
-        else if (doc.FileType == "text/markdown" && !string.IsNullOrEmpty(doc.ContentBase64))
+        else if (kind == "markdown" && !string.IsNullOrEmpty(doc.ContentBase64))
         {
             @* Markdown via preformatted rendering (FR-058) *@
             <div style="padding: 1rem; overflow: auto; flex: 1; font-size: 0.9rem; line-height: 1.6;">
                 <pre style="white-space: pre-wrap; margin: 0; font-family: inherit;">@DecodeBase64(doc.ContentBase64)</pre>
             </div>
         }
-        else if (doc.FileType == "text/plain" && !string.IsNullOrEmpty(doc.ContentBase64))
+        else if (kind == "text" && !string.IsNullOrEmpty(doc.ContentBase64))
         {
             @* TXT as preformatted text (FR-058) *@
             <pre style="white-space: pre-wrap; padding: 1rem; margin: 0; font-size: 0.9rem; line-height: 1.6; overflow: auto; flex: 1;">@DecodeBase64(doc.ContentBase64)</pre>
         }
         else if (!string.IsNullOrEmpty(doc.ContentBase64))
         {
-            @* Fallback for other text-based formats *@
+            @* Fallback for other text-based formats with embedded content *@
             <div style="padding: 1rem; font-size: 0.9rem; white-space: pre-wrap; overflow: auto; flex: 1;">@DecodeBase64(doc.ContentBase64)</div>
         }
         else
         {
-            <p style="padding: 1rem; color: #999;">Preview not available for @doc.FileType. <a href="@GetContentUrl(doc)" target="_blank">Download</a></p>
+            <p style="padding: 1rem; color: #999;">Preview not available for @doc.FileName. <a href="@GetContentUrl(doc)" target="_blank">Download</a></p>
         }
     }
     else
@@ -75,9 +87,70 @@
     [Parameter] public int SelectedIndex { get; set; } = 0;
     [Parameter] public EventCallback<int> SelectedIndexChanged { get; set; }
 
+    private string? _docxHtml;
+    private bool _docxConverting;
+    private string? _lastDocxKey;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Documents == null || Documents.Count == 0 || SelectedIndex < 0 || SelectedIndex >= Documents.Count)
+        {
+            _docxHtml = null;
+            _lastDocxKey = null;
+            return;
+        }
+
+        var doc = Documents[SelectedIndex];
+        var kind = ResolveKind(doc);
+        var key = $"{doc.Id}|{kind}";
+
+        if (kind != "docx" || string.IsNullOrEmpty(doc.ContentBase64))
+        {
+            _docxHtml = null;
+            _lastDocxKey = null;
+            return;
+        }
+
+        if (key == _lastDocxKey) return;
+        _lastDocxKey = key;
+        _docxHtml = null;
+        _docxConverting = true;
+
+        try
+        {
+            _docxHtml = await JS.InvokeAsync<string?>("docxToHtml", doc.ContentBase64);
+        }
+        catch
+        {
+            _docxHtml = null;
+        }
+        finally
+        {
+            _docxConverting = false;
+        }
+    }
+
     private string GetContentUrl(DocumentDto doc)
     {
         return $"/api/applications/{ApplicationId}/documents/{doc.Id}/content";
+    }
+
+    private static string ResolveKind(DocumentDto doc)
+    {
+        var mime = (doc.FileType ?? string.Empty).ToLowerInvariant();
+        var semicolonIndex = mime.IndexOf(';');
+        if (semicolonIndex >= 0) mime = mime.Substring(0, semicolonIndex).Trim();
+
+        var ext = System.IO.Path.GetExtension(doc.FileName ?? string.Empty).ToLowerInvariant().TrimStart('.');
+
+        if (mime == "application/pdf" || mime == "application/x-pdf" || ext == "pdf") return "pdf";
+        if (mime.StartsWith("image/") || ext is "jpg" or "jpeg" or "png" or "gif" or "webp" or "bmp" or "svg") return "image";
+        if (mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            || mime == "application/msword"
+            || ext is "docx" or "doc") return "docx";
+        if (mime == "text/markdown" || mime == "text/x-markdown" || ext is "md" or "markdown") return "markdown";
+        if (mime.StartsWith("text/") || ext == "txt") return "text";
+        return "unknown";
     }
 
     private string DecodeBase64(string? base64)

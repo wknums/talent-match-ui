@@ -15,7 +15,7 @@ public class ManualReviewPrepopulationTests
 
     private ScoreApplicationCommandHandler CreateHandler()
     {
-        return new ScoreApplicationCommandHandler(null!, null!, null!);
+        return new ScoreApplicationCommandHandler(null!, null!, null!, null!);
     }
 
     [Fact]

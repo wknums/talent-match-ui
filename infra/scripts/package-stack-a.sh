@@ -63,16 +63,22 @@ EOF
 
 log_info "Stamped build metadata: version=$BUILD_VERSION createdAtUtc=$BUILD_CREATED_AT_UTC"
 
-# Copy package files for production dependencies
+# Copy package.json only (no lockfile: it can pin platform-specific native binaries
+# such as @rollup/rollup-win32-x64-msvc that break Oryx npm install on Linux).
 cp package.json "$ARTIFACT_DIR/"
-cp package-lock.json "$ARTIFACT_DIR/"
 
-# Align production start script to packaged layout (server entrypoint under server/index.js)
+# Reduce artifact's package.json to runtime essentials:
+# - keep only the `start` script (Oryx auto-runs `npm run build` if present,
+#   which would fail because devDeps like tsc/vite are not installed)
+# - drop devDependencies and optionalDependencies (devDeps may include
+#   platform-locked native binaries that break cross-platform install)
 cd "$ARTIFACT_DIR"
-node -e "const fs=require('fs'); const p='package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.scripts=j.scripts||{}; j.scripts.start='node server/index.js'; fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');"
+node -e "const fs=require('fs'); const p='package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.scripts={start:'node server/index.js'}; delete j.devDependencies; delete j.optionalDependencies; fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');"
 
-# Install production dependencies only
-npm ci --omit=dev
+# Intentionally exclude node_modules from the artifact.
+# App Service installs dependencies during deployment when
+# SCM_DO_BUILD_DURING_DEPLOYMENT=true and ENABLE_ORYX_BUILD=true.
+log_info "Skipping node_modules in package (on-host dependency restore enabled)"
 
 # Create startup helper for manual fallback scenarios
 cat > "$ARTIFACT_DIR/startup.sh" << 'EOF'
@@ -88,7 +94,8 @@ cd "$ARTIFACT_DIR"
 ARTIFACT_PATH="${REPO_ROOT}/artifacts/stack-a.zip"
 rm -f "$ARTIFACT_PATH"
 
-log_info "Creating zip artifact..."
+FILE_COUNT="$(find . -type f | wc -l | tr -d ' ')"
+log_info "Creating zip artifact from $FILE_COUNT files (node_modules excluded)..."
 if command -v zip >/dev/null 2>&1; then
 	zip -q -r "$ARTIFACT_PATH" .
 elif command -v powershell.exe >/dev/null 2>&1; then
@@ -111,7 +118,7 @@ elif command -v powershell.exe >/dev/null 2>&1; then
 		try { \
 			Get-ChildItem -Path \$SourceDir -Recurse -File | ForEach-Object { \
 				\$entryName = \$_.FullName.Substring(\$SourceDir.Length).TrimStart('\\', '/').Replace('\\', '/'); \
-				[System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(\$zip, \$_.FullName, \$entryName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null \
+				[System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(\$zip, \$_.FullName, \$entryName, [System.IO.Compression.CompressionLevel]::Fastest) | Out-Null \
 			} \
 		} finally { \
 			\$zip.Dispose() \

@@ -12,7 +12,7 @@ public class ScoreApplicationCommandEvidenceParsingTests
     /// </summary>
     private ScoreApplicationCommandHandler CreateHandler()
     {
-        return new ScoreApplicationCommandHandler(null!, null!, null!);
+        return new ScoreApplicationCommandHandler(null!, null!, null!, null!);
     }
 
     [Fact]

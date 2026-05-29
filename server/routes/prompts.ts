@@ -4,6 +4,7 @@ import type { AuthenticatedRequest } from '../middleware/auth.js'
 import { jobRepo, applicationRepo, promptRepo } from '../storage/repos/index.js'
 import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
+import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
 import { createPipelineOrchestrator } from '../services/pipeline.js'
 import type {
   ScoringPrompt, PromptTestRun, Application,
@@ -291,11 +292,13 @@ Return ONLY the scoring prompt text, ready for use.
           formData.append('promptFile', new Blob([combinedPrompt], { type: 'text/plain' }), 'generate-prompt.md')
           formData.append('specFile', new Blob([JSON.stringify(rubricContext, null, 2)], { type: 'text/plain' }), 'context.md')
 
+          const timeout = createAwrTimeoutSignal()
           const response = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
             method: 'POST',
             headers: awrHeaders,
             body: formData,
-          })
+            signal: timeout.signal,
+          }).finally(() => timeout.dispose())
           if (!response.ok) {
             const errorText = await response.text()
             throw new Error(`Passthrough API error (${response.status}): ${errorText}`)

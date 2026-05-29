@@ -366,13 +366,17 @@ export const jobRepo = {
 
   async updateConfigVersionField(versionId: string, field: string, value: string): Promise<void> {
     const pool = await getPool()
-    // Only allow specific safe fields
-    const allowed = ['RubricApprovalStatus']
-    if (!allowed.includes(field)) throw new Error(`Cannot update field: ${field}`)
+    // Only allow specific safe fields (accept API-style camelCase aliases)
+    const fieldMap: Record<string, string> = {
+      RubricApprovalStatus: 'RubricApprovalStatus',
+      rubricApprovalStatus: 'RubricApprovalStatus',
+    }
+    const targetField = fieldMap[field]
+    if (!targetField) throw new Error(`Cannot update field: ${field}`)
     await pool.request()
       .input('id', sql.NVarChar, versionId)
       .input('val', sql.NVarChar, value)
-      .query(`UPDATE ${T('JobConfigVersions')} SET ${field} = @val WHERE Id = @id`)
+      .query(`UPDATE ${T('JobConfigVersions')} SET ${targetField} = @val WHERE Id = @id`)
   },
 
   async delete(jobId: string): Promise<boolean> {

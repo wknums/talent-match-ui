@@ -3,6 +3,7 @@ using System.Text.Json;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
@@ -31,6 +32,7 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
     private static readonly string? SeqEndpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
     private static readonly string? PlatformEndpoint = Environment.GetEnvironmentVariable("AWR_PLATFORM_API_ENDPOINT");
     private static readonly int MaxParallel = int.TryParse(Environment.GetEnvironmentVariable("AWR_MAX_PARALLEL"), out var p) && p > 0 ? p : 1;
+    private static readonly int PlatformBatchSize = int.TryParse(Environment.GetEnvironmentVariable("AWR_PLATFORM_BATCH_SIZE"), out var b) && b > 0 ? b : 2;
 
     public static string ResolveScoringMode()
     {
@@ -74,6 +76,43 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
             .Where(a => a.Status is "Queued" or "Scored" or "Scoring" or "ScoringFailed")
             .Select(a => a.Id).ToList();
 
+        // Platform mode: enqueue ScoringBatches and return immediately. The
+        // in-process reconciler (PlatformScoringReconciler hosted service) drives
+        // submit/poll/finalize asynchronously. Sequential mode below is unchanged.
+        if (ResolveScoringMode() == "platform")
+        {
+            using var pScope = _scopeFactory.CreateScope();
+            var batchRepo = pScope.ServiceProvider.GetRequiredService<IScoringBatchRepository>();
+            var appRepoP = pScope.ServiceProvider.GetRequiredService<IApplicationRepository>();
+            var batches = 0;
+            foreach (var chunk in toProcessIds.Chunk(PlatformBatchSize))
+            {
+                var batch = new ScoringBatch
+                {
+                    JobId = request.JobId,
+                    PromptVersionId = request.ProductionPromptId,
+                    ApplicationIdsJson = JsonSerializer.Serialize(chunk),
+                    RunCount = request.RunCount,
+                    Status = "pending",
+                };
+                await batchRepo.CreateAsync(batch, ct);
+                batches++;
+                foreach (var aId in chunk)
+                {
+                    try
+                    {
+                        var a = await appRepoP.GetByIdAsync(aId, ct);
+                        if (a != null) { a.Status = "Scoring"; await appRepoP.UpdateAsync(a, ct); }
+                    }
+                    catch { /* best effort */ }
+                }
+            }
+            await batchRepo.InitProgressAsync(request.JobId, toProcessIds.Count, batches, ct);
+            _logger.LogInformation("Job {JobId}: enqueued {Batches} platform batch(es) for {Apps} application(s).",
+                request.JobId, batches, toProcessIds.Count);
+            return new ProcessJobResult(toProcessIds.Count, toProcessIds.Count, new List<string>());
+        }
+
         int processed = 0;
         var errors = new ConcurrentBag<string>();
         _logger.LogInformation("Processing job {JobId}: {Count} applications in {Mode} mode (parallelism: {MaxParallel})",
@@ -102,68 +141,10 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
                     new ScoreApplicationCommand(appId, request.JobId, request.RunCount,
                         request.ProductionPromptId, jobDescriptionText, config?.RubricJson), ct);
 
-                // Compute aggregated scores and set final status
-                var scored = await appRepo.GetByIdAsync(appId, ct)
-                    ?? throw new InvalidOperationException($"Application {appId} not found after scoring");
-
-                var scores = scoringResult.Runs.Select(r => r.TotalScore).ToList();
-                var avgScore = scores.Any() ? scores.Average() : 0;
-                var variance = scores.Any()
-                    ? Math.Sqrt(scores.Sum(s => Math.Pow(s - avgScore, 2)) / scores.Count) : 0;
-
-                scored.FinalScore = avgScore;
-                scored.Variance = variance;
-
-                // Check if any run failed the must-have eligibility gate (like Stack A)
-                var anyGateFailed = scoringResult.Runs.Any(r =>
-                {
-                    if (string.IsNullOrWhiteSpace(r.MustHaveEvaluationJson) || r.MustHaveEvaluationJson == "{}")
-                        return false;
-                    try
-                    {
-                        using var gateDoc = JsonDocument.Parse(r.MustHaveEvaluationJson);
-                        return gateDoc.RootElement.TryGetProperty("passed", out var p)
-                            && p.ValueKind == JsonValueKind.False;
-                    }
-                    catch { return false; }
-                });
-
-                // Decision cascade: gate failure → Excluded (highest priority), then variance, then score
-                if (anyGateFailed)
-                {
-                    scored.Status = "Completed";
-                    scored.FinalDecision = "Excluded";
-                }
-                else if (variance > varianceThreshold)
-                {
-                    scored.Status = "NeedsManualReview";
-                    scored.FinalDecision = "NeedsManualReview";
-                }
-                else if (avgScore >= longlistThreshold)
-                {
-                    scored.Status = "Completed";
-                    scored.FinalDecision = "Eligible";
-                }
-                else
-                {
-                    scored.Status = "Completed";
-                    scored.FinalDecision = "Excluded";
-                }
-
-                await appRepo.UpdateAsync(scored, ct);
-
-                await appRepo.SetAggregatedResultAsync(new AggregatedResult
-                {
-                    ApplicationId = appId,
-                    FinalScore = avgScore,
-                    Variance = variance,
-                    Confidence = scores.Count >= request.RunCount
-                        ? 1.0 : (double)scores.Count / request.RunCount,
-                    Decision = scored.FinalDecision ?? "Excluded",
-                    ConsolidatedRationale = anyGateFailed
-                        ? $"Excluded: eligibility gate failed. Score: {avgScore:F1} ({scores.Count} run(s), variance: {variance:F1})."
-                        : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}"
-                }, ct);
+                // Aggregation + decision + AggregatedResult persistence shared with platform mode.
+                var finalizer = scope.ServiceProvider.GetRequiredService<IApplicationScoringFinalizer>();
+                await finalizer.FinalizeAsync(appId, request.JobId, scoringResult.Runs,
+                    request.RunCount, varianceThreshold, longlistThreshold, ct);
 
                 Interlocked.Increment(ref processed);
             }

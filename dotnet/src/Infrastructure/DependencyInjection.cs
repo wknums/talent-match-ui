@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Interfaces;
@@ -43,19 +44,44 @@ public static class DependencyInjection
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
         services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();
+        services.AddScoped<IScoringBatchRepository, ScoringBatchRepository>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddTransient<AwrAuthHandler>();
         services.AddHttpClient<ILlmProxyService, LlmProxyService>(client =>
             {
-                client.Timeout = TimeSpan.FromMinutes(10);
+                client.Timeout = TimeSpan.FromMinutes(6);
             })
             .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddHttpClient("AwrApiClient", client =>
             {
-                client.Timeout = TimeSpan.FromMinutes(10);
+                client.Timeout = TimeSpan.FromMinutes(6);
+            })
+            .AddHttpMessageHandler<AwrAuthHandler>();
+        services.AddHttpClient<IPlatformScoringService, PlatformScoringService>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(6);
             })
             .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddHttpContextAccessor();
+
+        // Blob store: AzureBlobStore when AWR_BLOB_STORAGE_ACCOUNT is set (platform mode),
+        // otherwise InlineBlobStore (sequential / dev). See specs/008-platform-mode-shift/platform-contract.md.
+        services.AddSingleton<IBlobStore>(sp =>
+        {
+            var account = Environment.GetEnvironmentVariable("AWR_BLOB_STORAGE_ACCOUNT");
+            if (string.IsNullOrWhiteSpace(account))
+            {
+                return new InlineBlobStore();
+            }
+            var container = Environment.GetEnvironmentVariable("AWR_BLOB_CONTAINER");
+            if (string.IsNullOrWhiteSpace(container)) container = "cv-uploads";
+            var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<AzureBlobStore>();
+            return new AzureBlobStore(account, container, logger);
+        });
+
+        // Platform-mode reconciler hosted service. It self-disables when scoring
+        // mode is sequential, so it is safe to register unconditionally.
+        services.AddHostedService<TalentMatch.Infrastructure.HostedServices.PlatformScoringReconciler>();
 
         return services;
     }

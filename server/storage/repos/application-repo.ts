@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { Buffer } from 'node:buffer'
 import { getPool, isAzureSql, sql } from '../db.js'
 import { T } from '../table-names.js'
 import type {
@@ -38,6 +39,32 @@ function rowToDocument(r: any): ApplicationDocument {
     sizeBytes: r.SizeBytes ?? r.FileSize,
     sha256: r.Fingerprint,
     uploadedAt: r.UploadedAt?.toISOString?.() ?? r.UploadedAt ?? r.UploadTimestamp?.toISOString?.() ?? r.UploadTimestamp,
+    blobUri: r.BlobUri ?? undefined,
+    contentSha256: r.ContentSha256 ?? undefined,
+  }
+}
+
+async function downloadBlobAsBase64(blobUri: string): Promise<string | undefined> {
+  const trimmed = (blobUri ?? '').trim()
+  if (!trimmed) return undefined
+
+  try {
+    const { BlobClient } = await import('@azure/storage-blob')
+    const { DefaultAzureCredential } = await import('@azure/identity')
+
+    const client = new BlobClient(trimmed, new DefaultAzureCredential())
+    const response = await client.download()
+    const stream = response.readableStreamBody
+    if (!stream) return undefined
+
+    const chunks: Buffer[] = []
+    for await (const chunk of stream as any) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+    return Buffer.concat(chunks).toString('base64')
+  } catch (err) {
+    console.warn(`[applicationRepo] Failed to download BlobUri ${trimmed}; falling back to DB content:`, err)
+    return undefined
   }
 }
 
@@ -50,7 +77,7 @@ function rowToScoringRun(r: any): ScoringRun {
     modelDeploymentId: r.ModelDeploymentId ?? r.AiModelId ?? '',
     promptVersionId: r.PromptVersionId ?? r.PromptVersion ?? '',
     overallScore: r.OverallScore ?? r.TotalScore,
-    subScores: parseJson(r.CategoryScoresJson, {}),
+    subScores: parseJson(r.SubScoresJson ?? r.CategoryScoresJson, {}),
     mustHaveResult: parseJson(r.MustHaveResultJson ?? r.MustHaveEvaluationJson, { passed: true, missingCriteria: [], details: {} }),
     evidenceCitations: parseJson(r.EvidenceCitationsJson, []),
     rationale: r.Rationale ?? '',
@@ -112,6 +139,7 @@ function rowToManualReview(r: any): ManualReviewData {
     overallComment: r.OverallComment,
     adjustedFinalScore: r.AdjustedFinalScore ?? undefined,
     auditTrail: parseJson(r.AuditTrailJson, []),
+    humanEdited: r.HumanEdited === true || Number(r.HumanEdited ?? 0) === 1,
     lastModifiedAt: r.UpdatedAt?.toISOString?.() ?? r.UpdatedAt,
     lastModifiedBy: r.LastModifiedBy ?? '',
   }
@@ -324,8 +352,52 @@ export const applicationRepo = {
       .query(`UPDATE ${T('ApplicationDocuments')} SET ContentBase64 = @content WHERE Id = @documentId`)
   },
 
+  async setDocumentBlobReference(documentId: string, blobUri: string, contentSha256: string): Promise<void> {
+    const pool = await getPool()
+
+    // Canonical bytes are now the blob object for this row; remove DB-stored bytes
+    // to avoid duplicate storage across Azure Blob and DB blob columns.
+    const req = pool.request()
+      .input('documentId', sql.NVarChar, documentId)
+      .input('blobUri', sql.NVarChar, blobUri)
+      .input('contentSha256', sql.NVarChar, contentSha256)
+
+    try {
+      await req.query(`UPDATE ${T('ApplicationDocuments')}
+                       SET BlobUri = @blobUri, ContentSha256 = @contentSha256, ContentBase64 = NULL
+                       WHERE Id = @documentId`)
+    } catch {
+      await pool.request()
+        .input('documentId', sql.NVarChar, documentId)
+        .input('blobUri', sql.NVarChar, blobUri)
+        .input('contentSha256', sql.NVarChar, contentSha256)
+        .query(`UPDATE ${T('ApplicationDocuments')}
+                SET BlobUri = @blobUri, ContentSha256 = @contentSha256
+                WHERE Id = @documentId`)
+    }
+
+    await pool.request()
+      .input('documentId', sql.NVarChar, documentId)
+      .query(`DELETE FROM ${T('DocumentBlobs')} WHERE DocumentId = @documentId`)
+  },
+
   async getBlob(documentId: string): Promise<string | undefined> {
     const pool = await getPool()
+
+    const documentMeta = await pool.request()
+      .input('documentId', sql.NVarChar, documentId)
+      .query(`SELECT BlobUri, ContentBase64 FROM ${T('ApplicationDocuments')} WHERE Id = @documentId`)
+
+    const blobUri = documentMeta.recordset[0]?.BlobUri as string | undefined
+    const contentBase64 = documentMeta.recordset[0]?.ContentBase64 as string | undefined
+
+    // C1: prefer BlobUri when present so platform-created records are readable
+    // in sequential code paths without duplicating bytes in DB.
+    if (blobUri) {
+      const downloaded = await downloadBlobAsBase64(blobUri)
+      if (downloaded) return downloaded
+    }
+
     const blobResult = await pool.request()
       .input('documentId', sql.NVarChar, documentId)
       .query(`SELECT Content FROM ${T('DocumentBlobs')} WHERE DocumentId = @documentId`)
@@ -334,20 +406,20 @@ export const applicationRepo = {
       return blobContent
     }
 
-    const documentResult = await pool.request()
-      .input('documentId', sql.NVarChar, documentId)
-      .query(`SELECT ContentBase64 FROM ${T('ApplicationDocuments')} WHERE Id = @documentId`)
-    const contentBase64 = documentResult.recordset[0]?.ContentBase64
     if (!contentBase64) {
       return undefined
     }
 
-    await pool.request()
-      .input('documentId', sql.NVarChar, documentId)
-      .input('content', sql.NVarChar, contentBase64)
-      .query(`INSERT INTO ${T('DocumentBlobs')} (DocumentId, Content)
-              SELECT @documentId, @content
-              WHERE NOT EXISTS (SELECT 1 FROM ${T('DocumentBlobs')} WHERE DocumentId = @documentId)`)
+    // Keep legacy read acceleration only when BlobUri is absent. When BlobUri is
+    // present, avoid re-materializing DocumentBlobs to prevent duplicate byte storage.
+    if (!blobUri) {
+      await pool.request()
+        .input('documentId', sql.NVarChar, documentId)
+        .input('content', sql.NVarChar, contentBase64)
+        .query(`INSERT INTO ${T('DocumentBlobs')} (DocumentId, Content)
+                SELECT @documentId, @content
+                WHERE NOT EXISTS (SELECT 1 FROM ${T('DocumentBlobs')} WHERE DocumentId = @documentId)`)
+    }
 
     return contentBase64
   },
@@ -559,12 +631,13 @@ export const applicationRepo = {
       .input('overallComment', sql.NVarChar, review.overallComment)
       .input('adjustedFinalScore', sql.Float, review.adjustedFinalScore ?? null)
       .input('auditTrailJson', sql.NVarChar, JSON.stringify(review.auditTrail))
+      .input('humanEdited', sql.Bit, review.humanEdited ? 1 : 0)
       .input('lastModifiedBy', sql.NVarChar, review.lastModifiedBy)
       .input('updatedAt', sql.DateTime2, new Date(now))
       .query(`UPDATE ${T('ManualReviews')}
               SET JobId = @jobId, RubricScoresJson = @rubricScoresJson, OverallComment = @overallComment,
                   AdjustedFinalScore = @adjustedFinalScore, AuditTrailJson = @auditTrailJson,
-                  UpdatedAt = @updatedAt, LastModifiedBy = @lastModifiedBy
+                  HumanEdited = @humanEdited, UpdatedAt = @updatedAt, LastModifiedBy = @lastModifiedBy
               WHERE ApplicationId = @applicationId`)
     if ((updateResult.rowsAffected?.[0] ?? 0) === 0) {
       await pool.request()
@@ -575,15 +648,16 @@ export const applicationRepo = {
         .input('overallComment', sql.NVarChar, review.overallComment)
         .input('adjustedFinalScore', sql.Float, review.adjustedFinalScore ?? null)
         .input('auditTrailJson', sql.NVarChar, JSON.stringify(review.auditTrail))
+        .input('humanEdited', sql.Bit, review.humanEdited ? 1 : 0)
         .input('lastModifiedBy', sql.NVarChar, review.lastModifiedBy)
         .input('createdAt', sql.DateTime2, new Date(now))
         .input('updatedAt', sql.DateTime2, new Date(now))
         .query(`INSERT INTO ${T('ManualReviews')} (
                 Id, ApplicationId, JobId, RubricScoresJson, OverallComment, AdjustedFinalScore,
-                AuditTrailJson, CreatedAt, UpdatedAt, LastModifiedBy)
+                AuditTrailJson, HumanEdited, CreatedAt, UpdatedAt, LastModifiedBy)
                 VALUES (
                 @id, @applicationId, @jobId, @rubricScoresJson, @overallComment, @adjustedFinalScore,
-                @auditTrailJson, @createdAt, @updatedAt, @lastModifiedBy)`)
+                @auditTrailJson, @humanEdited, @createdAt, @updatedAt, @lastModifiedBy)`)
     }
   },
 

@@ -80,6 +80,8 @@ export interface ApplicationDocument {
   sizeBytes: number
   sha256: string
   uploadedAt: string
+  blobUri?: string
+  contentSha256?: string
   contentUrl?: string
   rawContent?: string
 }
@@ -237,6 +239,7 @@ export interface ManualReviewData {
   overallComment: string
   adjustedFinalScore?: number
   auditTrail: ManualReviewAuditEntry[]
+  humanEdited: boolean
   lastModifiedAt: string
   lastModifiedBy: string
 }
