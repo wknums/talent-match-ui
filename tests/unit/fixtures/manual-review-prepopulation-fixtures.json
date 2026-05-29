@@ -1,0 +1,155 @@
+{
+  "matchedCategories": {
+    "scoringRuns": [
+      {
+        "runId": "run-1",
+        "applicationId": "app-1",
+        "versionId": "v1",
+        "runIndex": 1,
+        "modelDeploymentId": "model-1",
+        "promptVersionId": "prompt-1",
+        "overallScore": 80,
+        "subScores": { "Technical Skills": 85, "Communication": 75 },
+        "mustHaveResult": { "passed": true, "missingCriteria": [], "details": {} },
+        "evidenceCitations": [
+          { "category": "Technical Skills", "snippet": "5 years Java experience", "section": "work", "confidence": 0.9 },
+          { "category": "Communication", "snippet": "Led presentations", "section": "skills", "confidence": 0.8 }
+        ],
+        "rationale": "Strong candidate",
+        "improvementRecommendations": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+        "durationMs": 100,
+        "status": "Success"
+      }
+    ],
+    "rubric": [
+      { "id": "cat-1", "name": "Technical Skills", "weight": 0.6 },
+      { "id": "cat-2", "name": "Communication", "weight": 0.4 }
+    ]
+  },
+  "mismatchedCategories": {
+    "scoringRuns": [
+      {
+        "runId": "run-2",
+        "applicationId": "app-2",
+        "versionId": "v1",
+        "runIndex": 1,
+        "modelDeploymentId": "model-1",
+        "promptVersionId": "prompt-1",
+        "overallScore": 80,
+        "subScores": { "Quantum Physics": 85, "Rocket Propulsion": 75 },
+        "mustHaveResult": { "passed": true, "missingCriteria": [], "details": {} },
+        "evidenceCitations": [
+          { "category": "Quantum Physics", "snippet": "Nobel prize", "section": "", "confidence": 0.9 }
+        ],
+        "rationale": "OK",
+        "improvementRecommendations": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+        "durationMs": 100,
+        "status": "Success"
+      }
+    ],
+    "rubric": [
+      { "id": "cat-1", "name": "Technical Skills", "weight": 0.6 },
+      { "id": "cat-2", "name": "Communication", "weight": 0.4 }
+    ]
+  },
+  "substringMatchCategories": {
+    "scoringRuns": [
+      {
+        "runId": "run-3",
+        "applicationId": "app-3",
+        "versionId": "v1",
+        "runIndex": 1,
+        "modelDeploymentId": "model-1",
+        "promptVersionId": "prompt-1",
+        "overallScore": 80,
+        "subScores": { "Technical Skills Assessment": 85 },
+        "mustHaveResult": { "passed": true, "missingCriteria": [], "details": {} },
+        "evidenceCitations": [
+          { "category": "Technical Skills Assessment", "snippet": "Java expert", "section": "", "confidence": 0.9 }
+        ],
+        "rationale": "OK",
+        "improvementRecommendations": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+        "durationMs": 100,
+        "status": "Success"
+      }
+    ],
+    "rubric": [
+      { "id": "cat-1", "name": "Technical Skills", "weight": 0.6 },
+      { "id": "cat-2", "name": "Communication", "weight": 0.4 }
+    ]
+  },
+  "emptyScoringRuns": {
+    "scoringRuns": [],
+    "rubric": [
+      { "id": "cat-1", "name": "Technical Skills", "weight": 0.6 },
+      { "id": "cat-2", "name": "Communication", "weight": 0.4 }
+    ]
+  },
+  "emptyEvidenceArrays": {
+    "scoringRuns": [
+      {
+        "runId": "run-4",
+        "applicationId": "app-4",
+        "versionId": "v1",
+        "runIndex": 1,
+        "modelDeploymentId": "model-1",
+        "promptVersionId": "prompt-1",
+        "overallScore": 80,
+        "subScores": { "Technical Skills": 85 },
+        "mustHaveResult": { "passed": true, "missingCriteria": [], "details": {} },
+        "evidenceCitations": [],
+        "rationale": "OK",
+        "improvementRecommendations": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+        "durationMs": 100,
+        "status": "Success"
+      }
+    ],
+    "rubric": [
+      { "id": "cat-1", "name": "Technical Skills", "weight": 0.6 },
+      { "id": "cat-2", "name": "Communication", "weight": 0.4 }
+    ]
+  },
+  "existingSavedReview": {
+    "scoringRuns": [
+      {
+        "runId": "run-5",
+        "applicationId": "app-5",
+        "versionId": "v1",
+        "runIndex": 1,
+        "modelDeploymentId": "model-1",
+        "promptVersionId": "prompt-1",
+        "overallScore": 80,
+        "subScores": { "Technical Skills": 85 },
+        "mustHaveResult": { "passed": true, "missingCriteria": [], "details": {} },
+        "evidenceCitations": [
+          { "category": "Technical Skills", "snippet": "Java expert", "section": "", "confidence": 0.9 }
+        ],
+        "rationale": "OK",
+        "improvementRecommendations": [],
+        "createdAt": "2026-01-01T00:00:00Z",
+        "durationMs": 100,
+        "status": "Success"
+      }
+    ],
+    "rubric": [
+      { "id": "cat-1", "name": "Technical Skills", "weight": 0.6 },
+      { "id": "cat-2", "name": "Communication", "weight": 0.4 }
+    ],
+    "existingReview": {
+      "applicationId": "app-5",
+      "jobId": "job-1",
+      "rubricScores": {
+        "cat-1": { "score": 90, "points": 54, "maxPoints": 60, "comment": "Manually scored" }
+      },
+      "overallComment": "Manual review completed",
+      "auditTrail": [],
+      "humanEdited": true,
+      "lastModifiedAt": "2026-01-01T00:00:00Z",
+      "lastModifiedBy": "reviewer"
+    }
+  }
+}

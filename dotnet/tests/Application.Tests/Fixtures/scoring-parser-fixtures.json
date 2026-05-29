@@ -1,0 +1,88 @@
+{
+  "nestedObjectLowercaseEvidence": {
+    "categories": {
+      "Technical Skills": {
+        "score": 85,
+        "evidence": ["5 years Java experience", "AWS certified"]
+      },
+      "Communication": {
+        "score": 70,
+        "evidence": ["Led team presentations", "Published articles"]
+      }
+    },
+    "total_score": 77.5
+  },
+  "nestedObjectCapitalisedEvidence": {
+    "categories": {
+      "Technical Skills": {
+        "score": 85,
+        "Evidence": ["5 years Java experience", "AWS certified"]
+      },
+      "Communication": {
+        "score": 70,
+        "Evidence": ["Led team presentations"]
+      }
+    },
+    "total_score": 77.5
+  },
+  "arrayOfObjectsCategoryFirst": {
+    "rubric_scores": [
+      { "category_name": "Technical Skills", "score": 85, "evidence": "5 years Java experience" },
+      { "category_name": "Communication", "score": 70, "evidence": "Led team presentations" }
+    ],
+    "total_score": 77.5
+  },
+  "arrayOfObjectsEvidenceBeforeCategory": {
+    "rubric_scores": [
+      { "evidence": "5 years Java experience", "score": 85, "category_name": "Technical Skills" },
+      { "evidence": "Led team presentations", "score": 70, "category_name": "Communication" }
+    ],
+    "total_score": 77.5
+  },
+  "arrayOfObjectsWithEvidenceArray": {
+    "rubric_scores": [
+      { "category_name": "Technical Skills", "score": 85, "evidence": ["5 years Java experience", "AWS certified"] },
+      { "category_name": "Communication", "score": 70, "evidence": ["Led team presentations"] }
+    ],
+    "total_score": 77.5
+  },
+  "mixedCasePropertyNames": {
+    "categories": {
+      "Technical Skills": {
+        "Score": 85,
+        "EVIDENCE": ["5 years Java experience"]
+      }
+    },
+    "Total_Score": 85
+  },
+  "emptyEvidenceFields": {
+    "categories": {
+      "Technical Skills": {
+        "score": 85,
+        "evidence": []
+      },
+      "Communication": {
+        "score": 70,
+        "evidence": null
+      }
+    },
+    "total_score": 77.5
+  },
+  "nullEvidenceFields": {
+    "categories": {
+      "Technical Skills": {
+        "score": 85
+      }
+    },
+    "total_score": 85
+  },
+  "emptySnippets": {
+    "categories": {
+      "Technical Skills": {
+        "score": 85,
+        "evidence": ["", "  ", "Valid evidence"]
+      }
+    },
+    "total_score": 85
+  }
+}

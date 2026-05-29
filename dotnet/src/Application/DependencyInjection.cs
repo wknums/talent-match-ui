@@ -3,6 +3,8 @@ using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using TalentMatch.Application.Common.Behaviours;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Common.Services;
 
 namespace TalentMatch.Application;
 
@@ -18,6 +20,7 @@ public static class DependencyInjection
         });
 
         services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
+        services.AddScoped<IApplicationScoringFinalizer, ApplicationScoringFinalizer>();
 
         return services;
     }

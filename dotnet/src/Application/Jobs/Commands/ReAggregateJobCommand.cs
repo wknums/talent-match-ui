@@ -51,6 +51,25 @@ public class ReAggregateJobCommandHandler : IRequestHandler<ReAggregateJobComman
             var avgScore = scores.Average();
             var variance = Math.Sqrt(scores.Sum(s => Math.Pow(s - avgScore, 2)) / scores.Count);
 
+            // Compute per-category averages across all runs
+            var categoryTotals = new Dictionary<string, List<double>>();
+            foreach (var run in runs)
+            {
+                try
+                {
+                    var cats = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson);
+                    if (cats != null)
+                        foreach (var kv in cats)
+                        {
+                            if (!categoryTotals.ContainsKey(kv.Key)) categoryTotals[kv.Key] = new List<double>();
+                            categoryTotals[kv.Key].Add(kv.Value);
+                        }
+                }
+                catch { /* ignore malformed JSON */ }
+            }
+            var finalSubScores = categoryTotals.ToDictionary(kv => kv.Key, kv => kv.Value.Average());
+            var finalSubScoresJson = JsonSerializer.Serialize(finalSubScores);
+
             var anyGateFailed = runs.Any(r =>
             {
                 if (string.IsNullOrWhiteSpace(r.MustHaveEvaluationJson) || r.MustHaveEvaluationJson == "{}")
@@ -108,7 +127,8 @@ public class ReAggregateJobCommandHandler : IRequestHandler<ReAggregateJobComman
                     Decision = newDecision,
                     ConsolidatedRationale = anyGateFailed
                         ? $"Excluded: eligibility gate failed. Score: {avgScore:F1} ({scores.Count} run(s), variance: {variance:F1})."
-                        : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}"
+                        : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}",
+                    FinalSubScoresJson = finalSubScoresJson,
                 }, ct);
 
                 updated++;

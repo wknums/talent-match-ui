@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using FluentValidation;
 using MediatR;
 using TalentMatch.Application.Jobs.Commands;
 using TalentMatch.Application.Jobs.Queries;
@@ -19,18 +20,31 @@ public static class JobsEndpoints
 
         group.MapPost("/", async (CreateJobRequest request, ISender mediator) =>
         {
-            var job = await mediator.Send(new CreateJobCommand(
-                request.Title, request.Department, request.Organisation, request.PostingDate,
-                request.RubricJson, request.MustHaveCriteriaJson, request.DesiredCriteriaJson,
-                request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
-                request.ShortlistThreshold, request.VarianceThreshold, request.JobDescription,
-                request.RubricSource ?? "manual", request.RawExtractionResponse));
-            return Results.Created($"/api/jobs/{job.Id}", new
+            try
             {
-                job.Id, job.JobCode, job.Title, job.Department,
-                job.Organisation, job.PostingDate, job.Status,
-                job.JobDescription, job.CreatedBy, job.CreatedAt, job.UpdatedAt
-            });
+                var job = await mediator.Send(new CreateJobCommand(
+                    request.Title, request.Department, request.Organisation, request.PostingDate,
+                    request.RubricJson, request.MustHaveCriteriaJson, request.DesiredCriteriaJson,
+                    request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
+                    request.ShortlistThreshold, request.VarianceThreshold, request.JobDescription,
+                    request.RubricSource ?? "manual", request.RawExtractionResponse));
+                return Results.Created($"/api/jobs/{job.Id}", new
+                {
+                    job.Id, job.JobCode, job.Title, job.Department,
+                    job.Organisation, job.PostingDate, job.Status,
+                    job.JobDescription, job.CreatedBy, job.CreatedAt, job.UpdatedAt
+                });
+            }
+            catch (ValidationException ex)
+            {
+                var errors = ex.Errors
+                    .GroupBy(error => error.PropertyName)
+                    .ToDictionary(
+                        group => group.Key,
+                        group => group.Select(error => error.ErrorMessage).ToArray());
+
+                return Results.ValidationProblem(errors);
+            }
         });
 
         group.MapPost("/extract-spec", async (ExtractDocumentRequest request, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
@@ -248,6 +262,25 @@ public static class JobsEndpoints
         {
             var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ReAggregateJobCommand(jobId));
             return Results.Ok(new { updated = result.Updated, total = result.Total });
+        });
+
+        // Platform-mode cancellation: best-effort flips CancelRequested on all
+        // pending/submitted ScoringBatches for the job; the reconciler picks it
+        // up on its next tick. Sequential mode currently has no cancel — this
+        // endpoint still returns 200 with affectedBatches=0 in that case.
+        group.MapPost("/{jobId}/scoring/cancel", async (string jobId, ISender mediator) =>
+        {
+            var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.CancelJobScoringCommand(jobId));
+            return Results.Ok(new { affectedBatches = result.AffectedBatches });
+        });
+
+        // Platform-mode progress rollup. Returns null progress if no platform run
+        // is in flight for this job (caller treats that as sequential / idle).
+        group.MapGet("/{jobId}/scoring/progress", async (string jobId,
+            TalentMatch.Domain.Interfaces.IScoringBatchRepository batchRepo) =>
+        {
+            var progress = await batchRepo.GetProgressAsync(jobId);
+            return Results.Ok(new { progress });
         });
 
         group.MapPut("/{jobId}/rubric-approval", async (string jobId, UpdateRubricApprovalRequest request, ISender mediator) =>

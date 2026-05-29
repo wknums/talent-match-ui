@@ -29,7 +29,8 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
 
         var users = allUsers
             .Where(u => (u.Role == "recruiter" || u.Role == "admin")
-                && !string.IsNullOrEmpty(u.Department))
+                && !string.IsNullOrEmpty(u.Department)
+                && !string.IsNullOrWhiteSpace(u.Id))
             .ToList();
 
         if (request.CallerRole != "admin" && !string.IsNullOrEmpty(request.CallerDepartment))
@@ -37,7 +38,9 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
             users = users.Where(u => u.Department == request.CallerDepartment).ToList();
         }
 
-        var usersById = users.ToDictionary(u => u.Id, StringComparer.OrdinalIgnoreCase);
+        var usersById = users
+            .GroupBy(u => u.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
         var usersByUsername = users
             .Where(u => !string.IsNullOrWhiteSpace(u.Username))
             .GroupBy(u => u.Username, StringComparer.OrdinalIgnoreCase)
@@ -45,8 +48,8 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
         var departmentCandidates = users
             .GroupBy(u => u.Department, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
-        var jobsByRecruiterId = users.ToDictionary(
-            user => user.Id,
+        var jobsByRecruiterId = usersById.Keys.ToDictionary(
+            recruiterId => recruiterId,
             _ => new List<Job>(),
             StringComparer.OrdinalIgnoreCase);
 
@@ -68,8 +71,8 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
             var userJobs = jobsByRecruiterId[user.Id];
 
             var activeJobs = userJobs.Count(j =>
-                j.Status.Equals("Active", StringComparison.OrdinalIgnoreCase) ||
-                j.Status.Equals("Processing", StringComparison.OrdinalIgnoreCase));
+                string.Equals(j.Status, "Active", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(j.Status, "Processing", StringComparison.OrdinalIgnoreCase));
 
             int applicationsInQueue = 0;
             int manualReviewsPerformed = 0;

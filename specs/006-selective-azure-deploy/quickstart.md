@@ -146,14 +146,29 @@ terraform -chdir=infra/terraform/live/stack-a output
 terraform -chdir=infra/terraform/live/stack-b output
 ```
 
+## Verify Deployment Build Stamps (Stack A + Stack B)
+
+Each packaged deployment stamps a `build-info.json` file with a unique version and UTC creation timestamp.
+
+1. Open Stack A in the browser and inspect DevTools Console.
+2. Open Stack B in the browser and inspect DevTools Console.
+3. Confirm each app logs a line in this format:
+
+```text
+[TalentMatch Build] version=<unique-version> createdAtUtc=<UTC timestamp>
+```
+
+Expected result: every deployment emits a new version value and timestamp so operators can verify the app is serving newly deployed artifacts.
+
 ## Seed Key Vault Secrets
 
 ```bash
 KV_NAME="kv-talentmatch-dev"
-az keyvault secret set --vault-name "$KV_NAME" --name sql-connection-string --value "<connection-string>"
 az keyvault secret set --vault-name "$KV_NAME" --name openai-api-key --value "<your-key>"
 az keyvault secret set --vault-name "$KV_NAME" --name awr-api-key --value "<your-key>"
 ```
+
+Azure SQL auth is handled with Entra managed identity. After shared deployment creates or resolves the app identities, the deployment flow must create contained database users for those identities in Azure SQL.
 
 ## Safe Deprovisioning
 

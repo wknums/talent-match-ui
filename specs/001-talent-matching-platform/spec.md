@@ -2,41 +2,109 @@
 
 **Feature Branch**: `001-talent-matching-platform`
 **Created**: 2026-03-03
-**Updated**: 2026-03-14
+**Updated**: 2026-04-24
 **Status**: Active (brownfield — existing codebase)
 **Source**: PRD.md, INTEGRATION.md, README.md, AUTHENTICATION.md, MANUAL_REVIEW_SUMMARY.md
+
+## Iteration Scope Amendment (2026-04-23)
+
+This planning/implementation iteration is intentionally limited to the manual review AI
+prepopulation regression for User Story 7, specifically FR-014 and FR-026.
+
+In scope for this iteration:
+- AI prepopulation of per-category scores and evidence snippets in manual review
+- Mismatch warning behavior when AI categories do not align to rubric categories
+- Banner behavior for AI prepopulation state
+
+Out of scope for this iteration:
+- New feature implementation for user stories outside US7
+- Broad platform refactors unrelated to manual review AI prepopulation
+
+## Clarification Amendment (2026-04-24)
+
+This clarification updates US7 behavior for AI prepopulation gating.
+
+Problem clarified:
+- The current "meaningful manual review content exists" gate can block AI prepopulation even when
+   saved content is only auto-generated AI text and no human edits were made.
+
+Required behavior (Option 1):
+- AI prepopulation MUST be skipped only when a manual review has been human-edited.
+- Presence of saved prepopulated AI content alone MUST NOT suppress future prepopulation.
+
+New persistent signal:
+- Introduce a persisted manual-review field `humanEdited` (boolean) used as the source of truth
+   for prepopulation skip behavior.
+- Default value MUST be `false` for newly created manual review records.
+- Value MUST transition to `true` when a user actually edits prepopulated manual-review content.
+
+Cross-stack/data-store parity requirements:
+- This field and behavior MUST be implemented in both stacks (Stack A Node/React and Stack B
+   .NET/Blazor).
+- This field MUST be supported in both database providers used by the platform:
+   SQLite and Azure SQL.
+- Read/write DTOs, API contracts, repository models, and persistence mappings MUST remain parity
+   aligned across stacks.
+
+Acceptance scenarios for this clarification:
+
+1. **Given** a manual review exists containing only AI-prepopulated content and `humanEdited=false`,
+    **When** manual review is opened, **Then** AI prepopulation runs and refreshes the prepopulated
+    fields.
+2. **Given** a reviewer edits any prepopulated manual review score/comment and saves, **When** the
+    review is persisted, **Then** `humanEdited` is stored as `true`.
+3. **Given** a saved manual review with `humanEdited=true`, **When** manual review is opened,
+    **Then** AI prepopulation is skipped and saved human-edited values are used.
+4. **Given** Stack A and Stack B target the same application data in SQLite or Azure SQL,
+    **When** manual review records are created/updated/read, **Then** `humanEdited` behavior is
+    consistent in both stacks and both providers.
 
 ---
 
 ## User Scenarios & Testing
 
-### User Story 1 — Recruiter authenticates and reaches their dashboard (Priority: P1)
+### User Story 1 — User authenticates and reaches role-scoped experience (Priority: P1)
 
-A recruiter opens the app, enters username and password, and lands on a dashboard filtered to show
-only jobs from their department. An admin sees all jobs regardless of department.
+A user opens the app and authenticates using the configured client authentication mode. In
+`simple` mode, users authenticate with username/password. In `entra` mode, users authenticate with
+Microsoft Entra ID and receive application roles via Entra security-group membership. After
+authentication, the user lands on a role-scoped experience:
+- admin: access to all organizations and departments
+- recruiter: access limited to assigned organization and department
+- analytics_viewer: read-only analytics with filters at global, organization, and
+   organization+department levels
 
 **Why this priority**: Gate to every other feature; nothing is accessible without auth.
 
-**Independent Test**: Login with admin credentials, verify all-department dashboard. Create a
-recruiter user scoped to "Engineering", log in, verify only Engineering jobs appear.
+**Independent Test**: Run the same authentication and authorization tests in both stacks with
+`CLIENT_AUTH_MODE=simple` and `CLIENT_AUTH_MODE=entra`, verifying identical role outcomes and
+scope boundaries.
 
 **Acceptance Scenarios**:
 
-1. **Given** the app loads, **When** no session exists, **Then** the login screen is shown with
-   username and password fields.
-2. **Given** valid credentials, **When** submitted, **Then** user is redirected to dashboard with
-   role-filtered jobs.
-3. **Given** invalid credentials, **When** submitted, **Then** an error message is shown; no
-   navigation occurs.
-4. **Given** a logged-in user, **When** they click "Logout", **Then** session is cleared and the
-   login screen is shown.
-5. **Given** an admin, **When** they view the dashboard, **Then** all departments' jobs are visible.
-6. **Given** a recruiter, **When** they view the dashboard, **Then** only their department's jobs
-   appear.
-7. **Given** the Web.Server is running, **When** a browser navigates to the root URL (`/`), **Then**
+1. **Given** the app loads and no authenticated session exists, **When** `CLIENT_AUTH_MODE=simple`,
+   **Then** the login screen is shown with username and password fields.
+2. **Given** the app loads and no authenticated session exists, **When** `CLIENT_AUTH_MODE=entra`,
+   **Then** the user is challenged with Entra sign-in.
+3. **Given** valid credentials or valid Entra sign-in, **When** authentication completes,
+   **Then** the user is redirected to dashboard with role-filtered data.
+4. **Given** invalid username/password in `simple` mode, **When** submitted, **Then** an error
+   message is shown and no navigation occurs.
+5. **Given** a logged-in user, **When** they click "Logout", **Then** local session state is
+   cleared and re-authentication is required according to the configured auth mode.
+6. **Given** an admin, **When** they view the dashboard and data screens, **Then** all
+   organizations and departments are visible.
+7. **Given** a recruiter, **When** they view the dashboard and data screens, **Then** only
+   resources in their assigned organization and department are visible.
+8. **Given** an analytics_viewer, **When** they open analytics views, **Then** they can read
+   analytics at global, organization, and organization+department filter levels and cannot perform
+   mutating actions.
+9. **Given** `CLIENT_AUTH_MODE=entra`, **When** an authenticated principal is not a member of any
+   mapped application role group, **Then** access is denied with a clear unauthorized message.
+10. **Given** the Web.Server is running, **When** a browser navigates to the root URL (`/`), **Then**
    the Blazor WebAssembly UI is served (not a 404 or blank page), and API endpoints remain
    accessible under their `/api/` prefix.
-8. **Given** Azure SQL is configured and the database is in a cold state, **When** the first
+11. **Given** Azure SQL is configured and the database is in a cold state, **When** the first
    connection attempt takes 30-90 seconds or returns transient startup errors, **Then** the
    system retries with bounded exponential backoff and eventually succeeds without requiring user
    intervention unless the retry budget is exhausted.
@@ -46,7 +114,8 @@ recruiter user scoped to "Engineering", log in, verify only Engineering jobs app
 ### User Story 2 — Admin manages users and passwords (Priority: P1)
 
 An admin can create users, reset any user's password, delete users, and approve/reject recruiter
-password-reset requests. All users can change their own password.
+password-reset requests. All users can change their own password. This user/password lifecycle
+applies only when `CLIENT_AUTH_MODE=simple`.
 
 **Why this priority**: Required for initial demo setup and recruiter onboarding.
 
@@ -314,10 +383,25 @@ and every change is appended to an immutable audit trail. Documents are rendered
 via browser-embedded viewer, DOCX via client-side HTML conversion, Markdown via a Markdown
 renderer, TXT as preformatted text, and images (JPG) inline.
 
+When AI scoring results are available for an application and no manual review has yet been saved,
+the scoring form MUST be pre-populated with the AI's per-category scores and evidence:
+- Each rubric category input MUST be pre-filled with the AI-assigned score (averaged across all
+  scoring runs if N > 1).
+- The notes/comment field for each category MUST be pre-filled with the AI evidence — direct
+  quotes or citations extracted from the CV by the scoring engine — so the recruiter can see the
+  justification for each AI-assigned score without leaving the review pane.
+- A clearly visible banner MUST indicate that scores and notes are AI-pre-populated and should
+  be verified. The banner MUST include the AI's overall aggregated score and variance.
+- If AI scoring exists but category names do not match the configured rubric (e.g. the prompt
+  used different category labels), a distinct warning MUST be shown explaining why pre-population
+  is unavailable for affected categories.
+
 **Why this priority**: Required for high-variance and edge-case applications; provides defensibility.
 
-**Independent Test**: Open manual review for a flagged application; allocate points in all
-categories; save; reload and verify the saved scores and comments persist with audit trail entries.
+**Independent Test**: Open manual review for a flagged application that has completed AI scoring;
+ verify that every rubric category shows the AI score pre-filled and that each category's notes
+ field contains the AI evidence snippets. Adjust one score; save; reload and verify the saved
+ scores and comments persist with audit trail entries.
 
 **Acceptance Scenarios**:
 
@@ -327,10 +411,23 @@ categories; save; reload and verify the saved scores and comments persist with a
 2. **Given** points are allocated to a rubric category, **Then** the live score updates immediately.
 3. **Given** save is clicked, **Then** the review data (including rubric scores, overall comment,
    and audit trail) is persisted against the application.
-4. **Given** a page reload, **When** reviewing the same application, **Then** previous rubric scores
-   and comments are pre-populated.
+4. **Given** a page reload, **When** reviewing the same application, **Then** previously saved
+   rubric scores and comments are pre-populated (from the persisted review, not from AI).
 5. **Given** any scoring change, **Then** an audit entry is appended recording the reviewer,
    timestamp, category, previous value, and new value.
+6. **Given** AI scoring results exist for the application and no manual review has been saved yet,
+   **When** the recruiter opens manual review, **Then** every rubric category input is pre-filled
+   with the AI-assigned score (averaged across runs) AND the notes field for each category
+   contains the AI evidence snippets (direct quotes/citations from the CV) that support that
+   score. A banner MUST be visible indicating AI pre-population is active and showing the
+   aggregated score and variance.
+7. **Given** AI scoring exists but category names in the scoring output do not match the job's
+   configured rubric, **When** the recruiter opens manual review, **Then** a warning is displayed
+   explaining the mismatch and that pre-population is unavailable; the recruiter may re-score
+   the application to resolve the mismatch.
+8. **Given** AI scoring does not exist for the application (e.g. scoring failed or has not run),
+   **When** the recruiter opens manual review, **Then** all category inputs are empty (zero) and
+   no pre-population banner is shown.
 
 ---
 
@@ -374,6 +471,11 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 - Network interruptions: optimistic updates with rollback; visible sync status indicator.
 - Azure SQL cold-start wake-up delays (30-90 seconds): initial connection may time out or fail
    with transient startup errors; system retries with bounded backoff and logs retry attempts.
+- Auth-mode mismatch across stacks: if Stack A and Stack B are configured with different
+   `CLIENT_AUTH_MODE` values for the same environment, startup/deploy validation fails with a
+   descriptive parity error.
+- Entra role mapping gaps: authenticated users with no mapped app role groups are denied access and
+   shown a clear authorization message.
 
 ---
 
@@ -381,10 +483,12 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 
 ### Functional Requirements
 
-- **FR-001**: System MUST authenticate users with username and password; passwords MUST be stored securely using one-way hashing.
-- **FR-002**: System MUST enforce role-based access — recruiters see only their department's jobs; admins see all.
-- **FR-003**: Admin MUST be able to create, reset passwords for, and delete other users.
-- **FR-004**: System MUST support recruiter-initiated password-reset requests visible to admin.
+- **FR-001**: System MUST support a client authentication mode switch (`CLIENT_AUTH_MODE`) with two values: `simple` and `entra`, and MUST apply the same selected mode to both Stack A and Stack B in each environment.
+- **FR-002**: In `simple` mode, system MUST authenticate users with username and password, store passwords with one-way hashing, and maintain session-based authentication.
+- **FR-003**: In `entra` mode, system MUST authenticate users through Microsoft Entra ID and map access via application-specific Entra security groups to roles: `admin`, `recruiter`, and `analytics_viewer`.
+- **FR-004**: System MUST enforce role-based access in both auth modes: `admin` has full access, `recruiter` is limited to assigned organization and department, and `analytics_viewer` has read-only analytics access with filters at global, organization, and organization+department levels.
+- **FR-072**: In `simple` mode, admin MUST be able to create users, reset passwords, and delete other users.
+- **FR-073**: In `simple` mode, system MUST support recruiter-initiated password-reset requests visible to admin.
 - **FR-005**: Jobs MUST be created with title, department, organisation, posting date, and a versioned configuration.
 - **FR-006**: Job configuration changes MUST create a new version without invalidating in-progress scoring.
 - **FR-007**: System MUST accept bulk document upload with per-file cryptographic fingerprinting, file type, and size validation.
@@ -394,19 +498,19 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 - **FR-011**: Aggregation of N runs MUST be performed by the scoring engine automatically when multiple runs are requested. The engine computes the final score, per-category aggregates, variance, confidence, and final decision (using its built-in aggregation strategy) and returns them alongside the individual runs. The platform MUST store the engine-provided aggregated result directly. The platform's local aggregation worker (`server/workers/aggregation.ts` in Stack A; equivalent in Stack B) is deprecated for new scoring flows but retained for backward compatibility.
 - **FR-012**: Applications with variance above the configured threshold MUST be auto-flagged as "Needs Manual Review".
 - **FR-013**: Failed scoring runs MUST be retried with backoff; items exceeding maximum retries go to the failure queue.
-- **FR-014**: Manual review MUST record per-category scores, comments, and produce an immutable audit trail.
+- **FR-014**: Manual review MUST record per-category scores, comments, and produce an immutable audit trail. When AI scoring results are available and no manual review has been previously saved, the review form MUST be pre-populated with: (a) the AI-assigned score per rubric category (averaged across all scoring runs); (b) the AI evidence snippets (direct quotes/citations from the CV) for each category, surfaced in the category's notes/comment field; (c) the overall aggregated AI score and variance in a clearly visible banner. Pre-population MUST NOT overwrite a previously saved manual review. If AI category names do not match the rubric, a warning MUST be shown per unmatched category.
 - **FR-015**: Dashboard stats MUST auto-refresh at intervals of 30 seconds or less.
 - **FR-016**: Longlist, shortlist, and exclusion lists MUST be sortable and filterable.
 - **FR-017**: All AI model calls MUST be proxied through the backend; no client-side API keys.
 - **FR-018**: System MUST support swappable storage backends for local development and production deployment.
 - **FR-019**: The Stack B Web.Server project MUST host the Blazor WebAssembly client — it MUST include the WebAssembly.Server hosting package, serve Blazor framework files and static assets via middleware, and map a fallback route to `index.html` so that the root URL and all client-side routes serve the Blazor UI alongside the API endpoints.
-- **FR-020**: The Stack B Web.Server MUST seed a default admin user on first launch (username `admin`, SHA-256 hashed password, role `admin`, department `all`) if no users exist in the database, matching the Stack A behaviour defined in `server/services/init-users.ts` and `AUTHENTICATION.md`.
-- **FR-021**: The Stack B Blazor WASM client MUST send cookie credentials with every API request by configuring `BrowserRequestCredentials.Include` via a `DelegatingHandler` and `IHttpClientFactory`, and the Web.Server cookie auth MUST set `HttpOnly`, `SameSite=Strict`, and `SecurePolicy=SameAsRequest` options to ensure cookies persist across same-origin requests.
+- **FR-020**: In `simple` mode, Stack B Web.Server MUST seed a default admin user on first launch (username `admin`, SHA-256 hashed password, role `admin`, department `all`) if no users exist in the database, matching Stack A behaviour defined in `server/services/init-users.ts` and `AUTHENTICATION.md`.
+- **FR-021**: In `simple` mode, both stacks MUST use cookie/session authentication semantics consistently. For Stack B this includes sending cookie credentials with every API request via `BrowserRequestCredentials.Include` and setting cookie options `HttpOnly`, `SameSite=Strict`, and `SecurePolicy=SameAsRequest`.
 - **FR-022**: The Stack B Blazor WASM client MUST provide a `UserMenu` component in the layout header displaying the authenticated user's name, role badge, and department, with controls for logout, change password, and (admin-only) user management access — matching the React `UserMenu.tsx` behaviour.
 - **FR-023**: The Stack B Blazor WASM client MUST provide accessible navigation entry points for all features: "Create Job" button on Dashboard, "Upload Applications" button on Job Detail, User Management from UserMenu (admin-only), Change Password from UserMenu, and Failure Queue from navigation — ensuring no component is orphaned from the UI.
 - **FR-024**: The Stack B Blazor WASM client MUST implement a Change Password dialog with current password, new password, and confirmation fields, calling the change-password API endpoint with success/error feedback — matching US2 acceptance scenario 5.
 - **FR-025**: The Stack B Blazor WASM client MUST implement an Application Detail page (`ApplicationDetail.razor`) displaying original documents rendered in their native format (PDF via embedded viewer, DOCX converted to HTML, Markdown rendered, TXT as preformatted text, images inline), all N individual scoring runs with per-category breakdown and evidence citations, and the aggregated final decision with rationale and improvement tips — matching US6 acceptance scenario 4 and React `ApplicationDetail.tsx`.
-- **FR-026**: The Stack B Manual Review page MUST implement per-category rubric scoring with point allocation inputs for each category, live weighted score recalculation, display of the job's rubric categories and must-have criteria in the left pane, and a chronological audit trail — matching US7 acceptance scenarios 1–5 and React `ManualReviewView.tsx`.
+- **FR-026**: The Stack B Manual Review page MUST implement per-category rubric scoring with point allocation inputs for each category, live weighted score recalculation, display of the job's rubric categories and must-have criteria in the left pane, and a chronological audit trail — matching US7 acceptance scenarios 1–8 and React `ManualReviewView.tsx`. This MUST include AI pre-population of both scores and evidence per category (US7 scenario 6), the mismatch warning (scenario 7), and the pre-population banner showing overall AI score and variance.
 - **FR-027**: The Stack B Blazor WASM client MUST implement a Failure Queue view displaying DLQ items with error details, failure reason, retry count, timestamps, a retry button, and 30-second auto-refresh — matching US8 acceptance scenario 3 and React `FailureQueueView.tsx`.
 - **FR-028**: The Stack B Create Job dialog MUST implement rubric category management (add/remove rows, weight inputs with sum-to-1.0 validation), must-have criteria list management (add/remove), and job specification file upload with LLM-based rubric extraction — matching US3 acceptance scenarios 2–3 and React `CreateJobDialog.tsx` / `UploadRubricDialog.tsx`.
 - **FR-029**: The Stack B User Management component MUST include a tab or section for pending password reset requests with approve (with new password) and reject controls — matching US2 acceptance scenarios 3–4 and React `UserManagementDialog.tsx`.
@@ -447,10 +551,14 @@ If one or more test runs result in rejected status, the user must be returned to
 - **FR-066**: Both Stack A and Stack B MUST implement scoring mode detection with identical logic: read `AWR_PLATFORM_API_ENDPOINT` and `AWR_SEQ_API_ENDPOINT` from environment variables, compare them, and route production scoring accordingly. The mode detection logic MUST reside in the pipeline orchestrator layer (`server/services/pipeline.ts` in Stack A; equivalent orchestrator in Stack B) — not in individual workers or route handlers.
 - **FR-067**: Authentication for outbound requests to `AWR_PLATFORM_API_ENDPOINT` (platform mode) MUST use the same `AWR_AUTH_MODE` mechanism defined in FR-049 and FR-050. The existing `getAwrAuthHeaders()` (Stack A) and `AwrAuthHandler` (Stack B) MUST be reused with no changes to the auth layer.
 - **FR-068**: When Azure SQL is enabled, both Stack A and Stack B MUST treat initial connection failures caused by pay-as-you-go cold-start wake-up as transient and retry with bounded exponential backoff before surfacing a startup failure. The retry policy MUST tolerate a 30-90 second wake-up window, log each retry attempt with elapsed time and error reason, and fail fast only after the configured retry budget is exhausted.
+- **FR-069**: In `entra` mode, both stacks MUST use identical role-mapping configuration keys for application-specific Entra security groups (`ENTRA_GROUP_ADMIN`, `ENTRA_GROUP_RECRUITER`, `ENTRA_GROUP_ANALYTICS_VIEWER`) and MUST fail startup with a descriptive error if any required group mapping is missing.
+- **FR-070**: In `entra` mode, user/password management features (create local user, reset local password, request password reset, change local password) MUST be hidden or disabled in both stacks and replaced by guidance that identity lifecycle is managed in Entra.
+- **FR-071**: Authorization outcomes for identical user claims/groups MUST be equivalent across Stack A and Stack B, including role resolution, organization/department scoping, analytics_viewer read-only constraints, and unauthorized responses.
 
 ### Key Entities
 
-- **User**: A person who accesses the system. Key attributes: username, role (admin or recruiter), full name, email, department, account creation date, and last login. Passwords stored as secure one-way hashes.
+- **User**: A person who accesses the system. Key attributes: username, role (`admin`, `recruiter`, or `analytics_viewer`), organization, department, full name, email, account creation date, and last login. In `simple` mode, passwords are stored as secure one-way hashes; in `entra` mode, identity is externalized to Entra ID.
+- **Client Auth Configuration**: Environment-level configuration selecting `CLIENT_AUTH_MODE` (`simple` or `entra`) and, for `entra` mode, role-group mappings (`ENTRA_GROUP_ADMIN`, `ENTRA_GROUP_RECRUITER`, `ENTRA_GROUP_ANALYTICS_VIEWER`).
 - **Job**: A job opening that applications are scored against. Key attributes: job code, title, department, organisation, posting date, status, and a reference to its current configuration version.
 - **Job Configuration Version**: A versioned snapshot of a job's scoring setup. Key attributes: rubric (categories with weights), must-have criteria, number of scoring runs, aggregation strategy, longlist/shortlist thresholds, and variance threshold.
 - **Application**: A candidate's submission for a specific job. Tracks status through the pipeline (Queued → Scoring → Completed / Needs Manual Review / Failed), associated documents, final score, final decision, and variance. The `Aggregating` status is deprecated — aggregation is now performed by the scoring engine as part of the scoring step.
@@ -478,6 +586,8 @@ If one or more test runs result in rejected status, the user must be returned to
 - **SC-006**: A recruiter can log in, create a job, upload applications, and reach the ranked list view within 10 minutes of first use.
 - **SC-007**: Role-based access control is enforced end-to-end: recruiter accounts cannot view, query, or access data for jobs outside their assigned department.
 - **SC-008**: Manual review scores persist across page reloads, and every point allocation change is recorded in an immutable per-application audit trail.
+- **SC-009**: Switching `CLIENT_AUTH_MODE` between `simple` and `entra` changes the authentication entry flow without changing role-based authorization outcomes for equivalent admin/recruiter/analytics_viewer personas.
+- **SC-010**: In `entra` mode, 100% of users without mapped application role groups are denied access with an explicit authorization error, and 0 unauthorized mutating actions are permitted for analytics_viewer.
 
 ---
 
@@ -487,6 +597,8 @@ If one or more test runs result in rejected status, the user must be returned to
 - Initial deployment targets a single-tenant scenario with a defined set of departments and user roles.
 - Document formats accepted for upload include common file types (PDF, DOCX, MD); exotic formats are out of scope for initial release.
 - The admin user account is pre-created during initial deployment; subsequent users are managed through the admin interface.
+- `CLIENT_AUTH_MODE` is configured consistently per environment and propagated equally to both stacks.
+- In `entra` mode, application-specific Entra security groups exist and are pre-mapped for `admin`, `recruiter`, and `analytics_viewer` roles.
 - AI model availability and rate limits are managed externally; the platform handles transient failures through retry mechanisms.
 - The AWReason engine API (`AWR_SEQ_API_ENDPOINT`) requires authentication configured via `AWR_AUTH_MODE`. Local development uses `none`; staging uses `apikey` with a shared secret; production uses `entra` (Entra ID JWT). See FR-049–FR-051.
 - The system supports two scoring modes: sequential (using `AWR_SEQ_API_ENDPOINT`) and platform (using `AWR_PLATFORM_API_ENDPOINT`). The mode is determined by comparing the two endpoint values at startup. When both point to the same URL (or `AWR_PLATFORM_API_ENDPOINT` is unset), sequential mode is used. See FR-061–FR-067.
@@ -499,7 +611,7 @@ If one or more test runs result in rejected status, the user must be returned to
 
 ### In Scope
 
-- User authentication and role-based access control (admin and recruiter roles)
+- User authentication mode switch (`simple` or `entra`) with role-based access control (`admin`, `recruiter`, `analytics_viewer`)
 - Job creation with versioned scoring configurations
 - Bulk document upload and ingestion
 - AI-powered multi-run scoring pipeline with aggregation
@@ -517,6 +629,7 @@ If one or more test runs result in rejected status, the user must be returned to
 - Advanced analytics or reporting beyond the operational dashboard
 - Candidate communication or interview scheduling
 - Mobile-native application (responsive web is in scope)
+- Multi-IdP federation beyond Microsoft Entra ID
 
 ---
 

@@ -107,7 +107,15 @@
             <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["title"]</span>
         }
         <input placeholder="Department" @bind="department" />
+        @if (validationErrors.ContainsKey("department"))
+        {
+            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["department"]</span>
+        }
         <input placeholder="Organisation" @bind="organisation" />
+        @if (validationErrors.ContainsKey("organisation"))
+        {
+            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["organisation"]</span>
+        }
         <input type="date" @bind="postingDate" />
 
         <div>
@@ -337,7 +345,10 @@
     }
 
     private double WeightSum => rubricCategories.Sum(c => c.Weight);
-    private bool CanSubmit => !string.IsNullOrWhiteSpace(title);
+    private bool CanSubmit =>
+        !string.IsNullOrWhiteSpace(title)
+        && !string.IsNullOrWhiteSpace(department)
+        && !string.IsNullOrWhiteSpace(organisation);
 
     private void AddCategory()
     {
@@ -370,6 +381,12 @@
 
         if (!IsEditMode && string.IsNullOrWhiteSpace(title))
             validationErrors["title"] = "Title is required";
+
+        if (!IsEditMode && string.IsNullOrWhiteSpace(department))
+            validationErrors["department"] = "Department is required";
+
+        if (!IsEditMode && string.IsNullOrWhiteSpace(organisation))
+            validationErrors["organisation"] = "Organisation is required";
 
         if (!rubricCategories.Any(c => !string.IsNullOrWhiteSpace(c.Name) && c.Weight > 0))
             validationErrors["rubric"] = "At least one rubric category with a name and weight is required";
@@ -579,15 +596,23 @@
         }
         else
         {
-            var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
-                rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold,
-                string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription));
-            success = result;
-            message = result ? "Job created successfully!" : "Failed to create job.";
-            if (result)
+            try
             {
-                await OnCreated.InvokeAsync();
-                ResetForm();
+                var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
+                    rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold,
+                    string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription));
+                success = result;
+                message = result ? "Job created successfully!" : "Failed to create job.";
+                if (result)
+                {
+                    await OnCreated.InvokeAsync();
+                    ResetForm();
+                }
+            }
+            catch (ApiException ex)
+            {
+                success = false;
+                message = ex.Message;
             }
         }
     }

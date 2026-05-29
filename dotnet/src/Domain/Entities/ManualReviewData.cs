@@ -10,6 +10,7 @@ public class ManualReviewData
     public string OverallComment { get; set; } = string.Empty;
     public double? AdjustedFinalScore { get; set; }
     public string AuditTrailJson { get; set; } = "[]"; // JSON array of ManualReviewAuditEntry
+    public bool HumanEdited { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     

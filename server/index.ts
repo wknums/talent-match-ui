@@ -13,6 +13,7 @@ import { createDLQRouter } from './routes/dlq.js'
 import { createPromptsRouter } from './routes/prompts.js'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { errorHandler } from './middleware/error-handler.js'
+import { buildHealthReport } from './services/health.js'
 import { initializeUsers } from './services/init-users.js'
 import { validateAwrAuthConfig } from './services/awr-auth.js'
 
@@ -35,6 +36,13 @@ if (existsSync(envPath)) {
 
 const PORT = parseInt(process.env.PORT || '3001', 10)
 const API_MODE = (process.env.API_MODE || 'mock') as 'mock' | 'real'
+const DIST_DIR = resolve(process.cwd(), 'dist')
+const INDEX_HTML_PATH = resolve(DIST_DIR, 'index.html')
+
+async function initializeAppState() {
+  await initializeDatabase()
+  await initializeUsers()
+}
 
 async function main() {
   // Validate AWReason API auth configuration before starting
@@ -45,10 +53,9 @@ async function main() {
     process.exit(1)
   }
 
-  await initializeDatabase()
-
-  // Seed default admin user if none exist
-  await initializeUsers()
+  if (!isAzureSql) {
+    await initializeAppState()
+  }
 
   const app = express()
 
@@ -64,12 +71,18 @@ async function main() {
     res.json({ apiMode: API_MODE })
   })
 
-  // Health check (public)
-  app.get('/api/health', (_req, res) => {
-    res.json({
-      status: 'ok',
-      storage: isAzureSql ? 'azure-sql' : 'sqlite',
-    })
+  // Health checks (public)
+  const handleHealth = async (_req: express.Request, res: express.Response) => {
+    const report = await buildHealthReport()
+    res.status(report.status === 'ok' ? 200 : 503).json(report)
+  }
+
+  app.get('/api/health', (req, res, next) => {
+    void handleHealth(req, res).catch(next)
+  })
+
+  app.get('/healthz', (req, res, next) => {
+    void handleHealth(req, res).catch(next)
   })
 
   // Auth middleware for protected routes
@@ -85,6 +98,18 @@ async function main() {
   app.use('/api/audit', authMiddleware, createAuditRouter())
   app.use('/api/dlq', authMiddleware, createDLQRouter())
 
+  // Serve the built SPA when available (production packaging places it in ./dist).
+  if (existsSync(INDEX_HTML_PATH)) {
+    app.use(express.static(DIST_DIR))
+    app.get('*', (req, res, next) => {
+      if (req.path.startsWith('/api') || req.path === '/healthz') {
+        next()
+        return
+      }
+      res.sendFile(INDEX_HTML_PATH)
+    })
+  }
+
   // Error handler (must be last)
   app.use(errorHandler)
 
@@ -93,6 +118,27 @@ async function main() {
     console.log(`Storage provider: ${process.env.STORAGE_PROVIDER || 'local'}`)
     console.log(`API mode: ${API_MODE}`)
   })
+
+  // Platform-mode reconciler: only starts when AWR_PLATFORM_API_ENDPOINT is
+  // configured (see detectScoringMode). Sequential deployments are a no-op.
+  const { startPlatformReconciler } = await import('./workers/reconciler.js')
+  if (isAzureSql) {
+    // Defer start until DB init completes so the first tick has a working pool.
+  } else {
+    startPlatformReconciler()
+  }
+
+  if (isAzureSql) {
+    console.log('[startup] Azure SQL detected; continuing startup while database initialization runs in the background')
+    void initializeAppState()
+      .then(() => {
+        console.log('[startup] Background database initialization complete')
+        startPlatformReconciler()
+      })
+      .catch((err) => {
+        console.error(`[startup] Background database initialization failed: ${(err as Error).message}`)
+      })
+  }
 }
 
 main().catch((err) => {

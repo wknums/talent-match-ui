@@ -2,6 +2,13 @@
 
 A production-grade frontend for an Azure-hosted AI-powered job application scoring system. This application provides recruiters, hiring managers, and administrators with comprehensive tools to manage jobs, upload applications, monitor AI-powered scoring pipelines, and review candidate assessments.
 
+> **Scoring backends.** The client supports two scoring modes selected by env vars:
+> - **Sequential mode** (`AWR_SEQ_API_ENDPOINT`) — synchronous `POST /assess/passthrough`. Used for test scoring and small jobs.
+> - **Platform mode** (`AWR_PLATFORM_API_ENDPOINT`) — asynchronous batched submission + polling against a Service Bus + Durable Functions backend. Orchestration (queueing, fan-out per CV, retries) lives on the platform. The client only submits, reconciles, and reports.
+>
+> The full client ↔ platform ↔ engine contract is documented in
+> [specs/008-platform-mode-shift/platform-contract.md](specs/008-platform-mode-shift/platform-contract.md). Platform and engine teams build against that document. Any change to wire format, headers, or storage layout must be made there first.
+
 ## Features
 
 - **Dashboard Overview**: Real-time system statistics and job monitoring

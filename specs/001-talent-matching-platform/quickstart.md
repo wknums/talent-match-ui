@@ -79,14 +79,20 @@ dotnet test TalentMatch.slnx
 
 Stack B uses SQLite by default at `shared-data/talentmatch.db` (repo root). EF Core migrations are applied automatically on startup.
 
-To use SQL Server, update `appsettings.json`:
+To use Azure SQL with Entra auth in Azure-hosted environments, configure:
 ```json
 {
-  "DatabaseProvider": "sqlserver",
-  "ConnectionStrings": {
-    "DefaultConnection": "Server=.;Database=TalentMatch;Trusted_Connection=true;TrustServerCertificate=true"
-  }
+  "DatabaseProvider": "sqlserver"
 }
+```
+
+And set environment variables:
+
+```bash
+AZURE_SQL_AUTH_MODE=entra
+AZURE_SQL_SERVER_FQDN=your-server.database.windows.net
+AZURE_SQL_DATABASE_NAME=TalentMatch
+AZURE_CLIENT_ID=<user-assigned-managed-identity-client-id>
 ```
 
 ## Running Both Stacks
@@ -128,7 +134,42 @@ Both stacks support the full prompt lifecycle:
 | Variable | Purpose | Required |
 |----------|---------|----------|
 | `AWR_SEQ_API_ENDPOINT` | External API for document extraction and prompt generation | For US3/US3a AI features |
-| `AWR_PLATFORM_API_ENDPOINT` | Platform API for async production scoring. When unset or equal to `AWR_SEQ_API_ENDPOINT`, system uses sequential mode. When different, production scoring routes to the platform endpoint. Non-scoring ops always use `AWR_SEQ_API_ENDPOINT`. | Optional (FR-061) |
+| `AWR_PLATFORM_API_ENDPOINT` | Platform API for async production scoring. When unset or equal to `AWR_SEQ_API_ENDPOINT`, system uses sequential mode. When different, production scoring routes to the platform endpoint. Non-scoring ops always use `AWR_SEQ_API_ENDPOINT`. See **[specs/008-platform-mode-shift/platform-contract.md](../008-platform-mode-shift/platform-contract.md)** for the full client ↔ platform contract. | Optional (FR-061) |
+| `AWR_PLATFORM_BATCH_SIZE` | CVs per platform submission (default `2`). Configurable per spec 008. | Optional |
+| `AWR_PLATFORM_RECONCILE_INTERVAL_MS` | Reconciler tick interval in ms (default `15000`). | Optional |
+| `AWR_PLATFORM_LEASE_SECONDS` | Reconciler row-lease TTL in seconds (default `60`). | Optional |
+| `AWR_BLOB_STORAGE_ACCOUNT` | Azure Storage account name hosting `cv-uploads` container (required in platform mode). RBAC only — no SAS. | Platform mode |
+| `AWR_BLOB_CONTAINER` | Blob container for CV uploads (default `cv-uploads`). | Platform mode |
 | `STORAGE_PROVIDER` | `local` or `azuresql` (Stack A) | Stack A only |
 | `API_MODE` | `mock` or `real` (Stack A) | Stack A only |
 | `DatabaseProvider` | `sqlite` or `sqlserver` (Stack B) | Stack B only |
+
+## Manual Review AI Prepopulation Verification (US7 / FR-014)
+
+Use this flow to verify the regression fix for AI category evidence prepopulation.
+
+### Preconditions
+
+- Application has completed scoring with at least one `ScoringRun`.
+- `ScoringRun.CategoryScoresJson` contains category scores.
+- `ScoringRun.EvidenceCitationsJson` contains category/snippet citations.
+- No existing `ManualReview` record for the application.
+
+### Verification Steps
+
+1. Open a scored application and click **Manual Review**.
+2. Confirm the AI prepopulation banner is shown with overall score and variance.
+3. For each rubric category, confirm:
+  - points/score input is pre-filled from averaged AI category score;
+  - notes/comment field includes an **AI Score** block and an **Evidence** block;
+  - evidence block contains one or more bullet snippets sourced from scoring citations.
+4. Save the manual review, refresh the page, and confirm saved values reload (persisted review),
+  not a fresh AI overwrite.
+5. Repeat with a scoring payload whose category names do not match rubric category names and
+  confirm mismatch warning is shown and prepopulation is skipped for unmatched categories.
+
+### Expected Results
+
+- First open (no prior review): AI score + evidence prepopulation is visible per category.
+- After save/reload: persisted manual review remains authoritative.
+- Category mismatch case: explicit warning shown; recruiter can re-score.

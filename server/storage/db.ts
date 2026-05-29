@@ -7,12 +7,19 @@ const require = createRequire(import.meta.url)
 
 // ---------------------------------------------------------------------------
 // Dual-driver database layer
-//   • Production  → Azure SQL via 'mssql'   (set AZURE_SQL_CONNECTION_STRING)
-//   • Development → SQLite  via 'better-sqlite3' (default when env var absent)
+//   • Production  → Azure SQL via 'mssql' using Entra managed identity
+//                   (or a legacy connection string when explicitly provided)
+//   • Development → SQLite via 'better-sqlite3' (default when Azure SQL is unset)
 // ---------------------------------------------------------------------------
 
+type AzureSqlSettings =
+  | { mode: 'connection-string'; connectionString: string }
+  | { mode: 'entra'; server: string; database: string; clientId?: string }
+
+const azureSqlSettings = resolveAzureSqlSettings()
+
 /** Are we using Azure SQL? */
-export const isAzureSql: boolean = !!process.env.AZURE_SQL_CONNECTION_STRING
+export const isAzureSql: boolean = azureSqlSettings !== null
 
 // ---- mssql type-tag stubs used by repos in .input(name, TYPE, value) ------
 // When using SQLite the shim ignores them.
@@ -55,17 +62,43 @@ export async function getPool(): Promise<any> {
 // Azure SQL (mssql) driver
 // ===========================================================================
 async function createMssqlPool() {
-  const mssql = require('mssql')
+  const mssqlModule = require('mssql')
+  const mssql = mssqlModule?.default ?? mssqlModule
+  const connectWithConfig = resolveMssqlConnect(mssqlModule)
   // Replace the stub type-tags with real mssql type objects
-  sql = mssql.default
-  const connStr = process.env.AZURE_SQL_CONNECTION_STRING!
+  sql = mssql ?? mssqlModule
+  if (!azureSqlSettings) {
+    throw new Error('Azure SQL settings are required when STORAGE_PROVIDER=azuresql.')
+  }
+
+  const connectionConfig =
+    azureSqlSettings.mode === 'connection-string'
+      ? azureSqlSettings.connectionString
+      : {
+          server: azureSqlSettings.server,
+          database: azureSqlSettings.database,
+          connectionTimeout: 90_000,
+          requestTimeout: 180_000,
+          options: {
+            encrypt: true,
+            trustServerCertificate: false,
+          },
+          authentication: {
+            type: 'azure-active-directory-default',
+            options: azureSqlSettings.clientId
+              ? { clientId: azureSqlSettings.clientId }
+              : {},
+          },
+        }
 
   const startedAt = Date.now()
   let lastError: unknown
+  let attemptsMade = 0
 
   for (let attempt = 1; attempt <= azureSqlRetryConfig.maxAttempts; attempt++) {
+    attemptsMade = attempt
     try {
-      const pool = await mssql.default.connect(connStr)
+      const pool = await connectWithConfig(connectionConfig)
       if (attempt > 1) {
         const elapsedMs = Date.now() - startedAt
         console.log(`[db] Azure SQL connection established after retry (attempt=${attempt}, elapsedMs=${elapsedMs})`)
@@ -97,9 +130,43 @@ async function createMssqlPool() {
 
   const finalMessage = normalizeErrorMessage(lastError)
   console.error(
-    `[db] Azure SQL connect failed after retries (attempts=${azureSqlRetryConfig.maxAttempts}, elapsedMs=${Date.now() - startedAt}, error="${finalMessage}")`,
+    `[db] Azure SQL connect failed after retries (attempts=${attemptsMade}, elapsedMs=${Date.now() - startedAt}, error="${finalMessage}")`,
   )
   throw lastError
+}
+
+type MssqlConnectConfig = string | Record<string, unknown>
+
+function resolveMssqlConnect(mssqlModule: unknown): (config: MssqlConnectConfig) => Promise<unknown> {
+  const candidates = [
+    mssqlModule,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mssqlModule as any)?.default,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (mssqlModule as any)?.sql,
+  ]
+
+  for (const candidate of candidates) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (typeof (candidate as any)?.connect === 'function') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (config: MssqlConnectConfig) => (candidate as any).connect(config)
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (typeof (candidate as any)?.ConnectionPool === 'function') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return async (config: MssqlConnectConfig) => new (candidate as any).ConnectionPool(config).connect()
+    }
+  }
+
+  const availableKeys = Object.keys(
+    (mssqlModule && typeof mssqlModule === 'object'
+      ? (mssqlModule as Record<string, unknown>)
+      : {}) as Record<string, unknown>,
+  )
+  throw new Error(
+    `Unable to resolve mssql connect API. Module keys: ${availableKeys.length ? availableKeys.join(', ') : '(none)'}`,
+  )
 }
 
 function sleep(ms: number): Promise<void> {
@@ -135,6 +202,38 @@ function isTransientAzureSqlConnectionError(error: unknown): boolean {
   ]
 
   return transientMessageFragments.some(fragment => message.includes(fragment))
+}
+
+function resolveAzureSqlSettings(): AzureSqlSettings | null {
+  const legacyConnectionString = process.env.AZURE_SQL_CONNECTION_STRING?.trim()
+  if (legacyConnectionString) {
+    return {
+      mode: 'connection-string',
+      connectionString: legacyConnectionString,
+    }
+  }
+
+  const storageProvider = (process.env.STORAGE_PROVIDER ?? '').trim().toLowerCase()
+  const authMode = (process.env.AZURE_SQL_AUTH_MODE ?? '').trim().toLowerCase()
+  const server = process.env.AZURE_SQL_SERVER_FQDN?.trim()
+  const database = process.env.AZURE_SQL_DATABASE_NAME?.trim()
+
+  if (storageProvider !== 'azuresql' || authMode !== 'entra') {
+    return null
+  }
+
+  if (!server || !database) {
+    throw new Error(
+      'AZURE_SQL_SERVER_FQDN and AZURE_SQL_DATABASE_NAME are required when Azure SQL Entra authentication is enabled.',
+    )
+  }
+
+  return {
+    mode: 'entra',
+    server,
+    database,
+    clientId: process.env.AZURE_CLIENT_ID?.trim() || undefined,
+  }
 }
 
 // ===========================================================================
@@ -271,6 +370,10 @@ function ensureSqliteCompatibilitySchema(db: any): void {
   ensureSqliteColumn(db, 'ApplicationDocuments', 'MimeType', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ApplicationDocuments', 'SizeBytes', 'INTEGER NOT NULL DEFAULT 0')
   ensureSqliteColumn(db, 'ApplicationDocuments', 'UploadedAt', "TEXT NOT NULL DEFAULT ''")
+  // Platform mode (spec 008): blob-by-reference
+  ensureSqliteColumn(db, 'ApplicationDocuments', 'BlobUri', 'TEXT NULL')
+  ensureSqliteColumn(db, 'ApplicationDocuments', 'ContentSha256', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Applications', 'BatchId', 'TEXT NULL')
 
   ensureSqliteColumn(db, 'ExtractionArtifacts', 'Markdown', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ExtractionArtifacts', 'ToolVersion', "TEXT NOT NULL DEFAULT ''")
@@ -302,6 +405,7 @@ function ensureSqliteCompatibilitySchema(db: any): void {
 
   ensureSqliteColumn(db, 'ManualReviews', 'JobId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ManualReviews', 'LastModifiedBy', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'ManualReviews', 'HumanEdited', 'INTEGER NOT NULL DEFAULT 0')
 
   ensureSqliteColumn(db, 'FailureQueueItems', 'ApplicationId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'FailureQueueItems', 'JobId', "TEXT NOT NULL DEFAULT ''")
@@ -342,6 +446,25 @@ export async function initializeDatabase(): Promise<void> {
     for (const batch of batches) {
       await pool.request().query(batch)
     }
+
+    // Backward compatibility for existing Azure SQL environments.
+    await pool.request().query(`
+IF COL_LENGTH('talentmatch.ManualReviews', 'HumanEdited') IS NULL
+BEGIN
+  ALTER TABLE [talentmatch].ManualReviews
+    ADD [HumanEdited] BIT NOT NULL CONSTRAINT DF_ManualReviews_HumanEdited DEFAULT 0;
+END;
+`)
+
+    // Platform mode (spec 008): blob-by-reference + per-app batch linkage
+    await pool.request().query(`
+IF COL_LENGTH('talentmatch.ApplicationDocuments', 'BlobUri') IS NULL
+  ALTER TABLE [talentmatch].ApplicationDocuments ADD BlobUri NVARCHAR(1024) NULL;
+IF COL_LENGTH('talentmatch.ApplicationDocuments', 'ContentSha256') IS NULL
+  ALTER TABLE [talentmatch].ApplicationDocuments ADD ContentSha256 CHAR(64) NULL;
+IF COL_LENGTH('talentmatch.Applications', 'BatchId') IS NULL
+  ALTER TABLE [talentmatch].Applications ADD BatchId UNIQUEIDENTIFIER NULL;
+`)
   } else {
     // SQLite — run the DDL using the underlying db handle directly
     const schemaPath = resolve(import.meta.dirname, 'schema-sqlite.sql')

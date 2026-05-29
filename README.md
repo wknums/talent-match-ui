@@ -35,6 +35,18 @@ Open `http://localhost:5173` in your browser. Default login: `admin` / `adm1n99`
 | `npm start` | Run compiled backend (after `build:server`) |
 | `npm run lint` | Run ESLint |
 
+## Azure App Service Startup (Stack A)
+
+For Linux App Service deployments of Stack A, set the **Startup Command** to:
+
+```bash
+npm start
+```
+
+Do not set the startup command to `npm run` without a script name. That causes startup failure.
+
+The Stack A packaging script (`infra/scripts/package-stack-a.sh`) prepares the deployment artifact so `npm start` resolves to the correct production entry point.
+
 ## Storage Configuration
 
 The backend supports two database drivers:
@@ -46,16 +58,20 @@ No configuration needed. Data is stored in `shared-data/talentmatch.db`. Tables 
 ### Azure SQL
 
 ```env
-AZURE_SQL_CONNECTION_STRING=Server=your-server.database.windows.net;Database=your-db;User Id=your-user;Password=your-password;Encrypt=true
+STORAGE_PROVIDER=azuresql
+AZURE_SQL_AUTH_MODE=entra
+AZURE_SQL_SERVER_FQDN=your-server.database.windows.net
+AZURE_SQL_DATABASE_NAME=your-db
+AZURE_CLIENT_ID=<user-assigned-managed-identity-client-id>
 ```
 
-Requires `mssql` package (included as optional dependency). The server will run `schema.sql` automatically on first connection.
+Requires `mssql` package (included as optional dependency). In Azure, Stack A uses the assigned managed identity for Azure SQL; the corresponding database user must exist before startup. The server will run `schema.sql` automatically on first connection.
 
 Azure SQL pay-as-you-go databases can take 30-90 seconds to wake after idle periods. Both stacks now include startup resilience for that behavior:
 
 - **Node.js (Stack A)** retries initial `mssql` connection attempts with bounded exponential backoff.
 - **.NET (Stack B)** applies SQL Server provider transient retries, a minimum 90 second connect timeout, and retries startup migration/seed work.
-- **Operations guidance**: do not set a lower SQL connect timeout than 90 seconds in Azure-hosted connection strings unless you are prepared to absorb cold-start failures.
+- **Operations guidance**: do not lower the Azure SQL connect timeout below 90 seconds in Azure-hosted environments unless you are prepared to absorb cold-start failures.
 
 Stack A retry tuning can be overridden with environment variables:
 
@@ -99,7 +115,11 @@ Copy `.env.example` to `.env` and configure:
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | Backend server port |
-| `AZURE_SQL_CONNECTION_STRING` | - | Set to use Azure SQL instead of SQLite |
+| `STORAGE_PROVIDER` | `local` | Set to `azuresql` to use Azure SQL in Stack A |
+| `AZURE_SQL_AUTH_MODE` | - | Set to `entra` for managed-identity Azure SQL auth |
+| `AZURE_SQL_SERVER_FQDN` | - | Azure SQL server FQDN for Entra auth |
+| `AZURE_SQL_DATABASE_NAME` | - | Azure SQL database name for Entra auth |
+| `AZURE_CLIENT_ID` | - | User-assigned managed identity client ID used for Azure SQL and other Azure SDK auth |
 | `AZURE_SQL_WAKEUP_MAX_ATTEMPTS` | `8` | Stack A Azure SQL startup retry budget |
 | `AZURE_SQL_WAKEUP_INITIAL_DELAY_MS` | `2000` | Stack A initial Azure SQL retry delay |
 | `AZURE_SQL_WAKEUP_MAX_DELAY_MS` | `15000` | Stack A cap for Azure SQL retry backoff |
@@ -185,7 +205,10 @@ dotnet/
 
 Stack B uses `appsettings.json` for configuration:
 - `DatabaseProvider`: `sqlite` (default) or `sqlserver`
-- `ConnectionStrings:DefaultConnection`: Database connection string
+- `AZURE_SQL_AUTH_MODE`: `entra` for Azure-hosted managed-identity SQL auth
+- `AZURE_SQL_SERVER_FQDN`: Azure SQL server FQDN
+- `AZURE_SQL_DATABASE_NAME`: Azure SQL database name
+- `AZURE_CLIENT_ID`: user-assigned managed identity client ID
 - `AzureOpenAI:Endpoint`: Azure OpenAI endpoint (for LLM features)
 
 When `DatabaseProvider=sqlserver`, Stack B enforces Azure SQL resilience defaults in code:

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { applicationRepo, jobRepo, promptRepo } from '../storage/repos/index.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
+import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
 import type { ScoringRun, ApplicationDocument, ScoringPrompt, AggregatedResult } from '../../src/types/index.js'
 
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
@@ -786,11 +787,13 @@ export async function runScoring(
     }
 
     const awrHeaders = await getAwrAuthHeaders({ username: 'system', role: 'pipeline' })
+    const timeout = createAwrTimeoutSignal()
     const response = await fetch(`${endpoint}/assess/passthrough`, {
       method: 'POST',
       headers: awrHeaders,
       body: formData,
-    })
+      signal: timeout.signal,
+    }).finally(() => timeout.dispose())
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => response.statusText)

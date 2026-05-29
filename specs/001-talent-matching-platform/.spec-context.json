@@ -16,19 +16,165 @@
       },
       "by": "extension",
       "at": "2026-04-17T15:08:29.246Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "from": {
+        "step": "specify",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-24T09:04:40.393Z"
+    },
+    {
+      "step": "plan",
+      "substep": "research",
+      "from": {
+        "step": "plan",
+        "substep": null
+      },
+      "by": "ai",
+      "at": "2026-04-24T09:08:16.741Z"
+    },
+    {
+      "step": "plan",
+      "substep": "design",
+      "from": {
+        "step": "plan",
+        "substep": "research"
+      },
+      "by": "ai",
+      "at": "2026-04-24T09:08:40.000Z"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "from": {
+        "step": "plan",
+        "substep": "design"
+      },
+      "by": "ai",
+      "at": "2026-04-24T09:08:57.776Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "from": {
+        "step": "plan",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-24T09:11:33.242Z"
+    },
+    {
+      "step": "tasks",
+      "substep": "generate",
+      "from": {
+        "step": "tasks",
+        "substep": null
+      },
+      "by": "ai",
+      "at": "2026-04-24T09:11:52.445Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "from": {
+        "step": "tasks",
+        "substep": "generate"
+      },
+      "by": "ai",
+      "at": "2026-04-24T09:17:52.445Z"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "from": {
+        "step": "tasks",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-24T09:20:05.093Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "from": {
+        "step": "tasks",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-24T09:20:05.137Z"
+    },
+    {
+      "step": "implement",
+      "substep": "run-tests",
+      "from": {
+        "step": "implement",
+        "substep": null
+      },
+      "by": "ai",
+      "at": "2026-04-24T09:35:00.000Z"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "from": {
+        "step": "implement",
+        "substep": "run-tests"
+      },
+      "by": "ai",
+      "at": "2026-04-24T09:40:00.000Z"
     }
   ],
-  "currentStep": "specify",
+  "currentStep": "implement",
   "stepHistory": {
     "tasks": {
-      "startedAt": "2026-04-17T14:54:22.210Z",
-      "completedAt": "2026-04-17T15:08:29.245Z"
+      "startedAt": "2026-04-24T09:11:33.242Z",
+      "completedAt": "2026-04-24T09:20:05.093Z",
+      "substeps": [
+        {
+          "name": "generate",
+          "startedAt": "2026-04-24T09:11:52.445Z",
+          "completedAt": "2026-04-24T09:17:52.445Z"
+        }
+      ]
     },
     "specify": {
       "startedAt": "2026-04-17T15:08:29.245Z",
-      "completedAt": null
+      "completedAt": "2026-04-24T09:04:40.393Z"
+    },
+    "plan": {
+      "startedAt": "2026-04-24T09:04:40.393Z",
+      "completedAt": "2026-04-24T09:08:57.776Z",
+      "substeps": [
+        {
+          "name": "research",
+          "startedAt": "2026-04-24T09:08:16.741Z",
+          "completedAt": "2026-04-24T09:08:40.000Z"
+        },
+        {
+          "name": "design",
+          "startedAt": "2026-04-24T09:08:40.000Z",
+          "completedAt": "2026-04-24T09:08:57.776Z"
+        }
+      ]
+    },
+    "implement": {
+      "startedAt": "2026-04-24T09:20:05.137Z",
+      "completedAt": "2026-04-24T09:40:00.000Z",
+      "substeps": [
+        {
+          "name": "run-tests",
+          "startedAt": "2026-04-24T09:35:00.000Z",
+          "completedAt": "2026-04-24T09:40:00.000Z"
+        }
+      ]
     }
   },
-  "status": "active",
-  "specName": "Talent Matching Platform"
+  "status": "completed",
+  "specName": "Talent Matching Platform",
+  "workflow": "speckit",
+  "branch": ""
 }

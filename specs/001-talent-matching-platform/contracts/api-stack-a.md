@@ -2,7 +2,9 @@
 
 **Feature**: 001-talent-matching-platform | **Date**: 2026-03-09
 
-Base URL: `/api` | Auth: Cookie-based session | Content-Type: `application/json`
+Base URL: `/api` | Auth: Cookie-based session (`CLIENT_AUTH_MODE=simple`) or Entra token-based (`CLIENT_AUTH_MODE=entra`) | Content-Type: `application/json`
+
+Auth mode selection MUST match Stack B for the same environment (see spec FR-001, FR-071).
 
 ---
 

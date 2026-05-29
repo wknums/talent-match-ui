@@ -11,6 +11,8 @@ public class ApplicationDocument
     public long FileSize { get; set; }
     public string Fingerprint { get; set; } = string.Empty;
     public string? ContentBase64 { get; set; }
+    public string? BlobUri { get; set; }
+    public string? ContentSha256 { get; set; }
     public DateTime? UploadTimestamp { get; set; }
     
     [JsonIgnore]

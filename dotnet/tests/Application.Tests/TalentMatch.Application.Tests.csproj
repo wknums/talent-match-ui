@@ -25,4 +25,8 @@
     <ProjectReference Include="..\..\src\Domain\TalentMatch.Domain.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

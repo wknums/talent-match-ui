@@ -40,6 +40,11 @@ variable "identity_id" {
   type        = string
 }
 
+variable "identity_client_id" {
+  description = "Stack A managed identity client ID from shared root"
+  type        = string
+}
+
 variable "key_vault_uri" {
   description = "Key Vault URI from shared root"
   type        = string
@@ -58,6 +63,50 @@ variable "sql_database_name" {
 variable "apim_gateway_url" {
   description = "APIM gateway URL from shared root"
   type        = string
+}
+
+variable "use_key_vault_secret_refs" {
+  description = "When true, app settings use Key Vault references for runtime secrets"
+  type        = bool
+  default     = true
+}
+
+variable "awr_api_key" {
+  description = "Direct AWR API key value for non-sensitive environments"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "openai_api_key" {
+  description = "Direct OpenAI API key value for non-sensitive environments"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "awr_seq_api_endpoint" {
+  description = "AWReason sequential API endpoint passed to Stack A app settings"
+  type        = string
+  default     = ""
+}
+
+variable "awr_auth_mode" {
+  description = "AWReason auth mode passed to app settings"
+  type        = string
+  default     = "none"
+}
+
+variable "awr_max_parallel" {
+  description = "Maximum parallel AWR operations allowed at runtime"
+  type        = number
+  default     = 1
+}
+
+variable "api_mode" {
+  description = "Application API mode"
+  type        = string
+  default     = "mock"
 }
 
 # --- Networking (US6) ---

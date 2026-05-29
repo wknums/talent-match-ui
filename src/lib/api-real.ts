@@ -115,6 +115,7 @@ function mapManualReview(raw: any): ManualReviewData {
     auditTrail: typeof raw.auditTrailJson === 'string'
       ? JSON.parse(raw.auditTrailJson)
       : (raw.auditTrail ?? []),
+    humanEdited: raw.humanEdited === true || raw.HumanEdited === true || Number(raw.HumanEdited ?? 0) === 1,
     lastModifiedAt: raw.lastModifiedAt ?? new Date().toISOString(),
     lastModifiedBy: raw.lastModifiedBy ?? 'unknown',
   }

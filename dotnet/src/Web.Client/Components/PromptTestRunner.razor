@@ -26,6 +26,12 @@
             {
                 <div style="border: 2px dashed #ccc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
                     <InputFile OnChange="OnFilesSelected" multiple />
+                    @if (!string.IsNullOrWhiteSpace(uploadError))
+                    {
+                        <div style="margin-top: 0.75rem; padding: 0.75rem; background: #fed7d7; color: #822727; border: 1px solid #feb2b2; border-radius: 4px; white-space: pre-wrap; word-break: break-word;">
+                            @uploadError
+                        </div>
+                    }
                     <button @onclick="SubmitTestFiles" disabled="@isUploading" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
                         @(isUploading ? "Uploading..." : "Start Test Run")
                     </button>
@@ -178,7 +184,10 @@
                                                 </div>
                                             }
 
-                                            @{ var mustHave = ParseJson<MustHaveDto>(run.MustHaveEvaluationJson); }
+                                            @{ 
+                                                var mustHave = ParseJson<MustHaveDto>(run.MustHaveEvaluationJson);
+                                                var mustHaveEntries = ParseMustHaveEntries(run.MustHaveEvaluationJson);
+                                            }
                                             @if (mustHave != null)
                                             {
                                                 <div style="margin-top: 0.25rem;">
@@ -190,7 +199,22 @@
                                                     else
                                                     {
                                                         <span style="color: #e53e3e;">❌ Failed</span>
-                                                        @if (mustHave.MissingCriteria?.Any() == true)
+                                                        @if (mustHaveEntries.Any())
+                                                        {
+                                                            <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
+                                                                @foreach (var entry in mustHaveEntries)
+                                                                {
+                                                                    <li style="color: @(entry.Passed ? "#38a169" : "#e53e3e");">
+                                                                        @(entry.Passed ? "✅" : "❌") @entry.Criterion
+                                                                        @if (!string.IsNullOrWhiteSpace(entry.Evidence))
+                                                                        {
+                                                                            <div style="color: #718096; font-size: 0.75rem; font-style: italic; margin-top: 0.1rem;">@entry.Evidence</div>
+                                                                        }
+                                                                    </li>
+                                                                }
+                                                            </ul>
+                                                        }
+                                                        else if (mustHave.MissingCriteria?.Any() == true)
                                                         {
                                                             <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0; color: #e53e3e;">
                                                                 @foreach (var m in mustHave.MissingCriteria)
@@ -226,7 +250,11 @@
                                                 </details>
                                             }
 
-                                            @{ var tips = ParseJson<List<string>>(run.ImprovementTipsJson); }
+                                            @{ 
+                                                var tips = ParseJson<List<string>>(run.ImprovementTipsJson);
+                                                var gateFailedCriteria = GetFailedCriteria(run.MustHaveEvaluationJson);
+                                                var gateFailed = mustHave?.Passed == false;
+                                            }
                                             @if (tips?.Any() == true)
                                             {
                                                 <details style="margin-top: 0.25rem;">
@@ -234,7 +262,8 @@
                                                     <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
                                                         @foreach (var tip in tips)
                                                         {
-                                                            <li>@tip</li>
+                                                            var isGateFailureTip = gateFailed && IsTipGateFailureRelated(tip, gateFailedCriteria);
+                                                            <li style="color: @(isGateFailureTip ? "#e53e3e" : "#4a5568");">@tip</li>
                                                         }
                                                     </ul>
                                                 </details>
@@ -271,6 +300,7 @@
     private List<IBrowserFile> selectedFiles = new();
     private System.Threading.Timer? _pollTimer;
     private bool _disposed;
+    private string? uploadError;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -361,12 +391,14 @@
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
         selectedFiles = e.GetMultipleFiles(20).ToList();
+        uploadError = null;
     }
 
     private async Task SubmitTestFiles()
     {
         if (ActivePrompt == null || !selectedFiles.Any()) return;
         isUploading = true;
+        uploadError = null;
         StateHasChanged();
         try
         {
@@ -389,6 +421,14 @@
             selectedFiles.Clear();
             testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
             StartPolling();
+        }
+        catch (ApiException ex)
+        {
+            uploadError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            uploadError = ex.Message;
         }
         finally
         {
@@ -442,6 +482,226 @@
         if (string.IsNullOrWhiteSpace(json)) return null;
         try { return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
         catch { return null; }
+    }
+
+    private List<MustHaveEntry> ParseMustHaveEntries(string? json)
+    {
+        var entries = new List<MustHaveEntry>();
+        if (string.IsNullOrWhiteSpace(json)) return entries;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var missingCriteria = new List<string>();
+            if (root.TryGetProperty("missing_criteria", out var missingElement) && missingElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in missingElement.EnumerateArray())
+                {
+                    if (item.ValueKind == JsonValueKind.String)
+                    {
+                        var criterion = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(criterion))
+                            missingCriteria.Add(criterion);
+                    }
+                }
+            }
+
+            if (root.TryGetProperty("details", out var details))
+            {
+                if (details.TryGetProperty("entries", out var entryArray) && entryArray.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in entryArray.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object) continue;
+
+                        var criterion = item.TryGetProperty("criterion", out var criterionElement)
+                            ? criterionElement.GetString()
+                            : item.TryGetProperty("requirement", out var requirementElement)
+                                ? requirementElement.GetString()
+                                : item.TryGetProperty("item", out var itemElement)
+                                    ? itemElement.GetString()
+                                    : null;
+
+                        if (string.IsNullOrWhiteSpace(criterion)) continue;
+
+                        var passed = false;
+                        var hasPassed = false;
+
+                        if (item.TryGetProperty("passed", out var passedElement) && TryParseFlexibleBool(passedElement, out var parsedPassed))
+                        {
+                            passed = parsedPassed;
+                            hasPassed = true;
+                        }
+                        else if (item.TryGetProperty("met", out var metElement) && TryParseFlexibleBool(metElement, out var parsedMet))
+                        {
+                            passed = parsedMet;
+                            hasPassed = true;
+                        }
+                        else if (item.TryGetProperty("satisfied", out var satisfiedElement) && TryParseFlexibleBool(satisfiedElement, out var parsedSatisfied))
+                        {
+                            passed = parsedSatisfied;
+                            hasPassed = true;
+                        }
+
+                        if (!hasPassed)
+                        {
+                            passed = !missingCriteria.Any(m =>
+                                m.Equals(criterion, StringComparison.OrdinalIgnoreCase) ||
+                                criterion.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                m.IndexOf(criterion, StringComparison.OrdinalIgnoreCase) >= 0);
+                        }
+
+                        var evidence = item.TryGetProperty("evidence", out var evidenceElement)
+                            ? evidenceElement.GetString()
+                            : item.TryGetProperty("reason", out var reasonElement)
+                                ? reasonElement.GetString()
+                                : null;
+
+                        entries.Add(new MustHaveEntry
+                        {
+                            Criterion = criterion,
+                            Passed = passed,
+                            Evidence = evidence
+                        });
+                    }
+
+                    if (entries.Any()) return entries;
+                }
+
+                if (details.ValueKind == JsonValueKind.Object)
+                {
+                    foreach (var prop in details.EnumerateObject())
+                    {
+                        if (prop.Name is "source" or "entries" or "recommendation") continue;
+                        if (!TryParseFlexibleBool(prop.Value, out var passed)) continue;
+
+                        entries.Add(new MustHaveEntry
+                        {
+                            Criterion = prop.Name,
+                            Passed = passed,
+                            Evidence = null
+                        });
+                    }
+
+                    if (entries.Any()) return entries;
+                }
+            }
+        }
+        catch
+        {
+            return new List<MustHaveEntry>();
+        }
+
+        return entries;
+    }
+
+    private List<string> GetFailedCriteria(string? mustHaveEvaluationJson)
+    {
+        var failed = new List<string>();
+
+        foreach (var entry in ParseMustHaveEntries(mustHaveEvaluationJson).Where(e => !e.Passed))
+        {
+            if (!string.IsNullOrWhiteSpace(entry.Criterion))
+                failed.Add(entry.Criterion);
+        }
+
+        var mustHave = ParseJson<MustHaveDto>(mustHaveEvaluationJson);
+        if (mustHave?.MissingCriteria?.Any() == true)
+        {
+            failed.AddRange(mustHave.MissingCriteria.Where(c => !string.IsNullOrWhiteSpace(c)));
+        }
+
+        return failed.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private bool IsTipGateFailureRelated(string tip, List<string> failedCriteria)
+    {
+        if (string.IsNullOrWhiteSpace(tip) || failedCriteria.Count == 0)
+            return false;
+
+        var normalizedTip = NormalizeForMatch(tip);
+        if (string.IsNullOrWhiteSpace(normalizedTip))
+            return false;
+
+        foreach (var criterion in failedCriteria)
+        {
+            if (string.IsNullOrWhiteSpace(criterion)) continue;
+
+            var normalizedCriterion = NormalizeForMatch(criterion);
+            if (string.IsNullOrWhiteSpace(normalizedCriterion)) continue;
+
+            if (normalizedTip.Contains(normalizedCriterion, StringComparison.Ordinal) ||
+                normalizedCriterion.Contains(normalizedTip, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            var criterionTokens = normalizedCriterion.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Where(t => t.Length >= 4)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+            if (!criterionTokens.Any()) continue;
+
+            var overlap = criterionTokens.Count(token => normalizedTip.Contains(token, StringComparison.Ordinal));
+            if (overlap >= Math.Min(2, criterionTokens.Count))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseFlexibleBool(JsonElement value, out bool parsed)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.True:
+                parsed = true;
+                return true;
+            case JsonValueKind.False:
+                parsed = false;
+                return true;
+            case JsonValueKind.Number:
+                if (value.TryGetInt32(out var intVal))
+                {
+                    parsed = intVal != 0;
+                    return true;
+                }
+                break;
+            case JsonValueKind.String:
+                var raw = value.GetString()?.Trim().ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(raw)) break;
+
+                if (raw is "true" or "yes" or "y" or "pass" or "passed" or "met" or "meets" or "satisfied" or "compliant" or "success" or "successful")
+                {
+                    parsed = true;
+                    return true;
+                }
+
+                if (raw is "false" or "no" or "n" or "fail" or "failed" or "missing" or "not met" or "unsatisfied" or "non-compliant" or "ineligible")
+                {
+                    parsed = false;
+                    return true;
+                }
+                break;
+        }
+
+        parsed = false;
+        return false;
+    }
+
+    private static string NormalizeForMatch(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        var chars = value
+            .ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ')
+            .ToArray();
+
+        return string.Join(' ', new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
     private bool HasError(string? json)
@@ -510,6 +770,13 @@
         [System.Text.Json.Serialization.JsonPropertyName("missing_criteria")]
         public List<string>? MissingCriteria { get; set; }
         public string? Recommendation { get; set; }
+    }
+
+    public class MustHaveEntry
+    {
+        public string? Criterion { get; set; }
+        public bool Passed { get; set; }
+        public string? Evidence { get; set; }
     }
 
     public class EvidenceItem

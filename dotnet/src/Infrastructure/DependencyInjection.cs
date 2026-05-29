@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Interfaces;
@@ -20,7 +21,7 @@ public static class DependencyInjection
 
         if (provider.Equals("sqlserver", StringComparison.OrdinalIgnoreCase))
         {
-            var connectionString = BuildResilientSqlServerConnectionString(configuration.GetConnectionString("DefaultConnection"));
+            var connectionString = BuildResilientSqlServerConnectionString(ResolveSqlServerConnectionString(configuration));
             services.AddDbContext<AppDbContext>(options =>
                 options.UseSqlServer(connectionString, sqlOptions =>
                 {
@@ -43,19 +44,44 @@ public static class DependencyInjection
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
         services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();
+        services.AddScoped<IScoringBatchRepository, ScoringBatchRepository>();
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddTransient<AwrAuthHandler>();
         services.AddHttpClient<ILlmProxyService, LlmProxyService>(client =>
             {
-                client.Timeout = TimeSpan.FromMinutes(10);
+                client.Timeout = TimeSpan.FromMinutes(6);
             })
             .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddHttpClient("AwrApiClient", client =>
             {
-                client.Timeout = TimeSpan.FromMinutes(10);
+                client.Timeout = TimeSpan.FromMinutes(6);
+            })
+            .AddHttpMessageHandler<AwrAuthHandler>();
+        services.AddHttpClient<IPlatformScoringService, PlatformScoringService>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(6);
             })
             .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddHttpContextAccessor();
+
+        // Blob store: AzureBlobStore when AWR_BLOB_STORAGE_ACCOUNT is set (platform mode),
+        // otherwise InlineBlobStore (sequential / dev). See specs/008-platform-mode-shift/platform-contract.md.
+        services.AddSingleton<IBlobStore>(sp =>
+        {
+            var account = Environment.GetEnvironmentVariable("AWR_BLOB_STORAGE_ACCOUNT");
+            if (string.IsNullOrWhiteSpace(account))
+            {
+                return new InlineBlobStore();
+            }
+            var container = Environment.GetEnvironmentVariable("AWR_BLOB_CONTAINER");
+            if (string.IsNullOrWhiteSpace(container)) container = "cv-uploads";
+            var logger = sp.GetRequiredService<ILoggerFactory>().CreateLogger<AzureBlobStore>();
+            return new AzureBlobStore(account, container, logger);
+        });
+
+        // Platform-mode reconciler hosted service. It self-disables when scoring
+        // mode is sequential, so it is safe to register unconditionally.
+        services.AddHostedService<TalentMatch.Infrastructure.HostedServices.PlatformScoringReconciler>();
 
         return services;
     }
@@ -73,6 +99,46 @@ public static class DependencyInjection
         if (builder.ConnectTimeout < 90)
         {
             builder.ConnectTimeout = 90;
+        }
+
+        return builder.ConnectionString;
+    }
+
+    private static string? ResolveSqlServerConnectionString(IConfiguration configuration)
+    {
+        var configuredConnectionString = configuration.GetConnectionString("DefaultConnection");
+        if (!string.IsNullOrWhiteSpace(configuredConnectionString))
+        {
+            return configuredConnectionString;
+        }
+
+        var authMode = configuration["AZURE_SQL_AUTH_MODE"];
+        var server = configuration["AZURE_SQL_SERVER_FQDN"];
+        var database = configuration["AZURE_SQL_DATABASE_NAME"];
+        if (!string.Equals(authMode, "entra", StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(database)))
+        {
+            throw new InvalidOperationException("DatabaseProvider=sqlserver requires either ConnectionStrings__DefaultConnection or the Entra settings AZURE_SQL_AUTH_MODE=entra, AZURE_SQL_SERVER_FQDN, and AZURE_SQL_DATABASE_NAME.");
+        }
+
+        if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(database))
+        {
+            throw new InvalidOperationException("AZURE_SQL_SERVER_FQDN and AZURE_SQL_DATABASE_NAME are required when Azure SQL Entra authentication is enabled.");
+        }
+
+        var builder = new SqlConnectionStringBuilder
+        {
+            DataSource = server,
+            InitialCatalog = database,
+            Encrypt = true,
+            TrustServerCertificate = false,
+            Authentication = SqlAuthenticationMethod.ActiveDirectoryManagedIdentity,
+        };
+
+        var clientId = configuration["AZURE_CLIENT_ID"];
+        if (!string.IsNullOrWhiteSpace(clientId))
+        {
+            builder.UserID = clientId;
         }
 
         return builder.ConnectionString;

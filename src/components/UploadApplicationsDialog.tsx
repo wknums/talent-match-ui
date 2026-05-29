@@ -29,10 +29,52 @@ export function UploadApplicationsDialog({
   onClose,
   onSuccess,
 }: UploadApplicationsDialogProps) {
+  const ALLOWED_EXTENSIONS = ['.pdf', '.md', '.docx', '.txt', '.jpg', '.png']
+  const MAX_FILE_SIZE = 15 * 1024 * 1024
+
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [dragActive, setDragActive] = useState(false)
+
+  const validateFile = useCallback(
+    (file: File): string | null => {
+      const extension = `.${file.name.split('.').pop()?.toLowerCase() ?? ''}`
+      if (!ALLOWED_EXTENSIONS.includes(extension)) {
+        return `Unsupported file type for ${file.name}`
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        return `${file.name} exceeds the 15 MB limit`
+      }
+      return null
+    },
+    [ALLOWED_EXTENSIONS]
+  )
+
+  const addFiles = useCallback(
+    (incomingFiles: File[]) => {
+      const accepted: File[] = []
+      const rejected: string[] = []
+
+      incomingFiles.forEach((file) => {
+        const validationError = validateFile(file)
+        if (validationError) {
+          rejected.push(validationError)
+        } else {
+          accepted.push(file)
+        }
+      })
+
+      if (accepted.length > 0) {
+        setFiles((prev) => [...prev, ...accepted])
+      }
+
+      if (rejected.length > 0) {
+        toast.error(rejected.join('; '))
+      }
+    },
+    [validateFile]
+  )
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -49,16 +91,14 @@ export function UploadApplicationsDialog({
     e.stopPropagation()
     setDragActive(false)
 
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      (file) => file.type === 'application/pdf' || file.type.startsWith('image/')
-    )
-    setFiles((prev) => [...prev, ...droppedFiles])
-  }, [])
+    const droppedFiles = Array.from(e.dataTransfer.files)
+    addFiles(droppedFiles)
+  }, [addFiles])
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const selectedFiles = Array.from(e.target.files)
-      setFiles((prev) => [...prev, ...selectedFiles])
+      addFiles(selectedFiles)
     }
   }
 
@@ -149,7 +189,7 @@ export function UploadApplicationsDialog({
                 type="file"
                 id="file-upload"
                 multiple
-                accept=".pdf,image/*"
+                accept=".pdf,.md,.docx,.txt,.jpg,.png"
                 onChange={handleFileInput}
                 className="hidden"
               />
@@ -159,7 +199,7 @@ export function UploadApplicationsDialog({
                   <div>
                     <p className="font-medium mb-1">Drop files here or click to browse</p>
                     <p className="text-sm text-muted-foreground">
-                      Supports PDF and image files (PNG, JPG)
+                      Supports PDF, MD, DOCX, TXT, JPG, and PNG files (max 15 MB each)
                     </p>
                   </div>
                 </div>

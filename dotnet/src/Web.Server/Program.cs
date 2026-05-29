@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
@@ -58,27 +59,50 @@ var app = builder.Build();
 // Validate AWReason API auth configuration at startup
 AwrAuthHandler.ValidateConfiguration();
 
-// Ensure database is created and seed default admin
-await ExecuteWithSqlWarmupRetryAsync(async () =>
+var useBackgroundAzureSqlWarmup =
+    !app.Environment.IsEnvironment("Testing")
+    && string.Equals(builder.Configuration["DatabaseProvider"], "sqlserver", StringComparison.OrdinalIgnoreCase);
+
+if (useBackgroundAzureSqlWarmup)
 {
-    using var scope = app.Services.CreateScope();
+    Console.WriteLine("[startup] Azure SQL detected; continuing startup while database initialization runs in the background.");
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await ExecuteWithSqlWarmupRetryAsync(() => InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment));
+            Console.WriteLine("[startup] Background database initialization complete.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[startup] Background Azure SQL initialization failed: {ex.Message}");
+        }
+    });
+}
+else
+{
+    await InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment);
+}
+
+static Task InitializeApplicationDataAsync(IServiceProvider services, string contentRootPath, IHostEnvironment environment)
+{
+    using var scope = services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    if (app.Environment.IsEnvironment("Testing"))
+    if (environment.IsEnvironment("Testing"))
     {
         db.Database.EnsureCreated();
     }
     else if (db.Database.IsSqlite())
     {
-        EnsureSharedSqliteSchemaIfNeeded(db, app.Environment.ContentRootPath);
+        EnsureSharedSqliteSchemaIfNeeded(db, contentRootPath);
         BaselineSharedSqliteSchemaIfNeeded(db);
     }
     else
     {
-        db.Database.Migrate();
+        EnsureSharedAzureSqlSchemaIfNeeded(db, contentRootPath);
     }
 
-    // Seed default admin user if no users exist (matches Stack A init-users.ts / AUTHENTICATION.md)
     if (!db.Users.Any())
     {
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("adm1n99")));
@@ -92,7 +116,9 @@ await ExecuteWithSqlWarmupRetryAsync(async () =>
         });
         db.SaveChanges();
     }
-});
+
+    return Task.CompletedTask;
+}
 
 static async Task ExecuteWithSqlWarmupRetryAsync(Func<Task> operation)
 {
@@ -278,21 +304,186 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
               AND name IN ('Users', 'Jobs', 'Applications', 'ScoringRuns', 'AggregatedResults', 'FailureQueueItems');";
         var hasExistingSchema = Convert.ToInt32(hasExistingSchemaCommand.ExecuteScalar()) > 0;
         if (hasExistingSchema)
+        {
+            EnsureSqliteManualReviewHumanEditedColumn(connection);
+            EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
             return;
+        }
 
-        var schemaPath = Path.GetFullPath(Path.Combine(contentRootPath, "..", "..", "..", "server", "storage", "schema-sqlite.sql"));
+        var schemaPath = ResolveSharedSchemaPath(contentRootPath, "schema-sqlite.sql");
         if (!File.Exists(schemaPath))
             throw new FileNotFoundException($"Shared SQLite schema file not found: {schemaPath}");
 
         using var initializeSchemaCommand = connection.CreateCommand();
         initializeSchemaCommand.CommandText = File.ReadAllText(schemaPath);
         initializeSchemaCommand.ExecuteNonQuery();
+        EnsureSqliteManualReviewHumanEditedColumn(connection);
+        EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
     }
     finally
     {
         if (shouldClose)
             connection.Close();
     }
+}
+
+static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connection)
+{
+    using var columnCheckCommand = connection.CreateCommand();
+    columnCheckCommand.CommandText = "PRAGMA table_info('ManualReviews');";
+
+    using var reader = columnCheckCommand.ExecuteReader();
+    var hasHumanEdited = false;
+    while (reader.Read())
+    {
+        if (string.Equals(reader.GetString(1), "HumanEdited", StringComparison.OrdinalIgnoreCase))
+        {
+            hasHumanEdited = true;
+            break;
+        }
+    }
+
+    if (!hasHumanEdited)
+    {
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE ManualReviews ADD COLUMN HumanEdited INTEGER NOT NULL DEFAULT 0;";
+        alterCommand.ExecuteNonQuery();
+    }
+}
+
+static void EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(SqliteConnection connection)
+{
+    using var columnCheckCommand = connection.CreateCommand();
+    columnCheckCommand.CommandText = "PRAGMA table_info('AggregatedResults');";
+
+    using var reader = columnCheckCommand.ExecuteReader();
+    var hasColumn = false;
+    while (reader.Read())
+    {
+        if (string.Equals(reader.GetString(1), "FinalSubScoresJson", StringComparison.OrdinalIgnoreCase))
+        {
+            hasColumn = true;
+            break;
+        }
+    }
+
+    if (!hasColumn)
+    {
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE AggregatedResults ADD COLUMN FinalSubScoresJson TEXT NOT NULL DEFAULT '{}';";
+        alterCommand.ExecuteNonQuery();
+    }
+}
+
+static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRootPath)
+{
+    if (!db.Database.IsSqlServer())
+        return;
+
+    var schemaPath = ResolveSharedSchemaPath(contentRootPath, "schema.sql");
+    if (!File.Exists(schemaPath))
+        throw new FileNotFoundException($"Shared Azure SQL schema file not found: {schemaPath}");
+
+    var schemaSql = File.ReadAllText(schemaPath);
+    var batches = Regex.Split(schemaSql, @"\r?\n(?=IF NOT EXISTS|CREATE (?:UNIQUE )?INDEX)")
+        .Select(batch => 
+        {
+            // Remove all comment-only lines from the batch to avoid SQL parse errors
+            var lines = batch.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            var nonCommentLines = lines
+                .Where(line => !line.Trim().StartsWith("--"))
+                .ToList();
+            return string.Join("\n", nonCommentLines).Trim();
+        })
+        .Where(batch => batch.Length > 0);
+
+    var connection = db.Database.GetDbConnection();
+    var shouldClose = connection.State != System.Data.ConnectionState.Open;
+    if (shouldClose)
+        connection.Open();
+
+    try
+    {
+        foreach (var batch in batches)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = batch;
+            command.CommandTimeout = 180;
+            command.ExecuteNonQuery();
+        }
+
+        // Backward compatibility for environments created with Stack A naming.
+        // Execute DDL and DML in separate round-trips so SQL Server can compile
+        // statements against newly-added columns.
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.JobConfigVersions', 'MustHaveCriteriaJson') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].JobConfigVersions
+        ADD [MustHaveCriteriaJson] NVARCHAR(MAX) NOT NULL CONSTRAINT DF_JobConfigVersions_MustHaveCriteriaJson DEFAULT N'[]';
+END;
+");
+
+        ExecuteSql(@"
+UPDATE [talentmatch].JobConfigVersions
+SET [MustHaveCriteriaJson] = ISNULL([MustHavesJson], N'[]')
+WHERE [MustHaveCriteriaJson] IS NULL OR [MustHaveCriteriaJson] = N'[]';
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.JobConfigVersions', 'ScoringRunCount') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].JobConfigVersions
+        ADD [ScoringRunCount] INT NOT NULL CONSTRAINT DF_JobConfigVersions_ScoringRunCount DEFAULT 3;
+END;
+");
+
+        ExecuteSql(@"
+UPDATE [talentmatch].JobConfigVersions
+SET [ScoringRunCount] = ISNULL([RunsPerApplication], 3)
+WHERE [ScoringRunCount] IS NULL OR [ScoringRunCount] = 3;
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.ManualReviews', 'HumanEdited') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].ManualReviews
+        ADD [HumanEdited] BIT NOT NULL CONSTRAINT DF_ManualReviews_HumanEdited DEFAULT 0;
+END;
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.AggregatedResults', 'FinalSubScoresJson') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].AggregatedResults
+        ADD [FinalSubScoresJson] NVARCHAR(MAX) NOT NULL CONSTRAINT DF_AggregatedResults_FinalSubScoresJson DEFAULT N'{}';
+END;
+");
+
+        void ExecuteSql(string sql)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.CommandTimeout = 180;
+            command.ExecuteNonQuery();
+        }
+    }
+    finally
+    {
+        if (shouldClose)
+            connection.Close();
+    }
+}
+
+static string ResolveSharedSchemaPath(string contentRootPath, string fileName)
+{
+    var candidates = new[]
+    {
+        Path.GetFullPath(Path.Combine(contentRootPath, "server", "storage", fileName)),
+        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "server", "storage", fileName)),
+        Path.GetFullPath(Path.Combine(contentRootPath, "..", "..", "..", "server", "storage", fileName)),
+    };
+
+    return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
 }
 
 if (app.Environment.IsDevelopment())
@@ -310,6 +501,7 @@ app.UseAuthorization();
 
 // Map endpoints
 app.MapAuthEndpoints();
+app.MapHealthEndpoints();
 app.MapUsersEndpoints();
 app.MapJobsEndpoints();
 app.MapApplicationsEndpoints();

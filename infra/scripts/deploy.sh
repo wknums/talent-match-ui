@@ -95,14 +95,30 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
     export TF_VAR_apim_gateway_url="$(get_terraform_output "$TF_LIVE_DIR/shared" "apim_gateway_url")"
     export TF_VAR_identity_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_id")"
     export TF_VAR_identity_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_id")"
+    export TF_VAR_identity_client_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_client_id")"
+    export TF_VAR_identity_client_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_client_id")"
 
     # Networking (US6): Capture integration subnet ID if networking is configured
-    local subnet_id
     subnet_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "integration_subnet_id")"
     if [[ -n "$subnet_id" ]]; then
       export TF_VAR_integration_subnet_id="$subnet_id"
       log_info "Captured integration_subnet_id from shared root"
     fi
+
+    STACK_A_IDENTITY_NAME="${TF_VAR_identity_id_stack_a##*/}"
+    STACK_B_IDENTITY_NAME="${TF_VAR_identity_id_stack_b##*/}"
+    export SQL_SERVER_FQDN="${TF_VAR_sql_server_fqdn}"
+    export SQL_DATABASE_NAME="${TF_VAR_sql_database_name}"
+    export STACK_A_IDENTITY_NAME
+    export STACK_B_IDENTITY_NAME
+
+    print_banner "Shared Post-Provisioning: Azure SQL Entra Users"
+    if command -v cygpath >/dev/null 2>&1; then
+      bootstrap_script="$(cygpath -w "$SCRIPT_DIR/bootstrap-sql-entra-users.mjs")"
+    else
+      bootstrap_script="$SCRIPT_DIR/bootstrap-sql-entra-users.mjs"
+    fi
+    node "$bootstrap_script"
   fi
 fi
 
@@ -114,6 +130,7 @@ if [[ "$DEPLOY_STACK_A" == "true" ]]; then
 
   # Set Stack A identity
   export TF_VAR_identity_id="${TF_VAR_identity_id_stack_a:-}"
+  export TF_VAR_identity_client_id="${TF_VAR_identity_client_id_stack_a:-}"
 
   run_terraform "$TF_LIVE_DIR/stack-a" "$ACTION"
 
@@ -131,6 +148,7 @@ if [[ "$DEPLOY_STACK_B" == "true" ]]; then
 
   # Set Stack B identity
   export TF_VAR_identity_id="${TF_VAR_identity_id_stack_b:-}"
+  export TF_VAR_identity_client_id="${TF_VAR_identity_client_id_stack_b:-}"
 
   run_terraform "$TF_LIVE_DIR/stack-b" "$ACTION"
 

@@ -31,6 +31,7 @@ export interface StackBPrepopulatedCategory {
 export interface StackBPrepopulationResult {
   aiPrePopulated: boolean
   aiScoringMismatch: boolean
+  mismatchedCategories: string[]
   rubricScores: Record<string, ManualReviewRubricEntry>
   overallComment?: string
 }
@@ -146,15 +147,8 @@ export function parseGateEntries(run: ScoringRun): StackBCompatibleGateEntry[] |
 }
 
 export function hasMeaningfulManualReviewContent(review: ManualReviewData | null | undefined): boolean {
-  if (!review) return false
-
-  return Object.values(review.rubricScores ?? {}).some((entry) => {
-    const maxPoints = Number.isFinite(entry.maxPoints) ? entry.maxPoints : 0
-    const points = Number.isFinite(entry.points) ? entry.points : 0
-    const score = Number.isFinite(entry.score) ? entry.score ?? 0 : toPercentageScore(entry.points, maxPoints)
-
-    return points !== 0 || score !== 0 || (entry.comment || '').trim().length > 0
-  }) || Boolean(review.overallComment?.trim())
+  // Clarification (Option 1): only skip AI prepopulation when human edits are persisted.
+  return review?.humanEdited === true
 }
 
 export function normalizeManualReviewForRubric(args: {
@@ -202,6 +196,7 @@ export function normalizeManualReviewForRubric(args: {
 
   return {
     ...review,
+    humanEdited: review.humanEdited === true,
     rubricScores: normalizedRubricScores,
   }
 }
@@ -216,7 +211,8 @@ export function collectEvidenceByRubricCategory(
     const snippet = value?.trim()
     if (!snippet) return
     if (!evidenceByCategory[categoryName]) evidenceByCategory[categoryName] = []
-    if (!evidenceByCategory[categoryName].includes(snippet)) {
+    const normalizedSnippet = snippet.toLowerCase()
+    if (!evidenceByCategory[categoryName].some(existing => existing.trim().toLowerCase() === normalizedSnippet)) {
       evidenceByCategory[categoryName].push(snippet)
     }
   }
@@ -267,15 +263,37 @@ export function buildStackBManualReviewPrepopulation(args: {
     return {
       aiPrePopulated: false,
       aiScoringMismatch: false,
+      mismatchedCategories: [],
       rubricScores: existingReview.rubricScores,
       overallComment: existingReview.overallComment,
     }
   }
 
+  // Prioritize aggregatedResult.finalSubScores if available (ensures parity with Stack B behavior)
+  if (aggregatedResult?.finalSubScores && Object.keys(aggregatedResult.finalSubScores).length > 0) {
+    for (const category of rubric) {
+      if (category.name in aggregatedResult.finalSubScores) {
+        avgScoresByCategory[category.name] = aggregatedResult.finalSubScores[category.name]
+      }
+    }
+  }
+
+  // Compute which rubric categories had zero matched AI scores AND zero matched evidence
+  const mismatchedCategories: string[] = []
+  for (const category of rubric) {
+    const hasScore = avgScoresByCategory[category.name] != null
+    const hasEvidence = (evidenceByCategory[category.name]?.length ?? 0) > 0
+    if (!hasScore && !hasEvidence) {
+      mismatchedCategories.push(category.name)
+    }
+  }
+
   if (Object.keys(avgScoresByCategory).length === 0) {
+    const totalMismatch = scoringRuns.length > 0
     return {
       aiPrePopulated: false,
-      aiScoringMismatch: scoringRuns.length > 0,
+      aiScoringMismatch: totalMismatch,
+      mismatchedCategories: totalMismatch ? mismatchedCategories : [],
       rubricScores: existingReview.rubricScores,
       overallComment: existingReview.overallComment,
     }
@@ -331,6 +349,7 @@ export function buildStackBManualReviewPrepopulation(args: {
   return {
     aiPrePopulated: true,
     aiScoringMismatch: false,
+    mismatchedCategories,
     rubricScores,
     overallComment,
   }

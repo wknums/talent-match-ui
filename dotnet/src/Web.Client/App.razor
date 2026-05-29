@@ -1,6 +1,82 @@
-﻿<Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
-    <Found Context="routeData">
-        <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)"/>
-        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
-    </Found>
-</Router>
+﻿@using Microsoft.AspNetCore.Components.Routing
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+@implements IDisposable
+
+@if (_authChecked)
+{
+    <Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+        <Found Context="routeData">
+            <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)"/>
+            <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+        </Found>
+    </Router>
+}
+
+@code {
+    private bool _authChecked;
+    private bool _isAuthenticated;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Navigation.LocationChanged += HandleLocationChanged;
+        await RefreshAuthAndEnforceNavigationAsync();
+    }
+
+    private async void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        await InvokeAsync(RefreshAuthAndEnforceNavigationAsync);
+    }
+
+    private async Task RefreshAuthAndEnforceNavigationAsync()
+    {
+        var currentPath = NormalizePath(Navigation.ToBaseRelativePath(Navigation.Uri));
+
+        _isAuthenticated = await IsUserAuthenticatedAsync();
+        _authChecked = true;
+
+        if (!_isAuthenticated && !IsLoginPath(currentPath))
+        {
+            Navigation.NavigateTo("/login", replace: true);
+            return;
+        }
+
+        if (_isAuthenticated && IsLoginPath(currentPath))
+        {
+            Navigation.NavigateTo("/", replace: true);
+        }
+    }
+
+    private async Task<bool> IsUserAuthenticatedAsync()
+    {
+        var currentUser = await Api.GetCurrentUserAsync();
+        return currentUser is not null;
+    }
+
+    private static bool IsLoginPath(string relativePath)
+        => string.Equals(relativePath, "login", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizePath(string rawPath)
+    {
+        var path = rawPath;
+        var queryIndex = path.IndexOf('?');
+        if (queryIndex >= 0)
+        {
+            path = path[..queryIndex];
+        }
+
+        var hashIndex = path.IndexOf('#');
+        if (hashIndex >= 0)
+        {
+            path = path[..hashIndex];
+        }
+
+        return path.Trim('/');
+    }
+
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= HandleLocationChanged;
+    }
+}
