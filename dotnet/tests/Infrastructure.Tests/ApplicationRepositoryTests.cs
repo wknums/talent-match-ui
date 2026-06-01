@@ -10,6 +10,57 @@ namespace TalentMatch.Infrastructure.Tests;
 public class ApplicationRepositoryTests
 {
     [Fact]
+    public async Task GetByIdAsync_ReturnsApplication_WhenRelatedTablesAreUnavailable()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        await using (var setupCommand = connection.CreateCommand())
+        {
+            setupCommand.CommandText = """
+                CREATE TABLE Applications (
+                    Id TEXT NOT NULL PRIMARY KEY,
+                    JobId TEXT NOT NULL,
+                    CandidateRef TEXT NOT NULL DEFAULT '',
+                    CandidateName TEXT NULL,
+                    CandidateEmail TEXT NULL,
+                    Status TEXT NOT NULL,
+                    FinalScore REAL NULL,
+                    FinalDecision TEXT NULL,
+                    Variance REAL NULL,
+                    Flagged INTEGER NOT NULL DEFAULT 0,
+                    CreatedAt TEXT NOT NULL,
+                    UpdatedAt TEXT NOT NULL,
+                    TestRunId TEXT NULL,
+                    LastError TEXT NULL
+                );
+                """;
+            await setupCommand.ExecuteNonQueryAsync();
+        }
+
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var context = new AppDbContext(options);
+        var repository = new ApplicationRepository(context);
+
+        var application = new TalentMatch.Domain.Entities.Application
+        {
+            JobId = "job-1",
+            Status = "Queued"
+        };
+
+        await repository.AddAsync(application);
+
+        var loaded = await repository.GetByIdAsync(application.Id);
+
+        loaded.Should().NotBeNull();
+        loaded!.Id.Should().Be(application.Id);
+        loaded.JobId.Should().Be("job-1");
+    }
+
+    [Fact]
     public async Task AddDocumentAsync_SetsUploadTimestamp_WhenMissing()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

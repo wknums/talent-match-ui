@@ -3,7 +3,7 @@
 **Input**: Design documents from `/specs/007-fix-stackb-sql-endpoint/`
 **Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, quickstart.md ✅
 
-**Tests**: Not requested — no test tasks included.
+**Tests**: Automated test-code tasks were not requested; runtime verification tasks are included.
 
 **Organization**: Tasks grouped by user story. US1 and US2 are co-P1 and independent (different files). US3 is a post-code deployment verification phase.
 
@@ -26,7 +26,10 @@
 **Purpose**: Confirm assumptions from research.md before making changes
 
 - [x] T001 Verify Stack B module accepts `extra_app_settings` by inspecting `infra/terraform/modules/stack-b/variables.tf` (line 77) and confirming `merge(... var.extra_app_settings)` in `infra/terraform/modules/stack-b/main.tf` (line 35)
-- [x] T002 Verify `common.sh` already exports `TF_VAR_awr_seq_api_endpoint` by inspecting `infra/scripts/lib/common.sh` (line 132)
+- [x] T002 Verify `common.sh` already exports `TF_VAR_awr_seq_api_endpoint` and remains unchanged in git diff by inspecting `infra/scripts/lib/common.sh` (line 132)
+- [x] T011 Verify FR-004 scope guard by confirming no changes to `Task.Run` wrapper or `ExecuteWithSqlWarmupRetryAsync` retry flow in `dotnet/src/Web.Server/Program.cs` outside SQL command execution method swap
+- [x] T012 Verify FR-005 scope guard by confirming `server/storage/schema.sql` remains unchanged in git diff
+- [x] T014 Verify FR-009 scope guard for environment config by confirming no git diff changes in `.env_qa` and `.env_qa.example`
 
 ---
 
@@ -65,15 +68,21 @@
 
 **Depends on**: US1 (T003) and US2 (T004–T005) both complete.
 
-**Independent Test**: Full end-to-end — schema tables all created, health endpoint shows AWR API connectivity.
+**Independent Test**: Full end-to-end — schema tables all created, health endpoint shows AWR API connectivity, no-regression checks pass, and transient SQL startup interruption recovers via the existing retry flow.
 
 ### Deployment & Verification
 
 - [ ] T006 [US3] Rebuild Stack B by running `bash infra/scripts/package-stack-b.sh` and confirm build succeeds with artifact at `artifacts/stack-b/`
 - [ ] T007 [US3] Deploy Stack B artifact to Azure App Service using `az webapp deploy` per `specs/007-fix-stackb-sql-endpoint/quickstart.md` Step 2
 - [ ] T008 [US3] Apply Terraform for Stack B by running `terraform plan -out=tfplan` then `terraform apply tfplan` in `infra/terraform/live/stack-b/` — verify `AWR_SEQ_API_ENDPOINT` appears in the plan output (SC-004)
-- [ ] T009 [US3] Verify schema bootstrap success (SC-001, SC-002): query Azure SQL `INFORMATION_SCHEMA.TABLES` for table count matching `server/storage/schema.sql` CREATE TABLE count; check application logs for absence of `FormatException`
+- [ ] T009 [US3] Verify schema bootstrap success (SC-001, SC-002): query Azure SQL `INFORMATION_SCHEMA.TABLES` and explicitly assert `table_count = 17`; verify schema-derived `CREATE TABLE` count is also `17`; check application logs for absence of `FormatException`
+- [ ] T017 [US3] Verify idempotent restart behavior (US1 AC3): restart Stack B after successful bootstrap and confirm no duplicate table creation errors, no bootstrap failure, and stable startup logs
+- [ ] T018 [US3] Verify NFR-001 retry safety (SC-006): induce a transient SQL connectivity failure during startup, confirm retry logs, and confirm eventual successful bootstrap completion
 - [ ] T010 [US3] Verify AWR API health check (SC-003): hit Stack B health endpoint and confirm `awrApi` dependency reports status other than `"skipped"`
+- [ ] T013 [US3] Verify SC-005 no-regression scope: confirm Stack A health endpoint remains unchanged, `terraform plan` for non-target roots shows no unintended drift, and non-Azure schema bootstrap path remains successful
+- [ ] T019 [US3] Verify malformed AWR endpoint edge case: deploy with malformed `AWR_SEQ_API_ENDPOINT`, confirm app startup remains stable, and health dependency reports unreachable/error (not `"skipped"`)
+- [ ] T015 [US3] Verify NFR-002 missing-schema-file diagnostic: run a controlled deployment validation where `server/storage/schema.sql` is absent from the artifact and confirm logs emit a clear "schema file not found" bootstrap error
+- [ ] T016 [US3] Verify NFR-002 SQL-execution diagnostic: run a controlled failure-path validation with an intentionally invalid SQL batch in a temporary test artifact and confirm startup logs include actionable SQL execution error details
 
 ---
 
@@ -98,6 +107,12 @@
 - **T003 and T004/T005** can run in parallel (US1 is C# changes, US2 is Terraform changes — completely different files)
 - **T004** can run in parallel with T005 (different Terraform files), though T005 references the local that uses T004's variable
 - **T006–T010** are sequential (build → deploy → apply → verify schema → verify health)
+- **T017** runs after T009 to validate idempotent restart behavior
+- **T018** runs after T009 to validate retry-safe transient-failure recovery
+- **T013** runs after T010 as final no-regression verification
+- **T019** runs after T010 as malformed-endpoint edge-case validation
+- **T015** runs after T009 to validate missing-schema diagnostic behavior
+- **T016** runs after T009 to validate SQL-execution diagnostic behavior
 
 ### Parallel Example: US1 + US2
 
@@ -117,23 +132,30 @@ Worker B: T005 [US2] Add local + extra_app_settings to stack-b/main.tf
 1. Complete Phase 1: Verify assumptions (T001–T002)
 2. Complete Phase 2 + Phase 3 in parallel: Fix SQL bootstrap (T003) + Wire Terraform (T004–T005)
 3. **STOP and VALIDATE**: `dotnet build` for C# change; `terraform validate` + `terraform plan` for Terraform changes
-4. Complete Phase 4: Full deployment verification (T006–T010)
+4. Complete Phase 4: Full deployment verification (T006–T010, then T017, T018, T013, T019, T015, and T016)
 
 ### Incremental Delivery
 
 1. T001–T002 → Assumptions confirmed
 2. T003 → SQL bootstrap fix done → can verify locally if SQLite path exercises same pattern
 3. T004–T005 → Terraform wiring done → `terraform plan` confirms correctness
-4. T006–T010 → Combined deployment verification → feature complete
+4. T006–T010 → Combined deployment verification
+5. T017 + T018 → Idempotent restart and retry-safety verification
+6. T013 + T019 → No-regression and malformed-endpoint edge-case verification
+7. T015 + T016 → Bootstrap diagnostic verification (missing-file + SQL execution failure) → feature complete
 
 ---
 
 ## Notes
 
-- **3 files changed**: `Program.cs`, `stack-b/variables.tf`, `stack-b/main.tf` — zero new files
+- **Primary code-change scope is 3 files**: `Program.cs`, `stack-b/variables.tf`, `stack-b/main.tf` — zero new code files; runtime verification and diagnostics tasks are additionally included.
 - **No schema SQL changes** (FR-005): `server/storage/schema.sql` is read-only
 - **No `.env_qa` or `common.sh` changes** (FR-009): already correctly configured
 - **No shared module changes**: Stack B module already accepts `extra_app_settings`
+- FR-004 and FR-005 now have explicit verification tasks (T011, T012)
+- FR-009 now has explicit verification coverage without overlap: `common.sh` (T002) and `.env_qa` files (T014)
+- SC-005 now has an explicit no-regression verification task (T013)
+- NFR-002 diagnostics now have explicit verification coverage for missing-file and SQL-execution failure paths (T015, T016)
 - The SQL fix mirrors the existing SQLite bootstrap pattern (Program.cs lines 287–322)
 - The Terraform fix mirrors the existing Stack A pattern (live/stack-a/main.tf lines 14–16)
 - Commit after each user story phase for clean git history
