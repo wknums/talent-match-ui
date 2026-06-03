@@ -1,15 +1,16 @@
-# Implementation Plan: Fix Stack B Azure SQL Bootstrap and Wire AWR Endpoint
+# Implementation Plan: Fix Stack B Azure SQL Bootstrap and Preserve Cross-Stack AWR Parity
 
-**Branch**: `007-fix-stackb-sql-endpoint` | **Date**: 2026-05-29 | **Spec**: `spec.md`
+**Branch**: `007-fix-stackb-sql-endpoint` | **Date**: 2026-06-01 | **Spec**: `spec.md`
 **Input**: Feature specification from `/specs/007-fix-stackb-sql-endpoint/spec.md`
 
 ## Summary
 
-Fix two Stack B Azure deployment blockers with minimal, targeted changes:
+Fix Stack B Azure deployment blockers and enforce cross-stack parity expectations with minimal, targeted changes:
 1. Replace EF Core raw-SQL execution in Azure SQL schema bootstrap with ADO.NET `DbCommand.ExecuteNonQuery()` so SQL batches containing literal curly braces (for example `DEFAULT '{}'`) execute verbatim.
 2. Add conditional Terraform wiring for `AWR_SEQ_API_ENDPOINT` in Stack B live infrastructure, mirroring Stack A behavior via `extra_app_settings` only when non-empty.
+3. Validate cross-stack parity outcomes for `AWR_SEQ_API_ENDPOINT` app-setting inclusion semantics and `awrApi` health-status semantics (reachable, unreachable, not-configured), without changing Stack A implementation.
 
-This keeps existing schema SQL, retry scaffolding, deployment scripts, and module contracts unchanged.
+This keeps existing schema SQL, retry scaffolding, deployment scripts, and module contracts unchanged while treating Stack A as the parity baseline.
 
 ## Technical Context
 
@@ -28,17 +29,20 @@ This keeps existing schema SQL, retry scaffolding, deployment scripts, and modul
 - Azure App Service app settings populated by Terraform
 
 **Testing**:
-- Infrastructure validation: `terraform plan` in `infra/terraform/live/stack-b/`
-- Runtime validation: Stack B health endpoint (`awrApi` dependency) and Azure SQL table count checks
+- Infrastructure validation: script-driven plan/apply via `infra/scripts/deploy.sh ... stack-b`
+- Infrastructure parity validation: compare script-driven plan behavior for Stack A and Stack B using the same `AWR_SEQ_API_ENDPOINT` inputs
+- Runtime validation: Stack B health endpoint (`awrApi` dependency), Stack A no-regression checks, and cross-stack health-semantics comparison for reachable/unreachable/not-configured endpoint states
+- Data validation: Azure SQL table count checks
 - Build sanity: Stack B package/build command from existing runbook
 
 **Target Platform**:
 - Stack B on Azure App Service
+- Stack A on Azure App Service (validation baseline only)
 - Azure SQL Database
 - Terraform-managed infrastructure
 
 **Project Type**:
-- Existing dual-stack web application; this feature touches Stack B runtime bootstrap and Stack B Terraform live root only
+- Existing dual-stack web application; this feature edits Stack B runtime bootstrap and Stack B Terraform live root only, and adds parity validation against Stack A behavior
 
 **Performance Goals**:
 - No regression to startup retry behavior
@@ -49,12 +53,15 @@ This keeps existing schema SQL, retry scaffolding, deployment scripts, and modul
 - Preserve `Task.Run` + retry structure in `Program.cs` (FR-004)
 - Do not modify `server/storage/schema.sql` content (FR-005)
 - Do not modify `.env_qa` or `infra/scripts/lib/common.sh` (FR-009)
-- Keep Terraform change scoped to Stack B live root only
+
+- Enforce FR-011 parity for `AWR_SEQ_API_ENDPOINT` app-setting include/omit behavior across Stack A and Stack B
+- Enforce FR-012: Stack A runtime behavior remains unchanged
+- Enforce FR-013/NFR-004 parity for `awrApi` health semantics across configured-reachable, configured-unreachable, and not-configured states
 
 **Scale/Scope**:
 - Code scope: Stack B server bootstrap + Stack B live Terraform root
 - Infrastructure scope: one additional conditional app-setting map path
-- Verification scope: rebuild/deploy/apply/health + schema completeness checks
+- Verification scope: rebuild/deploy/apply/health + schema completeness checks, plus cross-stack parity verification for SC-007 and SC-008
 
 ## Constitution Check
 
@@ -79,7 +86,8 @@ Research is captured in `research.md` and resolves all technical uncertainties.
 2. **Connection strategy**: Keep EF Core-owned connection via `GetDbConnection()` with explicit open/close guard to preserve existing lifecycle pattern.
 3. **Terraform pattern**: Mirror Stack A conditional `extra_app_settings` behavior in Stack B live root.
 4. **Deployment variable path**: Keep existing `common.sh` export path and `.env_qa` values unchanged.
-5. **Verification approach**: Rebuild, deploy, run Terraform plan/apply, validate schema completeness and health dependency status.
+5. **Cross-stack parity baseline**: Use Stack A as baseline for conditional app-setting behavior and health semantics; align Stack B to baseline without Stack A code changes.
+6. **Verification approach**: Rebuild, deploy, run script-driven plan/apply (`infra/scripts/deploy.sh`), validate schema completeness, and execute cross-stack parity checks for app-setting behavior and `awrApi` semantics.
 
 Raw SQL path documentation note: This feature uses direct ADO.NET only for startup schema bootstrap batch execution, a bounded operational path justified by performance-critical startup behavior and deterministic literal SQL execution where EF Core placeholder parsing causes correctness failures. All regular data access remains in EF Core/repository paths.
 
@@ -111,6 +119,7 @@ dotnet/
 infra/
 └── terraform/
     ├── live/
+    │   ├── stack-a/                     # parity baseline validation only
     │   └── stack-b/
     │       ├── main.tf                   # conditional extra app settings wiring
     │       └── variables.tf              # awr_seq_api_endpoint variable declaration
@@ -125,13 +134,13 @@ server/
 ```
 
 **Structure Decision**:
-No structural refactor. Use existing Stack B runtime host and Stack B Terraform live root, with minimal edits only where the bug originates and where endpoint wiring is missing.
+No structural refactor. Use existing Stack B runtime host and Stack B Terraform live root for code edits, and add parity validation against Stack A Terraform/runtime behavior as a release gate.
 
 ## Phase 1 Design Outputs
 
 - **Data model**: `data-model.md` confirms no new entities/relationships; this is an execution and configuration bugfix.
 - **Contracts**: No new external API/interface contract artifact required for this feature. Existing health endpoint and deployment interfaces remain unchanged.
-- **Quickstart**: `quickstart.md` defines deployment and validation steps for SC-001 through SC-006.
+- **Quickstart**: `quickstart.md` defines deployment and validation steps for SC-001 through SC-008, including cross-stack app-setting and health-semantics parity checks.
 - **Agent context update**: `.specify/scripts/bash/update-agent-context.sh copilot` executed as part of planning workflow.
 
 ## Post-Design Constitution Re-Check

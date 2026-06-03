@@ -32,27 +32,26 @@ az webapp deploy \
 
 **Expected**: Deployment completes without errors.
 
-## Step 3: Apply Terraform for Stack B
+## Step 3: Apply Stack B Infrastructure via Deployment Script
 
 ```bash
-cd infra/terraform/live/stack-b
-terraform plan -out=tfplan
+bash infra/scripts/deploy.sh .env_qa test plan stack-b
 ```
 
-**Verify** (SC-004): The plan output shows `AWR_SEQ_API_ENDPOINT` being added to app settings when `TF_VAR_awr_seq_api_endpoint` is set to a non-empty value.
+**Verify** (SC-004): Script-driven plan output shows `AWR_SEQ_API_ENDPOINT` being added to app settings when `AWR_SEQ_API_ENDPOINT` is non-empty in the selected env file.
 
 ```bash
-terraform apply tfplan
+bash infra/scripts/deploy.sh .env_qa test apply stack-b
 ```
 
 **Expected**: Apply completes. The `AWR_SEQ_API_ENDPOINT` app setting is now configured on the App Service.
 
 ### Conditional Verification
 
-Re-run with an empty endpoint to confirm no change is made:
+Re-run using a temporary env file where `AWR_SEQ_API_ENDPOINT` is intentionally empty to confirm no app-setting change is made:
 
 ```bash
-TF_VAR_awr_seq_api_endpoint="" terraform plan
+bash infra/scripts/deploy.sh <temp-env-with-empty-endpoint> test plan stack-b
 ```
 
 **Expected**: No changes to `extra_app_settings` (the conditional local produces `{}`).
@@ -108,10 +107,32 @@ curl -s https://<stack-b-hostname>/api/health | jq '.dependencies[] | select(.na
 curl -s https://<stack-a-hostname>/api/health | jq .
 ```
 
-Also verify no unintended Terraform drift outside Stack B root:
+Also verify no unintended infrastructure drift outside Stack B scope using deployment scripts:
 
 ```bash
-cd infra/terraform/live/stack-a && terraform plan
+bash infra/scripts/deploy.sh .env_qa test plan stack-a
 ```
 
 **Expected**: Stack A health endpoint returns the same results as before the changes. No unintended Terraform changes appear for Stack A or other non-target roots.
+
+## Step 7: Cross-Stack Health Semantics Matrix (NFR-004)
+
+Use the evidence artifacts from T021/T022/T023 to confirm parity of `awrApi` health behavior between Stack A and Stack B.
+
+| Endpoint State | Stack A Expected | Stack B Expected | Evidence |
+|---|---|---|---|
+| Configured + reachable | `checks.awrApi.status = "ok"` | `checks.awrApi.status = "ok"` | Stack A: `artifacts/logs/007/t013_stack-a_health.json`<br>Stack B: `artifacts/logs/007/t017_idempotent_restart_verification.md` (final recovered payload) |
+| Configured + unreachable | `checks.awrApi.status = "failed"` and target points to unreachable endpoint | `checks.awrApi.status = "failed"` and same target semantics | `artifacts/logs/007/t022_unreachable_parity_verification.md`<br>`artifacts/logs/007/t022_stack-a_health_unreachable.json`<br>`artifacts/logs/007/t022_stack-b_health_unreachable.json` |
+| Not configured | `checks.awrApi.status = "skipped"` with not-configured detail | `checks.awrApi.status = "skipped"` with same detail | `artifacts/logs/007/t023_not_configured_parity_verification.md`<br>`artifacts/logs/007/t023_stack-a_health_not_configured.json`<br>`artifacts/logs/007/t023_stack-b_health_not_configured.json` |
+
+### Runbook Interpretation
+
+- `awrApi.status = "ok"`: Endpoint is configured and reachable. No action needed for AWR connectivity.
+- `awrApi.status = "failed"`: Endpoint is configured but unreachable. Check endpoint value, DNS/network routing, TLS/certificate chain, and upstream service availability.
+- `awrApi.status = "skipped"` with `AWR_SEQ_API_ENDPOINT is not configured.`: Configuration-intent state. This is expected only when the endpoint is intentionally unset.
+
+### Operator Notes
+
+- Overall health can return unhealthy (often HTTP 503) when any dependency check fails, even when the app process is alive.
+- For parity validation, compare semantic fields first (`checks.awrApi.status`, `checks.awrApi.target`, `checks.awrApi.detail`) rather than exact error wording.
+- Always use deployment scripts (`infra/scripts/deploy.sh`) for endpoint-state transitions so both stacks are exercised consistently.

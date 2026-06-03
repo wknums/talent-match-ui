@@ -1,11 +1,11 @@
-# Tasks: Fix Stack B Azure SQL Bootstrap and Wire AWR Endpoint
+# Tasks: Fix Stack B Azure SQL Bootstrap and Preserve Cross-Stack AWR Parity
 
 **Input**: Design documents from `/specs/007-fix-stackb-sql-endpoint/`
 **Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, quickstart.md ✅
 
 **Tests**: Automated test-code tasks were not requested; runtime verification tasks are included.
 
-**Organization**: Tasks grouped by user story. US1 and US2 are co-P1 and independent (different files). US3 is a post-code deployment verification phase.
+**Organization**: Tasks grouped by user story. US1 and US2 are co-P1 and independent for implementation. US3 and US4 are post-code deployment/operability verification phases.
 
 ## Format: `[ID] [P?] [Story] Description`
 
@@ -17,6 +17,7 @@
 
 - **C# server**: `dotnet/src/Web.Server/`
 - **Terraform live roots**: `infra/terraform/live/stack-b/`
+- **Parity baseline root**: `infra/terraform/live/stack-a/`
 - **Scripts**: `infra/scripts/`
 
 ---
@@ -47,18 +48,19 @@
 
 ---
 
-## Phase 3: User Story 2 — AWR API Connectivity from Stack B (Priority: P1)
+## Phase 3: User Story 2 — AWR API Connectivity and App-Setting Parity Across Stacks (Priority: P1)
 
-**Goal**: Wire the `AWR_SEQ_API_ENDPOINT` environment variable into Stack B's Terraform live root so Stack B can connect to the AWR API for scoring, extraction, and health checks.
+**Goal**: Wire the `AWR_SEQ_API_ENDPOINT` environment variable into Stack B's Terraform live root and validate app-setting include/omit parity behavior against Stack A.
 
-**Independent Test**: Run `terraform plan` for Stack B and verify `AWR_SEQ_API_ENDPOINT` appears in planned app settings when `TF_VAR_awr_seq_api_endpoint` is set; verify no change when empty.
+**Independent Test**: Run `terraform plan` for Stack A and Stack B with the same non-empty and empty `TF_VAR_awr_seq_api_endpoint` inputs; verify matching include/omit behavior for `AWR_SEQ_API_ENDPOINT`.
 
 ### Implementation
 
 - [x] T004 [P] [US2] Add `awr_seq_api_endpoint` variable declaration to `infra/terraform/live/stack-b/variables.tf` — mirror Stack A's declaration at `infra/terraform/live/stack-a/variables.tf` lines 88–92 (type `string`, default `""`, description for Stack B)
 - [x] T005 [US2] Add conditional local and pass `extra_app_settings` to module in `infra/terraform/live/stack-b/main.tf` — add `stack_b_extra_app_settings` local in the `locals` block (mirroring Stack A's pattern at `infra/terraform/live/stack-a/main.tf` lines 14–16) and add `extra_app_settings = local.stack_b_extra_app_settings` argument to the `module "stack_b"` block
+- [x] T020 [US2] Validate SC-007/FR-011 app-setting parity via deployment scripts by running `bash infra/scripts/deploy.sh <env-file> <tf-environment> plan stack-a` and `... plan stack-b` with identical non-empty and empty `AWR_SEQ_API_ENDPOINT` inputs; capture evidence of matching include/omit semantics for `AWR_SEQ_API_ENDPOINT` (see `artifacts/logs/007/t020_retry_verdict.md`)
 
-**Checkpoint**: `terraform plan` in `infra/terraform/live/stack-b/` shows `AWR_SEQ_API_ENDPOINT` in app settings when the variable is provided, and shows no change when it is empty.
+**Checkpoint**: Stack B wiring is in place and cross-stack app-setting semantics match Stack A behavior for both non-empty and empty endpoint values.
 
 ---
 
@@ -72,17 +74,34 @@
 
 ### Deployment & Verification
 
-- [ ] T006 [US3] Rebuild Stack B by running `bash infra/scripts/package-stack-b.sh` and confirm build succeeds with artifact at `artifacts/stack-b/`
-- [ ] T007 [US3] Deploy Stack B artifact to Azure App Service using `az webapp deploy` per `specs/007-fix-stackb-sql-endpoint/quickstart.md` Step 2
-- [ ] T008 [US3] Apply Terraform for Stack B by running `terraform plan -out=tfplan` then `terraform apply tfplan` in `infra/terraform/live/stack-b/` — verify `AWR_SEQ_API_ENDPOINT` appears in the plan output (SC-004)
-- [ ] T009 [US3] Verify schema bootstrap success (SC-001, SC-002): query Azure SQL `INFORMATION_SCHEMA.TABLES` and explicitly assert `table_count = 17`; verify schema-derived `CREATE TABLE` count is also `17`; check application logs for absence of `FormatException`
-- [ ] T017 [US3] Verify idempotent restart behavior (US1 AC3): restart Stack B after successful bootstrap and confirm no duplicate table creation errors, no bootstrap failure, and stable startup logs
-- [ ] T018 [US3] Verify NFR-001 retry safety (SC-006): induce a transient SQL connectivity failure during startup, confirm retry logs, and confirm eventual successful bootstrap completion
-- [ ] T010 [US3] Verify AWR API health check (SC-003): hit Stack B health endpoint and confirm `awrApi` dependency reports status other than `"skipped"`
-- [ ] T013 [US3] Verify SC-005 no-regression scope: confirm Stack A health endpoint remains unchanged, `terraform plan` for non-target roots shows no unintended drift, and non-Azure schema bootstrap path remains successful
-- [ ] T019 [US3] Verify malformed AWR endpoint edge case: deploy with malformed `AWR_SEQ_API_ENDPOINT`, confirm app startup remains stable, and health dependency reports unreachable/error (not `"skipped"`)
-- [ ] T015 [US3] Verify NFR-002 missing-schema-file diagnostic: run a controlled deployment validation where `server/storage/schema.sql` is absent from the artifact and confirm logs emit a clear "schema file not found" bootstrap error
-- [ ] T016 [US3] Verify NFR-002 SQL-execution diagnostic: run a controlled failure-path validation with an intentionally invalid SQL batch in a temporary test artifact and confirm startup logs include actionable SQL execution error details
+- [x] T006 [US3] Rebuild Stack B by running `bash infra/scripts/package-stack-b.sh` and confirm build succeeds with artifact at `artifacts/stack-b.zip`
+- [x] T007 [US3] Deploy Stack B artifact to Azure App Service using `az webapp deploy` per `specs/007-fix-stackb-sql-endpoint/quickstart.md` Step 2
+- [x] T008 [US3] Apply Stack B infrastructure using deployment script wrappers (`bash infra/scripts/deploy.sh <env-file> <tf-environment> plan stack-b` then `... apply stack-b`) — verify `AWR_SEQ_API_ENDPOINT` appears in script-driven plan/apply output (SC-004)
+- [x] T009 [US3] Verify schema bootstrap success (SC-001, SC-002): query Azure SQL `INFORMATION_SCHEMA.TABLES` and explicitly assert `table_count = 17`; verify schema-derived `CREATE TABLE` count is also `17`; check application logs for absence of `FormatException` (see `artifacts/logs/007/t009_schema_verification.md`)
+- [x] T017 [US3] Verify idempotent restart behavior (US1 AC3): restart Stack B after successful bootstrap and confirm no duplicate table creation errors, no bootstrap failure, and stable startup logs (see `artifacts/logs/007/t017_idempotent_restart_verification.md`)
+- [x] T018 [US3] Verify NFR-001 retry safety (SC-006): induce a transient SQL connectivity failure during startup, confirm retry logs, and confirm eventual successful bootstrap completion (see `artifacts/logs/007/t018_retry_safety_verification.md`)
+- [x] T010 [US3] Verify AWR API health check (SC-003): hit Stack B health endpoint and confirm `awrApi` dependency reports status other than `"skipped"`
+- [x] T013 [US3] Verify SC-005 no-regression scope: confirm Stack A health endpoint remains unchanged, deployment-script plan for non-target stack/root scope shows no unintended drift, and non-Azure schema bootstrap path remains successful (see `artifacts/logs/007/t013_no_regression_retry_verdict.md`)
+- [x] T019 [US3] Verify malformed AWR endpoint edge case: deploy with malformed `AWR_SEQ_API_ENDPOINT`, confirm app startup remains stable, and health dependency reports unreachable/error (not `"skipped"`) (see `artifacts/logs/007/t019_malformed_endpoint_verification.md`)
+- [x] T015 [US3] Verify NFR-002 missing-schema-file diagnostic: run a controlled deployment validation where `server/storage/schema.sql` is absent from the artifact and confirm logs emit a clear "schema file not found" bootstrap error (see `artifacts/logs/007/t015_missing_schema_diagnostic_verification.md`)
+- [x] T016 [US3] Verify NFR-002 SQL-execution diagnostic: run a controlled failure-path validation with an intentionally invalid SQL batch in a temporary test artifact and confirm startup logs include actionable SQL execution error details (see `artifacts/logs/007/t016_sql_execution_diagnostic_verification.md`)
+
+---
+
+## Phase 5: User Story 4 — Cross-Stack Functional Consistency (Priority: P2)
+
+**Goal**: Validate equivalent `awrApi` health semantics across Stack A and Stack B for reachable, unreachable, and not-configured endpoint states.
+
+**Depends on**: US2 (T004, T005, T020) and baseline deployments for both stacks.
+
+**Independent Test**: Execute health checks for both stacks under all three endpoint states and verify matching semantics.
+
+### Deployment & Verification
+
+- [x] T021 [US4] Validate SC-008/FR-013 case 1 (configured + reachable): deploy Stack A and Stack B with the same reachable `AWR_SEQ_API_ENDPOINT`, call both health endpoints, and verify both report healthy `awrApi` connectivity
+- [x] T022 [US4] Validate SC-008/FR-013 case 2 (configured + unreachable): deploy Stack A and Stack B with the same unreachable `AWR_SEQ_API_ENDPOINT`, call both health endpoints, and verify both report unreachable/error semantics for `awrApi` (see `artifacts/logs/007/t022_unreachable_parity_verification.md`)
+- [x] T023 [US4] Validate SC-008/FR-013 case 3 (not configured): deploy Stack A and Stack B without `AWR_SEQ_API_ENDPOINT`, call both health endpoints, and verify both report identical `skipped/not-configured` semantics for `awrApi` (see `artifacts/logs/007/t023_not_configured_parity_verification.md`)
+- [x] T024 [US4] Validate NFR-004 operability parity by recording a cross-stack health-semantics matrix and runbook interpretation in `specs/007-fix-stackb-sql-endpoint/quickstart.md`
 
 ---
 
@@ -94,12 +113,14 @@
 - **Phase 2 (US1 — SQL fix)**: Can start after Phase 1 (or in parallel if confident)
 - **Phase 3 (US2 — Terraform fix)**: Can start after Phase 1 (or in parallel with Phase 2 — different files)
 - **Phase 4 (US3 — Deploy & Verify)**: Depends on BOTH Phase 2 and Phase 3 completion
+- **Phase 5 (US4 — Cross-Stack Consistency Verify)**: Depends on Phase 3 parity wiring and comparable Stack A/Stack B deployments
 
 ### User Story Dependencies
 
 - **US1 (P1)**: Independent — touches only `dotnet/src/Web.Server/Program.cs`
 - **US2 (P1)**: Independent — touches only `infra/terraform/live/stack-b/variables.tf` and `infra/terraform/live/stack-b/main.tf`
 - **US3 (P2)**: Depends on US1 + US2 — deployment verification of combined fixes
+- **US4 (P2)**: Depends on US2 for app-setting parity and on deployed Stack A/Stack B environments for health-semantics comparison
 
 ### Parallel Opportunities
 
@@ -113,6 +134,9 @@
 - **T019** runs after T010 as malformed-endpoint edge-case validation
 - **T015** runs after T009 to validate missing-schema diagnostic behavior
 - **T016** runs after T009 to validate SQL-execution diagnostic behavior
+- **T020** runs after T004/T005 to validate cross-stack Terraform app-setting parity
+- **T021–T023** run after T020 with controlled endpoint-state variations across both stacks
+- **T024** runs after T021–T023 to capture operational interpretation and evidence
 
 ### Parallel Example: US1 + US2
 
@@ -133,6 +157,7 @@ Worker B: T005 [US2] Add local + extra_app_settings to stack-b/main.tf
 2. Complete Phase 2 + Phase 3 in parallel: Fix SQL bootstrap (T003) + Wire Terraform (T004–T005)
 3. **STOP and VALIDATE**: `dotnet build` for C# change; `terraform validate` + `terraform plan` for Terraform changes
 4. Complete Phase 4: Full deployment verification (T006–T010, then T017, T018, T013, T019, T015, and T016)
+5. Complete Phase 5: Cross-stack parity verification (T021–T024)
 
 ### Incremental Delivery
 
@@ -142,7 +167,17 @@ Worker B: T005 [US2] Add local + extra_app_settings to stack-b/main.tf
 4. T006–T010 → Combined deployment verification
 5. T017 + T018 → Idempotent restart and retry-safety verification
 6. T013 + T019 → No-regression and malformed-endpoint edge-case verification
-7. T015 + T016 → Bootstrap diagnostic verification (missing-file + SQL execution failure) → feature complete
+7. T015 + T016 → Bootstrap diagnostic verification (missing-file + SQL execution failure)
+8. T021 + T022 + T023 + T024 → Cross-stack health-semantics parity verification and runbook update → feature complete
+
+---
+
+## Requirement Coverage Additions
+
+- FR-011 + SC-007: T020
+- FR-012 + SC-005: T013
+- FR-013 + SC-008: T021, T022, T023
+- NFR-004: T024
 
 ---
 
@@ -155,6 +190,9 @@ Worker B: T005 [US2] Add local + extra_app_settings to stack-b/main.tf
 - FR-004 and FR-005 now have explicit verification tasks (T011, T012)
 - FR-009 now has explicit verification coverage without overlap: `common.sh` (T002) and `.env_qa` files (T014)
 - SC-005 now has an explicit no-regression verification task (T013)
+- SC-007 now has an explicit cross-stack Terraform parity task (T020)
+- SC-008 now has explicit three-state cross-stack health parity tasks (T021–T023)
+- NFR-004 now has explicit operational parity documentation coverage (T024)
 - NFR-002 diagnostics now have explicit verification coverage for missing-file and SQL-execution failure paths (T015, T016)
 - The SQL fix mirrors the existing SQLite bootstrap pattern (Program.cs lines 287–322)
 - The Terraform fix mirrors the existing Stack A pattern (live/stack-a/main.tf lines 14–16)
