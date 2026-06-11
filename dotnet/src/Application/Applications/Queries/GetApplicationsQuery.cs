@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.Extensions.Logging;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -19,11 +20,16 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
 {
     private readonly IApplicationRepository _applicationRepository;
     private readonly IFailureQueueRepository _failureQueueRepository;
+    private readonly ILogger<GetApplicationsQueryHandler> _logger;
 
-    public GetApplicationsQueryHandler(IApplicationRepository applicationRepository, IFailureQueueRepository failureQueueRepository)
+    public GetApplicationsQueryHandler(
+        IApplicationRepository applicationRepository,
+        IFailureQueueRepository failureQueueRepository,
+        ILogger<GetApplicationsQueryHandler> logger)
     {
         _applicationRepository = applicationRepository;
         _failureQueueRepository = failureQueueRepository;
+        _logger = logger;
     }
 
     public async Task<IReadOnlyList<Domain.Entities.Application>> Handle(GetApplicationsQuery request, CancellationToken cancellationToken)
@@ -47,7 +53,18 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
                 if (!dlqEntityIds.Contains(fa.Id))
                 {
                     orphanIds.Add(fa.Id);
-                    await _applicationRepository.DeleteAsync(fa.Id, cancellationToken);
+                    try
+                    {
+                        await _applicationRepository.DeleteAsync(fa.Id, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Read operations must remain stable even if best-effort cleanup fails.
+                        _logger.LogWarning(ex,
+                            "Failed to delete orphaned failed application {ApplicationId} during list query for job {JobId}",
+                            fa.Id,
+                            request.JobId);
+                    }
                 }
             }
             if (orphanIds.Count > 0)

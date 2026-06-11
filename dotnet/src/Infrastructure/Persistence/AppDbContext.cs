@@ -62,23 +62,8 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.AggregationStrategy).HasMaxLength(20);
-
-            if (Database.IsSqlServer())
-            {
-                // Azure SQL schema uses Stack A names.
-                e.Property(x => x.ScoringRunCount).HasColumnName("RunsPerApplication");
-                e.Property(x => x.MustHaveCriteriaJson).HasColumnName("MustHavesJson");
-            }
-            else
-            {
-                // Existing local SQLite DBs still require legacy Stack B column names.
-                e.Property(x => x.ScoringRunCount).HasColumnName("ScoringRunCount");
-                e.Property(x => x.MustHaveCriteriaJson).HasColumnName("MustHaveCriteriaJson");
-            }
-
-            // Avoid mapping duplicate compatibility alias properties.
-            e.Ignore(x => x.RunsPerApplication);
-            e.Ignore(x => x.MustHavesJson);
+            e.Property(x => x.MustHavesJson).HasColumnName("MustHavesJson");
+            e.Property(x => x.RunsPerApplication).HasColumnName("RunsPerApplication");
         });
 
         // Application
@@ -103,17 +88,11 @@ public class AppDbContext : DbContext
             e.Property(x => x.FileName).HasMaxLength(500);
             e.Property(x => x.FileType).HasColumnName("MimeType");
             e.Property(x => x.FileSize).HasColumnName("SizeBytes");
-            e.Property(x => x.BlobUri).HasMaxLength(1024);
-            e.Property(x => x.ContentSha256).HasMaxLength(64);
-            var uploadTimestampProp = e.Property(x => x.UploadTimestamp)
-                .HasColumnName("UploadedAt");
-            // SQLite stores timestamps as ISO-8601 strings; SQL Server uses DATETIME2 natively.
-            if (Database.IsSqlite())
-            {
-                uploadTimestampProp.HasConversion(new ValueConverter<DateTime?, string?>(
+            e.Property(x => x.UploadTimestamp)
+                .HasColumnName("UploadedAt")
+                .HasConversion(new ValueConverter<DateTime?, string?>(
                     value => value.HasValue ? value.Value.ToString("O") : null,
                     value => string.IsNullOrWhiteSpace(value) ? null : DateTime.Parse(value)));
-            }
             e.Ignore(x => x.ContentBase64);
         });
 
@@ -130,22 +109,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<ScoringRun>(e =>
         {
             e.HasKey(x => x.Id);
-            e.Property(x => x.AiModelId).HasMaxLength(100);
-
-            if (Database.IsSqlServer())
-            {
-                // Azure SQL uses Stack A names for these fields.
-                e.Property(x => x.TotalScore).HasColumnName("OverallScore");
-                e.Property(x => x.CategoryScoresJson).HasColumnName("SubScoresJson");
-                e.Property(x => x.MustHaveEvaluationJson).HasColumnName("MustHaveResultJson");
-                e.Property(x => x.ImprovementTipsJson).HasColumnName("ImprovementRecsJson");
-                e.Property(x => x.AiModelId).HasColumnName("ModelDeploymentId");
-                e.Property(x => x.PromptVersion).HasColumnName("PromptVersionId");
-
-                // Shared Azure SQL schema stores token usage as JSON only.
-                e.Ignore(x => x.InputTokens);
-                e.Ignore(x => x.OutputTokens);
-            }
+            e.Property(x => x.TotalScore).HasColumnName("OverallScore");
+            e.Property(x => x.CategoryScoresJson).HasColumnName("SubScoresJson");
+            e.Property(x => x.MustHaveEvaluationJson).HasColumnName("MustHaveResultJson");
+            e.Property(x => x.ImprovementTipsJson).HasColumnName("ImprovementRecsJson");
+            e.Property(x => x.AiModelId).HasColumnName("ModelDeploymentId").HasMaxLength(100);
+            e.Property(x => x.PromptVersion).HasColumnName("PromptVersionId");
+            e.Ignore(x => x.InputTokens);
+            e.Ignore(x => x.OutputTokens);
         });
 
         // AggregatedResult
@@ -153,15 +124,9 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.ApplicationId).IsUnique();
-            e.Property(x => x.Decision).HasMaxLength(30);
-
-            if (Database.IsSqlServer())
-            {
-                // Azure SQL uses Stack A names for these fields.
-                e.Property(x => x.Decision).HasColumnName("FinalDecision");
-                e.Property(x => x.ConsolidatedRationale).HasColumnName("RationaleText");
-                e.Property(x => x.MergedImprovementTipsJson).HasColumnName("RecommendationsText");
-            }
+            e.Property(x => x.Decision).HasColumnName("FinalDecision").HasMaxLength(30);
+            e.Property(x => x.ConsolidatedRationale).HasColumnName("RationaleText");
+            e.Property(x => x.MergedImprovementTipsJson).HasColumnName("RecommendationsText");
         });
 
         // ExtractionArtifact
@@ -179,7 +144,6 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.HasIndex(x => x.ApplicationId).IsUnique();
-            e.Property(x => x.HumanEdited).HasDefaultValue(false);
         });
 
         // FailureQueueItem
@@ -228,29 +192,29 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.NoAction);
         });
 
-        // ScoringBatch (platform-mode batch row). PK column is BatchId in shared schema.
+        // ScoringBatch
         modelBuilder.Entity<ScoringBatch>(e =>
         {
             e.ToTable("ScoringBatches");
             e.HasKey(x => x.Id);
-            e.Property(x => x.Id).HasColumnName("BatchId");
+            e.Property(x => x.Id).HasColumnName("BatchId").HasMaxLength(36);
             e.Property(x => x.JobId).HasMaxLength(36).IsRequired();
             e.Property(x => x.PromptVersionId).HasMaxLength(36).IsRequired();
-            e.Property(x => x.ApplicationIdsJson).IsRequired();
             e.Property(x => x.Status).HasMaxLength(20).IsRequired();
             e.Property(x => x.SubmissionId).HasMaxLength(128);
             e.Property(x => x.PollUrl).HasMaxLength(512);
             e.Property(x => x.LeaseOwner).HasMaxLength(128);
-            e.HasIndex(x => x.JobId);
-            e.HasIndex(x => new { x.Status, x.NextPollAt });
+            e.HasIndex(x => x.JobId).HasDatabaseName("IX_ScoringBatches_JobId");
+            e.HasIndex(x => new { x.Status, x.NextPollAt }).HasDatabaseName("IX_ScoringBatches_Status_NextPollAt");
+            e.HasIndex(x => x.SubmissionId).IsUnique().HasFilter("[SubmissionId] IS NOT NULL").HasDatabaseName("UX_ScoringBatches_SubmissionId");
         });
 
-        // ScoringJobProgress (job-level rollup)
+        // ScoringJobProgress
         modelBuilder.Entity<ScoringJobProgress>(e =>
         {
             e.ToTable("ScoringJobProgress");
             e.HasKey(x => x.JobId);
-            e.Property(x => x.JobId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.JobId).HasMaxLength(36);
         });
     }
 }

@@ -591,11 +591,14 @@ export function createJobsRouter() {
         const variance = Math.sqrt(
           scores.reduce((sum, value) => sum + Math.pow(value - meanScore, 2), 0) / scores.length,
         )
-        const anyGateFailed = runs.some((run) => run.mustHaveResult?.passed === false)
+        const gatePassVotes = runs.filter((run) => run.mustHaveResult?.passed === true).length
+        const gateFailVotes = runs.filter((run) => run.mustHaveResult?.passed === false).length
+        const gateFailedByAggregation = gateFailVotes > gatePassVotes
+        const hasGateVotes = gatePassVotes + gateFailVotes > 0
 
         let finalDecision: AggregatedResult['finalDecision']
         let nextStatus: typeof app.status
-        if (anyGateFailed) {
+        if (gateFailedByAggregation) {
           finalDecision = 'Excluded'
           nextStatus = 'Completed'
         } else if (variance > varianceThreshold) {
@@ -623,9 +626,11 @@ export function createJobsRouter() {
           confidence: 1,
           variance,
           finalDecision,
-          rationaleText: anyGateFailed
-            ? `Excluded: eligibility gate failed. Score: ${meanScore.toFixed(1)} (${scores.length} run(s), variance: ${variance.toFixed(1)}).`
-            : `Aggregated ${scores.length} scoring run(s). Mean score: ${meanScore.toFixed(1)}, Variance: ${variance.toFixed(1)}.`,
+          rationaleText: gateFailedByAggregation
+            ? `Excluded: eligibility gate failed by aggregated votes (passed: ${gatePassVotes}, failed: ${gateFailVotes}). Score: ${meanScore.toFixed(1)} (${scores.length} run(s), variance: ${variance.toFixed(1)}).`
+            : hasGateVotes
+              ? `Aggregated ${scores.length} scoring run(s). Mean score: ${meanScore.toFixed(1)}, Variance: ${variance.toFixed(1)}. Eligibility votes: passed ${gatePassVotes}, failed ${gateFailVotes}.`
+              : `Aggregated ${scores.length} scoring run(s). Mean score: ${meanScore.toFixed(1)}, Variance: ${variance.toFixed(1)}.`,
           recommendationsText: '',
           allRuns: [],
           createdAt: new Date().toISOString(),

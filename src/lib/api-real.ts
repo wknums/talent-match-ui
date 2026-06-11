@@ -112,6 +112,7 @@ function mapManualReview(raw: any): ManualReviewData {
       : (raw.rubricScores ?? {}),
     overallComment: raw.overallComment ?? '',
     adjustedFinalScore: raw.adjustedFinalScore,
+    finalDecision: raw.finalDecision,
     auditTrail: typeof raw.auditTrailJson === 'string'
       ? JSON.parse(raw.auditTrailJson)
       : (raw.auditTrail ?? []),

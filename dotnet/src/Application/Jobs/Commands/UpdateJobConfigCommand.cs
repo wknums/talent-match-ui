@@ -15,7 +15,8 @@ public record UpdateJobConfigCommand(
     double ShortlistThreshold,
     double VarianceThreshold,
     string? RubricSource,
-    string? RawExtractionResponse
+    string? RawExtractionResponse,
+    string? RubricApprovalStatus = null
 ) : IRequest<JobConfigVersion>;
 
 public class UpdateJobConfigCommandHandler : IRequestHandler<UpdateJobConfigCommand, JobConfigVersion>
@@ -35,6 +36,8 @@ public class UpdateJobConfigCommandHandler : IRequestHandler<UpdateJobConfigComm
         var versions = await _jobRepository.GetConfigVersionsAsync(request.JobId, cancellationToken);
         var nextVersion = versions.Count + 1;
 
+        var rubricApprovalStatus = NormalizeRubricApprovalStatus(request.RubricApprovalStatus);
+
         var configVersion = new JobConfigVersion
         {
             JobId = request.JobId,
@@ -49,6 +52,7 @@ public class UpdateJobConfigCommandHandler : IRequestHandler<UpdateJobConfigComm
             LonglistThreshold = request.LonglistThreshold,
             ShortlistThreshold = request.ShortlistThreshold,
             VarianceThreshold = request.VarianceThreshold,
+            RubricApprovalStatus = rubricApprovalStatus,
             RubricSource = request.RubricSource ?? "manual",
             RawExtractionResponse = request.RawExtractionResponse
         };
@@ -60,5 +64,17 @@ public class UpdateJobConfigCommandHandler : IRequestHandler<UpdateJobConfigComm
         await _jobRepository.UpdateAsync(job, cancellationToken);
 
         return configVersion;
+    }
+
+    private static string NormalizeRubricApprovalStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+            return "draft";
+
+        var normalized = status.Trim().ToLowerInvariant();
+        if (normalized is "approved" or "draft")
+            return normalized;
+
+        throw new InvalidOperationException($"Invalid rubric approval status: '{status}'. Must be 'approved' or 'draft'.");
     }
 }

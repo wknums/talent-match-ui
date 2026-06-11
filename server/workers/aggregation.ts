@@ -85,12 +85,14 @@ export async function runAggregation(
   const longlistThreshold = config?.longlistThreshold || 60
   const varianceThreshold = config?.varianceThreshold || 15
 
-  // Check if any run failed the must-have eligibility gate
-  const anyGateFailed = runs.some(r => r.mustHaveResult && r.mustHaveResult.passed === false)
+  // Aggregate must-have gate results across runs (majority failure excludes).
+  const gatePassVotes = runs.filter(r => r.mustHaveResult?.passed === true).length
+  const gateFailVotes = runs.filter(r => r.mustHaveResult?.passed === false).length
+  const gateFailedByAggregation = gateFailVotes > gatePassVotes
+  const hasGateVotes = gatePassVotes + gateFailVotes > 0
 
   let finalDecision: 'Eligible' | 'Excluded' | 'NeedsManualReview'
-  if (anyGateFailed) {
-    // Must-have gate failure always excludes, regardless of score
+  if (gateFailedByAggregation) {
     finalDecision = 'Excluded'
   } else if (variance > varianceThreshold) {
     finalDecision = 'NeedsManualReview'
@@ -109,9 +111,11 @@ export async function runAggregation(
     confidence: 1 - (variance / 100),
     variance,
     finalDecision,
-    rationaleText: anyGateFailed
-      ? `Excluded: eligibility gate failed. ${runs.filter(r => r.mustHaveResult && !r.mustHaveResult.passed).flatMap(r => r.mustHaveResult.missingCriteria).join('; ')}. Score: ${finalScore.toFixed(1)} (${strategy}, ${runs.length} run${runs.length > 1 ? 's' : ''}).`
-      : `Aggregated ${runs.length} scoring runs using ${strategy} strategy. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}.`,
+    rationaleText: gateFailedByAggregation
+      ? `Excluded: eligibility gate failed by aggregated votes (passed: ${gatePassVotes}, failed: ${gateFailVotes}). Score: ${finalScore.toFixed(1)} (${strategy}, ${runs.length} run${runs.length > 1 ? 's' : ''}).`
+      : hasGateVotes
+        ? `Aggregated ${runs.length} scoring runs using ${strategy} strategy. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}. Eligibility votes: passed ${gatePassVotes}, failed ${gateFailVotes}.`
+        : `Aggregated ${runs.length} scoring runs using ${strategy} strategy. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}.`,
     recommendationsText: runs[0]?.improvementRecommendations?.join('; ') || '',
     allRuns: runs,
     createdAt: new Date().toISOString(),

@@ -26,6 +26,7 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
 {
     private readonly IJobRepository _jobRepo;
     private readonly IApplicationRepository _applicationRepo;
+    private readonly IScoringBatchRepository _batchRepo;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ProcessJobCommandHandler> _logger;
 
@@ -50,11 +51,13 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
     public ProcessJobCommandHandler(
         IJobRepository jobRepo,
         IApplicationRepository applicationRepo,
+        IScoringBatchRepository batchRepo,
         IServiceScopeFactory scopeFactory,
         ILogger<ProcessJobCommandHandler> logger)
     {
         _jobRepo = jobRepo;
         _applicationRepo = applicationRepo;
+        _batchRepo = batchRepo;
         _scopeFactory = scopeFactory;
         _logger = logger;
     }
@@ -81,6 +84,15 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         // submit/poll/finalize asynchronously. Sequential mode below is unchanged.
         if (ResolveScoringMode() == "platform")
         {
+            var existingBatches = await _batchRepo.ListByJobAsync(request.JobId, ct);
+            var activeBatchCount = existingBatches.Count(b => b.Status is "pending" or "submitted");
+            if (activeBatchCount > 0)
+            {
+                var message = $"Job {request.JobId} already has {activeBatchCount} in-flight platform batch(es).";
+                _logger.LogWarning(message);
+                return new ProcessJobResult(0, toProcessIds.Count, new List<string> { message });
+            }
+
             using var pScope = _scopeFactory.CreateScope();
             var batchRepo = pScope.ServiceProvider.GetRequiredService<IScoringBatchRepository>();
             var appRepoP = pScope.ServiceProvider.GetRequiredService<IApplicationRepository>();

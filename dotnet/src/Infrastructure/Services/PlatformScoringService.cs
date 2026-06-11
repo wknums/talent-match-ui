@@ -322,7 +322,10 @@ public class PlatformScoringService : IPlatformScoringService
                         foreach (var r in runsEl.EnumerateArray())
                         {
                             idx++;
+                            var parsedRunJson = r.GetRawText();
                             var run = ScoreApplicationCommandHandler.ParseSingleRunStatic(r, applicationId, prompt?.Id ?? batch.PromptVersionId, idx);
+                            run.RawResponseText = parsedRunJson;
+                            run.RawParsedResponseJson = parsedRunJson;
                             ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubric);
                             await appRepo.AddScoringRunAsync(run, ct);
                             runs.Add(run);

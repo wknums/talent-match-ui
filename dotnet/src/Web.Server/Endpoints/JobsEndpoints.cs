@@ -24,7 +24,7 @@ public static class JobsEndpoints
             {
                 var job = await mediator.Send(new CreateJobCommand(
                     request.Title, request.Department, request.Organisation, request.PostingDate,
-                    request.RubricJson, request.MustHaveCriteriaJson, request.DesiredCriteriaJson,
+                    request.RubricJson, request.MustHavesJson, request.DesiredCriteriaJson,
                     request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
                     request.ShortlistThreshold, request.VarianceThreshold, request.JobDescription,
                     request.RubricSource ?? "manual", request.RawExtractionResponse));
@@ -62,12 +62,18 @@ public static class JobsEndpoints
             formData.Add(promptContent, "promptFile", "extract-spec-prompt.md");
 
             // Add the uploaded document as specFile (decoded from base64)
-            var docBytes = Convert.FromBase64String(request.Content);
+            byte[] docBytes;
+            try { docBytes = Convert.FromBase64String(request.Content); }
+            catch (FormatException) { return Results.Problem("Invalid base64 document content", statusCode: 400); }
+
+            var mimeType = string.IsNullOrWhiteSpace(request.MimeType) ? "application/octet-stream" : request.MimeType;
             var docContent = new ByteArrayContent(docBytes);
-            docContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(request.MimeType ?? "application/octet-stream");
+            docContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
             formData.Add(docContent, "specFile", request.FileName);
 
-            var response = await client.PostAsync($"{endpoint}/assess/passthrough", formData);
+            HttpResponseMessage response;
+            try { response = await client.PostAsync($"{endpoint}/assess/passthrough", formData); }
+            catch (Exception ex) { return Results.Problem($"Failed to reach AWR API: {ex.Message}", statusCode: 502); }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -147,12 +153,18 @@ public static class JobsEndpoints
             formData.Add(promptContent, "promptFile", "extract-rubric-prompt.md");
 
             // Add the uploaded document as specFile (decoded from base64)
-            var docBytes = Convert.FromBase64String(request.Content);
+            byte[] docBytes;
+            try { docBytes = Convert.FromBase64String(request.Content); }
+            catch (FormatException) { return Results.Problem("Invalid base64 document content", statusCode: 400); }
+
+            var mimeType = string.IsNullOrWhiteSpace(request.MimeType) ? "application/octet-stream" : request.MimeType;
             var docContent = new ByteArrayContent(docBytes);
-            docContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(request.MimeType ?? "application/octet-stream");
+            docContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
             formData.Add(docContent, "specFile", request.FileName);
 
-            var response = await client.PostAsync($"{endpoint}/assess/passthrough", formData);
+            HttpResponseMessage response;
+            try { response = await client.PostAsync($"{endpoint}/assess/passthrough", formData); }
+            catch (Exception ex) { return Results.Problem($"Failed to reach AWR API: {ex.Message}", statusCode: 502); }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -195,7 +207,7 @@ public static class JobsEndpoints
             return Results.Ok(new
             {
                 config.RubricJson,
-                config.MustHaveCriteriaJson,
+                config.MustHavesJson,
                 config.DesiredCriteriaJson,
                 config.ScoringRunCount,
                 config.AggregationStrategy,
@@ -210,17 +222,17 @@ public static class JobsEndpoints
         group.MapPut("/{jobId}/config", async (string jobId, UpdateJobConfigRequest request, ISender mediator) =>
         {
             var config = await mediator.Send(new UpdateJobConfigCommand(
-                jobId, request.RubricJson, request.MustHaveCriteriaJson, request.DesiredCriteriaJson,
+                jobId, request.RubricJson, request.MustHavesJson, request.DesiredCriteriaJson,
                 request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
                 request.ShortlistThreshold, request.VarianceThreshold,
-                request.RubricSource ?? "manual", request.RawExtractionResponse));
+                request.RubricSource ?? "manual", request.RawExtractionResponse, request.RubricApprovalStatus));
             return Results.Ok(new
             {
                 config.Id,
                 config.JobId,
                 config.VersionNumber,
                 config.RubricJson,
-                config.MustHaveCriteriaJson,
+                config.MustHavesJson,
                 config.DesiredCriteriaJson,
                 config.ScoringRunCount,
                 config.AggregationStrategy,
@@ -299,16 +311,17 @@ public static class JobsEndpoints
 
 public record CreateJobRequest(
     string Title, string Department, string Organisation, DateTime PostingDate,
-    string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson,
+    string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,
     int ScoringRunCount, string AggregationStrategy, double LonglistThreshold,
     double ShortlistThreshold, double VarianceThreshold, string? JobDescription,
     string? RubricSource = "manual", string? RawExtractionResponse = null);
 
 public record UpdateJobConfigRequest(
-    string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson,
+    string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,
     int ScoringRunCount, string AggregationStrategy, double LonglistThreshold,
     double ShortlistThreshold, double VarianceThreshold,
-    string? RubricSource = "manual", string? RawExtractionResponse = null);
+    string? RubricSource = "manual", string? RawExtractionResponse = null,
+    string? RubricApprovalStatus = null);
 
 public record UpdateRubricApprovalRequest(string Status);
 

@@ -107,7 +107,7 @@ because it conflates different concepts (decision vs processing status).
 ## R11: Rubric Approval Status Impact on Job Deletion
 
 **Decision**: Deleting a job also permanently removes all associated `JobConfigVersion` records, which
-contain the rubric data (`RubricJson`, `MustHaveCriteriaJson`, `DesiredCriteriaJson`) and its
+contain the rubric data (`RubricJson`, `MustHavesJson`, `DesiredCriteriaJson`) and its
 implicit approval status. No special handling is needed for rubric approval state during deletion.
 **Rationale**: The rubric approval status is determined by whether `RubricJson` is non-null in the
 job's current config version (see `JobDetail.razor` line 168: `hasApprovedRubric = config?.RubricJson != null`).

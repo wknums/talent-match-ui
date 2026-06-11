@@ -30,6 +30,19 @@ public record EngineAggregatedResult(
     Dictionary<string, double> SubScoreAverages
 );
 
+public record ScoreParsingDiagnostics(
+    bool FallbackParsingActivated,
+    bool EligibilityFallbackActivated,
+    bool TotalScoreFallbackActivated,
+    bool GateDetected,
+    string EligibilityPath
+);
+
+public record ScoreRunParseResult(
+    ScoringRun Run,
+    ScoreParsingDiagnostics Diagnostics
+);
+
 public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCommand, ScoreApplicationResult>
 {
     private readonly ILlmProxyService _llmService;
@@ -97,7 +110,12 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                 using var doc = JsonDocument.Parse(jsonText);
                 var root = doc.RootElement;
 
-                var run = ParseSingleRun(root, request.ApplicationId, prompt.Id, runIndex);
+                var parsed = ParseSingleRunWithDiagnostics(root, request.ApplicationId, prompt.Id, runIndex);
+                var run = parsed.Run;
+                run.RawResponseText = responseText;
+                run.RawParsedResponseJson = jsonText;
+                run.ParserWarningsJson = BuildParserWarningsJson(parsed.Diagnostics);
+                run.ParserConfidence = parsed.Diagnostics.FallbackParsingActivated ? 0.7 : 1.0;
                 RemapToRubric(run, request.RubricJson);
                 await _applicationRepo.AddScoringRunAsync(run, ct);
                 runs.Add(run);
@@ -120,6 +138,10 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                     ImprovementTipsJson = "[]",
                     AiModelId = "passthrough-llm",
                     PromptVersion = prompt.Id,
+                    RawResponseText = responseText,
+                    RawParsedResponseJson = null,
+                    ParserWarningsJson = JsonSerializer.Serialize(new[] { "invalid_json_response" }),
+                    ParserConfidence = 0,
                 };
                 await _applicationRepo.AddScoringRunAsync(run, ct);
                 runs.Add(run);
@@ -142,13 +164,16 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     /// Scalar numbers are candidates for the total/overall score.
     /// </summary>
     internal ScoringRun ParseSingleRun(JsonElement root, string applicationId, string promptId, int runIndex)
-        => ParseSingleRunStatic(root, applicationId, promptId, runIndex);
+        => ParseSingleRunWithDiagnostics(root, applicationId, promptId, runIndex).Run;
 
     /// <summary>
     /// Platform-mode reuses the same parsing logic without instantiating the handler.
     /// Kept logically identical to the instance method body.
     /// </summary>
     public static ScoringRun ParseSingleRunStatic(JsonElement root, string applicationId, string promptId, int runIndex)
+        => ParseSingleRunWithDiagnostics(root, applicationId, promptId, runIndex).Run;
+
+    public static ScoreRunParseResult ParseSingleRunWithDiagnostics(JsonElement root, string applicationId, string promptId, int runIndex)
     {
         var categoryScores = new Dictionary<string, double>();
         var evidenceCitations = new List<object>();
@@ -157,6 +182,10 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         string notes = "";
         var tips = new List<string>();
         JsonElement? gateElement = null; // captured eligibility gate (any key name)
+        var gateDetected = false;
+        var eligibilityPath = "none";
+        var eligibilityFallbackActivated = false;
+        var totalScoreFallbackActivated = false;
 
         // Classify every top-level property by its value type
         foreach (var prop in root.EnumerateObject())
@@ -168,6 +197,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             if (LooksLikeEligibilityGate(name) && (val.ValueKind == JsonValueKind.Object || val.ValueKind == JsonValueKind.Array))
             {
                 gateElement = val;
+                gateDetected = true;
                 Console.WriteLine($"[GATE DEBUG] Key='{name}' Kind={val.ValueKind} Raw={val.GetRawText()[..Math.Min(500, val.GetRawText().Length)]}");
                 continue;
             }
@@ -300,8 +330,11 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         if (gateElement.HasValue)
         {
             var gate = gateElement.Value;
+            var gateMissingCriteria = ExtractMissingCriteria(gate);
+            var gatePassedHint = ExtractGatePassedHint(gate);
             if (gate.ValueKind == JsonValueKind.Array)
             {
+                eligibilityPath = "gate_array";
                 // Normalize array format: [{criterion, met/passed, evidence}, ...] → structured object
                 var entries = new List<object>();
                 var missing = new List<string>();
@@ -309,14 +342,11 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                 foreach (var item in gate.EnumerateArray())
                 {
                     if (item.ValueKind != JsonValueKind.Object) continue;
-                    var criterion = item.TryGetProperty("criterion", out var c) ? c.GetString() ?? ""
-                                  : item.TryGetProperty("requirement", out var r) ? r.GetString() ?? ""
-                                  : item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                    var met = LooksLikeTrueValue(item, "met")
-                           || LooksLikeTrueValue(item, "passed")
-                           || LooksLikeTrueValue(item, "satisfied")
-                           || LooksLikeTrueValue(item, "eligible");
-                    var ev = item.TryGetProperty("evidence", out var e) ? e.GetString() ?? "" : "";
+                    var criterion = ExtractGateCriterion(item);
+                    var ev = ExtractGateEvidence(item);
+                    var met = TryExtractGateEntryStatus(item, out var explicitStatus)
+                        ? explicitStatus
+                        : InferGateEntryStatus(criterion, ev, gateMissingCriteria, gatePassedHint);
                     Console.WriteLine($"[GATE ENTRY] criterion='{criterion}' met={met} raw_keys=[{string.Join(",", item.EnumerateObject().Select(p => $"{p.Name}:{p.Value.ValueKind}"))}]");
                     entries.Add(new { criterion, passed = met, evidence = ev });
                     if (!met)
@@ -338,19 +368,11 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             {
                 // Object format — could be {passed: bool, ...} or {criteria: [...], ...}
                 // Check if it has a nested array of criteria entries
-                JsonElement? nestedArray = null;
-                foreach (var prop in gate.EnumerateObject())
-                {
-                    if (prop.Value.ValueKind == JsonValueKind.Array && prop.Value.GetArrayLength() > 0
-                        && prop.Value[0].ValueKind == JsonValueKind.Object)
-                    {
-                        nestedArray = prop.Value;
-                        break;
-                    }
-                }
+                var nestedArray = FindGateEntriesArray(gate);
 
                 if (nestedArray.HasValue)
                 {
+                    eligibilityPath = "gate_object_nested";
                     // Parse the nested array as gate entries
                     var entries = new List<object>();
                     var missing = new List<string>();
@@ -358,14 +380,11 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                     foreach (var item in nestedArray.Value.EnumerateArray())
                     {
                         if (item.ValueKind != JsonValueKind.Object) continue;
-                        var criterion = item.TryGetProperty("criterion", out var c2) ? c2.GetString() ?? ""
-                                      : item.TryGetProperty("requirement", out var r2) ? r2.GetString() ?? ""
-                                      : item.TryGetProperty("name", out var n2) ? n2.GetString() ?? "" : "";
-                        var met = LooksLikeTrueValue(item, "met")
-                               || LooksLikeTrueValue(item, "passed")
-                               || LooksLikeTrueValue(item, "satisfied")
-                               || LooksLikeTrueValue(item, "eligible");
-                        var ev = item.TryGetProperty("evidence", out var e2) ? e2.GetString() ?? "" : "";
+                        var criterion = ExtractGateCriterion(item);
+                        var ev = ExtractGateEvidence(item);
+                        var met = TryExtractGateEntryStatus(item, out var explicitStatus)
+                            ? explicitStatus
+                            : InferGateEntryStatus(criterion, ev, gateMissingCriteria, gatePassedHint);
                         if (string.IsNullOrEmpty(criterion)) continue;
                         entries.Add(new { criterion, passed = met, evidence = ev });
                         if (!met) { allPassed = false; missing.Add(criterion); }
@@ -382,26 +401,32 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                     }
                     else
                     {
+                        eligibilityPath = "gate_object_raw";
                         mustHaveJson = gate.GetRawText();
                     }
                 }
                 else
                 {
+                    eligibilityPath = "gate_object_raw";
                     mustHaveJson = gate.GetRawText();
                 }
             }
             else
             {
+                eligibilityPath = "gate_raw";
                 mustHaveJson = gate.GetRawText();
             }
         }
         else if (!string.IsNullOrEmpty(recommendation))
         {
+            eligibilityPath = "recommendation_fallback";
+            eligibilityFallbackActivated = true;
             var passed = LooksLikePositiveRecommendation(recommendation);
             mustHaveJson = JsonSerializer.Serialize(new { passed, recommendation, missing_criteria = Array.Empty<string>() });
         }
         else
         {
+            eligibilityPath = "none";
             mustHaveJson = "{}";
         }
 
@@ -409,9 +434,10 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         if (totalScore == 0 && categoryScores.Count > 0)
         {
             totalScore = categoryScores.Values.Average();
+            totalScoreFallbackActivated = true;
         }
 
-        return new ScoringRun
+        var run = new ScoringRun
         {
             ApplicationId = applicationId,
             RunIndex = runIndex,
@@ -425,6 +451,15 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             InputTokens = 0,
             OutputTokens = 0,
         };
+
+        var diagnostics = new ScoreParsingDiagnostics(
+            FallbackParsingActivated: eligibilityFallbackActivated || totalScoreFallbackActivated,
+            EligibilityFallbackActivated: eligibilityFallbackActivated,
+            TotalScoreFallbackActivated: totalScoreFallbackActivated,
+            GateDetected: gateDetected,
+            EligibilityPath: eligibilityPath);
+
+        return new ScoreRunParseResult(run, diagnostics);
     }
 
     // --- Generic JSON field extraction helpers (no hardcoded schema) ---
@@ -547,17 +582,74 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
 
     internal static double? ExtractNumericField(JsonElement obj)
     {
+        double? firstNumeric = null;
+        double? bestNonWeight = null;
+
         foreach (var prop in obj.EnumerateObject())
         {
-            if (prop.Value.ValueKind == JsonValueKind.Number)
-                return prop.Value.GetDouble();
-            if (prop.Value.ValueKind == JsonValueKind.String &&
-                double.TryParse(prop.Value.GetString(), System.Globalization.NumberStyles.Any,
-                    System.Globalization.CultureInfo.InvariantCulture, out var parsed))
-                return parsed;
+            if (!TryGetNumericValue(prop.Value, out var numericValue))
+                continue;
+
+            var normalizedFieldName = NormalizeName(prop.Name);
+            if (LooksLikeScoreFieldName(normalizedFieldName))
+                return numericValue;
+
+            if (!firstNumeric.HasValue)
+                firstNumeric = numericValue;
+
+            if (!bestNonWeight.HasValue && !LooksLikeWeightFieldName(normalizedFieldName))
+                bestNonWeight = numericValue;
         }
-        return null;
+
+        return bestNonWeight ?? firstNumeric;
     }
+
+    private static bool TryGetNumericValue(JsonElement value, out double parsed)
+    {
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            parsed = value.GetDouble();
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            var raw = value.GetString()?.Trim();
+            if (!string.IsNullOrWhiteSpace(raw))
+            {
+                if (raw.EndsWith("%", StringComparison.Ordinal))
+                    raw = raw[..^1].Trim();
+
+                if (double.TryParse(raw, System.Globalization.NumberStyles.Any,
+                        System.Globalization.CultureInfo.InvariantCulture, out parsed))
+                {
+                    return true;
+                }
+            }
+        }
+
+        parsed = 0;
+        return false;
+    }
+
+    private static bool LooksLikeScoreFieldName(string normalizedFieldName)
+        => ContainsAny(normalizedFieldName,
+            "score",
+            "rating",
+            "percent",
+            "percentage",
+            "pct",
+            "point",
+            "points",
+            "mark");
+
+    private static bool LooksLikeWeightFieldName(string normalizedFieldName)
+        => ContainsAny(normalizedFieldName,
+            "weight",
+            "weighting",
+            "coefficient",
+            "ratio",
+            "portion");
 
     /// <summary>Find the longest string property in an object (the "evidence/justification" field), preferring semantically named properties.</summary>
     internal static string ExtractStringField(JsonElement obj)
@@ -673,16 +765,294 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     /// </summary>
     private static bool LooksLikeTrueValue(JsonElement obj, string key)
     {
-        if (!obj.TryGetProperty(key, out var val)) return false;
-        return val.ValueKind switch
+        if (!TryGetPropertyCaseInsensitive(obj, key, out var val))
+            return false;
+
+        if (TryParseFlexibleBoolValue(val, out var parsed))
+            return parsed;
+
+        // If the gate key exists with non-empty text and no explicit negative indicator,
+        // prefer treating it as satisfied (common LLM output style for gate checks).
+        if (val.ValueKind == JsonValueKind.String)
         {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.String => val.GetString()?.ToLowerInvariant() is "true" or "yes" or "y" or "1" or "met" or "pass" or "passed",
-            JsonValueKind.Number => val.GetDouble() != 0,
-            _ => false
-        };
+            var text = val.GetString()?.Trim();
+            if (!string.IsNullOrWhiteSpace(text))
+                return true;
+        }
+
+        return false;
     }
+
+    private static string ExtractGateCriterion(JsonElement item)
+    {
+        if (TryGetPropertyCaseInsensitive(item, "criterion", out var criterion) && criterion.ValueKind == JsonValueKind.String)
+            return criterion.GetString() ?? "";
+        if (TryGetPropertyCaseInsensitive(item, "requirement", out var requirement) && requirement.ValueKind == JsonValueKind.String)
+            return requirement.GetString() ?? "";
+        if (TryGetPropertyCaseInsensitive(item, "name", out var name) && name.ValueKind == JsonValueKind.String)
+            return name.GetString() ?? "";
+        if (TryGetPropertyCaseInsensitive(item, "item", out var itemName) && itemName.ValueKind == JsonValueKind.String)
+            return itemName.GetString() ?? "";
+        return "";
+    }
+
+    private static string ExtractGateEvidence(JsonElement item)
+    {
+        if (!TryGetPropertyCaseInsensitive(item, "evidence", out var evidence))
+            return "";
+
+        if (evidence.ValueKind == JsonValueKind.String)
+            return evidence.GetString() ?? "";
+
+        if (evidence.ValueKind == JsonValueKind.Array)
+        {
+            var snippets = evidence
+                .EnumerateArray()
+                .Where(v => v.ValueKind == JsonValueKind.String)
+                .Select(v => v.GetString())
+                .Where(s => !string.IsNullOrWhiteSpace(s));
+
+            return string.Join("; ", snippets!);
+        }
+
+        return evidence.GetRawText();
+    }
+
+    private static bool TryExtractGateEntryStatus(JsonElement item, out bool passed)
+    {
+        foreach (var key in new[] { "met", "passed", "satisfied", "eligible", "status", "result", "is_met", "isMet" })
+        {
+            if (TryGetPropertyCaseInsensitive(item, key, out var value) && TryParseFlexibleBoolValue(value, out var parsed))
+            {
+                passed = parsed;
+                return true;
+            }
+        }
+
+        passed = false;
+        return false;
+    }
+
+    private static bool InferGateEntryStatus(string criterion, string evidence, HashSet<string> missingCriteria, bool? gatePassedHint)
+    {
+        if (IsCriterionInMissingList(criterion, missingCriteria))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(evidence))
+        {
+            if (LooksLikeNegativeEvidence(evidence))
+                return false;
+
+            return true;
+        }
+
+        if (gatePassedHint.HasValue)
+            return gatePassedHint.Value;
+
+        return false;
+    }
+
+    private static HashSet<string> ExtractMissingCriteria(JsonElement gate)
+    {
+        var missing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (gate.ValueKind != JsonValueKind.Object)
+            return missing;
+
+        foreach (var key in new[] { "missing_criteria", "missingCriteria", "missing", "failed_criteria", "unmet_criteria" })
+        {
+            if (!TryGetPropertyCaseInsensitive(gate, key, out var value) || value.ValueKind != JsonValueKind.Array)
+                continue;
+
+            foreach (var item in value.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                    continue;
+
+                var text = item.GetString();
+                if (!string.IsNullOrWhiteSpace(text))
+                    missing.Add(text.Trim());
+            }
+        }
+
+        return missing;
+    }
+
+    private static bool? ExtractGatePassedHint(JsonElement gate)
+    {
+        if (gate.ValueKind != JsonValueKind.Object)
+            return null;
+
+        foreach (var key in new[] { "passed", "met", "eligible", "satisfied" })
+        {
+            if (TryGetPropertyCaseInsensitive(gate, key, out var value) && TryParseFlexibleBoolValue(value, out var parsed))
+                return parsed;
+        }
+
+        if (TryGetPropertyCaseInsensitive(gate, "recommendation", out var recommendation)
+            && recommendation.ValueKind == JsonValueKind.String)
+        {
+            var recText = recommendation.GetString() ?? "";
+            if (!string.IsNullOrWhiteSpace(recText))
+            {
+                var normalized = NormalizeForBoolParsing(recText);
+                if (ContainsAny(normalized, "excluded", "reject", "rejected", "fail", "failed", "not eligible", "ineligible"))
+                    return false;
+                if (LooksLikePositiveRecommendation(recText))
+                    return true;
+            }
+        }
+
+        return null;
+    }
+
+    private static JsonElement? FindGateEntriesArray(JsonElement gate)
+    {
+        if (gate.ValueKind != JsonValueKind.Object)
+            return null;
+
+        foreach (var prop in gate.EnumerateObject())
+        {
+            if (IsObjectArray(prop.Value))
+                return prop.Value;
+
+            if (prop.Value.ValueKind != JsonValueKind.Object)
+                continue;
+
+            foreach (var nested in prop.Value.EnumerateObject())
+            {
+                if (IsObjectArray(nested.Value))
+                    return nested.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsObjectArray(JsonElement value)
+        => value.ValueKind == JsonValueKind.Array
+           && value.GetArrayLength() > 0
+           && value[0].ValueKind == JsonValueKind.Object;
+
+    private static bool IsCriterionInMissingList(string criterion, HashSet<string> missingCriteria)
+    {
+        if (string.IsNullOrWhiteSpace(criterion) || missingCriteria.Count == 0)
+            return false;
+
+        var normalizedCriterion = NormalizeForBoolParsing(criterion);
+        if (string.IsNullOrWhiteSpace(normalizedCriterion))
+            return false;
+
+        foreach (var missing in missingCriteria)
+        {
+            var normalizedMissing = NormalizeForBoolParsing(missing);
+            if (string.IsNullOrWhiteSpace(normalizedMissing))
+                continue;
+
+            if (normalizedMissing == normalizedCriterion
+                || normalizedMissing.Contains(normalizedCriterion, StringComparison.Ordinal)
+                || normalizedCriterion.Contains(normalizedMissing, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeNegativeEvidence(string evidence)
+    {
+        var normalized = NormalizeForBoolParsing(evidence);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        return ContainsAny(normalized,
+            "none found",
+            "not found",
+            "no evidence",
+            "no proof",
+            "not provided",
+            "insufficient evidence",
+            "unable to verify",
+            "cannot verify",
+            "missing evidence",
+            "no supporting evidence",
+            "unknown",
+            "n a");
+    }
+
+    private static bool TryParseFlexibleBoolValue(JsonElement value, out bool parsed)
+    {
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.True:
+                parsed = true;
+                return true;
+            case JsonValueKind.False:
+                parsed = false;
+                return true;
+            case JsonValueKind.Number:
+                if (value.TryGetDouble(out var number))
+                {
+                    parsed = number != 0;
+                    return true;
+                }
+                break;
+            case JsonValueKind.String:
+            {
+                var raw = value.GetString();
+                if (string.IsNullOrWhiteSpace(raw))
+                    break;
+
+                var normalized = NormalizeForBoolParsing(raw);
+
+                if (ContainsAny(normalized,
+                        "not met", "does not meet", "do not meet", "failed", "fail", "false", "no", "ineligible", "missing", "unmet", "unsatisfied", "non compliant", "noncompliant"))
+                {
+                    parsed = false;
+                    return true;
+                }
+
+                if (ContainsAny(normalized,
+                        "met", "meets", "passed", "pass", "true", "yes", "eligible", "satisfied", "compliant", "success", "successful"))
+                {
+                    parsed = true;
+                    return true;
+                }
+
+                // For structured values like "1" / "0" embedded in text.
+                if (normalized == "1")
+                {
+                    parsed = true;
+                    return true;
+                }
+                if (normalized == "0")
+                {
+                    parsed = false;
+                    return true;
+                }
+
+                break;
+            }
+        }
+
+        parsed = false;
+        return false;
+    }
+
+    private static string NormalizeForBoolParsing(string text)
+    {
+        var chars = text
+            .Trim()
+            .ToLowerInvariant()
+            .Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ')
+            .ToArray();
+
+        return string.Join(' ', new string(chars)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static bool ContainsAny(string text, params string[] tokens)
+        => tokens.Any(token => text.Contains(token, StringComparison.Ordinal));
 
     private static bool LooksLikePositiveRecommendation(string text)
     {
@@ -712,6 +1082,22 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
 
         return new EngineAggregatedResult(finalScore, variance, confidence, finalDecision, consolidatedRationale, subScoreAverages);
     }
+
+    private static string? BuildParserWarningsJson(ScoreParsingDiagnostics diagnostics)
+    {
+        var warnings = new List<string>();
+
+        if (diagnostics.EligibilityFallbackActivated)
+            warnings.Add("eligibility_fallback_activated");
+        if (diagnostics.TotalScoreFallbackActivated)
+            warnings.Add("total_score_fallback_activated");
+        if (!diagnostics.GateDetected)
+            warnings.Add("eligibility_gate_not_detected");
+
+        return warnings.Count == 0 ? null : JsonSerializer.Serialize(warnings);
+    }
+
+    public static string ExtractJsonFromResponse(string text) => ExtractJson(text);
 
     private static string ExtractJson(string text)
     {

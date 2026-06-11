@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs.Commands;
 using TalentMatch.Domain.Entities;
@@ -104,7 +105,7 @@ public class PlatformScoringReconciler : BackgroundService
                     return;
                 case PlatformSubmitStatus.PermanentFailure:
                 default:
-                    await repo.MarkFailedAsync(batch.Id, outcome.Error ?? "permanent failure", ct);
+                    await HandleSubmitPermanentFailureAsync(batch, outcome.Error ?? "permanent failure", ct);
                     return;
             }
         }
@@ -134,5 +135,51 @@ public class PlatformScoringReconciler : BackgroundService
         var maxMs = 60000.0;
         var ms = Math.Min(maxMs, baseMs * Math.Pow(2, Math.Max(0, attempt - 1)));
         return DateTime.UtcNow.AddMilliseconds(ms);
+    }
+
+    private async Task HandleSubmitPermanentFailureAsync(ScoringBatch batch, string error, CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IScoringBatchRepository>();
+        var appRepo = scope.ServiceProvider.GetRequiredService<IApplicationRepository>();
+        var dlqRepo = scope.ServiceProvider.GetRequiredService<IFailureQueueRepository>();
+
+        var ids = DeserializeIds(batch.ApplicationIdsJson);
+
+        await repo.MarkFailedAsync(batch.Id, error, ct);
+        await repo.ApplyTransitionAsync(batch.JobId, "pending", "failed", 0, ids.Count, ct);
+
+        foreach (var applicationId in ids)
+        {
+            try
+            {
+                var app = await appRepo.GetByIdAsync(applicationId, ct);
+                if (app != null)
+                {
+                    app.Status = "ScoringFailed";
+                    app.LastError = error;
+                    await appRepo.UpdateAsync(app, ct);
+                }
+
+                await dlqRepo.AddAsync(new FailureQueueItem
+                {
+                    EntityType = "Application",
+                    EntityId = applicationId,
+                    FailureReason = error,
+                }, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Reconciler failed to mark application {ApplicationId} as ScoringFailed for permanently failed batch {BatchId}.",
+                    applicationId, batch.Id);
+            }
+        }
+    }
+
+    private static List<string> DeserializeIds(string json)
+    {
+        try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
+        catch { return new(); }
     }
 }

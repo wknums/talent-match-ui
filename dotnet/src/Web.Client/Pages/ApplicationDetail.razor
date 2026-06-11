@@ -394,16 +394,16 @@ else
                     try { rubricCategories = JsonSerializer.Deserialize<List<RubricCategoryItem>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
                     catch { }
                 }
-                if (!string.IsNullOrEmpty(config.MustHaveCriteriaJson))
+                if (!string.IsNullOrEmpty(config.MustHavesJson))
                 {
                     try
                     {
-                        var items = JsonSerializer.Deserialize<List<MustHaveItem>>(config.MustHaveCriteriaJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        var items = JsonSerializer.Deserialize<List<MustHaveItem>>(config.MustHavesJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                         mustHaveCriteria = items?.Select(i => i.Criterion).ToList() ?? new();
                     }
                     catch
                     {
-                        try { mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHaveCriteriaJson) ?? new(); }
+                        try { mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHavesJson) ?? new(); }
                         catch { }
                     }
                 }

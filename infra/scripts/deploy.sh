@@ -41,6 +41,12 @@ load_env_file "$ENV_FILE"
 # Ensure secrets are not echoed
 set +x  # Disable trace mode if it was enabled
 
+# Stack runtimes rely on AWR_SEQ_API_ENDPOINT for sequential-mode calls.
+# Require it for any deployment that touches Stack A or Stack B.
+if [[ "$TARGET" != "shared-only" ]]; then
+  validate_required "AWR_SEQ_API_ENDPOINT"
+fi
+
 export_tf_vars
 validate_reuse_coordinates
 

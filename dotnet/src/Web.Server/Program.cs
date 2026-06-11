@@ -412,23 +412,6 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
             command.ExecuteNonQuery();
         }
 
-        // Backward compatibility for environments created with Stack A naming.
-        // Execute DDL and DML in separate round-trips so SQL Server can compile
-        // statements against newly-added columns.
-        ExecuteSql(@"
-IF COL_LENGTH('talentmatch.JobConfigVersions', 'MustHaveCriteriaJson') IS NULL
-BEGIN
-    ALTER TABLE [talentmatch].JobConfigVersions
-        ADD [MustHaveCriteriaJson] NVARCHAR(MAX) NOT NULL CONSTRAINT DF_JobConfigVersions_MustHaveCriteriaJson DEFAULT N'[]';
-END;
-");
-
-        ExecuteSql(@"
-UPDATE [talentmatch].JobConfigVersions
-SET [MustHaveCriteriaJson] = ISNULL([MustHavesJson], N'[]')
-WHERE [MustHaveCriteriaJson] IS NULL OR [MustHaveCriteriaJson] = N'[]';
-");
-
         ExecuteSql(@"
 IF COL_LENGTH('talentmatch.JobConfigVersions', 'ScoringRunCount') IS NULL
 BEGIN
@@ -450,6 +433,22 @@ BEGIN
         ADD [HumanEdited] BIT NOT NULL CONSTRAINT DF_ManualReviews_HumanEdited DEFAULT 0;
 END;
 ");
+
+        ExecuteSql(@"
+    IF COL_LENGTH('talentmatch.ApplicationDocuments', 'BlobUri') IS NULL
+    BEGIN
+        ALTER TABLE [talentmatch].ApplicationDocuments
+        ADD [BlobUri] NVARCHAR(1024) NULL;
+    END;
+    ");
+
+        ExecuteSql(@"
+    IF COL_LENGTH('talentmatch.ApplicationDocuments', 'ContentSha256') IS NULL
+    BEGIN
+        ALTER TABLE [talentmatch].ApplicationDocuments
+        ADD [ContentSha256] NVARCHAR(64) NULL;
+    END;
+    ");
 
         ExecuteSql(@"
 IF COL_LENGTH('talentmatch.AggregatedResults', 'FinalSubScoresJson') IS NULL

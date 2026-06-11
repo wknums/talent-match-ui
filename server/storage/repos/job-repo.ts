@@ -57,12 +57,7 @@ function normalizeDesiredCriteria(raw: unknown): JobConfigVersion['desiredCriter
 
 function rowToConfigVersion(r: any): JobConfigVersion {
   const rubric = normalizeRubricCategories(parseJson(r.RubricJson, []))
-  const parsedMustHaves = parseJson(r.MustHavesJson, [])
-  const mustHaves = normalizeMustHaves(
-    Array.isArray(parsedMustHaves) && parsedMustHaves.length > 0
-      ? parsedMustHaves
-      : parseJson(r.MustHaveCriteriaJson, []),
-  )
+  const mustHaves = normalizeMustHaves(parseJson(r.MustHavesJson, []))
   const desiredCriteria = normalizeDesiredCriteria(parseJson(r.DesiredCriteriaJson, []))
 
   return {
@@ -82,8 +77,6 @@ function rowToConfigVersion(r: any): JobConfigVersion {
     createdAt: r.CreatedAt?.toISOString?.() ?? r.CreatedAt,
   }
 }
-
-const legacyMustHaveCriteriaSelectSql = isAzureSql ? '' : ', cv.MustHaveCriteriaJson'
 
 async function getNextVersionNumber(pool: any, jobId: string): Promise<number> {
   const result = await pool.request()
@@ -114,7 +107,7 @@ export const jobRepo = {
   async getAll(): Promise<Job[]> {
     const pool = await getPool()
     const result = await pool.request().query(`
-      SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson${legacyMustHaveCriteriaSelectSql},
+      SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson,
              cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
              cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
              cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
@@ -133,7 +126,7 @@ export const jobRepo = {
     const result = await pool.request()
       .input('dept', sql.NVarChar, department)
       .query(`
-        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson${legacyMustHaveCriteriaSelectSql},
+        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson,
                cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
                cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
                cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
@@ -153,7 +146,7 @@ export const jobRepo = {
     const result = await pool.request()
       .input('id', sql.NVarChar, jobId)
       .query(`
-        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson${legacyMustHaveCriteriaSelectSql},
+        SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson,
                cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
                cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
                cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
@@ -234,11 +227,11 @@ export const jobRepo = {
           .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
           .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
           .query(`INSERT INTO ${T('JobConfigVersions')} (
-            Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
+            Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
             ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
             VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
             VALUES (
-            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @mustHavesJson, @desiredCriteriaJson,
+            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
             @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
             @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
       }
@@ -335,11 +328,11 @@ export const jobRepo = {
           .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
           .input('createdAt', sql.DateTime2, new Date(version.createdAt))
           .query(`INSERT INTO ${T('JobConfigVersions')} (
-            Id, JobId, VersionNumber, RubricJson, MustHaveCriteriaJson, MustHavesJson, DesiredCriteriaJson,
+            Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
             ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
             VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
             VALUES (
-            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @mustHavesJson, @desiredCriteriaJson,
+            @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
             @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
             @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
       }

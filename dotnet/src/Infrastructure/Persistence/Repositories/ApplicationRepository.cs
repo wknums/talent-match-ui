@@ -40,8 +40,22 @@ public class ApplicationRepository : IApplicationRepository
     public async Task UpdateAsync(TalentMatch.Domain.Entities.Application application, CancellationToken ct = default)
     {
         var entry = _context.Entry(application);
-        if (entry.State == Microsoft.EntityFrameworkCore.EntityState.Detached)
-            _context.Applications.Update(application);
+        if (entry.State == EntityState.Detached)
+        {
+            // Merge detached values into an already-tracked row when present to avoid
+            // duplicate-key tracking exceptions in high-parallel scoring flows.
+            var tracked = _context.Applications.Local.FirstOrDefault(a => a.Id == application.Id);
+            if (tracked != null)
+            {
+                _context.Entry(tracked).CurrentValues.SetValues(application);
+            }
+            else
+            {
+                _context.Applications.Attach(application);
+                _context.Entry(application).State = EntityState.Modified;
+            }
+        }
+
         await _context.SaveChangesAsync(ct);
     }
 
@@ -493,6 +507,18 @@ public class ApplicationRepository : IApplicationRepository
             .AsNoTracking()
             .ToListAsync(ct);
 
+    public async Task<ScoringRun?> GetScoringRunByIdAsync(string scoringRunId, CancellationToken ct = default)
+        => await _context.ScoringRuns
+            .FirstOrDefaultAsync(r => r.Id == scoringRunId, ct);
+
+    public async Task UpdateScoringRunAsync(ScoringRun run, CancellationToken ct = default)
+    {
+        var entry = _context.Entry(run);
+        if (entry.State == EntityState.Detached)
+            _context.ScoringRuns.Update(run);
+        await _context.SaveChangesAsync(ct);
+    }
+
     public async Task SetAggregatedResultAsync(AggregatedResult result, CancellationToken ct = default)
     {
         var existing = await _context.AggregatedResults
@@ -524,16 +550,20 @@ public class ApplicationRepository : IApplicationRepository
 
     public async Task DeleteAsync(string id, CancellationToken ct = default)
     {
-        var app = await _context.Applications
-            .Include(a => a.Documents)
-            .Include(a => a.ScoringRuns)
-            .Include(a => a.AggregatedResult)
-            .Include(a => a.ManualReview)
-            .Include(a => a.Extraction)
-            .FirstOrDefaultAsync(a => a.Id == id, ct);
-        if (app == null) return;
-        _context.Applications.Remove(app);
-        await _context.SaveChangesAsync(ct);
+        // Use key-only delete to avoid eager-loading related tables. This keeps deletion
+        // resilient across shared-schema drift where optional columns may differ.
+        var stub = new TalentMatch.Domain.Entities.Application { Id = id };
+        _context.Applications.Attach(stub);
+        _context.Applications.Remove(stub);
+
+        try
+        {
+            await _context.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // Already removed by another concurrent cleanup path.
+        }
     }
 
     public async Task SetExtractionAsync(ExtractionArtifact extraction, CancellationToken ct = default)

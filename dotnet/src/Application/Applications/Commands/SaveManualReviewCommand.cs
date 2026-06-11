@@ -11,7 +11,8 @@ public record SaveManualReviewCommand(
     string OverallComment,
     double? AdjustedFinalScore,
     string AuditTrailJson,
-    bool HumanEdited
+    bool HumanEdited,
+    string? FinalDecision
 ) : IRequest<ManualReviewData>;
 
 public class SaveManualReviewCommandHandler : IRequestHandler<SaveManualReviewCommand, ManualReviewData>
@@ -37,7 +38,59 @@ public class SaveManualReviewCommandHandler : IRequestHandler<SaveManualReviewCo
         review.HumanEdited = review.HumanEdited || request.HumanEdited;
         review.UpdatedAt = DateTime.UtcNow;
 
+        var app = await _applicationRepository.GetByIdAsync(request.ApplicationId, cancellationToken)
+            ?? throw new InvalidOperationException($"Application {request.ApplicationId} not found.");
+
+        var normalizedDecision = NormalizeDecision(request.FinalDecision) ?? app.FinalDecision;
+        if (!string.IsNullOrWhiteSpace(normalizedDecision))
+        {
+            app.FinalDecision = normalizedDecision;
+            app.Status = string.Equals(normalizedDecision, "NeedsManualReview", StringComparison.Ordinal)
+                ? "NeedsManualReview"
+                : "Completed";
+        }
+
+        if (request.AdjustedFinalScore.HasValue)
+        {
+            app.FinalScore = request.AdjustedFinalScore.Value;
+        }
+
+        app.UpdatedAt = DateTime.UtcNow;
+        await _applicationRepository.UpdateAsync(app, cancellationToken);
+
+        var aggregatedResult = await _applicationRepository.GetAggregatedResultAsync(request.ApplicationId, cancellationToken);
+        if (aggregatedResult != null)
+        {
+            if (!string.IsNullOrWhiteSpace(normalizedDecision))
+            {
+                aggregatedResult.Decision = normalizedDecision;
+            }
+
+            if (request.AdjustedFinalScore.HasValue)
+            {
+                aggregatedResult.FinalScore = request.AdjustedFinalScore.Value;
+            }
+
+            await _applicationRepository.SetAggregatedResultAsync(aggregatedResult, cancellationToken);
+        }
+
         await _applicationRepository.SetManualReviewAsync(review, cancellationToken);
         return review;
+    }
+
+    private static string? NormalizeDecision(string? decision)
+    {
+        if (string.IsNullOrWhiteSpace(decision))
+        {
+            return null;
+        }
+
+        return decision switch
+        {
+            "Eligible" => "Eligible",
+            "Excluded" => "Excluded",
+            "NeedsManualReview" => "NeedsManualReview",
+            _ => null,
+        };
     }
 }

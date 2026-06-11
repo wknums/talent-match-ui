@@ -2,6 +2,7 @@ using System.Security.Claims;
 using MediatR;
 using TalentMatch.Application.Prompts.Commands;
 using TalentMatch.Application.Prompts.Queries;
+using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Web.Server.Endpoints;
 
@@ -91,6 +92,20 @@ public static class PromptEndpoints
             return detail != null ? Results.Ok(detail) : Results.NotFound();
         });
 
+        testRunGroup.MapPost("/reconcile", async (string jobId, string promptId, ISender mediator, IPromptTestRunRepository testRunRepo) =>
+        {
+            var before = (await testRunRepo.GetByPromptIdAsync(promptId))
+                .ToDictionary(r => r.Id, r => r.Status, StringComparer.OrdinalIgnoreCase);
+
+            var runs = (await mediator.Send(new GetPromptTestRunsQuery(promptId))).ToList();
+
+            var healedCount = runs.Count(r =>
+                before.TryGetValue(r.Id, out var oldStatus)
+                && !string.Equals(oldStatus, r.Status, StringComparison.OrdinalIgnoreCase));
+
+            return Results.Ok(new ReconcilePromptTestRunsResponse(healedCount, runs));
+        });
+
         testRunGroup.MapPost("/", async (string jobId, string promptId, CreateTestRunRequest request, ISender mediator) =>
         {
             var files = request.Files.Select(f =>
@@ -139,3 +154,4 @@ public record RatePromptRequest(int Rating, string? Comments);
 public record ApproveTestRunRequest(string? ReviewNotes);
 public record CreateTestRunFileRequest(string FileName, string Content, string MimeType, long SizeBytes);
 public record CreateTestRunRequest(List<CreateTestRunFileRequest> Files);
+public record ReconcilePromptTestRunsResponse(int HealedCount, IReadOnlyList<Domain.Entities.PromptTestRun> Runs);

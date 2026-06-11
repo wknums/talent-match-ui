@@ -54,21 +54,30 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
         app.FinalScore = avgScore;
         app.Variance = variance;
 
-        var anyGateFailed = runs.Any(r =>
+        var gatePassVotes = 0;
+        var gateFailVotes = 0;
+        foreach (var run in runs)
         {
-            if (string.IsNullOrWhiteSpace(r.MustHaveEvaluationJson) || r.MustHaveEvaluationJson == "{}")
-                return false;
-            try
+            if (!TryReadGatePassed(run.MustHaveEvaluationJson, out var passed))
             {
-                using var gateDoc = JsonDocument.Parse(r.MustHaveEvaluationJson);
-                return gateDoc.RootElement.TryGetProperty("passed", out var p)
-                    && p.ValueKind == JsonValueKind.False;
+                continue;
             }
-            catch { return false; }
-        });
+
+            if (passed)
+            {
+                gatePassVotes++;
+            }
+            else
+            {
+                gateFailVotes++;
+            }
+        }
+
+        var gateFailedByAggregation = gateFailVotes > gatePassVotes;
+        var hasGateVotes = gatePassVotes + gateFailVotes > 0;
 
         string status, decision;
-        if (anyGateFailed)        { status = "Completed";          decision = "Excluded"; }
+        if (gateFailedByAggregation)        { status = "Completed";          decision = "Excluded"; }
         else if (variance > varianceThreshold) { status = "NeedsManualReview"; decision = "NeedsManualReview"; }
         else if (avgScore >= longlistThreshold){ status = "Completed";          decision = "Eligible"; }
         else                       { status = "Completed";          decision = "Excluded"; }
@@ -84,12 +93,50 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
             Variance = variance,
             Confidence = scores.Count >= runCountTarget ? 1.0 : (double)scores.Count / Math.Max(1, runCountTarget),
             Decision = decision,
-            ConsolidatedRationale = anyGateFailed
-                ? $"Excluded: eligibility gate failed. Score: {avgScore:F1} ({scores.Count} run(s), variance: {variance:F1})."
-                : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}",
+            ConsolidatedRationale = gateFailedByAggregation
+                ? $"Excluded: eligibility gate failed by aggregated votes (passed: {gatePassVotes}, failed: {gateFailVotes}). Score: {avgScore:F1} ({scores.Count} run(s), variance: {variance:F1})."
+                : hasGateVotes
+                    ? $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}. Eligibility votes: passed {gatePassVotes}, failed {gateFailVotes}."
+                    : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}",
             FinalSubScoresJson = finalSubScoresJson,
         }, ct);
 
         return new ApplicationScoringFinalizerResult(avgScore, variance, decision, status);
+    }
+
+    private static bool TryReadGatePassed(string? mustHaveEvaluationJson, out bool passed)
+    {
+        passed = false;
+        if (string.IsNullOrWhiteSpace(mustHaveEvaluationJson) || mustHaveEvaluationJson == "{}")
+        {
+            return false;
+        }
+
+        try
+        {
+            using var gateDoc = JsonDocument.Parse(mustHaveEvaluationJson);
+            if (!gateDoc.RootElement.TryGetProperty("passed", out var gatePassed))
+            {
+                return false;
+            }
+
+            if (gatePassed.ValueKind == JsonValueKind.True)
+            {
+                passed = true;
+                return true;
+            }
+
+            if (gatePassed.ValueKind == JsonValueKind.False)
+            {
+                passed = false;
+                return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
     }
 }

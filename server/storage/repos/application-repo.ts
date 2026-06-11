@@ -1,11 +1,39 @@
 import { randomUUID } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 import { getPool, isAzureSql, sql } from '../db.js'
-import { T } from '../table-names.js'
+import { SCHEMA_NAME, T } from '../table-names.js'
 import type {
   Application, ApplicationDocument, ExtractionArtifact,
   ScoringRun, AggregatedResult, ManualReviewData
 } from '../../../src/types/index.js'
+
+const applicationDocumentsColumnCache = new Map<string, boolean>()
+
+async function hasApplicationDocumentsColumn(columnName: string): Promise<boolean> {
+  if (!isAzureSql) {
+    return true
+  }
+
+  const cached = applicationDocumentsColumnCache.get(columnName)
+  if (cached !== undefined) {
+    return cached
+  }
+
+  const pool = await getPool()
+  const result = await pool.request()
+    .input('schemaName', sql.NVarChar, SCHEMA_NAME)
+    .input('tableName', sql.NVarChar, 'ApplicationDocuments')
+    .input('columnName', sql.NVarChar, columnName)
+    .query(`SELECT 1 AS ExistsFlag
+            FROM sys.columns c
+            JOIN sys.tables t ON t.object_id = c.object_id
+            JOIN sys.schemas s ON s.schema_id = t.schema_id
+            WHERE s.name = @schemaName AND t.name = @tableName AND c.name = @columnName`)
+
+  const exists = result.recordset.length > 0
+  applicationDocumentsColumnCache.set(columnName, exists)
+  return exists
+}
 
 function parseJson<T>(val: string | null | undefined, fallback: T): T {
   if (!val) return fallback
@@ -291,6 +319,30 @@ export const applicationRepo = {
   // Documents
   async createDocument(doc: ApplicationDocument): Promise<void> {
     const pool = await getPool()
+    const hasFileType = await hasApplicationDocumentsColumn('FileType')
+    const hasFileSize = await hasApplicationDocumentsColumn('FileSize')
+    const hasContentBase64 = await hasApplicationDocumentsColumn('ContentBase64')
+    const hasUploadTimestamp = await hasApplicationDocumentsColumn('UploadTimestamp')
+
+    const columns = ['Id', 'ApplicationId', 'FileName', 'MimeType', 'SizeBytes', 'Fingerprint', 'UploadedAt']
+    const values = ['@id', '@applicationId', '@fileName', '@mimeType', '@sizeBytes', '@fingerprint', '@uploadedAt']
+    if (hasFileType) {
+      columns.push('FileType')
+      values.push('@mimeType')
+    }
+    if (hasFileSize) {
+      columns.push('FileSize')
+      values.push('@sizeBytes')
+    }
+    if (hasContentBase64) {
+      columns.push('ContentBase64')
+      values.push("''")
+    }
+    if (hasUploadTimestamp) {
+      columns.push('UploadTimestamp')
+      values.push('@uploadedAt')
+    }
+
     await pool.request()
       .input('id', sql.NVarChar, doc.documentId)
       .input('applicationId', sql.NVarChar, doc.applicationId)
@@ -299,10 +351,8 @@ export const applicationRepo = {
       .input('sizeBytes', sql.BigInt, doc.sizeBytes)
       .input('fingerprint', sql.NVarChar, doc.sha256)
       .input('uploadedAt', sql.DateTime2, new Date(doc.uploadedAt))
-            .query(`INSERT INTO ${T('ApplicationDocuments')} (
-              Id, ApplicationId, FileName, FileType, MimeType, FileSize, SizeBytes, Fingerprint, ContentBase64, UploadTimestamp, UploadedAt)
-              VALUES (
-              @id, @applicationId, @fileName, @mimeType, @mimeType, @sizeBytes, @sizeBytes, @fingerprint, '', @uploadedAt, @uploadedAt)`)
+      .query(`INSERT INTO ${T('ApplicationDocuments')} (${columns.join(', ')})
+              VALUES (${values.join(', ')})`)
   },
 
   async getDocuments(applicationId: string): Promise<ApplicationDocument[]> {
@@ -346,10 +396,12 @@ export const applicationRepo = {
         .query(`INSERT INTO ${T('DocumentBlobs')} (DocumentId, Content) VALUES (@documentId, @content)`)
     }
 
-    await pool.request()
-      .input('documentId', sql.NVarChar, documentId)
-      .input('content', sql.NVarChar, content)
-      .query(`UPDATE ${T('ApplicationDocuments')} SET ContentBase64 = @content WHERE Id = @documentId`)
+    if (await hasApplicationDocumentsColumn('ContentBase64')) {
+      await pool.request()
+        .input('documentId', sql.NVarChar, documentId)
+        .input('content', sql.NVarChar, content)
+        .query(`UPDATE ${T('ApplicationDocuments')} SET ContentBase64 = @content WHERE Id = @documentId`)
+    }
   },
 
   async setDocumentBlobReference(documentId: string, blobUri: string, contentSha256: string): Promise<void> {
@@ -383,13 +435,18 @@ export const applicationRepo = {
 
   async getBlob(documentId: string): Promise<string | undefined> {
     const pool = await getPool()
+    const hasContentBase64 = await hasApplicationDocumentsColumn('ContentBase64')
 
     const documentMeta = await pool.request()
       .input('documentId', sql.NVarChar, documentId)
-      .query(`SELECT BlobUri, ContentBase64 FROM ${T('ApplicationDocuments')} WHERE Id = @documentId`)
+      .query(`SELECT BlobUri${hasContentBase64 ? ', ContentBase64' : ''}
+              FROM ${T('ApplicationDocuments')}
+              WHERE Id = @documentId`)
 
     const blobUri = documentMeta.recordset[0]?.BlobUri as string | undefined
-    const contentBase64 = documentMeta.recordset[0]?.ContentBase64 as string | undefined
+    const contentBase64 = hasContentBase64
+      ? (documentMeta.recordset[0]?.ContentBase64 as string | undefined)
+      : undefined
 
     // C1: prefer BlobUri when present so platform-created records are readable
     // in sequential code paths without duplicating bytes in DB.

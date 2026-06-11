@@ -124,6 +124,8 @@ CREATE TABLE [talentmatch].ApplicationDocuments (
     MimeType        NVARCHAR(100)   NOT NULL DEFAULT '',
     SizeBytes       BIGINT          NOT NULL DEFAULT 0,
     Fingerprint     NVARCHAR(64)    NOT NULL DEFAULT '',
+    BlobUri         NVARCHAR(1024)  NULL,
+    ContentSha256   NVARCHAR(64)    NULL,
     UploadedAt      DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME()
 );
 

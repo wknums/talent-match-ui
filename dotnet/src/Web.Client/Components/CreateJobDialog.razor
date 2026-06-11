@@ -98,6 +98,16 @@
                     }
                 </div>
             </div>
+
+            <div style="background: #eff6ff; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; border: 1px solid #bfdbfe;">
+                <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: 600; color: #1e3a8a;">
+                    <input type="checkbox" @bind="approveRubricOnSave" />
+                    Approve rubric when saving this configuration
+                </label>
+                <div style="margin-top: 0.35rem; font-size: 0.8rem; color: #1e40af;">
+                    Approved rubrics can be used directly for prompt generation and processing.
+                </div>
+            </div>
         }
         else
         {
@@ -263,6 +273,7 @@
     private List<DesiredCriterionInput> desiredCriteria = new();
     private bool _populated;
     private bool isSaving;
+    private bool approveRubricOnSave;
     private Dictionary<string, string> validationErrors = new();
 
     protected override void OnParametersSet()
@@ -294,11 +305,11 @@
             else { rubricCategories = new(); }
 
             // Deserialize must-have criteria
-            if (!string.IsNullOrEmpty(EditingConfig.MustHaveCriteriaJson))
+            if (!string.IsNullOrEmpty(EditingConfig.MustHavesJson))
             {
                 try
                 {
-                    var items = JsonSerializer.Deserialize<List<string>>(EditingConfig.MustHaveCriteriaJson);
+                    var items = JsonSerializer.Deserialize<List<string>>(EditingConfig.MustHavesJson);
                     mustHaveCriteria = items ?? new();
                 }
                 catch { mustHaveCriteria = new(); }
@@ -323,6 +334,7 @@
             organisation = EditingJob.Organisation ?? "";
             postingDate = EditingJob.PostingDate;
             jobDescription = EditingJob.JobDescription ?? "";
+            approveRubricOnSave = string.Equals(EditingConfig.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase);
 
             _populated = true;
             activeTab = Tab.Manual;
@@ -573,7 +585,16 @@
             isSaving = true;
             try
             {
-                await Api.UpdateJobConfigAsync(EditingJob!.Id, new UpdateConfigDto(rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold));
+                await Api.UpdateJobConfigAsync(EditingJob!.Id, new UpdateConfigDto(
+                    rubricJson,
+                    mustHaveJson,
+                    desiredJson,
+                    scoringRunCount,
+                    aggregationStrategy,
+                    longlistThreshold,
+                    shortlistThreshold,
+                    varianceThreshold,
+                    approveRubricOnSave ? "approved" : "draft"));
                 success = true;
                 message = "Configuration updated!";
                 await OnUpdated.InvokeAsync();
@@ -638,6 +659,7 @@
         activeTab = Tab.Upload;
         validationErrors = new();
         isSaving = false;
+        approveRubricOnSave = false;
         _sizedToViewport = false;
     }
 

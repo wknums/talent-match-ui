@@ -14,8 +14,8 @@
         <div style="display: flex; gap: 0.5rem;">
             <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Upload Applications</button>
             <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">Manage Prompts</button>
-            <button @onclick="ProcessJob" disabled="@(isProcessing || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
-                @(isProcessing ? "Processing..." : "Process Applications")
+            <button @onclick="ProcessJob" disabled="@(isProcessRequestInFlight || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
+                @(isProcessRequestInFlight ? "Starting..." : (isProcessing ? "Processing..." : "Process Applications"))
             </button>
             <button @onclick="ReAggregate" disabled="@isReAggregating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;" title="Recompute decisions from existing scoring runs (no API calls)">
                 @(isReAggregating ? "Re-aggregating..." : "🔄 Re-aggregate")
@@ -57,8 +57,8 @@
     }
 
     <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist (@longlist.Count)</button>
-        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist (@shortlist.Count)</button>
+        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F0") (@longlist.Count)</button>
+        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F0") (@shortlist.Count)</button>
         <button @onclick="@(() => activeTab = "excluded")" style="@TabStyle("excluded")">Excluded (@excluded.Count)</button>
     </div>
 
@@ -151,6 +151,7 @@ else
     private bool showUpload;
     private bool showPrompts;
     private bool isProcessing;
+    private bool isProcessRequestInFlight;
     private List<string> processingErrors = new();
     private string sortField = "none";
     private bool sortAscending;
@@ -166,8 +167,19 @@ else
     private System.Threading.Timer? _bgRefreshTimer;
     private bool _jobDisposed;
 
-    private List<ApplicationDto> longlist => allApps.Where(a => a.FinalDecision == "Eligible").ToList();
-    private List<ApplicationDto> shortlist => allApps.Where(a => a.FinalScore >= 85).ToList();
+    private double EffectiveLonglistThreshold => jobConfig?.LonglistThreshold ?? 70;
+    private double EffectiveShortlistThreshold => jobConfig?.ShortlistThreshold ?? 85;
+
+    // Longlist is inclusive by threshold, so shortlist is naturally a subset
+    // when shortlist threshold >= longlist threshold.
+    private List<ApplicationDto> longlist => allApps
+        .Where(a => a.FinalScore.HasValue && a.FinalScore.Value >= EffectiveLonglistThreshold)
+        .ToList();
+
+    private List<ApplicationDto> shortlist => allApps
+        .Where(a => a.FinalScore.HasValue && a.FinalScore.Value >= EffectiveShortlistThreshold)
+        .ToList();
+
     private List<ApplicationDto> excluded => allApps.Where(a => a.FinalDecision == "Excluded").ToList();
 
     private List<ApplicationDto> currentList => activeTab switch
@@ -206,7 +218,9 @@ else
     {
         var config = await Api.GetJobConfigAsync(JobId);
         jobConfig = config;
-        hasApprovedRubric = config?.RubricJson != null;
+        hasApprovedRubric =
+            !string.IsNullOrWhiteSpace(config?.RubricJson) &&
+            string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase);
 
         var prompts = await Api.GetPromptsAsync(JobId);
         hasProductionApprovedPrompt = prompts.Any(p => p.Status == "production-approved");
@@ -254,6 +268,9 @@ else
 
     private async Task ProcessJob()
     {
+        if (isProcessRequestInFlight) return;
+
+        isProcessRequestInFlight = true;
         isProcessing = true;
         processingErrors.Clear();
         try
@@ -266,6 +283,11 @@ else
         {
             processingErrors.Add($"Request failed: {ex.Message}");
         }
+        finally
+        {
+            isProcessRequestInFlight = false;
+        }
+
         allApps = await Api.GetApplicationsAsync(JobId);
         ApplySort();
         StartJobPolling();

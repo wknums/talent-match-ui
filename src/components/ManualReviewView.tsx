@@ -29,6 +29,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     jobId,
     rubricScores: {},
     overallComment: '',
+    finalDecision: 'NeedsManualReview',
     auditTrail: [],
     humanEdited: false,
     lastModifiedAt: new Date().toISOString(),
@@ -136,6 +137,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
           jobId,
           rubricScores,
           overallComment: prepopulated.overallComment ?? base.overallComment,
+          finalDecision: base.finalDecision ?? appData.finalDecision ?? 'NeedsManualReview',
           humanEdited: base.humanEdited === true,
         }
 
@@ -188,7 +190,16 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     }))
   }
 
-  const calculateTotalScore = () => {
+  const updateFinalDecision = (newDecision: Application['finalDecision']) => {
+    setReviewData((current) => ({
+      ...current,
+      finalDecision: newDecision,
+      lastModifiedAt: new Date().toISOString(),
+      lastModifiedBy: currentUser?.login || 'unknown',
+    }))
+  }
+
+  const calculateRubricScore = () => {
     if (!job) return 0
     let total = 0
     job.currentVersion.rubric.forEach((category) => {
@@ -198,6 +209,45 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       }
     })
     return total
+  }
+
+  const hasRubricPointsEdits = (baseline: ManualReviewData | null, current: ManualReviewData): boolean => {
+    if (!baseline) return false
+
+    const categoryIds = new Set([...Object.keys(baseline.rubricScores ?? {}), ...Object.keys(current.rubricScores ?? {})])
+    for (const categoryId of categoryIds) {
+      const previous = baseline.rubricScores?.[categoryId]
+      const next = current.rubricScores?.[categoryId]
+      const previousPoints = Number.isFinite(previous?.points) ? Number(previous?.points) : 0
+      const nextPoints = Number.isFinite(next?.points) ? Number(next?.points) : 0
+      if (previousPoints !== nextPoints) {
+        return true
+      }
+    }
+
+    return false
+  }
+
+  const getDisplayScore = (): number => {
+    const rubricScore = calculateRubricScore()
+    const pointsEdited = hasRubricPointsEdits(baselineReviewData, reviewData)
+    if (pointsEdited) {
+      return rubricScore
+    }
+
+    if (aggregatedResult?.finalScore != null) {
+      return aggregatedResult.finalScore
+    }
+
+    if (application?.finalScore != null) {
+      return application.finalScore
+    }
+
+    if (reviewData.adjustedFinalScore != null) {
+      return reviewData.adjustedFinalScore
+    }
+
+    return rubricScore
   }
 
   const hasManualReviewEdits = (baseline: ManualReviewData | null, current: ManualReviewData): boolean => {
@@ -217,6 +267,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     }
 
     return (baseline.overallComment ?? '').trim() !== (current.overallComment ?? '').trim()
+      || (baseline.finalDecision ?? 'NeedsManualReview') !== (current.finalDecision ?? 'NeedsManualReview')
   }
 
   const handleSave = async () => {
@@ -226,7 +277,13 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
     setSaving(true)
     try {
-      const finalScore = calculateTotalScore()
+      const rubricPointsEdited = hasRubricPointsEdits(baselineReviewData, reviewData)
+      const finalScore = rubricPointsEdited
+        ? calculateRubricScore()
+        : (aggregatedResult?.finalScore
+          ?? application?.finalScore
+          ?? reviewData.adjustedFinalScore
+          ?? calculateRubricScore())
       const editedThisSession = hasManualReviewEdits(baselineReviewData, reviewData)
       const nextHumanEdited = reviewData.humanEdited === true || editedThisSession
       const dataToSave: ManualReviewData = {
@@ -288,7 +345,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
     return <div className="py-12 text-center">Data not available</div>
   }
 
-  const totalScore = calculateTotalScore()
+  const totalScore = getDisplayScore()
 
   return (
     <div className="min-h-screen bg-background">
@@ -451,6 +508,19 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
 
                   <div className="pt-2">
                     <Label className="text-sm font-medium mb-2 block">
+                      Final Decision
+                    </Label>
+                    <select
+                      value={reviewData.finalDecision ?? 'NeedsManualReview'}
+                      onChange={(e) => updateFinalDecision(e.target.value as Application['finalDecision'])}
+                      className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value="Eligible">Eligible</option>
+                      <option value="Excluded">Excluded</option>
+                      <option value="NeedsManualReview">NeedsManualReview</option>
+                    </select>
+
+                    <Label className="text-sm font-medium mb-2 block">
                       Overall Review Comments
                     </Label>
                     <Textarea
@@ -581,6 +651,9 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
                       )}
                       {entry.changeType === 'score_adjustment' && (
                         <span> changed score for <strong>{entry.categoryName}</strong>: {entry.previousValue} → {entry.newValue}</span>
+                      )}
+                      {entry.changeType === 'decision_override' && (
+                        <span> changed final decision: <strong>{String(entry.previousValue)}</strong> → <strong>{String(entry.newValue)}</strong></span>
                       )}
                     </div>
                   </div>

@@ -217,7 +217,7 @@ export interface ManualReviewAuditEntry {
   reviewerId: string
   reviewerName: string
   timestamp: string
-  changeType: 'score_adjustment' | 'comment_added' | 'points_allocated'
+  changeType: 'score_adjustment' | 'comment_added' | 'points_allocated' | 'decision_override'
   categoryId?: string
   categoryName?: string
   previousValue?: number | string
@@ -238,6 +238,7 @@ export interface ManualReviewData {
   rubricScores: Record<string, ManualReviewRubricEntry>
   overallComment: string
   adjustedFinalScore?: number
+  finalDecision?: Decision
   auditTrail: ManualReviewAuditEntry[]
   humanEdited: boolean
   lastModifiedAt: string

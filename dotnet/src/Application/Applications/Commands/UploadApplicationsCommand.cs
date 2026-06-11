@@ -25,30 +25,67 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
             ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
 
         var applications = new List<Domain.Entities.Application>();
+        var createdApplicationIds = new List<string>();
 
-        foreach (var file in request.Files)
+        try
         {
-            var app = new Domain.Entities.Application
+            foreach (var file in request.Files)
             {
-                JobId = request.JobId,
-                Status = "Queued"
-            };
-            await _applicationRepository.AddAsync(app, cancellationToken);
+                var app = new Domain.Entities.Application
+                {
+                    JobId = request.JobId,
+                    Status = "Queued"
+                };
+                await _applicationRepository.AddAsync(app, cancellationToken);
+                createdApplicationIds.Add(app.Id);
 
-            var doc = new ApplicationDocument
+                try
+                {
+                    var doc = new ApplicationDocument
+                    {
+                        ApplicationId = app.Id,
+                        FileName = file.FileName,
+                        FileType = file.FileType,
+                        FileSize = file.FileSize,
+                        Fingerprint = file.Fingerprint,
+                        ContentBase64 = file.ContentBase64
+                    };
+                    await _applicationRepository.AddDocumentAsync(doc, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    await SafeDeleteApplicationAsync(app.Id, cancellationToken);
+                    createdApplicationIds.Remove(app.Id);
+                    throw new InvalidOperationException(
+                        $"Failed to persist uploaded document '{file.FileName}' for application {app.Id}. Upload was rolled back.",
+                        ex);
+                }
+
+                applications.Add(app);
+            }
+
+            return applications;
+        }
+        catch
+        {
+            foreach (var applicationId in createdApplicationIds)
             {
-                ApplicationId = app.Id,
-                FileName = file.FileName,
-                FileType = file.FileType,
-                FileSize = file.FileSize,
-                Fingerprint = file.Fingerprint,
-                ContentBase64 = file.ContentBase64
-            };
-            await _applicationRepository.AddDocumentAsync(doc, cancellationToken);
+                await SafeDeleteApplicationAsync(applicationId, cancellationToken);
+            }
 
-            applications.Add(app);
+            throw;
         }
 
-        return applications;
+        async Task SafeDeleteApplicationAsync(string applicationId, CancellationToken ct)
+        {
+            try
+            {
+                await _applicationRepository.DeleteAsync(applicationId, ct);
+            }
+            catch
+            {
+                // Best-effort cleanup: preserve the original exception path.
+            }
+        }
     }
 }

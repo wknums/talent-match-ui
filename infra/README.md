@@ -148,19 +148,8 @@ az webapp deploy \
 # 2) Publish/package Stack B artifact (artifacts/stack-b.zip)
 ./infra/scripts/package-stack-b.sh
 
-# 3) Load resource group from profile and resolve deployed app name
-set -a
-source .env_qa
-set +a
-STACK_B_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-b output -raw app_name)"
-
-# 4) Deploy packaged zip to App Service
-az webapp deploy \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$STACK_B_APP_NAME" \
-  --src-path artifacts/stack-b.zip \
-  --type zip \
-  --async true
+# 3) Deploy packaged zip to App Service (loads env + resolves app name)
+./infra/scripts/deploy-stack-b-app.sh .env_qa artifacts/stack-b.zip
 ```
 
 ### Both Stacks: Full Deploy (One Infra Pass + Both Packages + Both App Deploys)

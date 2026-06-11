@@ -178,6 +178,56 @@ public class ScoreApplicationCommandEvidenceParsingTests
         citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "5 years Java experience");
     }
 
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_StringPositiveValues_AreMarkedPassed()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateStringPositive");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeTrue();
+        var missing = root.GetProperty("missing_criteria").EnumerateArray().ToList();
+        missing.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_StringNegativeValues_AreMarkedFailed()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateStringNegative");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeFalse();
+        root.GetProperty("missing_criteria").GetArrayLength().Should().Be(1);
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_EntriesWithoutExplicitStatus_AreInferredFromEvidence()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateEntriesWithoutExplicitStatus");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeTrue();
+        root.GetProperty("missing_criteria").GetArrayLength().Should().Be(0);
+
+        var entries = root.GetProperty("details").GetProperty("entries").EnumerateArray().ToList();
+        entries.Should().NotBeEmpty();
+        entries.Should().OnlyContain(e => e.GetProperty("passed").GetBoolean());
+    }
+
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     private record CitationDto(string? Category, string? Snippet);

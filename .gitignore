@@ -27,6 +27,7 @@ dist-server
 *.sw?
 
 .env
+.env_qa_temp
 .env.*
 !.env.example
 **/agent-eval-report*
@@ -34,6 +35,7 @@ packages
 pids
 .file-manifest
 .devcontainer/
+dotnet/tests/Application.Tests/TestResults/parser-tests.trx
 
 # Private keys and certificates
 *.pem
@@ -57,9 +59,14 @@ Thumbs.db
 health-live.json
 deployment_logs.json
 curl_cookies.txt
+deplog.json
+oryxlog.json
 
 # Local build/deploy artifacts
 artifacts/
+
+# One-off local SQL probe scripts (environment-specific)
+infra/scripts/sql/SQL4_prompt_gen.sql
 
 # Misplaced nested specs copy
 specs/specs/

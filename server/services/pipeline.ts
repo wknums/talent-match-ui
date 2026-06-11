@@ -235,14 +235,17 @@ export async function finalizeApplicationFromScoringResult(
   let rationaleText: string, recommendationsText: string
   let finalSubScores: Record<string, number>
 
-  const anyGateFailed = scoringResult.runs.some(r => r.mustHaveResult && r.mustHaveResult.passed === false)
+  const gatePassVotes = scoringResult.runs.filter(r => r.mustHaveResult?.passed === true).length
+  const gateFailVotes = scoringResult.runs.filter(r => r.mustHaveResult?.passed === false).length
+  const gateFailedByAggregation = gateFailVotes > gatePassVotes
+  const hasGateVotes = gatePassVotes + gateFailVotes > 0
 
   if (scoringResult.aggregated) {
     finalScore = scoringResult.aggregated.finalScore
     variance = scoringResult.aggregated.variance
     confidence = scoringResult.aggregated.confidence
     finalSubScores = remapSubScoresToRubric(scoringResult.aggregated.subScoreAverages, config?.rubric)
-    if (anyGateFailed) finalDecision = 'Excluded'
+    if (gateFailedByAggregation) finalDecision = 'Excluded'
     else if (variance > varianceThreshold) finalDecision = 'NeedsManualReview'
     else if (scoringResult.aggregated.finalDecision === 'NeedsManualReview') finalDecision = 'NeedsManualReview'
     else if (finalScore >= longlistThreshold) finalDecision = 'Eligible'
@@ -267,13 +270,15 @@ export async function finalizeApplicationFromScoringResult(
         finalSubScores[cat.name] = catScores.reduce((a, b) => a + b, 0) / catScores.length
       }
     }
-    if (anyGateFailed) finalDecision = 'Excluded'
+    if (gateFailedByAggregation) finalDecision = 'Excluded'
     else if (variance > varianceThreshold) finalDecision = 'NeedsManualReview'
     else if (finalScore >= longlistThreshold) finalDecision = 'Eligible'
     else finalDecision = 'Excluded'
-    rationaleText = anyGateFailed
-      ? `Excluded: eligibility gate failed. ${scoringResult.runs.filter(r => r.mustHaveResult && !r.mustHaveResult.passed).flatMap(r => r.mustHaveResult.missingCriteria).join('; ')}. Score: ${finalScore.toFixed(1)} (${scoringResult.runs.length} runs).`
-      : `Aggregated ${scoringResult.runs.length} scoring runs. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}.`
+    rationaleText = gateFailedByAggregation
+      ? `Excluded: eligibility gate failed by aggregated votes (passed: ${gatePassVotes}, failed: ${gateFailVotes}). Score: ${finalScore.toFixed(1)} (${scoringResult.runs.length} runs).`
+      : hasGateVotes
+        ? `Aggregated ${scoringResult.runs.length} scoring runs. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}. Eligibility votes: passed ${gatePassVotes}, failed ${gateFailVotes}.`
+        : `Aggregated ${scoringResult.runs.length} scoring runs. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}.`
     recommendationsText = scoringResult.runs[0]?.improvementRecommendations?.join('; ') || ''
   }
 
