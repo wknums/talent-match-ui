@@ -14,8 +14,8 @@
         <div style="display: flex; gap: 0.5rem;">
             <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Upload Applications</button>
             <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">Manage Prompts</button>
-            <button @onclick="ProcessJob" disabled="@(isProcessing || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
-                @(isProcessing ? "Processing..." : "Process Applications")
+            <button @onclick="ProcessJob" disabled="@(isProcessRequestInFlight || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
+                @(isProcessRequestInFlight ? "Starting..." : (isProcessing ? "Processing..." : "Process Applications"))
             </button>
             <button @onclick="ReAggregate" disabled="@isReAggregating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;" title="Recompute decisions from existing scoring runs (no API calls)">
                 @(isReAggregating ? "Re-aggregating..." : "🔄 Re-aggregate")
@@ -57,14 +57,28 @@
     }
 
     <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist (@longlist.Count)</button>
-        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist (@shortlist.Count)</button>
+        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F0") (@longlist.Count)</button>
+        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F0") (@shortlist.Count)</button>
         <button @onclick="@(() => activeTab = "excluded")" style="@TabStyle("excluded")">Excluded (@excluded.Count)</button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+        <input
+            @bind="applicantSearch"
+            @bind:event="oninput"
+            placeholder="Search applicant name"
+            aria-label="Search by applicant name"
+            style="padding: 0.45rem 0.6rem; min-width: 300px; border: 1px solid #cbd5e0; border-radius: 6px;" />
+        @if (!string.IsNullOrWhiteSpace(applicantSearch))
+        {
+            <button @onclick="() => applicantSearch = string.Empty" style="padding: 0.4rem 0.75rem;">Clear</button>
+        }
     </div>
 
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ccc;">
+                <th style="padding: 0.5rem; text-align: left;">Applicant</th>
                 <th style="padding: 0.5rem; cursor: pointer;" @onclick="SortByScore">Score ↕</th>
                 <th style="padding: 0.5rem;">Status</th>
                 <th style="padding: 0.5rem;">Decision</th>
@@ -77,6 +91,13 @@
             @foreach (var app in currentList)
             {
                 <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 0.5rem;">
+                        <div style="font-weight: 600;">@(string.IsNullOrWhiteSpace(app.CandidateName) ? app.CandidateRef : app.CandidateName)</div>
+                        @if (!string.IsNullOrWhiteSpace(app.CandidateEmail))
+                        {
+                            <div style="font-size: 0.8rem; color: #718096;">@app.CandidateEmail</div>
+                        }
+                    </td>
                     <td style="padding: 0.5rem;">@(app.FinalScore?.ToString("F1") ?? "—")</td>
                     <td style="padding: 0.5rem;">@app.Status</td>
                     <td style="padding: 0.5rem;">@(app.FinalDecision ?? "—")</td>
@@ -151,6 +172,7 @@ else
     private bool showUpload;
     private bool showPrompts;
     private bool isProcessing;
+    private bool isProcessRequestInFlight;
     private List<string> processingErrors = new();
     private string sortField = "none";
     private bool sortAscending;
@@ -160,22 +182,54 @@ else
     private bool showDeleteDialog;
     private bool showEditDialog;
     private string? deleteError;
+    private string applicantSearch = string.Empty;
     private ScoringPromptDto? activePrompt;
     private JobConfigDto? jobConfig;
     private System.Threading.Timer? _jobPollTimer;
     private System.Threading.Timer? _bgRefreshTimer;
     private bool _jobDisposed;
 
-    private List<ApplicationDto> longlist => allApps.Where(a => a.FinalDecision == "Eligible").ToList();
-    private List<ApplicationDto> shortlist => allApps.Where(a => a.FinalScore >= 85).ToList();
+    private double EffectiveLonglistThreshold => jobConfig?.LonglistThreshold ?? 70;
+    private double EffectiveShortlistThreshold => jobConfig?.ShortlistThreshold ?? 85;
+
+    // Longlist is inclusive by threshold, so shortlist is naturally a subset
+    // when shortlist threshold >= longlist threshold.
+    private List<ApplicationDto> longlist => allApps
+        .Where(a => a.FinalScore.HasValue && a.FinalScore.Value >= EffectiveLonglistThreshold)
+        .ToList();
+
+    private List<ApplicationDto> shortlist => allApps
+        .Where(a => a.FinalScore.HasValue && a.FinalScore.Value >= EffectiveShortlistThreshold)
+        .ToList();
+
     private List<ApplicationDto> excluded => allApps.Where(a => a.FinalDecision == "Excluded").ToList();
 
-    private List<ApplicationDto> currentList => activeTab switch
+    private List<ApplicationDto> currentList
     {
-        "shortlist" => shortlist,
-        "excluded" => excluded,
-        _ => longlist
-    };
+        get
+        {
+            var source = activeTab switch
+            {
+                "shortlist" => shortlist,
+                "excluded" => excluded,
+                _ => longlist
+            };
+
+            if (string.IsNullOrWhiteSpace(applicantSearch))
+                return source;
+
+            var searchTerm = applicantSearch.Trim();
+            return allApps.Where(a => MatchesApplicantSearch(a, searchTerm)).ToList();
+        }
+    }
+
+    private static bool MatchesApplicantSearch(ApplicationDto application, string searchTerm)
+    {
+        return (!string.IsNullOrWhiteSpace(application.CandidateName)
+                && application.CandidateName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+               || (!string.IsNullOrWhiteSpace(application.CandidateRef)
+                   && application.CandidateRef.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+    }
 
     private string TabStyle(string tab) => activeTab == tab
         ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;"
@@ -206,7 +260,9 @@ else
     {
         var config = await Api.GetJobConfigAsync(JobId);
         jobConfig = config;
-        hasApprovedRubric = config?.RubricJson != null;
+        hasApprovedRubric =
+            !string.IsNullOrWhiteSpace(config?.RubricJson) &&
+            string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase);
 
         var prompts = await Api.GetPromptsAsync(JobId);
         hasProductionApprovedPrompt = prompts.Any(p => p.Status == "production-approved");
@@ -254,6 +310,9 @@ else
 
     private async Task ProcessJob()
     {
+        if (isProcessRequestInFlight) return;
+
+        isProcessRequestInFlight = true;
         isProcessing = true;
         processingErrors.Clear();
         try
@@ -266,6 +325,11 @@ else
         {
             processingErrors.Add($"Request failed: {ex.Message}");
         }
+        finally
+        {
+            isProcessRequestInFlight = false;
+        }
+
         allApps = await Api.GetApplicationsAsync(JobId);
         ApplySort();
         StartJobPolling();

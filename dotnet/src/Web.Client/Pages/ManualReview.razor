@@ -6,6 +6,17 @@
 
 <h3>Manual Review</h3>
 
+@if (application != null)
+{
+    <div style="margin-bottom: 0.75rem; font-size: 0.9rem; color: #4a5568;">
+        <strong>Applicant:</strong> @GetApplicantLabel(application)
+        @if (!string.IsNullOrWhiteSpace(application.CandidateEmail))
+        {
+            <span> · @application.CandidateEmail</span>
+        }
+    </div>
+}
+
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; height: calc(100vh - 150px);">
     <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
         <div style="padding: 0.75rem 1rem; border-bottom: 1px solid #ccc; background: #f9f9f9;">
@@ -83,6 +94,19 @@
 
             <div style="margin: 1rem 0; padding: 0.75rem; background: #f5f5f5; border-radius: 4px;">
                 <strong>Total Weighted Score: @currentWeightedScore.ToString("F1")</strong>
+            </div>
+
+            <div style="margin-bottom: 1rem;">
+                <label style="font-weight: bold; display: block; margin-bottom: 0.3rem;">Final Decision</label>
+                <select @bind="selectedDecision" style="width: 100%; padding: 0.45rem; border: 1px solid #cbd5e0; border-radius: 4px;">
+                    @foreach (var option in DecisionOptions)
+                    {
+                        <option value="@option">@option</option>
+                    }
+                </select>
+                <div style="margin-top: 0.35rem; color: #4a5568; font-size: 0.8rem;">
+                    This manual override updates the application decision immediately.
+                </div>
             </div>
 
             <div style="margin-bottom: 1rem;">
@@ -182,6 +206,7 @@
     private Dictionary<string, double> baselineCategoryScores = new(StringComparer.Ordinal);
     private Dictionary<string, string> baselineCategoryComments = new(StringComparer.Ordinal);
     private string baselineOverallComment = "";
+    private string baselineDecision = "NeedsManualReview";
     private List<RubricCategory> rubricCategories = new();
     private List<string> mustHaveCriteria = new();
     private List<AuditEntry> auditTrail = new();
@@ -193,6 +218,14 @@
     private bool hasPerCategoryMismatch;
     private bool isRetrying;
     private string? retryMessage;
+    private string selectedDecision = "NeedsManualReview";
+
+    private static readonly string[] DecisionOptions =
+    [
+        "Eligible",
+        "Excluded",
+        "NeedsManualReview"
+    ];
 
     private List<DocumentViewer.DocumentDto> MapToDocumentDtos()
     {
@@ -226,11 +259,11 @@
                     catch { }
                 }
 
-                if (!string.IsNullOrEmpty(config.MustHaveCriteriaJson))
+                if (!string.IsNullOrEmpty(config.MustHavesJson))
                 {
                     try
                     {
-                        mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHaveCriteriaJson) ?? new();
+                        mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHavesJson) ?? new();
                     }
                     catch { }
                 }
@@ -248,8 +281,10 @@
         }
         else
         {
-            review = new ManualReviewDto("{}", "", null, "[]", false);
+            review = new ManualReviewDto("{}", "", null, "[]", false, null);
         }
+
+        selectedDecision = NormalizeDecision(application?.FinalDecision);
 
         var skipAiPrepopulation = review?.HumanEdited == true;
         if (!skipAiPrepopulation && application != null && rubricCategories.Any())
@@ -529,6 +564,7 @@
         baselineCategoryScores = new Dictionary<string, double>(categoryScores, StringComparer.Ordinal);
         baselineCategoryComments = new Dictionary<string, string>(categoryComments, StringComparer.Ordinal);
         baselineOverallComment = overallComment;
+        baselineDecision = selectedDecision;
     }
 
     private List<AuditEntry> BuildUpdatedAuditTrail()
@@ -576,6 +612,16 @@
                 ToAuditValue(overallComment)));
         }
 
+        if (!string.Equals(baselineDecision, selectedDecision, StringComparison.Ordinal))
+        {
+            updatedTrail.Add(new AuditEntry(
+                reviewer,
+                timestamp,
+                "Final decision",
+                baselineDecision,
+                selectedDecision));
+        }
+
         return updatedTrail;
     }
 
@@ -609,7 +655,13 @@
         var updatedAuditTrail = BuildUpdatedAuditTrail();
         var auditTrailJson = JsonSerializer.Serialize(updatedAuditTrail);
         var hasHumanEdits = (review?.HumanEdited ?? false) || updatedAuditTrail.Count > auditTrail.Count;
-        var reviewData = new ManualReviewDto(scoresJson, overallComment, currentWeightedScore, auditTrailJson, hasHumanEdits);
+        var reviewData = new ManualReviewDto(
+            scoresJson,
+            overallComment,
+            currentWeightedScore,
+            auditTrailJson,
+            hasHumanEdits,
+            selectedDecision);
 
         var success = await Api.SaveManualReviewAsync(ApplicationId, reviewData);
         saveMessage = success ? "Review saved successfully." : "Failed to save review.";
@@ -686,5 +738,29 @@
                 .Replace("/", " ").Replace(",", " ").Replace(";", " ").Replace(":", " "),
             "\\s+",
             " ").Trim();
+    }
+
+    private static string NormalizeDecision(string? decision)
+    {
+        if (string.IsNullOrWhiteSpace(decision))
+        {
+            return "NeedsManualReview";
+        }
+
+        return DecisionOptions.Contains(decision, StringComparer.Ordinal)
+            ? decision
+            : "NeedsManualReview";
+    }
+
+    private static string GetApplicantLabel(ApplicationDto app)
+    {
+        if (!string.IsNullOrWhiteSpace(app.CandidateName))
+            return app.CandidateName!;
+
+        if (!string.IsNullOrWhiteSpace(app.CandidateRef))
+            return app.CandidateRef;
+
+        var id = app.Id ?? string.Empty;
+        return id.Length > 8 ? $"{id[..8]}..." : id;
     }
 }

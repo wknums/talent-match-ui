@@ -12,7 +12,7 @@ import { getBlobStore } from './blob-store.js'
 import { getAwrAuthHeaders } from './awr-auth.js'
 import { createAwrTimeoutSignal } from './awr-timeout.js'
 import { auditService } from './audit.js'
-import { finalizeApplicationFromScoringResult, buildScoringRunFromParsedResponse, interpretAggregatedResult } from './pipeline.js'
+import { finalizeApplicationFromScoringResult, buildScoringRunFromParsedResponse, interpretAggregatedResult, extractCandidateName } from './pipeline.js'
 import type { ScoringRun } from '../../src/types/index.js'
 
 const AWR_PLATFORM_API_ENDPOINT = process.env.AWR_PLATFORM_API_ENDPOINT || ''
@@ -288,6 +288,16 @@ export async function pollBatch(batch: ScoringBatch): Promise<PollOutcome> {
       const aggregated = cv.aggregated && typeof cv.aggregated === 'object'
         ? interpretAggregatedResult(cv.aggregated as Record<string, unknown>)
         : undefined
+
+      const extractedCandidateName = extractCandidateName(cv)
+      if (extractedCandidateName) {
+        try {
+          await applicationRepo.updateCandidateName(applicationId, extractedCandidateName)
+        } catch (candidateNameErr) {
+          console.warn(`[Platform reconciler] Failed to persist candidate name for application ${applicationId}:`, candidateNameErr)
+        }
+      }
+
       await finalizeApplicationFromScoringResult(applicationId, batch.jobId, { runs, aggregated }, batch.batchId, 'platform')
       appsCompleted++
     } catch (err) {

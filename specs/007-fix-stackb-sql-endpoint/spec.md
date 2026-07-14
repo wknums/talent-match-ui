@@ -1,9 +1,9 @@
-# Feature Specification: Fix Stack B Azure SQL Bootstrap and Wire AWR Endpoint
+# Feature Specification: Fix Stack B Azure SQL Bootstrap and Preserve Cross-Stack AWR Parity
 
 **Feature Branch**: `007-fix-stackb-sql-endpoint`
 **Created**: 2025-07-15
 **Status**: Draft
-**Input**: User description: "Fix Stack B Azure SQL Bootstrap and Wire AWR Endpoint — two runtime bugs: SQL schema bootstrap failure due to curly-brace format placeholders and missing AWR_SEQ_API_ENDPOINT environment variable in Stack B's Terraform configuration."
+**Input**: User description: "Fix Stack B Azure SQL Bootstrap and Wire AWR Endpoint — two runtime bugs: SQL schema bootstrap failure due to curly-brace format placeholders and missing AWR_SEQ_API_ENDPOINT environment variable in Stack B's Terraform configuration, with parity requirements so Stack A and Stack B remain functionally aligned."
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -24,19 +24,20 @@ As a platform operator deploying Stack B to Azure, I need the database schema bo
 
 ---
 
-### User Story 2 - AWR API Connectivity from Stack B (Priority: P1)
+### User Story 2 - AWR API Connectivity and App-Setting Parity Across Stacks (Priority: P1)
 
-As a platform operator deploying Stack B to Azure, I need the AWR sequential API endpoint to be configured as an environment variable so that Stack B can perform scoring, extraction, prompt generation, and health checks against the AWR service. Currently, the `AWR_SEQ_API_ENDPOINT` variable is only wired into Stack A's infrastructure configuration, so Stack B has no connectivity to the AWR API and those features silently fail or show "skipped" status.
+As a platform operator deploying both stacks to Azure, I need the AWR sequential API endpoint configuration behavior to be equivalent across Stack A and Stack B so that scoring, extraction, prompt generation, and health checks behave consistently. Currently, the `AWR_SEQ_API_ENDPOINT` variable is only wired into Stack A's infrastructure configuration, so Stack B has no connectivity to the AWR API and those features silently fail or show "skipped" status.
 
 **Why this priority**: Stack B's scoring and extraction features (core application functionality) depend on the AWR API. Without this endpoint wired in, those features are entirely non-functional in production. This is co-P1 with the schema fix because both are deploy-time blockers.
 
-**Independent Test**: Run `terraform plan` for Stack B's live root and verify the AWR endpoint variable appears in the planned app settings; after apply, verify the Stack B health endpoint reports `awrApi` connectivity.
+**Independent Test**: Run `terraform plan` for both live roots and verify the AWR endpoint app-setting inclusion behavior is equivalent; after apply, verify Stack B reports `awrApi` connectivity and Stack A remains behaviorally unchanged.
 
 **Acceptance Scenarios**:
 
 1. **Given** Stack B's infrastructure is deployed with the `AWR_SEQ_API_ENDPOINT` value provided, **When** the application runs its health check, **Then** the health endpoint reports AWR API connectivity status (not "skipped").
 2. **Given** the deployment script already exports `TF_VAR_awr_seq_api_endpoint` from the environment, **When** `terraform plan` is run for Stack B, **Then** the plan shows `AWR_SEQ_API_ENDPOINT` being added to the app settings.
 3. **Given** the `AWR_SEQ_API_ENDPOINT` variable is empty or not provided, **When** Stack B is deployed, **Then** no extra app setting is added for this variable (matching Stack A's conditional behavior).
+4. **Given** the same input value for `AWR_SEQ_API_ENDPOINT`, **When** `terraform plan` is run for both Stack A and Stack B live roots, **Then** both plans include or omit the `AWR_SEQ_API_ENDPOINT` app setting under the same non-empty/empty conditions.
 
 ---
 
@@ -55,12 +56,29 @@ As a platform operator, after applying both fixes, I need to rebuild and redeplo
 
 ---
 
+### User Story 4 - Cross-Stack Functional Consistency (Priority: P2)
+
+As a platform operator, I need both stacks to expose the same AWR endpoint and health-status semantics so runbook actions and diagnostics are consistent regardless of which stack is active.
+
+**Why this priority**: The core defects are in Stack B, but unresolved stack-to-stack behavior differences create operational ambiguity and incident-response risk.
+
+**Independent Test**: Validate both stacks under three endpoint states (configured and reachable, configured but unreachable, missing) and confirm equivalent health semantics for `awrApi`.
+
+**Acceptance Scenarios**:
+
+1. **Given** both stacks are configured with the same reachable endpoint, **When** health checks run, **Then** both report healthy `awrApi` connectivity.
+2. **Given** both stacks are configured with the same unreachable endpoint, **When** health checks run, **Then** both report an unreachable/error state for `awrApi`.
+3. **Given** both stacks have no configured endpoint, **When** health checks run, **Then** both report the same "skipped/not-configured" behavior for `awrApi`.
+
+---
+
 ### Edge Cases
 
 - What happens when the database connection is temporarily unavailable during schema bootstrap? The existing retry mechanism (background task with `ExecuteWithSqlWarmupRetryAsync`) should handle transient connection failures.
 - What happens when only some tables were created in a prior failed bootstrap attempt? The `IF NOT EXISTS` guards in the schema SQL ensure idempotent re-runs — already-existing tables are skipped, and missing tables are created.
-- What happens when the schema SQL file contains unexpected encoding (e.g., BOM characters)? The existing file-read mechanism should handle standard UTF-8 encoding; non-standard encodings would surface as SQL syntax errors in the application logs.
+- What happens when the schema SQL file contains unexpected encoding (e.g., BOM characters)? Standard UTF-8 handling remains expected for normal operation, while non-UTF8 encoding validation is out of scope for this feature and tracked as a separate hardening item.
 - What happens when `AWR_SEQ_API_ENDPOINT` is set to a malformed URL? Stack B should still start, but health checks should report the AWR API as unreachable, surfacing the misconfiguration.
+- What happens when Stack A and Stack B are deployed from different Terraform revisions? Cross-stack parity checks must detect app-setting or health-semantics drift before release.
 
 ## Requirements *(mandatory)*
 
@@ -68,6 +86,7 @@ As a platform operator, after applying both fixes, I need to rebuild and redeplo
 
 - **FR-001**: The schema bootstrap MUST execute all SQL batches from the schema file without throwing format-related exceptions, regardless of special characters present in the SQL (curly braces, percent signs, etc.).
 - **FR-002**: The schema bootstrap MUST use a SQL execution mechanism that treats the entire SQL batch as a literal command with no parameter placeholder interpretation.
+- **FR-002A**: Direct ADO.NET command execution in this feature is permitted only for startup schema-bootstrap DDL execution and is documented as a Clean Architecture exception under Principle IX due to performance-critical startup behavior and deterministic literal SQL execution requirements. It MUST NOT be used for routine repository CRUD paths.
 - **FR-003**: The schema bootstrap MUST preserve the existing connection-management approach (obtaining the connection from the same database context used elsewhere).
 - **FR-004**: The schema bootstrap MUST NOT alter the background task execution structure (the `Task.Run` wrapper and retry logic must remain unchanged).
 - **FR-005**: The schema SQL file content MUST NOT be modified as part of this fix.
@@ -76,6 +95,16 @@ As a platform operator, after applying both fixes, I need to rebuild and redeplo
 - **FR-008**: Stack B's infrastructure variable definition MUST mirror Stack A's definition for `awr_seq_api_endpoint` (same type, default, and description pattern).
 - **FR-009**: No changes MUST be made to the `.env_qa` file or the common deployment script (`common.sh`), as they already have the correct configuration.
 - **FR-010**: The Stack B infrastructure module MUST already accept the `extra_app_settings` variable — this is a pre-existing capability that must be verified, not created.
+- **FR-011**: Cross-stack app-setting semantics for `AWR_SEQ_API_ENDPOINT` MUST be equivalent: for the same provided input value, Stack A and Stack B MUST both include the setting; for empty input, both MUST omit it.
+- **FR-012**: Stack A runtime behavior for AWR-dependent features MUST remain unchanged by this feature; parity changes in this feature are limited to bringing Stack B up to Stack A's established behavior.
+- **FR-013**: Both stacks MUST expose equivalent `awrApi` health semantics for the configured/reachable, configured/unreachable, and not-configured cases.
+
+### Non-Functional Requirements
+
+- **NFR-001 (Reliability)**: Schema bootstrap behavior MUST remain idempotent and retry-safe; no changes may reduce resilience to transient Azure SQL connectivity failures.
+- **NFR-002 (Observability)**: Startup logs MUST provide actionable diagnostics for schema bootstrap failures, including missing schema file and SQL execution errors.
+- **NFR-003 (Regression Isolation)**: The fix MUST remain scoped to Stack B runtime bootstrap and Stack B live Terraform root only, with no behavioral regressions in Stack A or unrelated Terraform roots.
+- **NFR-004 (Cross-Stack Operability)**: Post-fix operational runbooks and health diagnostics for AWR connectivity MUST produce consistent interpretations across Stack A and Stack B.
 
 ### Assumptions
 
@@ -84,19 +113,25 @@ As a platform operator, after applying both fixes, I need to rebuild and redeplo
 - The `common.sh` deployment script already exports `TF_VAR_awr_seq_api_endpoint` from the `AWR_SEQ_API_ENDPOINT` environment variable (verified: line 132).
 - The background task structure (lines 62-81 of Program.cs) is working correctly and must not be modified.
 - The existing regex-based SQL batch splitting logic (splitting on `IF NOT EXISTS` and `CREATE INDEX` boundaries) correctly segments the schema file and does not need changes.
+- Stack A remains the current baseline implementation for conditional `AWR_SEQ_API_ENDPOINT` app-setting behavior and expected `awrApi` health semantics.
 
 ### Constraints
 
 - The schema bootstrap fix is scoped to the SQL execution method only — no changes to batch-splitting logic, retry behavior, or the `EnsureSharedAzureSqlSchemaIfNeeded` method signature.
 - The Terraform changes are scoped to the Stack B live root only — no changes to shared modules, Stack A configuration, or shared infrastructure roots.
+- Cross-stack parity validation is required before release, but code/config edits remain scoped to Stack B runtime and Stack B live Terraform root.
 - The `.env_qa` file must not be modified.
+- Schema-file non-UTF8 encoding validation is out of scope for this feature and tracked as a separate hardening item.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: 100% of tables defined in the schema file are present in the Azure SQL database after a fresh Stack B deployment (currently approximately 60% are created before the failure).
+- **SC-001**: 100% of tables defined in the schema file are present in the Azure SQL database after a fresh Stack B deployment. For this feature baseline, the expected table count is **17** (`CREATE TABLE` statements in `server/storage/schema.sql` at time of fix), and verification MUST include both (a) SQL table-count query and (b) schema-derived `CREATE TABLE` count check from source.
 - **SC-002**: The schema bootstrap completes without any format-related exceptions in the application logs during startup.
 - **SC-003**: The Stack B health endpoint reports AWR API connectivity status instead of "skipped" after deployment with the endpoint configured.
 - **SC-004**: `terraform plan` for Stack B shows the `AWR_SEQ_API_ENDPOINT` app setting when the variable value is provided, and shows no change when the variable is empty.
 - **SC-005**: Existing functionality (Stack A deployments, schema bootstrap on non-Azure environments, other Terraform stacks) remains completely unaffected by these changes.
+- **SC-006**: With one induced transient Azure SQL connectivity interruption during startup, bootstrap recovers within the existing retry flow and completes schema initialization to the SC-001 baseline without manual intervention.
+- **SC-007**: For identical `AWR_SEQ_API_ENDPOINT` input values, Terraform plan output for Stack A and Stack B shows identical include/omit behavior for the `AWR_SEQ_API_ENDPOINT` app setting in 100% of validation runs.
+- **SC-008**: In reachability validation, Stack A and Stack B return matching `awrApi` health-status semantics for all three states (reachable, unreachable, not configured) in 100% of validation runs.

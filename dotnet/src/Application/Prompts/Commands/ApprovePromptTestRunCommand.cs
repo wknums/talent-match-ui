@@ -38,8 +38,30 @@ public class ApprovePromptTestRunCommandHandler : IRequestHandler<ApprovePromptT
         foreach (var appId in applicationIds)
         {
             var app = await _applicationRepo.GetByIdAsync(appId, ct);
-            if (app == null || app.Status == "Queued" || app.Status == "Extracting" || app.Status == "Scoring" || app.Status == "Aggregating")
-                throw new InvalidOperationException($"Not all test applications have been reviewed. Application '{appId}' has status '{app?.Status ?? "not found"}'");
+            if (app == null)
+                throw new InvalidOperationException($"Not all test applications have been reviewed. Application '{appId}' has status 'not found'");
+
+            if (IsStatus(app.Status, "Queued")
+                || IsStatus(app.Status, "Extracting")
+                || IsStatus(app.Status, "Aggregating")
+                || IsStatus(app.Status, "Scoring"))
+            {
+                var hasTerminalEvidence = app.FinalScore.HasValue
+                    || !string.IsNullOrWhiteSpace(app.FinalDecision);
+
+                if (!hasTerminalEvidence)
+                {
+                    var runs = await _applicationRepo.GetScoringRunsAsync(appId, ct);
+                    hasTerminalEvidence = runs.Count > 0;
+                }
+
+                if (!hasTerminalEvidence)
+                    throw new InvalidOperationException($"Not all test applications have been reviewed. Application '{appId}' has status '{app.Status}'");
+
+                // Heal stale app status so future approvals do not fail on legacy scoring rows.
+                app.Status = "Completed";
+                await _applicationRepo.UpdateAsync(app, ct);
+            }
         }
 
         testRun.Status = "approved";
@@ -65,4 +87,7 @@ public class ApprovePromptTestRunCommandHandler : IRequestHandler<ApprovePromptT
 
         return testRun;
     }
+
+    private static bool IsStatus(string? currentStatus, string expectedStatus)
+        => string.Equals(currentStatus, expectedStatus, StringComparison.OrdinalIgnoreCase);
 }

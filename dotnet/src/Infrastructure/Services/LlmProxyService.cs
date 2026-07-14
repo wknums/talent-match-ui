@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
 
@@ -41,7 +42,7 @@ public class LlmProxyService : ILlmProxyService
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError("Passthrough API error: {Status} {Error}", (int)response.StatusCode, errorText);
-            throw new InvalidOperationException($"LLM passthrough request failed ({(int)response.StatusCode}): {errorText}");
+            throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "LLM passthrough request", errorText));
         }
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -69,7 +70,7 @@ public class LlmProxyService : ILlmProxyService
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError("Scoring passthrough API error: {Status} {Error}", (int)response.StatusCode, errorText);
-            throw new InvalidOperationException($"Scoring passthrough request failed ({(int)response.StatusCode}): {errorText}");
+            throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "Scoring passthrough request", errorText));
         }
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -162,7 +163,7 @@ public class LlmProxyService : ILlmProxyService
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError("Scoring passthrough API error on run {RunNumber}: {Status} {Error}", runNumber, (int)response.StatusCode, errorText);
-            throw new InvalidOperationException($"Scoring passthrough request failed ({(int)response.StatusCode}): {errorText}");
+            throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "Scoring passthrough request", errorText));
         }
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
@@ -204,9 +205,69 @@ public class LlmProxyService : ILlmProxyService
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
             _logger.LogError("Extraction passthrough API error: {Status} {Error}", (int)response.StatusCode, errorText);
-            throw new InvalidOperationException($"Extraction passthrough request failed ({(int)response.StatusCode}): {errorText}");
+            throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "Extraction passthrough request", errorText));
         }
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
+    }
+
+    private static string BuildPassthroughFailureMessage(int statusCode, string operation, string errorText)
+    {
+        // Surface a concise, actionable diagnostic for the most common Azure OpenAI misconfiguration.
+        if (errorText.Contains("DeploymentNotFound", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{operation} failed ({statusCode}): Azure OpenAI deployment not found in AWReason service (DeploymentNotFound). Verify awreason-http-service deployment env vars (AOAI_DEPLOYMENT/AZURE_OPENAI_DEPLOYMENT) and API version.";
+        }
+
+        if (TryReadProblemDetails(errorText, out var title, out var detail))
+        {
+            var condensed = string.IsNullOrWhiteSpace(detail) ? title : $"{title}: {detail}";
+            return $"{operation} failed ({statusCode}): {Truncate(condensed, 600)}";
+        }
+
+        return $"{operation} failed ({statusCode}): {Truncate(errorText, 600)}";
+    }
+
+    private static bool TryReadProblemDetails(string json, out string title, out string detail)
+    {
+        title = string.Empty;
+        detail = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("title", out var titleProp) && titleProp.ValueKind == JsonValueKind.String)
+            {
+                title = titleProp.GetString() ?? string.Empty;
+            }
+
+            if (root.TryGetProperty("detail", out var detailProp) && detailProp.ValueKind == JsonValueKind.String)
+            {
+                detail = detailProp.GetString() ?? string.Empty;
+            }
+
+            return !string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(detail);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string Truncate(string value, int maxChars)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxChars)
+        {
+            return value;
+        }
+
+        return value[..maxChars] + "...";
     }
 }

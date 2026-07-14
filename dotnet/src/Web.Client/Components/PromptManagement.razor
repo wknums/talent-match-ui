@@ -21,6 +21,13 @@
             </button>
         </div>
 
+        @if (!string.IsNullOrWhiteSpace(generationError))
+        {
+            <div style="padding: 0.75rem; margin-bottom: 1rem; background: #fff5f5; border: 1px solid #fed7d7; border-radius: 4px; color: #9b2c2c;">
+                ⚠️ @generationError
+            </div>
+        }
+
         <!-- Editor (shown when creating/editing) -->
         @if (showEditor)
         {
@@ -112,6 +119,7 @@
     private string? editingPromptId;
     private bool isSaving;
     private bool isGenerating;
+    private string? generationError;
     private ScoringPromptDto? ratingPrompt;
     private int ratingValue;
     private string ratingComments = "";
@@ -128,6 +136,7 @@
 
     private void StartManualCreate()
     {
+        generationError = null;
         editorText = "";
         editorSource = "manual";
         editingPromptId = null;
@@ -136,6 +145,7 @@
 
     private void StartFileImport()
     {
+        generationError = null;
         editorText = "// Paste imported prompt content here";
         editorSource = "imported";
         editingPromptId = null;
@@ -144,6 +154,7 @@
 
     private async Task GenerateFromRubric()
     {
+        generationError = null;
         isGenerating = true;
         StateHasChanged();
         try
@@ -153,9 +164,23 @@
             {
                 editorText = result.PromptText;
                 editorSource = "generated";
-                editingPromptId = null;
+                await LoadPrompts();
+                var generatedPrompt = prompts.OrderByDescending(p => p.VersionNumber).FirstOrDefault();
+                editingPromptId = generatedPrompt?.Id;
                 showEditor = true;
             }
+            else
+            {
+                generationError = "Prompt generation did not return any content.";
+            }
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            generationError = $"Failed to generate prompt: {ex.Message}";
         }
         finally
         {
@@ -189,6 +214,7 @@
 
     private void EditPrompt(ScoringPromptDto prompt)
     {
+        generationError = null;
         editorText = prompt.PromptText;
         editorSource = prompt.Source;
         editingPromptId = prompt.Id;

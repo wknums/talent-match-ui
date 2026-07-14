@@ -571,6 +571,7 @@ const mockAPI = {
     minScore?: number
     maxScore?: number
     decision?: string
+    applicantName?: string
   }): Promise<Application[]> {
     await delay(500)
     let apps = generateMockApplications(jobId, 50)
@@ -580,6 +581,12 @@ const mockAPI = {
     }
     if (filters?.decision) {
       apps = apps.filter(a => a.finalDecision === filters.decision)
+    }
+    if (filters?.applicantName) {
+      const query = filters.applicantName.trim().toLocaleLowerCase()
+      if (query.length > 0) {
+        apps = apps.filter(a => (a.candidateName || '').toLocaleLowerCase().includes(query))
+      }
     }
     if (filters?.minScore !== undefined) {
       const minScore = filters.minScore

@@ -315,6 +315,7 @@ public class PlatformScoringService : IPlatformScoringService
                 }
                 try
                 {
+                    var extractedCandidateName = ExtractCandidateName(cv);
                     var runs = new List<ScoringRun>();
                     if (cv.TryGetProperty("runs", out var runsEl) && runsEl.ValueKind == JsonValueKind.Array)
                     {
@@ -322,13 +323,29 @@ public class PlatformScoringService : IPlatformScoringService
                         foreach (var r in runsEl.EnumerateArray())
                         {
                             idx++;
+                            extractedCandidateName ??= ExtractCandidateName(r);
+                            var parsedRunJson = r.GetRawText();
                             var run = ScoreApplicationCommandHandler.ParseSingleRunStatic(r, applicationId, prompt?.Id ?? batch.PromptVersionId, idx);
+                            run.RawResponseText = parsedRunJson;
+                            run.RawParsedResponseJson = parsedRunJson;
                             ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubric);
                             await appRepo.AddScoringRunAsync(run, ct);
                             runs.Add(run);
                         }
                     }
                     await finalizer.FinalizeAsync(applicationId, batch.JobId, runs, batch.RunCount, variance, longlist, ct);
+
+                    if (!string.IsNullOrWhiteSpace(extractedCandidateName))
+                    {
+                        var app = await appRepo.GetByIdAsync(applicationId, ct);
+                        if (app != null
+                            && !string.Equals(app.CandidateName?.Trim(), extractedCandidateName, StringComparison.Ordinal))
+                        {
+                            app.CandidateName = extractedCandidateName;
+                            await appRepo.UpdateAsync(app, ct);
+                        }
+                    }
+
                     completed++;
                 }
                 catch (Exception ex)
@@ -374,5 +391,72 @@ public class PlatformScoringService : IPlatformScoringService
     {
         try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
         catch { return new(); }
+    }
+
+    private static string? ExtractCandidateName(JsonElement node)
+    {
+        if (node.ValueKind == JsonValueKind.Null || node.ValueKind == JsonValueKind.Undefined)
+            return null;
+
+        if (node.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in new[] { "candidate_name", "candidateName", "candidate_full_name", "candidateFullName", "full_name", "fullName" })
+            {
+                if (node.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String)
+                {
+                    var normalized = NormalizeCandidateName(value.GetString());
+                    if (!string.IsNullOrWhiteSpace(normalized))
+                        return normalized;
+                }
+            }
+
+            foreach (var containerKey in new[] { "candidate", "candidate_info", "candidateInfo", "applicant", "person", "profile" })
+            {
+                if (!node.TryGetProperty(containerKey, out var container) || container.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                foreach (var nestedKey in new[] { "name", "full_name", "fullName", "candidate_name", "candidateName" })
+                {
+                    if (container.TryGetProperty(nestedKey, out var nestedValue) && nestedValue.ValueKind == JsonValueKind.String)
+                    {
+                        var normalized = NormalizeCandidateName(nestedValue.GetString());
+                        if (!string.IsNullOrWhiteSpace(normalized))
+                            return normalized;
+                    }
+                }
+            }
+
+            foreach (var prop in node.EnumerateObject())
+            {
+                var nested = ExtractCandidateName(prop.Value);
+                if (!string.IsNullOrWhiteSpace(nested))
+                    return nested;
+            }
+        }
+        else if (node.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in node.EnumerateArray())
+            {
+                var nested = ExtractCandidateName(item);
+                if (!string.IsNullOrWhiteSpace(nested))
+                    return nested;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeCandidateName(string? rawName)
+    {
+        if (string.IsNullOrWhiteSpace(rawName)) return null;
+
+        var collapsed = string.Join(' ', rawName.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)).Trim();
+        if (string.IsNullOrWhiteSpace(collapsed)) return null;
+
+        var lower = collapsed.ToLowerInvariant();
+        if (lower is "unknown" or "n/a" or "na" or "none" or "null" or "undefined" or "not provided" or "not available" or "candidate")
+            return null;
+
+        return collapsed;
     }
 }

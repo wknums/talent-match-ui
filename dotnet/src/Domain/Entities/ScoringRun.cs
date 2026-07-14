@@ -16,6 +16,10 @@ public class ScoringRun
     public string PromptVersion { get; set; } = string.Empty;
     public int InputTokens { get; set; }
     public int OutputTokens { get; set; }
+    public string? RawResponseText { get; set; }
+    public string? RawParsedResponseJson { get; set; }
+    public string? ParserWarningsJson { get; set; }
+    public double? ParserConfidence { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
     [JsonIgnore]

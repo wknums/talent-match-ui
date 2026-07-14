@@ -343,6 +343,122 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+const CANDIDATE_NAME_KEYS = new Set([
+  'candidate_name',
+  'candidateName',
+  'candidate_full_name',
+  'candidateFullName',
+  'applicant_name',
+  'applicantName',
+])
+
+const CANDIDATE_CONTAINER_KEYS = new Set([
+  'candidate',
+  'candidate_info',
+  'candidateInfo',
+  'applicant',
+  'person',
+  'profile',
+])
+
+function normalizeCandidateName(rawName: string | null | undefined): string | null {
+  if (!rawName) return null
+  const collapsed = rawName.replace(/\s+/g, ' ').trim()
+  if (!collapsed) return null
+
+  const lower = collapsed.toLowerCase()
+  if (
+    lower === 'unknown'
+    || lower === 'n/a'
+    || lower === 'na'
+    || lower === 'none'
+    || lower === 'null'
+    || lower === 'undefined'
+    || lower === 'not provided'
+    || lower === 'not available'
+    || lower === 'candidate'
+  ) {
+    return null
+  }
+
+  return collapsed
+}
+
+function getNameFromCandidateContainer(candidateRecord: Record<string, unknown>): string | null {
+  for (const key of ['name', 'full_name', 'fullName', 'candidate_name', 'candidateName']) {
+    const value = candidateRecord[key]
+    if (typeof value === 'string') {
+      const normalized = normalizeCandidateName(value)
+      if (normalized) return normalized
+    }
+  }
+
+  const firstName = typeof candidateRecord.first_name === 'string'
+    ? candidateRecord.first_name
+    : typeof candidateRecord.firstName === 'string'
+      ? candidateRecord.firstName
+      : typeof candidateRecord.given_name === 'string'
+        ? candidateRecord.given_name
+        : typeof candidateRecord.givenName === 'string'
+          ? candidateRecord.givenName
+          : ''
+
+  const lastName = typeof candidateRecord.last_name === 'string'
+    ? candidateRecord.last_name
+    : typeof candidateRecord.lastName === 'string'
+      ? candidateRecord.lastName
+      : typeof candidateRecord.family_name === 'string'
+        ? candidateRecord.family_name
+        : typeof candidateRecord.familyName === 'string'
+          ? candidateRecord.familyName
+          : typeof candidateRecord.surname === 'string'
+            ? candidateRecord.surname
+            : ''
+
+  const combined = `${firstName} ${lastName}`.trim()
+  return normalizeCandidateName(combined)
+}
+
+function extractCandidateNameFromNode(node: unknown, parentKey = ''): string | null {
+  if (!isRecord(node)) return null
+
+  for (const [key, value] of Object.entries(node)) {
+    if (CANDIDATE_NAME_KEYS.has(key) && typeof value === 'string') {
+      const normalized = normalizeCandidateName(value)
+      if (normalized) return normalized
+    }
+  }
+
+  if (CANDIDATE_CONTAINER_KEYS.has(parentKey)) {
+    const nestedName = getNameFromCandidateContainer(node)
+    if (nestedName) return nestedName
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (CANDIDATE_CONTAINER_KEYS.has(key) && isRecord(value)) {
+      const nestedName = getNameFromCandidateContainer(value)
+      if (nestedName) return nestedName
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const nested = extractCandidateNameFromNode(item, key)
+        if (nested) return nested
+      }
+      continue
+    }
+
+    const nested = extractCandidateNameFromNode(value, key)
+    if (nested) return nested
+  }
+
+  return null
+}
+
+export function extractCandidateName(node: unknown): string | null {
+  return extractCandidateNameFromNode(node)
+}
+
 function collectSignals(
   node: unknown,
   path: string,
@@ -831,6 +947,16 @@ export async function runScoring(
       const hasAggregated = isRecord(parsed) && isRecord(parsed.aggregated)
       const topKeys = isRecord(parsed) ? Object.keys(parsed).slice(0, 10).join(', ') : typeof parsed
       console.log(`[Scoring] Response structure: hasRuns=${hasRuns}, hasAggregated=${hasAggregated}, topKeys=[${topKeys}]`)
+
+      const extractedCandidateName = extractCandidateName(parsed)
+      if (extractedCandidateName) {
+        try {
+          await applicationRepo.updateCandidateName(applicationId, extractedCandidateName)
+        } catch (candidateNameErr) {
+          console.warn(`[Scoring] Failed to persist candidate name for application ${applicationId}:`, candidateNameErr)
+        }
+      }
+
       if (hasRuns && hasAggregated) {
         const combined = parsed as CombinedEngineResponse
         const runs: ScoringRun[] = []

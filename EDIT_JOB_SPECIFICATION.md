@@ -130,7 +130,7 @@ async updateJob(jobId: string, data: {
 group.MapPut("/{jobId}/config", async (string jobId, UpdateJobConfigRequest request, ISender mediator) =>
 {
     var config = await mediator.Send(new UpdateJobConfigCommand(
-        jobId, request.RubricJson, request.MustHaveCriteriaJson, request.DesiredCriteriaJson,
+        jobId, request.RubricJson, request.MustHavesJson, request.DesiredCriteriaJson,
         request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
         request.ShortlistThreshold, request.VarianceThreshold));
     return Results.Ok(config);
@@ -140,7 +140,7 @@ group.MapPut("/{jobId}/config", async (string jobId, UpdateJobConfigRequest requ
 **UpdateJobConfigRequest (Lines 211-214):**
 ```csharp
 public record UpdateJobConfigRequest(
-    string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson,
+    string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,
     int ScoringRunCount, string AggregationStrategy, double LonglistThreshold,
     double ShortlistThreshold, double VarianceThreshold);
 ```
@@ -170,7 +170,7 @@ public async Task<JobConfigVersion> Handle(UpdateJobConfigCommand request, Cance
         JobId = request.JobId,
         VersionNumber = nextVersion,
         RubricJson = request.RubricJson ?? "[]",
-        MustHaveCriteriaJson = request.MustHaveCriteriaJson ?? "[]",
+        MustHavesJson = request.MustHavesJson ?? "[]",
         DesiredCriteriaJson = request.DesiredCriteriaJson ?? "[]",
         ScoringRunCount = request.ScoringRunCount,
         AggregationStrategy = request.AggregationStrategy,
@@ -203,7 +203,7 @@ public async Task<bool> UpdateJobConfigAsync(string jobId, UpdateConfigDto confi
 **UpdateConfigDto (Line 291):**
 ```csharp
 public record UpdateConfigDto(
-    string? RubricJson, string? MustHaveCriteriaJson, string? DesiredCriteriaJson,
+    string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,
     int ScoringRunCount, string AggregationStrategy, double LonglistThreshold,
     double ShortlistThreshold, double VarianceThreshold);
 ```
@@ -218,7 +218,7 @@ public record UpdateConfigDto(
 **JobConfigVersion Entity:** dotnet/src/Domain/Entities/JobConfigVersion.cs
 - Id, JobId, VersionNumber
 - RubricJson (JSON array)
-- MustHaveCriteriaJson (JSON array)
+- MustHavesJson (JSON array)
 - DesiredCriteriaJson (JSON array)
 - ScoringRunCount (default 3)
 - AggregationStrategy (median, mean, weighted)
@@ -262,7 +262,7 @@ return Results.Ok(new {
 });
 ```
 
-Lacks RubricJson, MustHaveCriteriaJson, DesiredCriteriaJson!
+Lacks RubricJson, MustHavesJson, DesiredCriteriaJson!
 
 ---
 
@@ -396,7 +396,7 @@ public async Task<JobConfigDto?> GetJobConfigAsync(string jobId)
 - postingDate (date) - from job.PostingDate
 - jobDescription (textarea) - from job.JobDescription
 - rubricCategories (array) - parse from config.RubricJson
-- mustHaves (array) - parse from config.MustHaveCriteriaJson
+- mustHaves (array) - parse from config.MustHavesJson
 - desiredCriteria (array) - parse from config.DesiredCriteriaJson
 - scoringRunCount (number) - from config.ScoringRunCount
 - aggregationStrategy (select) - from config.AggregationStrategy
@@ -406,7 +406,7 @@ public async Task<JobConfigDto?> GetJobConfigAsync(string jobId)
 
 **Fields to Send in UpdateConfigDto:**
 - RubricJson (JSON.stringify)
-- MustHaveCriteriaJson (JSON.stringify)
+- MustHavesJson (JSON.stringify)
 - DesiredCriteriaJson (JSON.stringify)
 - ScoringRunCount
 - AggregationStrategy

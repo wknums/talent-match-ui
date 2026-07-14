@@ -276,6 +276,7 @@ The prompt should:
 5. Provide evidence citations from the candidate's documents
 6. Include improvement recommendations
 7. Include all eligibility gate details regardless if they are met or not.
+8. Extract the candidate's full name from the application documents and include it as candidate_name.
 Return ONLY the scoring prompt text, ready for use.
  At the end of the prompt, include the instruction to return all the output as valid json.`
 
@@ -317,6 +318,8 @@ Return ONLY the scoring prompt text, ready for use.
         promptText = generateFallbackPrompt(rubricContext)
         generationMetadata = { source: 'fallback', reason: 'AWR_SEQ_API_ENDPOINT not configured', timestamp: new Date().toISOString() }
       }
+
+      promptText = ensureCandidateNamePromptContract(promptText)
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
@@ -684,17 +687,35 @@ ${desired || 'None specified'}
 1. Score each category from 0-100 based on evidence from the candidate's documents
 2. For each must-have criterion, determine PASS or FAIL with justification
 3. Note any desired qualifications that are met
-4. Provide specific evidence citations from the documents
-5. Calculate a weighted overall score
-6. Provide improvement recommendations
+4. Extract the candidate's full name from the documents and set candidate_name when identifiable
+5. Provide specific evidence citations from the documents
+6. Calculate a weighted overall score
+7. Provide improvement recommendations
 
 Respond in JSON format with the following structure:
 {
+  "candidate_name": "",
   "overallScore": <0-100>,
   "subScores": { "<category>": <0-100> },
   "mustHaveResult": { "passed": <bool>, "details": { "<criterion>": <bool> }, "missingCriteria": [...] },
   "evidenceCitations": [{ "category": "...", "snippet": "...", "section": "...", "confidence": <0-1> }],
   "rationale": "...",
   "improvementRecommendations": [...]
-}`
+}
+Set candidate_name to null only if a full name cannot be identified in the source documents.`
+}
+
+function ensureCandidateNamePromptContract(promptText: string): string {
+  const contract = `
+
+## Additional Required Output Contract
+- Extract the candidate's full name from the application documents and include it as candidate_name.
+- Return valid JSON that contains a top-level candidate_name field.
+- Set candidate_name to null only if a full name cannot be identified in the source documents.`
+
+  if (promptText.includes('candidate_name')) {
+    return promptText
+  }
+
+  return `${promptText.trim()}${contract}`
 }

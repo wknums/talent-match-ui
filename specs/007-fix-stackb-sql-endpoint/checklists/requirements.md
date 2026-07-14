@@ -1,7 +1,8 @@
-# Specification Quality Checklist: Fix Stack B Azure SQL Bootstrap and Wire AWR Endpoint
+# Specification Quality Checklist: Fix Stack B Azure SQL Bootstrap and Preserve Cross-Stack AWR Parity
 
-**Purpose**: Validate specification completeness and quality before proceeding to planning
+**Purpose**: Validate specification completeness and quality before planning and implementation
 **Created**: 2025-07-15
+**Updated**: 2026-06-02
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -31,6 +32,6 @@
 
 ## Notes
 
-- All items pass. Specification is ready for `/speckit.clarify` or `/speckit.plan`.
-- The spec intentionally avoids naming specific technologies for the fix approach; the requirements describe WHAT must change (execution mechanism treats SQL as literal text, endpoint variable must be conditionally included) without prescribing HOW.
-- Assumptions section documents verified pre-conditions (module accepts extra_app_settings, common.sh already exports the variable) to avoid unnecessary investigation during planning.
+- All items pass. Specification is ready for implementation execution.
+- The specification includes cross-stack parity requirements and success criteria for both Terraform app-setting semantics and runtime health semantics.
+- Scope remains constrained to Stack B code/infrastructure edits with Stack A used as the parity baseline for validation.

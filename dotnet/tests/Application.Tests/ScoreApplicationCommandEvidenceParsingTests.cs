@@ -166,6 +166,36 @@ public class ScoreApplicationCommandEvidenceParsingTests
     }
 
     [Fact]
+    public void ExtractCandidateName_TopLevelCandidateName_ReturnsName()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate_name"": ""Jane Doe"", ""overall_score"": 85}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().Be("Jane Doe");
+    }
+
+    [Fact]
+    public void ExtractCandidateName_NestedCandidateObject_ReturnsName()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate"": {""fullName"": ""John Q Public""}, ""overall_score"": 72}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().Be("John Q Public");
+    }
+
+    [Fact]
+    public void ExtractCandidateName_PlaceholderValue_ReturnsNull()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate_name"": ""Unknown"", ""overall_score"": 72}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().BeNull();
+    }
+
+    [Fact]
     public void ParseSingleRun_MixedCasePropertyNames_ExtractsCorrectly()
     {
         var fixture = TestFixtureLoader.LoadFixture("mixedCasePropertyNames");
@@ -176,6 +206,56 @@ public class ScoreApplicationCommandEvidenceParsingTests
         var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
         citations.Should().NotBeNull();
         citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "5 years Java experience");
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_StringPositiveValues_AreMarkedPassed()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateStringPositive");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeTrue();
+        var missing = root.GetProperty("missing_criteria").EnumerateArray().ToList();
+        missing.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_StringNegativeValues_AreMarkedFailed()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateStringNegative");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeFalse();
+        root.GetProperty("missing_criteria").GetArrayLength().Should().Be(1);
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_EntriesWithoutExplicitStatus_AreInferredFromEvidence()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateEntriesWithoutExplicitStatus");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeTrue();
+        root.GetProperty("missing_criteria").GetArrayLength().Should().Be(0);
+
+        var entries = root.GetProperty("details").GetProperty("entries").EnumerateArray().ToList();
+        entries.Should().NotBeEmpty();
+        entries.Should().OnlyContain(e => e.GetProperty("passed").GetBoolean());
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };

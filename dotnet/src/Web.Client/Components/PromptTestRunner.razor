@@ -1,5 +1,7 @@
 @using TalentMatch.Web.Client.Services
+@using System.Globalization
 @using System.Text.Json
+@using System.Text.RegularExpressions
 @implements IDisposable
 @inject ApiClient Api
 @inject NavigationManager Navigation
@@ -15,11 +17,20 @@
     {
         <div style="margin-bottom: 1rem;">
             <p>Testing prompt: v@(ActivePrompt.VersionNumber) (@ActivePrompt.Status)</p>
+            @if (!string.IsNullOrWhiteSpace(workflowMessage))
+            {
+                <div style="margin-bottom: 0.75rem; padding: 0.75rem; background: #ebf8ff; color: #2a4365; border: 1px solid #90cdf4; border-radius: 4px; white-space: pre-wrap; word-break: break-word;">
+                    @workflowMessage
+                </div>
+            }
 
             @if (!showUpload)
             {
                 <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
                     📤 Upload Test Applications
+                </button>
+                <button @onclick="ReconcileRuns" disabled="@isReconciling" style="margin-left: 0.5rem; padding: 0.5rem 1rem; background: #2f855a; color: white; border: none; border-radius: 4px;">
+                    @(isReconciling ? "Reconciling..." : "🩹 Reconcile Stuck Runs")
                 </button>
             }
             else
@@ -103,7 +114,13 @@
                     {
                         <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; background: white;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                                <strong>@(appDetail.Application.Id[..8])...</strong>
+                                <div>
+                                    <strong>@GetApplicantLabel(appDetail.Application)</strong>
+                                    @if (!string.IsNullOrWhiteSpace(appDetail.Application.CandidateEmail))
+                                    {
+                                        <div style="font-size: 0.8rem; color: #718096;">@appDetail.Application.CandidateEmail</div>
+                                    }
+                                </div>
                                 <div style="display: flex; gap: 0.5rem; align-items: center;">
                                     <button @onclick="() => NavigateToApp(appDetail.Application.Id)" style="padding: 0.2rem 0.5rem; background: #4a5568; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.8rem;">
                                         📋 Detail
@@ -148,7 +165,14 @@
                                         <div style="border: 1px solid #e2e8f0; border-radius: 4px; padding: 0.5rem; margin-bottom: 0.5rem; background: @(HasError(run.MustHaveEvaluationJson) ? "#fff5f5" : "#f7fafc"); font-size: 0.85rem;">
                                             <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
                                                 <span><strong>Run #@(run.RunIndex)</strong></span>
-                                                <span><strong>Score: @run.TotalScore.ToString("F1")</strong>@(HasError(run.MustHaveEvaluationJson) ? " ⚠️" : "")</span>
+                                                <span style="display: flex; align-items: center; gap: 0.5rem;">
+                                                    <strong>Score: @run.TotalScore.ToString("F1")</strong>@(HasError(run.MustHaveEvaluationJson) ? " ⚠️" : "")
+                                                    <button @onclick="() => ReparseRun(appDetail.Application.Id, run.Id)"
+                                                            disabled="@reparsingRunIds.Contains(run.Id)"
+                                                            style="padding: 0.15rem 0.4rem; background: #2b6cb0; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.72rem;">
+                                                        @(reparsingRunIds.Contains(run.Id) ? "Re-parsing..." : "♻ Re-parse")
+                                                    </button>
+                                                </span>
                                             </div>
 
                                             @if (HasError(run.MustHaveEvaluationJson))
@@ -167,62 +191,145 @@
                                                 </div>
                                             }
 
-                                            @{ var subScores = ParseJson<Dictionary<string, double>>(run.CategoryScoresJson); }
-                                            @if (subScores?.Any() == true)
+                                            @{
+                                                var subScores = ParseJson<Dictionary<string, double>>(run.CategoryScoresJson);
+                                                var evidence = ParseJson<List<EvidenceItem>>(run.EvidenceCitationsJson) ?? new List<EvidenceItem>();
+                                                var tips = ParseJson<List<string>>(run.ImprovementTipsJson) ?? new List<string>();
+                                                var mustHave = ParseJson<MustHaveDto>(run.MustHaveEvaluationJson);
+                                                var mustHaveEntries = ParseMustHaveEntries(run.MustHaveEvaluationJson);
+                                                var categoryBreakdown = BuildCategoryBreakdown(subScores, evidence, _jobConfig, tips, mustHaveEntries);
+                                            }
+                                            @if (categoryBreakdown.Any())
                                             {
-                                                <div style="margin: 0.25rem 0; padding: 0.25rem 0.5rem; background: #edf2f7; border-radius: 4px;">
-                                                    <div style="font-weight: 600; font-size: 0.8rem; color: #4a5568; margin-bottom: 0.15rem;">Category Scores</div>
-                                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem;">
-                                                        @foreach (var kv in subScores)
-                                                        {
-                                                            <div style="display: flex; justify-content: space-between;">
-                                                                <span style="color: #718096;">@kv.Key:</span>
-                                                                <span><strong>@kv.Value.ToString("F1")</strong></span>
+                                                <div style="margin: 0.35rem 0; padding: 0.4rem 0.55rem; background: #edf2f7; border-radius: 4px; border: 1px solid #cbd5e0;">
+                                                    <div style="font-weight: 600; font-size: 0.82rem; color: #2d3748; margin-bottom: 0.35rem;">Category Score Breakdown (scored JSON)</div>
+                                                    @foreach (var category in categoryBreakdown)
+                                                    {
+                                                        <div style="margin-bottom: 0.4rem; padding: 0.4rem 0.5rem; border: 1px solid #d2d6dc; border-radius: 4px; background: white;">
+                                                            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
+                                                                <span style="font-weight: 600; color: #2d3748;">@category.Name</span>
+                                                                <div style="text-align: right;">
+                                                                    <div style="font-weight: 700; color: #1a202c;">Score: @FormatPercent(category.ScorePercent)</div>
+                                                                    <div style="font-size: 0.74rem; color: #4a5568;">Weight: @FormatPercent(category.WeightPercent)</div>
+                                                                </div>
                                                             </div>
+
+                                                            @if (!category.ScorePercent.HasValue)
+                                                            {
+                                                                <div style="margin-top: 0.2rem; color: #975a16; font-size: 0.74rem;">
+                                                                    Score % unavailable in this run's scoring JSON (raw value appears to be rubric weighting: @FormatCategoryScore(category.RawValue)).
+                                                                </div>
+                                                            }
+                                                            else if (category.WeightedContributionPoints.HasValue)
+                                                            {
+                                                                <div style="margin-top: 0.2rem; color: #4a5568; font-size: 0.74rem;">
+                                                                    Weighted contribution: @FormatCategoryScore(category.WeightedContributionPoints.Value) points.
+                                                                </div>
+                                                            }
+
+                                                            @if (!string.IsNullOrWhiteSpace(category.Description))
+                                                            {
+                                                                <div style="margin-top: 0.1rem; color: #718096; font-size: 0.74rem;">@category.Description</div>
+                                                            }
+
+                                                            @if (category.Requirements.Any())
+                                                            {
+                                                                <ul style="margin: 0.3rem 0 0 1.25rem; padding: 0;">
+                                                                    @foreach (var req in category.Requirements)
+                                                                    {
+                                                                        <li style="color: @(req.Found ? "#2f855a" : "#c53030"); margin-bottom: 0.2rem;">
+                                                                            @(req.Found ? "✅" : "❌") <span style="color: #2d3748;">@req.Requirement</span>
+                                                                            <div style="color: @(req.Found ? "#4a5568" : "#c53030"); font-size: 0.74rem; margin-top: 0.08rem; font-style: italic;">
+                                                                                @(req.Found ? req.Evidence : "None found")
+                                                                            </div>
+                                                                        </li>
+                                                                    }
+                                                                </ul>
+                                                            }
+                                                            else if (category.EvidenceSnippets.Any())
+                                                            {
+                                                                <ul style="margin: 0.3rem 0 0 1.25rem; padding: 0;">
+                                                                    @foreach (var snippet in category.EvidenceSnippets)
+                                                                    {
+                                                                        <li style="color: #2f855a; margin-bottom: 0.15rem;">
+                                                                            ✅ <span style="color: #2d3748;">@snippet</span>
+                                                                        </li>
+                                                                    }
+                                                                </ul>
+                                                            }
+                                                            else
+                                                            {
+                                                                <div style="margin-top: 0.3rem; color: #c53030; font-size: 0.76rem;">
+                                                                    ❌ No evidence citations captured for this category.
+                                                                </div>
+                                                            }
+
+                                                            @if (category.RelevantTips.Any())
+                                                            {
+                                                                <div style="margin-top: 0.25rem; color: #4a5568; font-size: 0.75rem;">
+                                                                    <strong>Improvement focus:</strong>
+                                                                    <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
+                                                                        @foreach (var tip in category.RelevantTips)
+                                                                        {
+                                                                            <li>@tip</li>
+                                                                        }
+                                                                    </ul>
+                                                                </div>
+                                                            }
+                                                        </div>
                                                         }
-                                                    </div>
                                                 </div>
                                             }
 
-                                            @{ 
-                                                var mustHave = ParseJson<MustHaveDto>(run.MustHaveEvaluationJson);
-                                                var mustHaveEntries = ParseMustHaveEntries(run.MustHaveEvaluationJson);
+                                            @{
+                                                var desiredChecklist = BuildDesiredChecklist(_jobConfig?.DesiredCriteriaJson, run.EvidenceCitationsJson);
+                                                var desiredCategoryScore = GetDesiredCategoryScore(subScores);
+                                                bool? inferredEligibilityPassed = mustHave?.Passed;
+                                                if (!inferredEligibilityPassed.HasValue && mustHaveEntries.Any())
+                                                {
+                                                    inferredEligibilityPassed = mustHaveEntries.All(e => e.Passed);
+                                                }
                                             }
-                                            @if (mustHave != null)
+                                            @if (mustHave != null || mustHaveEntries.Any())
                                             {
                                                 <div style="margin-top: 0.25rem;">
                                                     <span style="font-weight: 600; font-size: 0.8rem; color: #4a5568;">Eligibility: </span>
-                                                    @if (mustHave.Passed)
+                                                    @if (inferredEligibilityPassed == true)
                                                     {
                                                         <span style="color: #38a169;">✅ Passed</span>
                                                     }
-                                                    else
+                                                    else if (inferredEligibilityPassed == false)
                                                     {
                                                         <span style="color: #e53e3e;">❌ Failed</span>
-                                                        @if (mustHaveEntries.Any())
-                                                        {
-                                                            <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
-                                                                @foreach (var entry in mustHaveEntries)
-                                                                {
-                                                                    <li style="color: @(entry.Passed ? "#38a169" : "#e53e3e");">
-                                                                        @(entry.Passed ? "✅" : "❌") @entry.Criterion
-                                                                        @if (!string.IsNullOrWhiteSpace(entry.Evidence))
-                                                                        {
-                                                                            <div style="color: #718096; font-size: 0.75rem; font-style: italic; margin-top: 0.1rem;">@entry.Evidence</div>
-                                                                        }
-                                                                    </li>
-                                                                }
-                                                            </ul>
-                                                        }
-                                                        else if (mustHave.MissingCriteria?.Any() == true)
-                                                        {
-                                                            <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0; color: #e53e3e;">
-                                                                @foreach (var m in mustHave.MissingCriteria)
-                                                                {
-                                                                    <li>@m</li>
-                                                                }
-                                                            </ul>
-                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        <span style="color: #718096;">⚪ Unknown</span>
+                                                    }
+
+                                                    @if (mustHaveEntries.Any())
+                                                    {
+                                                        <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
+                                                            @foreach (var entry in mustHaveEntries)
+                                                            {
+                                                                <li style="color: @(entry.Passed ? "#38a169" : "#e53e3e");">
+                                                                    @(entry.Passed ? "✅" : "❌") @entry.Criterion
+                                                                    @if (!string.IsNullOrWhiteSpace(entry.Evidence))
+                                                                    {
+                                                                        <div style="color: #718096; font-size: 0.75rem; font-style: italic; margin-top: 0.1rem;">@entry.Evidence</div>
+                                                                    }
+                                                                </li>
+                                                            }
+                                                        </ul>
+                                                    }
+                                                    else if (mustHave?.MissingCriteria?.Any() == true)
+                                                    {
+                                                        <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0; color: #e53e3e;">
+                                                            @foreach (var m in mustHave.MissingCriteria)
+                                                            {
+                                                                <li>❌ @m</li>
+                                                            }
+                                                        </ul>
                                                     }
                                                 </div>
                                             }
@@ -233,8 +340,32 @@
                                                 </div>
                                             }
 
-                                            @{ var evidence = ParseJson<List<EvidenceItem>>(run.EvidenceCitationsJson); }
-                                            @if (evidence?.Any() == true)
+                                            @if (desiredChecklist.Any())
+                                            {
+                                                <div style="margin-top: 0.35rem; padding: 0.35rem 0.5rem; background: #f0fff4; border-radius: 4px; border: 1px solid #9ae6b4;">
+                                                    <div style="font-weight: 600; font-size: 0.8rem; color: #276749; margin-bottom: 0.15rem;">
+                                                        Desired Qualifications
+                                                        @if (desiredCategoryScore.HasValue)
+                                                        {
+                                                            <span style="margin-left: 0.5rem; color: #2f855a;">Score: @desiredCategoryScore.Value.ToString("F1")</span>
+                                                        }
+                                                    </div>
+                                                    <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
+                                                        @foreach (var item in desiredChecklist)
+                                                        {
+                                                            <li style="color: @(item.Passed ? "#38a169" : "#e53e3e"); margin-bottom: 0.2rem;">
+                                                                @(item.Passed ? "✅" : "❌") @item.Criterion
+                                                                @if (!string.IsNullOrWhiteSpace(item.Evidence))
+                                                                {
+                                                                    <div style="color: #718096; font-size: 0.75rem; font-style: italic; margin-top: 0.1rem;">@item.Evidence</div>
+                                                                }
+                                                            </li>
+                                                        }
+                                                    </ul>
+                                                </div>
+                                            }
+
+                                            @if (evidence.Any())
                                             {
                                                 <details style="margin-top: 0.25rem;">
                                                     <summary style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #4a5568;">Evidence Citations (@evidence.Count)</summary>
@@ -251,11 +382,10 @@
                                             }
 
                                             @{ 
-                                                var tips = ParseJson<List<string>>(run.ImprovementTipsJson);
                                                 var gateFailedCriteria = GetFailedCriteria(run.MustHaveEvaluationJson);
                                                 var gateFailed = mustHave?.Passed == false;
                                             }
-                                            @if (tips?.Any() == true)
+                                            @if (tips.Any())
                                             {
                                                 <details style="margin-top: 0.25rem;">
                                                     <summary style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #4a5568;">Improvement Tips (@tips.Count)</summary>
@@ -297,15 +427,20 @@
     private PromptTestRunDetailDto? selectedDetail;
     private bool showUpload;
     private bool isUploading;
+    private bool isReconciling;
+    private readonly HashSet<string> reparsingRunIds = new(StringComparer.Ordinal);
+    private JobConfigDto? _jobConfig;
     private List<IBrowserFile> selectedFiles = new();
     private System.Threading.Timer? _pollTimer;
     private bool _disposed;
     private string? uploadError;
+    private string? workflowMessage;
 
     protected override async Task OnParametersSetAsync()
     {
         if (ActivePrompt != null)
         {
+            _jobConfig = await Api.GetJobConfigAsync(JobId);
             testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
             Console.WriteLine($"[PromptTestRunner] Loaded {testRuns.Count} test runs for prompt {ActivePrompt.Id}");
             foreach (var r in testRuns)
@@ -316,6 +451,7 @@
         }
         else
         {
+            _jobConfig = null;
             testRuns = new();
             selectedDetail = null;
             StopPolling();
@@ -328,9 +464,42 @@
     private async Task RetryTestRun(string testRunId)
     {
         if (ActivePrompt == null) return;
+        workflowMessage = null;
         await Api.RetryTestRunAsync(JobId, ActivePrompt.Id, testRunId);
         testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
         StartPolling();
+    }
+
+    private async Task ReconcileRuns()
+    {
+        if (ActivePrompt == null) return;
+
+        isReconciling = true;
+        workflowMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var response = await Api.ReconcileTestRunsAsync(JobId, ActivePrompt.Id);
+            testRuns = response?.Runs ?? await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
+            var healedCount = response?.HealedCount ?? 0;
+            workflowMessage = healedCount > 0
+                ? $"Reconciled {healedCount} test run(s)."
+                : "No test runs required reconciliation.";
+            StartOrStopPolling();
+        }
+        catch (ApiException ex)
+        {
+            workflowMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            workflowMessage = ex.Message;
+        }
+        finally
+        {
+            isReconciling = false;
+        }
     }
 
     private void StartPolling()
@@ -399,6 +568,7 @@
         if (ActivePrompt == null || !selectedFiles.Any()) return;
         isUploading = true;
         uploadError = null;
+        workflowMessage = null;
         StateHasChanged();
         try
         {
@@ -446,6 +616,7 @@
     private async Task ApproveTestRun(string testRunId)
     {
         if (ActivePrompt == null) return;
+        workflowMessage = null;
         await Api.ApproveTestRunAsync(JobId, ActivePrompt.Id, testRunId);
         testRuns = await Api.GetTestRunsAsync(JobId, ActivePrompt.Id);
         selectedDetail = null;
@@ -457,6 +628,47 @@
         if (ActivePrompt == null) return;
         await Api.ApprovePromptForProductionAsync(JobId, ActivePrompt.Id);
         await OnPromptStatusChange.InvokeAsync();
+    }
+
+    private async Task ReparseRun(string applicationId, string scoringRunId)
+    {
+        if (ActivePrompt == null) return;
+        if (reparsingRunIds.Contains(scoringRunId)) return;
+
+        reparsingRunIds.Add(scoringRunId);
+        workflowMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await Api.ReparseScoringRunAsync(applicationId, scoringRunId);
+            Console.WriteLine($"[PromptTestRunner] Re-parse run={scoringRunId} source={result?.Source} fallback={result?.FallbackParsingActivated} eligibilityPath={result?.EligibilityPath} gateDetected={result?.GateDetected} totalScoreFallback={result?.TotalScoreFallbackActivated}");
+
+            if (result?.FallbackParsingActivated == true)
+                Console.WriteLine($"[PromptTestRunner] Fallback parsing path ACTIVATED for run {scoringRunId} (path={result.EligibilityPath}).");
+            else
+                Console.WriteLine($"[PromptTestRunner] Fallback parsing path not activated for run {scoringRunId}.");
+
+            if (_selectedDetailRunId != null)
+            {
+                selectedDetail = await Api.GetTestRunDetailAsync(JobId, ActivePrompt.Id, _selectedDetailRunId);
+            }
+
+            workflowMessage = $"Re-parsed scoring run {scoringRunId[..8]}... (source: {result?.Source ?? "unknown"}).";
+        }
+        catch (ApiException ex)
+        {
+            workflowMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            workflowMessage = ex.Message;
+        }
+        finally
+        {
+            reparsingRunIds.Remove(scoringRunId);
+            StateHasChanged();
+        }
     }
 
     private void CloseDetail()
@@ -477,6 +689,18 @@
         }
     }
 
+    private static string GetApplicantLabel(ApplicationDto application)
+    {
+        if (!string.IsNullOrWhiteSpace(application.CandidateName))
+            return application.CandidateName!;
+
+        if (!string.IsNullOrWhiteSpace(application.CandidateRef))
+            return application.CandidateRef;
+
+        var id = application.Id ?? string.Empty;
+        return id.Length > 8 ? $"{id[..8]}..." : id;
+    }
+
     private T? ParseJson<T>(string? json) where T : class
     {
         if (string.IsNullOrWhiteSpace(json)) return null;
@@ -494,98 +718,131 @@
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            var missingCriteria = new List<string>();
-            if (root.TryGetProperty("missing_criteria", out var missingElement) && missingElement.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in missingElement.EnumerateArray())
-                {
-                    if (item.ValueKind == JsonValueKind.String)
-                    {
-                        var criterion = item.GetString();
-                        if (!string.IsNullOrWhiteSpace(criterion))
-                            missingCriteria.Add(criterion);
-                    }
-                }
-            }
+            var missingCriteria = ExtractMissingCriteria(root);
+            var gatePassedHint = TryGetFlexibleBoolProperty(root, "passed", "met", "eligible", "satisfied");
 
-            if (root.TryGetProperty("details", out var details))
-            {
-                if (details.TryGetProperty("entries", out var entryArray) && entryArray.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var item in entryArray.EnumerateArray())
-                    {
-                        if (item.ValueKind != JsonValueKind.Object) continue;
+            static bool IsObjectArray(JsonElement element)
+                => element.ValueKind == JsonValueKind.Array
+                   && element.GetArrayLength() > 0
+                   && element[0].ValueKind == JsonValueKind.Object;
 
-                        var criterion = item.TryGetProperty("criterion", out var criterionElement)
-                            ? criterionElement.GetString()
-                            : item.TryGetProperty("requirement", out var requirementElement)
-                                ? requirementElement.GetString()
-                                : item.TryGetProperty("item", out var itemElement)
-                                    ? itemElement.GetString()
-                                    : null;
-
-                        if (string.IsNullOrWhiteSpace(criterion)) continue;
-
-                        var passed = false;
-                        var hasPassed = false;
-
-                        if (item.TryGetProperty("passed", out var passedElement) && TryParseFlexibleBool(passedElement, out var parsedPassed))
-                        {
-                            passed = parsedPassed;
-                            hasPassed = true;
-                        }
-                        else if (item.TryGetProperty("met", out var metElement) && TryParseFlexibleBool(metElement, out var parsedMet))
-                        {
-                            passed = parsedMet;
-                            hasPassed = true;
-                        }
-                        else if (item.TryGetProperty("satisfied", out var satisfiedElement) && TryParseFlexibleBool(satisfiedElement, out var parsedSatisfied))
-                        {
-                            passed = parsedSatisfied;
-                            hasPassed = true;
-                        }
-
-                        if (!hasPassed)
-                        {
-                            passed = !missingCriteria.Any(m =>
-                                m.Equals(criterion, StringComparison.OrdinalIgnoreCase) ||
-                                criterion.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                m.IndexOf(criterion, StringComparison.OrdinalIgnoreCase) >= 0);
-                        }
-
-                        var evidence = item.TryGetProperty("evidence", out var evidenceElement)
-                            ? evidenceElement.GetString()
-                            : item.TryGetProperty("reason", out var reasonElement)
-                                ? reasonElement.GetString()
+            static string? ExtractCriterion(JsonElement item)
+                => item.TryGetProperty("criterion", out var criterionElement)
+                    ? criterionElement.GetString()
+                    : item.TryGetProperty("requirement", out var requirementElement)
+                        ? requirementElement.GetString()
+                        : item.TryGetProperty("item", out var itemElement)
+                            ? itemElement.GetString()
+                            : item.TryGetProperty("name", out var nameElement)
+                                ? nameElement.GetString()
                                 : null;
 
-                        entries.Add(new MustHaveEntry
-                        {
-                            Criterion = criterion,
-                            Passed = passed,
-                            Evidence = evidence
-                        });
+            static string? ExtractEvidence(JsonElement item)
+                => item.TryGetProperty("evidence", out var evidenceElement)
+                    ? evidenceElement.GetString()
+                    : item.TryGetProperty("reason", out var reasonElement)
+                        ? reasonElement.GetString()
+                        : null;
+
+            bool AppendFromArray(JsonElement entryArray)
+            {
+                var startCount = entries.Count;
+                foreach (var item in entryArray.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object) continue;
+
+                    var criterion = ExtractCriterion(item);
+                    if (string.IsNullOrWhiteSpace(criterion)) continue;
+
+                    var passed = false;
+                    var hasPassed = false;
+
+                    if (item.TryGetProperty("passed", out var passedElement) && TryParseFlexibleBool(passedElement, out var parsedPassed))
+                    {
+                        passed = parsedPassed;
+                        hasPassed = true;
+                    }
+                    else if (item.TryGetProperty("met", out var metElement) && TryParseFlexibleBool(metElement, out var parsedMet))
+                    {
+                        passed = parsedMet;
+                        hasPassed = true;
+                    }
+                    else if (item.TryGetProperty("satisfied", out var satisfiedElement) && TryParseFlexibleBool(satisfiedElement, out var parsedSatisfied))
+                    {
+                        passed = parsedSatisfied;
+                        hasPassed = true;
                     }
 
-                    if (entries.Any()) return entries;
+                    var evidence = ExtractEvidence(item);
+
+                    if (!hasPassed)
+                    {
+                        if (IsCriterionInMissingCriteria(criterion, missingCriteria))
+                            passed = false;
+                        else if (!string.IsNullOrWhiteSpace(evidence))
+                            passed = !LooksLikeNegativeEvidence(evidence) && !EvidenceContradictsCriterion(criterion, evidence);
+                        else if (gatePassedHint.HasValue)
+                            passed = gatePassedHint.Value;
+                        else
+                            passed = false;
+                    }
+
+                    entries.Add(new MustHaveEntry
+                    {
+                        Criterion = criterion,
+                        Passed = passed,
+                        Evidence = evidence
+                    });
                 }
 
-                if (details.ValueKind == JsonValueKind.Object)
-                {
-                    foreach (var prop in details.EnumerateObject())
-                    {
-                        if (prop.Name is "source" or "entries" or "recommendation") continue;
-                        if (!TryParseFlexibleBool(prop.Value, out var passed)) continue;
+                return entries.Count > startCount;
+            }
 
-                        entries.Add(new MustHaveEntry
-                        {
-                            Criterion = prop.Name,
-                            Passed = passed,
-                            Evidence = null
-                        });
+            if (root.ValueKind == JsonValueKind.Array)
+            {
+                if (AppendFromArray(root)) return entries;
+            }
+
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                if (root.TryGetProperty("entries", out var topEntries) && topEntries.ValueKind == JsonValueKind.Array)
+                {
+                    if (AppendFromArray(topEntries)) return entries;
+                }
+
+                if (root.TryGetProperty("details", out var details))
+                {
+                    if (details.ValueKind == JsonValueKind.Object
+                        && details.TryGetProperty("entries", out var entryArray)
+                        && entryArray.ValueKind == JsonValueKind.Array)
+                    {
+                        if (AppendFromArray(entryArray)) return entries;
                     }
 
-                    if (entries.Any()) return entries;
+                    if (details.ValueKind == JsonValueKind.Object)
+                    {
+                        foreach (var prop in details.EnumerateObject())
+                        {
+                            if (prop.Name is "source" or "entries" or "recommendation") continue;
+                            if (!TryParseFlexibleBool(prop.Value, out var passed)) continue;
+
+                            entries.Add(new MustHaveEntry
+                            {
+                                Criterion = prop.Name,
+                                Passed = passed,
+                                Evidence = null
+                            });
+                        }
+
+                        if (entries.Any()) return entries;
+                    }
+                }
+
+                // Last fallback: scan for any object-array children and parse them as entries.
+                foreach (var prop in root.EnumerateObject())
+                {
+                    if (IsObjectArray(prop.Value) && AppendFromArray(prop.Value))
+                        return entries;
                 }
             }
         }
@@ -595,6 +852,163 @@
         }
 
         return entries;
+    }
+
+    private static List<string> ExtractMissingCriteria(JsonElement root)
+    {
+        var missingCriteria = new List<string>();
+        if (root.ValueKind != JsonValueKind.Object)
+            return missingCriteria;
+
+        if (root.TryGetProperty("missing_criteria", out var missingElement) && missingElement.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in missingElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                var criterion = item.GetString();
+                if (!string.IsNullOrWhiteSpace(criterion))
+                    missingCriteria.Add(criterion.Trim());
+            }
+        }
+
+        return missingCriteria;
+    }
+
+    private static bool IsCriterionInMissingCriteria(string criterion, List<string> missingCriteria)
+    {
+        if (string.IsNullOrWhiteSpace(criterion) || missingCriteria.Count == 0)
+            return false;
+
+        var normalizedCriterion = NormalizeForMatch(criterion);
+        foreach (var missing in missingCriteria)
+        {
+            var normalizedMissing = NormalizeForMatch(missing);
+            if (string.IsNullOrWhiteSpace(normalizedMissing))
+                continue;
+
+            if (normalizedMissing == normalizedCriterion
+                || normalizedMissing.Contains(normalizedCriterion, StringComparison.Ordinal)
+                || normalizedCriterion.Contains(normalizedMissing, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeNegativeEvidence(string evidence)
+    {
+        var normalized = NormalizeForMatch(evidence);
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        return normalized.Contains("none found", StringComparison.Ordinal)
+            || normalized.Contains("not found", StringComparison.Ordinal)
+            || normalized.Contains("no evidence", StringComparison.Ordinal)
+            || normalized.Contains("no proof", StringComparison.Ordinal)
+            || normalized.Contains("not provided", StringComparison.Ordinal)
+            || normalized.Contains("insufficient evidence", StringComparison.Ordinal)
+            || normalized.Contains("unable to verify", StringComparison.Ordinal)
+            || normalized.Contains("cannot verify", StringComparison.Ordinal)
+            || normalized.Contains("missing evidence", StringComparison.Ordinal)
+            || normalized.Contains("no supporting evidence", StringComparison.Ordinal)
+            || normalized.Contains("unknown", StringComparison.Ordinal)
+            || normalized.Contains("not met", StringComparison.Ordinal)
+            || normalized.Contains("does not meet", StringComparison.Ordinal)
+            || normalized.Contains("did not meet", StringComparison.Ordinal)
+            || normalized.Contains("not registered", StringComparison.Ordinal)
+            || normalized.Contains("limited exposure", StringComparison.Ordinal)
+            || normalized.Contains("limited management tenure", StringComparison.Ordinal)
+            || normalized.Contains("vs required", StringComparison.Ordinal)
+            || normalized.Contains("only", StringComparison.Ordinal);
+    }
+
+    private static bool EvidenceContradictsCriterion(string criterion, string evidence)
+    {
+        var normalizedCriterion = NormalizeForMatch(criterion);
+        var normalizedEvidence = NormalizeForMatch(evidence);
+
+        if (string.IsNullOrWhiteSpace(normalizedCriterion) || string.IsNullOrWhiteSpace(normalizedEvidence))
+            return false;
+
+        if (normalizedCriterion.Contains("registered", StringComparison.Ordinal)
+            && (normalizedEvidence.Contains("not registered", StringComparison.Ordinal)
+                || normalizedEvidence.Contains("unregistered", StringComparison.Ordinal)
+                || normalizedEvidence.Contains("registration missing", StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        if (TryExtractRequiredYears(normalizedCriterion, out var requiredYears)
+            && TryExtractYearsMentioned(normalizedEvidence, out var evidencedYears)
+            && evidencedYears < requiredYears)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryExtractRequiredYears(string normalizedCriterion, out double years)
+    {
+        years = 0;
+        if (!normalizedCriterion.Contains("year", StringComparison.Ordinal))
+            return false;
+
+        var minOrAtLeastMatch = Regex.Match(normalizedCriterion, @"(?:minimum|at least)\s+(\d+(?:\.\d+)?)\s+year");
+        if (minOrAtLeastMatch.Success && double.TryParse(minOrAtLeastMatch.Groups[1].Value, out years))
+            return true;
+
+        var genericMatch = Regex.Match(normalizedCriterion, @"(\d+(?:\.\d+)?)\s+year");
+        if (genericMatch.Success && double.TryParse(genericMatch.Groups[1].Value, out years))
+            return true;
+
+        return false;
+    }
+
+    private static bool TryExtractYearsMentioned(string normalizedEvidence, out double years)
+    {
+        years = 0;
+        if (!normalizedEvidence.Contains("year", StringComparison.Ordinal))
+            return false;
+
+        var matches = Regex.Matches(normalizedEvidence, @"(\d+(?:\.\d+)?)\s+year");
+        if (matches.Count == 0)
+            return false;
+
+        var max = 0d;
+        var found = false;
+        foreach (Match match in matches)
+        {
+            if (!double.TryParse(match.Groups[1].Value, out var value))
+                continue;
+            if (!found || value > max)
+            {
+                max = value;
+                found = true;
+            }
+        }
+
+        if (!found)
+            return false;
+
+        years = max;
+        return true;
+    }
+
+    private static bool? TryGetFlexibleBoolProperty(JsonElement root, params string[] names)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return null;
+
+        foreach (var name in names)
+        {
+            if (root.TryGetProperty(name, out var value) && TryParseFlexibleBool(value, out var parsed))
+                return parsed;
+        }
+
+        return null;
     }
 
     private List<string> GetFailedCriteria(string? mustHaveEvaluationJson)
@@ -614,6 +1028,509 @@
         }
 
         return failed.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private List<CategoryDetailRow> BuildCategoryBreakdown(
+        Dictionary<string, double>? subScores,
+        List<EvidenceItem> evidence,
+        JobConfigDto? jobConfig,
+        List<string>? tips,
+        List<MustHaveEntry>? mustHaveEntries)
+    {
+        var rows = new List<CategoryDetailRow>();
+        if (subScores == null || subScores.Count == 0)
+            return rows;
+
+        var rubricJson = jobConfig?.RubricJson;
+        var descriptions = ParseRubricDescriptions(rubricJson);
+        var weights = ParseRubricWeights(rubricJson);
+        var rubricRequirements = ParseRubricRequirements(rubricJson);
+        var mustHaveCriteria = ParseMustHaveCriteriaItems(jobConfig?.MustHavesJson);
+        var desiredCriteria = ParseDesiredCriteriaItems(jobConfig?.DesiredCriteriaJson);
+        var isWeightOnlyMap = LooksLikeWeightOnlyCategoryScores(subScores, weights);
+        var safeTips = tips ?? new List<string>();
+        var safeMustHaveEntries = mustHaveEntries ?? new List<MustHaveEntry>();
+        var allEvidence = evidence
+            .Where(e => !string.IsNullOrWhiteSpace(e.Snippet))
+            .Select(e => e.Snippet!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var kv in subScores)
+        {
+            var weightFraction = ResolveRubricWeight(kv.Key, weights);
+            var scorePercent = GetCategoryScorePercent(kv.Value, weightFraction, isWeightOnlyMap);
+            double? weightPercent = weightFraction.HasValue ? weightFraction.Value * 100.0 : (double?)null;
+            double? weightedContribution = scorePercent.HasValue && weightFraction.HasValue
+                ? scorePercent.Value * weightFraction.Value
+                : (double?)null;
+            var categoryEvidence = GetEvidenceSnippetsForCategory(kv.Key, evidence);
+
+            var requirements = BuildCategoryRequirementChecklist(
+                kv.Key,
+                categoryEvidence,
+                allEvidence,
+                rubricRequirements,
+                mustHaveCriteria,
+                desiredCriteria,
+                safeMustHaveEntries);
+
+            rows.Add(new CategoryDetailRow
+            {
+                Name = kv.Key,
+                RawValue = kv.Value,
+                ScorePercent = scorePercent,
+                WeightPercent = weightPercent,
+                WeightedContributionPoints = weightedContribution,
+                Description = ResolveRubricDescription(kv.Key, descriptions),
+                EvidenceSnippets = categoryEvidence,
+                Requirements = requirements,
+                RelevantTips = GetTipsForCategory(kv.Key, safeTips)
+            });
+        }
+
+        return rows;
+    }
+
+    private static string FormatCategoryScore(double score)
+        => score.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private static string FormatPercent(double? value)
+        => value.HasValue
+            ? $"{value.Value.ToString("0.##", CultureInfo.InvariantCulture)}%"
+            : "N/A";
+
+    private static Dictionary<string, string> ParseRubricDescriptions(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var categories = JsonSerializer.Deserialize<List<RubricCategoryItem>>(rubricJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<RubricCategoryItem>();
+
+            return categories
+                .Where(c => !string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Description))
+                .GroupBy(c => c.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().Description!.Trim(), StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static Dictionary<string, double> ParseRubricWeights(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var categories = JsonSerializer.Deserialize<List<RubricCategoryItem>>(rubricJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<RubricCategoryItem>();
+
+            return categories
+                .Where(c => !string.IsNullOrWhiteSpace(c.Name))
+                .GroupBy(c => c.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => NormalizeWeight(g.First().Weight),
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private static string? ResolveRubricDescription(string categoryName, Dictionary<string, string> descriptions)
+    {
+        if (descriptions.TryGetValue(categoryName, out var exact))
+            return exact;
+
+        var normalizedCategory = NormalizeForMatch(categoryName);
+        foreach (var kv in descriptions)
+        {
+            var normalizedCandidate = NormalizeForMatch(kv.Key);
+            if (string.IsNullOrWhiteSpace(normalizedCandidate))
+                continue;
+
+            if (normalizedCandidate == normalizedCategory
+                || normalizedCandidate.Contains(normalizedCategory, StringComparison.Ordinal)
+                || normalizedCategory.Contains(normalizedCandidate, StringComparison.Ordinal))
+            {
+                return kv.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static double? ResolveRubricWeight(string categoryName, Dictionary<string, double> weights)
+    {
+        if (weights.TryGetValue(categoryName, out var exact))
+            return exact;
+
+        var normalizedCategory = NormalizeForMatch(categoryName);
+        foreach (var kv in weights)
+        {
+            var normalizedCandidate = NormalizeForMatch(kv.Key);
+            if (string.IsNullOrWhiteSpace(normalizedCandidate))
+                continue;
+
+            if (normalizedCandidate == normalizedCategory
+                || normalizedCandidate.Contains(normalizedCategory, StringComparison.Ordinal)
+                || normalizedCategory.Contains(normalizedCandidate, StringComparison.Ordinal))
+            {
+                return kv.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool LooksLikeWeightOnlyCategoryScores(
+        Dictionary<string, double> subScores,
+        Dictionary<string, double> weights)
+    {
+        if (subScores.Count == 0 || weights.Count == 0)
+            return false;
+
+        var matched = 0;
+        foreach (var kv in subScores)
+        {
+            var weight = ResolveRubricWeight(kv.Key, weights);
+            if (!weight.HasValue)
+                return false;
+
+            matched++;
+            if (!AreApproximatelyEqual(kv.Value, weight.Value))
+                return false;
+        }
+
+        return matched == subScores.Count;
+    }
+
+    private static double? GetCategoryScorePercent(double rawValue, double? weightFraction, bool looksLikeWeightOnly)
+    {
+        if (looksLikeWeightOnly && weightFraction.HasValue && AreApproximatelyEqual(rawValue, weightFraction.Value))
+            return null;
+
+        if (rawValue <= 1.0)
+            return rawValue * 100.0;
+
+        return rawValue;
+    }
+
+    private static double NormalizeWeight(double rawWeight)
+    {
+        var normalized = rawWeight <= 1.0 ? rawWeight : rawWeight / 100.0;
+        if (normalized < 0) return 0;
+        if (normalized > 1) return 1;
+        return normalized;
+    }
+
+    private static bool AreApproximatelyEqual(double left, double right)
+        => Math.Abs(left - right) <= 0.0005;
+
+    private List<CategoryRequirementItem> BuildCategoryRequirementChecklist(
+        string categoryName,
+        List<string> categoryEvidence,
+        List<string> allEvidence,
+        Dictionary<string, List<string>> rubricRequirements,
+        List<string> mustHaveCriteria,
+        List<string> desiredCriteria,
+        List<MustHaveEntry> mustHaveEntries)
+    {
+        var requirements = new List<CategoryRequirementItem>();
+
+        if (IsMustHaveCategory(categoryName) && mustHaveEntries.Any())
+        {
+            foreach (var entry in mustHaveEntries)
+            {
+                var criterion = entry.Criterion?.Trim();
+                if (string.IsNullOrWhiteSpace(criterion))
+                    continue;
+
+                var hasEvidence = HasUsableEvidence(entry.Evidence);
+                requirements.Add(new CategoryRequirementItem
+                {
+                    Requirement = criterion,
+                    Found = hasEvidence,
+                    Evidence = hasEvidence ? entry.Evidence!.Trim() : "None found"
+                });
+            }
+
+            return requirements;
+        }
+
+        var sourceRequirements = ResolveRequirementsForCategory(
+            categoryName,
+            rubricRequirements,
+            mustHaveCriteria,
+            desiredCriteria);
+
+        foreach (var requirement in sourceRequirements)
+        {
+            var evidence = FindMatchingEvidence(requirement, categoryEvidence)
+                ?? FindMatchingEvidence(requirement, allEvidence);
+
+            var found = HasUsableEvidence(evidence);
+            requirements.Add(new CategoryRequirementItem
+            {
+                Requirement = requirement,
+                Found = found,
+                Evidence = found ? evidence!.Trim() : "None found"
+            });
+        }
+
+        return requirements;
+    }
+
+    private static List<string> ResolveRequirementsForCategory(
+        string categoryName,
+        Dictionary<string, List<string>> rubricRequirements,
+        List<string> mustHaveCriteria,
+        List<string> desiredCriteria)
+    {
+        if (IsMustHaveCategory(categoryName) && mustHaveCriteria.Any())
+            return mustHaveCriteria;
+
+        if (IsDesiredCategory(categoryName) && desiredCriteria.Any())
+            return desiredCriteria;
+
+        if (TryResolveCategoryValue(categoryName, rubricRequirements, out var rubricItems) && rubricItems.Any())
+            return rubricItems;
+
+        return new List<string>();
+    }
+
+    private static bool IsMustHaveCategory(string categoryName)
+    {
+        var normalized = NormalizeForMatch(categoryName);
+        return normalized.Contains("must have", StringComparison.Ordinal)
+            || normalized.Contains("mandatory", StringComparison.Ordinal)
+            || normalized.Contains("minimum requirement", StringComparison.Ordinal)
+            || normalized.Contains("required", StringComparison.Ordinal);
+    }
+
+    private static bool IsDesiredCategory(string categoryName)
+    {
+        var normalized = NormalizeForMatch(categoryName);
+        return normalized.Contains("desired", StringComparison.Ordinal)
+            || normalized.Contains("recommended", StringComparison.Ordinal)
+            || normalized.Contains("preferred", StringComparison.Ordinal)
+            || normalized.Contains("optional", StringComparison.Ordinal)
+            || normalized.Contains("bonus", StringComparison.Ordinal);
+    }
+
+    private static bool HasUsableEvidence(string? evidence)
+        => !string.IsNullOrWhiteSpace(evidence) && !LooksLikeNegativeEvidence(evidence);
+
+    private static Dictionary<string, List<string>> ParseRubricRequirements(string? rubricJson)
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return result;
+
+        try
+        {
+            var categories = JsonSerializer.Deserialize<List<RubricCategoryItem>>(rubricJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<RubricCategoryItem>();
+
+            foreach (var category in categories)
+            {
+                if (string.IsNullOrWhiteSpace(category.Name))
+                    continue;
+
+                var requirements = SplitRequirements(category.Description);
+                result[category.Name.Trim()] = requirements;
+            }
+        }
+        catch
+        {
+            // Best-effort only; empty requirements will fall back to evidence-only display.
+        }
+
+        return result;
+    }
+
+    private static List<string> ParseMustHaveCriteriaItems(string? mustHavesJson)
+    {
+        if (string.IsNullOrWhiteSpace(mustHavesJson))
+            return new List<string>();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(mustHavesJson);
+            return ExtractMustHaveValues(doc.RootElement)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static List<string> ExtractMustHaveValues(JsonElement element)
+    {
+        var values = new List<string>();
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var value = element.GetString();
+            if (!string.IsNullOrWhiteSpace(value))
+                values.Add(value);
+            return values;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                values.AddRange(ExtractMustHaveValues(item));
+            return values;
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+            return values;
+
+        foreach (var key in new[] { "criterion", "requirement", "item", "name", "title", "description", "qualification" })
+        {
+            if (element.TryGetProperty(key, out var candidate) && candidate.ValueKind == JsonValueKind.String)
+            {
+                var value = candidate.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                    values.Add(value);
+            }
+        }
+
+        foreach (var prop in element.EnumerateObject())
+        {
+            if (prop.Value.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
+                values.AddRange(ExtractMustHaveValues(prop.Value));
+        }
+
+        return values;
+    }
+
+    private static List<string> SplitRequirements(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description))
+            return new List<string>();
+
+        var split = description
+            .Split(new[] { '\n', ';', '•' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Trim())
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .ToList();
+
+        if (split.Count <= 1)
+        {
+            split = description
+                .Split(new[] { ". " }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Trim())
+                .Where(part => !string.IsNullOrWhiteSpace(part))
+                .ToList();
+        }
+
+        return split
+            .Select(part => part.Trim().TrimEnd('.', ','))
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool TryResolveCategoryValue<T>(string categoryName, Dictionary<string, T> values, out T value)
+    {
+        if (values.TryGetValue(categoryName, out value!))
+            return true;
+
+        var normalizedCategory = NormalizeForMatch(categoryName);
+        foreach (var kv in values)
+        {
+            var normalizedCandidate = NormalizeForMatch(kv.Key);
+            if (string.IsNullOrWhiteSpace(normalizedCandidate))
+                continue;
+
+            if (normalizedCandidate == normalizedCategory
+                || normalizedCandidate.Contains(normalizedCategory, StringComparison.Ordinal)
+                || normalizedCategory.Contains(normalizedCandidate, StringComparison.Ordinal))
+            {
+                value = kv.Value;
+                return true;
+            }
+        }
+
+        value = default!;
+        return false;
+    }
+
+    private static List<string> GetEvidenceSnippetsForCategory(string categoryName, List<EvidenceItem> evidence)
+    {
+        if (evidence.Count == 0)
+            return new List<string>();
+
+        var normalizedCategory = NormalizeForMatch(categoryName);
+        return evidence
+            .Where(e => !string.IsNullOrWhiteSpace(e.Snippet))
+            .Where(e =>
+            {
+                var category = e.Category ?? string.Empty;
+                var normalizedEvidenceCategory = NormalizeForMatch(category);
+                return !string.IsNullOrWhiteSpace(normalizedEvidenceCategory)
+                    && (normalizedEvidenceCategory == normalizedCategory
+                        || normalizedEvidenceCategory.Contains(normalizedCategory, StringComparison.Ordinal)
+                        || normalizedCategory.Contains(normalizedEvidenceCategory, StringComparison.Ordinal));
+            })
+            .Select(e => e.Snippet!.Trim())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static List<string> GetTipsForCategory(string categoryName, List<string> tips)
+    {
+        if (tips.Count == 0)
+            return new List<string>();
+
+        var normalizedCategory = NormalizeForMatch(categoryName);
+        var categoryTokens = normalizedCategory
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t.Length >= 4)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var matched = new List<string>();
+        foreach (var tip in tips)
+        {
+            if (string.IsNullOrWhiteSpace(tip))
+                continue;
+
+            var normalizedTip = NormalizeForMatch(tip);
+            if (string.IsNullOrWhiteSpace(normalizedTip))
+                continue;
+
+            if (normalizedTip.Contains(normalizedCategory, StringComparison.Ordinal)
+                || normalizedCategory.Contains(normalizedTip, StringComparison.Ordinal))
+            {
+                matched.Add(tip);
+                continue;
+            }
+
+            if (!categoryTokens.Any())
+                continue;
+
+            var overlap = categoryTokens.Count(token => normalizedTip.Contains(token, StringComparison.Ordinal));
+            if (overlap >= Math.Min(2, categoryTokens.Count))
+                matched.Add(tip);
+        }
+
+        return matched.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private bool IsTipGateFailureRelated(string tip, List<string> failedCriteria)
@@ -704,6 +1621,157 @@
         return string.Join(' ', new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
+    private List<MustHaveEntry> BuildDesiredChecklist(string? desiredCriteriaJson, string? evidenceCitationsJson)
+    {
+        var desiredItems = ParseDesiredCriteriaItems(desiredCriteriaJson);
+        if (!desiredItems.Any())
+            return new List<MustHaveEntry>();
+
+        var desiredEvidence = GetDesiredEvidenceSnippets(evidenceCitationsJson);
+        var checklist = new List<MustHaveEntry>();
+
+        foreach (var desired in desiredItems)
+        {
+            var matchedEvidence = FindMatchingEvidence(desired, desiredEvidence);
+            checklist.Add(new MustHaveEntry
+            {
+                Criterion = desired,
+                Passed = !string.IsNullOrWhiteSpace(matchedEvidence),
+                Evidence = matchedEvidence
+            });
+        }
+
+        return checklist;
+    }
+
+    private static string? FindMatchingEvidence(string criterion, List<string> snippets)
+    {
+        var normalizedCriterion = NormalizeForMatch(criterion);
+        if (string.IsNullOrWhiteSpace(normalizedCriterion))
+            return null;
+
+        var criterionTokens = normalizedCriterion
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Where(t => t.Length >= 4)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var snippet in snippets)
+        {
+            var normalizedSnippet = NormalizeForMatch(snippet);
+            if (string.IsNullOrWhiteSpace(normalizedSnippet))
+                continue;
+
+            if (normalizedSnippet.Contains(normalizedCriterion, StringComparison.Ordinal)
+                || normalizedCriterion.Contains(normalizedSnippet, StringComparison.Ordinal))
+            {
+                return snippet;
+            }
+
+            if (!criterionTokens.Any())
+                continue;
+
+            var overlap = criterionTokens.Count(t => normalizedSnippet.Contains(t, StringComparison.Ordinal));
+            if (overlap >= Math.Min(2, criterionTokens.Count))
+                return snippet;
+        }
+
+        return null;
+    }
+
+    private static List<string> ParseDesiredCriteriaItems(string? desiredCriteriaJson)
+    {
+        if (string.IsNullOrWhiteSpace(desiredCriteriaJson))
+            return new List<string>();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(desiredCriteriaJson);
+            return ExtractDesiredCriteriaValues(doc.RootElement)
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static List<string> ExtractDesiredCriteriaValues(JsonElement element)
+    {
+        var values = new List<string>();
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var value = element.GetString();
+            if (!string.IsNullOrWhiteSpace(value))
+                values.Add(value);
+            return values;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                values.AddRange(ExtractDesiredCriteriaValues(item));
+            return values;
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+            return values;
+
+        foreach (var key in new[] { "qualification", "criterion", "requirement", "item", "name", "title", "description" })
+        {
+            if (element.TryGetProperty(key, out var candidate) && candidate.ValueKind == JsonValueKind.String)
+            {
+                var value = candidate.GetString();
+                if (!string.IsNullOrWhiteSpace(value))
+                    values.Add(value);
+            }
+        }
+
+        foreach (var prop in element.EnumerateObject())
+        {
+            if (prop.Value.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
+                values.AddRange(ExtractDesiredCriteriaValues(prop.Value));
+        }
+
+        return values;
+    }
+
+    private List<string> GetDesiredEvidenceSnippets(string? evidenceCitationsJson)
+    {
+        var evidence = ParseJson<List<EvidenceItem>>(evidenceCitationsJson) ?? new List<EvidenceItem>();
+
+        return evidence
+            .Where(e => !string.IsNullOrWhiteSpace(e.Snippet))
+            .Select(e => e.Snippet)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => s!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static double? GetDesiredCategoryScore(Dictionary<string, double>? subScores)
+    {
+        if (subScores == null || subScores.Count == 0)
+            return null;
+
+        foreach (var kv in subScores)
+        {
+            if (kv.Key.Contains("desired", StringComparison.OrdinalIgnoreCase)
+                || kv.Key.Contains("recommended", StringComparison.OrdinalIgnoreCase)
+                || kv.Key.Contains("preferred", StringComparison.OrdinalIgnoreCase)
+                || kv.Key.Contains("bonus", StringComparison.OrdinalIgnoreCase))
+            {
+                return kv.Value;
+            }
+        }
+
+        return null;
+    }
+
     private bool HasError(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return false;
@@ -783,5 +1851,25 @@
     {
         public string? Category { get; set; }
         public string? Snippet { get; set; }
+    }
+
+    private class CategoryDetailRow
+    {
+        public string Name { get; set; } = string.Empty;
+        public double RawValue { get; set; }
+        public double? ScorePercent { get; set; }
+        public double? WeightPercent { get; set; }
+        public double? WeightedContributionPoints { get; set; }
+        public string? Description { get; set; }
+        public List<string> EvidenceSnippets { get; set; } = new();
+        public List<CategoryRequirementItem> Requirements { get; set; } = new();
+        public List<string> RelevantTips { get; set; } = new();
+    }
+
+    private class CategoryRequirementItem
+    {
+        public string Requirement { get; set; } = string.Empty;
+        public bool Found { get; set; }
+        public string Evidence { get; set; } = "None found";
     }
 }

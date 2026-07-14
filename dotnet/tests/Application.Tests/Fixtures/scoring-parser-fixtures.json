@@ -84,5 +84,49 @@
       }
     },
     "total_score": 85
+  },
+  "eligibilityGateStringPositive": {
+    "must_have_requirements": [
+      {
+        "criterion": "Registered Professional Engineer (Pr Eng) with ECSA",
+        "met": "Met",
+        "evidence": "ECSA Professional Engineer (Pr Eng)"
+      },
+      {
+        "criterion": "Minimum 15 years engineering experience",
+        "passed": "YES",
+        "evidence": "19 years of experience"
+      }
+    ],
+    "total_score": 96.0
+  },
+  "eligibilityGateStringNegative": {
+    "must_have_requirements": [
+      {
+        "criterion": "Valid driver licence",
+        "met": "does not meet",
+        "evidence": "No licence listed"
+      }
+    ],
+    "total_score": 55.0
+  },
+  "eligibilityGateEntriesWithoutExplicitStatus": {
+    "must_have_requirements": {
+      "passed": true,
+      "missing_criteria": [],
+      "details": {
+        "entries": [
+          {
+            "criterion": "Registered with ECSA as a Professional Engineer",
+            "evidence": "ECSA Professional Engineer (Pr Eng), Registration No. PR.ENG.2008/4512"
+          },
+          {
+            "criterion": "Minimum 15 years rail engineering experience",
+            "evidence": "19 years of rail engineering experience in freight infrastructure"
+          }
+        ]
+      }
+    },
+    "total_score": 96.0
   }
 }

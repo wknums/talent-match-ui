@@ -52,6 +52,117 @@ export function normalizeCategoryName(name: string): string {
   return name.toLowerCase().replace(/[_\-()&/,;:]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
+function normalizeCandidateName(rawName: string | null | undefined): string | null {
+  if (!rawName) return null
+
+  const collapsed = rawName.replace(/\s+/g, ' ').trim()
+  if (!collapsed) return null
+
+  const lower = collapsed.toLowerCase()
+  if (
+    lower === 'unknown'
+    || lower === 'n/a'
+    || lower === 'na'
+    || lower === 'none'
+    || lower === 'null'
+    || lower === 'undefined'
+    || lower === 'not provided'
+    || lower === 'not available'
+    || lower === 'candidate'
+  ) {
+    return null
+  }
+
+  return collapsed
+}
+
+function getFromObject(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null
+
+  const record = value as Record<string, unknown>
+
+  for (const key of ['candidate_name', 'candidateName', 'candidate_full_name', 'candidateFullName', 'full_name', 'fullName']) {
+    const keyValue = record[key]
+    if (typeof keyValue === 'string') {
+      const normalized = normalizeCandidateName(keyValue)
+      if (normalized) return normalized
+    }
+  }
+
+  for (const containerKey of ['candidate', 'candidate_info', 'candidateInfo', 'applicant', 'person', 'profile']) {
+    const nested = record[containerKey]
+    if (!nested || typeof nested !== 'object') continue
+    const nestedRecord = nested as Record<string, unknown>
+
+    for (const nestedKey of ['name', 'full_name', 'fullName', 'candidate_name', 'candidateName']) {
+      const nestedValue = nestedRecord[nestedKey]
+      if (typeof nestedValue === 'string') {
+        const normalized = normalizeCandidateName(nestedValue)
+        if (normalized) return normalized
+      }
+    }
+
+    const firstName = typeof nestedRecord.first_name === 'string'
+      ? nestedRecord.first_name
+      : typeof nestedRecord.firstName === 'string'
+        ? nestedRecord.firstName
+        : typeof nestedRecord.given_name === 'string'
+          ? nestedRecord.given_name
+          : typeof nestedRecord.givenName === 'string'
+            ? nestedRecord.givenName
+            : ''
+
+    const lastName = typeof nestedRecord.last_name === 'string'
+      ? nestedRecord.last_name
+      : typeof nestedRecord.lastName === 'string'
+        ? nestedRecord.lastName
+        : typeof nestedRecord.family_name === 'string'
+          ? nestedRecord.family_name
+          : typeof nestedRecord.familyName === 'string'
+            ? nestedRecord.familyName
+            : typeof nestedRecord.surname === 'string'
+              ? nestedRecord.surname
+              : ''
+
+    const combined = normalizeCandidateName(`${firstName} ${lastName}`)
+    if (combined) return combined
+  }
+
+  for (const nestedValue of Object.values(record)) {
+    if (Array.isArray(nestedValue)) {
+      for (const item of nestedValue) {
+        const nested = getFromObject(item)
+        if (nested) return nested
+      }
+      continue
+    }
+
+    const nested = getFromObject(nestedValue)
+    if (nested) return nested
+  }
+
+  return null
+}
+
+export function deriveCandidateNameFromScoringRuns(scoringRuns: ScoringRun[]): string | null {
+  for (const run of scoringRuns) {
+    const fromParsed = getFromObject(run.rawParsedResponse)
+    if (fromParsed) return fromParsed
+
+    if (run.rawResponseText) {
+      try {
+        const parsed = JSON.parse(run.rawResponseText)
+        const fromRawResponse = getFromObject(parsed)
+        if (fromRawResponse) return fromRawResponse
+      } catch {
+        // Ignore invalid raw response payloads here; parsing diagnostics already cover this.
+      }
+    }
+  }
+
+  return null
+}
+
 export function matchCategoryToRubric(llmName: string, rubricNames: string[]): string | null {
   const normalizedLlm = normalizeCategoryName(llmName)
   const exact = rubricNames.find(name => normalizeCategoryName(name) === normalizedLlm)

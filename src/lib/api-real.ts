@@ -112,6 +112,7 @@ function mapManualReview(raw: any): ManualReviewData {
       : (raw.rubricScores ?? {}),
     overallComment: raw.overallComment ?? '',
     adjustedFinalScore: raw.adjustedFinalScore,
+    finalDecision: raw.finalDecision,
     auditTrail: typeof raw.auditTrailJson === 'string'
       ? JSON.parse(raw.auditTrailJson)
       : (raw.auditTrail ?? []),
@@ -385,6 +386,7 @@ export const realAPI = {
     minScore?: number
     maxScore?: number
     decision?: string
+    applicantName?: string
     list?: string
     sortField?: string
     sortOrder?: string
@@ -394,6 +396,7 @@ export const realAPI = {
   }): Promise<Application[]> {
     const params = new URLSearchParams()
     if (filters?.status) params.set('status', filters.status)
+    if (filters?.applicantName) params.set('applicantName', filters.applicantName)
     if (filters?.list) params.set('list', filters.list)
     if (filters?.sortField) params.set('sortField', filters.sortField)
     if (filters?.sortOrder) params.set('sortOrder', filters.sortOrder)

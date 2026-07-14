@@ -33,6 +33,13 @@ function findStoredRubricEntry(
   return Object.entries(rubricScores).find(([key]) => normalizeCategoryName(key) === normalizedCategoryName)?.[1]
 }
 
+function normalizeDecision(value: unknown): 'Eligible' | 'Excluded' | 'NeedsManualReview' | null {
+  if (value === 'Eligible' || value === 'Excluded' || value === 'NeedsManualReview') {
+    return value
+  }
+  return null
+}
+
 export function createApplicationsRouter() {
   const router = Router()
   const audit = auditService
@@ -126,7 +133,7 @@ export function createApplicationsRouter() {
   router.get('/jobs/:jobId/applications', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const { status, list, sortField, sortOrder, varianceMin, page, pageSize } = req.query
+      const { status, list, sortField, sortOrder, varianceMin, page, pageSize, applicantName } = req.query
 
       const job = await jobRepo.getById(jobId)
       if (!job) {
@@ -143,6 +150,12 @@ export function createApplicationsRouter() {
       // Filter by status
       if (status) {
         filtered = filtered.filter(a => a.status === status)
+      }
+
+      // Case-insensitive applicant-name search for recruiter/admin workflows.
+      if (typeof applicantName === 'string' && applicantName.trim().length > 0) {
+        const needle = applicantName.trim().toLocaleLowerCase()
+        filtered = filtered.filter((a) => (a.candidateName || '').toLocaleLowerCase().includes(needle))
       }
 
       // Filter by list type using thresholds
@@ -313,7 +326,9 @@ export function createApplicationsRouter() {
   router.post('/applications/:applicationId/manual-review', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { applicationId } = req.params
-      const { rubricScores, overallComment, adjustedFinalScore, humanEdited } = req.body
+      const { rubricScores, overallComment, adjustedFinalScore, humanEdited, finalDecision } = req.body
+      const normalizedAdjustedFinalScore = Number.isFinite(adjustedFinalScore) ? Number(adjustedFinalScore) : undefined
+      const manualDecisionOverride = normalizeDecision(finalDecision)
 
       const existing = await applicationRepo.getManualReview(applicationId)
       const auditTrail = [...(existing?.auditTrail || [])]
@@ -416,6 +431,25 @@ export function createApplicationsRouter() {
         })
       }
 
+      const currentApp = await applicationRepo.getById(applicationId)
+      if (!currentApp) {
+        return res.status(404).json({ error: 'Not Found', message: 'Application not found' })
+      }
+
+      if (manualDecisionOverride && currentApp.finalDecision !== manualDecisionOverride) {
+        auditTrail.push({
+          entryId: randomUUID(),
+          applicationId,
+          reviewerId: req.user?.userId || 'unknown',
+          reviewerName: req.user?.fullName || 'Unknown',
+          timestamp: new Date().toISOString(),
+          changeType: 'decision_override',
+          categoryName: 'final decision',
+          previousValue: currentApp.finalDecision ?? 'Unknown',
+          newValue: manualDecisionOverride,
+        })
+      }
+
       const nextHumanEdited = existing?.humanEdited === true || humanEdited === true || detectedHumanEdit
 
       const reviewData: ManualReviewData = {
@@ -423,7 +457,8 @@ export function createApplicationsRouter() {
         jobId: effectiveJobId,
         rubricScores: storedRubricScores,
         overallComment: overallComment || existing?.overallComment || '',
-        adjustedFinalScore,
+        adjustedFinalScore: normalizedAdjustedFinalScore,
+        finalDecision: manualDecisionOverride ?? currentApp.finalDecision,
         auditTrail,
         humanEdited: nextHumanEdited,
         lastModifiedAt: new Date().toISOString(),
@@ -437,11 +472,29 @@ export function createApplicationsRouter() {
 
       await applicationRepo.setManualReview(reviewData)
 
+      const targetDecision = manualDecisionOverride ?? currentApp.finalDecision
+      const nextStatus = targetDecision === 'NeedsManualReview' ? 'NeedsManualReview' : 'Completed'
+      await applicationRepo.updateStatus(applicationId, nextStatus, {
+        finalScore: normalizedAdjustedFinalScore ?? currentApp.finalScore,
+        finalDecision: targetDecision,
+        variance: currentApp.variance,
+        flagged: targetDecision === 'NeedsManualReview',
+      })
+
+      const existingAggregated = await applicationRepo.getAggregatedResult(applicationId)
+      if (existingAggregated) {
+        await applicationRepo.setAggregatedResult({
+          ...existingAggregated,
+          finalDecision: targetDecision ?? existingAggregated.finalDecision,
+          finalScore: normalizedAdjustedFinalScore ?? existingAggregated.finalScore,
+        })
+      }
+
       await audit.appendEvent(
         req.user?.username || 'unknown',
         'manual-review.saved',
         'Application', applicationId,
-        { adjustedFinalScore }
+        { adjustedFinalScore: normalizedAdjustedFinalScore }
       )
 
       res.json(responseReviewData)

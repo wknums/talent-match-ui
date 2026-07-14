@@ -36,7 +36,7 @@ public class JobApplicationsIntegrationTests : IClassFixture<UserManagementInteg
             Organisation = "TalentMatch",
             PostingDate = DateTime.UtcNow.Date,
             RubricJson = "[]",
-            MustHaveCriteriaJson = "[]",
+            MustHavesJson = "[]",
             DesiredCriteriaJson = "[]",
             ScoringRunCount = 3,
             AggregationStrategy = "median",

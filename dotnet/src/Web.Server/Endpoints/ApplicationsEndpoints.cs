@@ -27,11 +27,11 @@ public static class ApplicationsEndpoints
             return Results.Ok(result);
         }).DisableAntiforgery();
 
-        jobAppsGroup.MapGet("/", async (string jobId, string? list, string? sortField, string? sortOrder,
+        jobAppsGroup.MapGet("/", async (string jobId, string? list, string? applicantName, string? sortField, string? sortOrder,
             double? varianceMin, int? page, int? pageSize, ISender mediator) =>
         {
             var apps = await mediator.Send(new GetApplicationsQuery(
-                jobId, list, sortField, sortOrder, varianceMin, page ?? 1, pageSize ?? 50));
+                jobId, list, applicantName, sortField, sortOrder, varianceMin, page ?? 1, pageSize ?? 50));
             return Results.Ok(apps);
         });
 
@@ -49,10 +49,25 @@ public static class ApplicationsEndpoints
             return Results.Ok(runs);
         });
 
+        appGroup.MapPost("/runs/{scoringRunId}/reparse", async (string applicationId, string scoringRunId, ReparseScoringRunRequest? request, ISender mediator) =>
+        {
+            try
+            {
+                var result = await mediator.Send(new ReparseScoringRunCommand(applicationId, scoringRunId, request?.RawJson));
+                return Results.Ok(result);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
+        });
+
         appGroup.MapGet("/result", async (string applicationId, ISender mediator) =>
         {
             var result = await mediator.Send(new GetAggregatedResultQuery(applicationId));
-            return result != null ? Results.Ok(result) : Results.NotFound();
+            // No aggregate exists yet for queued/in-flight applications.
+            // Return 200 with null payload to avoid unnecessary client-side 404 noise.
+            return Results.Ok(result);
         });
 
         appGroup.MapGet("/documents", async (string applicationId, IApplicationRepository repo) =>
@@ -92,10 +107,11 @@ public static class ApplicationsEndpoints
         {
             var review = await mediator.Send(new SaveManualReviewCommand(
                 applicationId, request.RubricScoresJson, request.OverallComment,
-                request.AdjustedFinalScore, request.AuditTrailJson, request.HumanEdited));
+                request.AdjustedFinalScore, request.AuditTrailJson, request.HumanEdited, request.FinalDecision));
             return Results.Ok(review);
         });
     }
 }
 
-public record SaveManualReviewRequest(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson, bool HumanEdited = false);
+public record SaveManualReviewRequest(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson, bool HumanEdited = false, string? FinalDecision = null);
+public record ReparseScoringRunRequest(string? RawJson);

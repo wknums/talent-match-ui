@@ -6,6 +6,9 @@ public class Application
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public string JobId { get; set; } = string.Empty;
+    public string CandidateRef { get; set; } = string.Empty;
+    public string? CandidateName { get; set; }
+    public string? CandidateEmail { get; set; }
     public string Status { get; set; } = "Queued"; // Use ApplicationStatus enum values
     public double? FinalScore { get; set; }
     public string? FinalDecision { get; set; } // Eligible, Excluded, NeedsManualReview

@@ -41,6 +41,12 @@ load_env_file "$ENV_FILE"
 # Ensure secrets are not echoed
 set +x  # Disable trace mode if it was enabled
 
+# Stack runtimes rely on AWR_SEQ_API_ENDPOINT for sequential-mode calls.
+# Require it for any deployment that touches Stack A or Stack B.
+if [[ "$TARGET" != "shared-only" ]]; then
+  validate_required "AWR_SEQ_API_ENDPOINT"
+fi
+
 export_tf_vars
 validate_reuse_coordinates
 
@@ -86,8 +92,9 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
   print_banner "Step 1: Shared Infrastructure"
   run_terraform "$TF_LIVE_DIR/shared" "$ACTION"
 
-  # Capture shared outputs for stack roots
-  if [[ "$ACTION" == "apply" ]]; then
+  # Capture shared outputs for downstream stack roots.
+  # For plan actions we still need these values to satisfy required variables.
+  if [[ "$DEPLOY_STACK_A" == "true" || "$DEPLOY_STACK_B" == "true" ]]; then
     export TF_VAR_app_service_plan_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "app_service_plan_id")"
     export TF_VAR_sql_server_fqdn="$(get_terraform_output "$TF_LIVE_DIR/shared" "sql_server_fqdn")"
     export TF_VAR_sql_database_name="$(get_terraform_output "$TF_LIVE_DIR/shared" "sql_database_name")"
@@ -105,6 +112,9 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
       log_info "Captured integration_subnet_id from shared root"
     fi
 
+  fi
+
+  if [[ "$ACTION" == "apply" ]]; then
     STACK_A_IDENTITY_NAME="${TF_VAR_identity_id_stack_a##*/}"
     STACK_B_IDENTITY_NAME="${TF_VAR_identity_id_stack_b##*/}"
     export SQL_SERVER_FQDN="${TF_VAR_sql_server_fqdn}"
