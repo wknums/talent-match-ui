@@ -287,6 +287,21 @@ export const applicationRepo = {
     await req.query(`UPDATE ${T('Applications')} SET ${sets} WHERE Id = @id`)
   },
 
+  async updateCandidateName(applicationId: string, candidateName: string): Promise<void> {
+    const normalized = candidateName.trim()
+    if (!normalized) return
+
+    const pool = await getPool()
+    await pool.request()
+      .input('id', sql.NVarChar, applicationId)
+      .input('candidateName', sql.NVarChar, normalized)
+      .query(`UPDATE ${T('Applications')}
+              SET CandidateName = @candidateName,
+                  UpdatedAt = SYSUTCDATETIME()
+              WHERE Id = @id
+                AND (CandidateName IS NULL OR LTRIM(RTRIM(CandidateName)) = '' OR CandidateName <> @candidateName)`)
+  },
+
   async resetForRescore(applicationId: string): Promise<void> {
     const pool = await getPool()
     const txn = pool.transaction()

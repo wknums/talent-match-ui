@@ -33,7 +33,7 @@ import {
   ArrowClockwise,
 } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
-import { parseCategoryScores, parseGate, parseGateEntries } from '@/lib/stackb-scoring'
+import { deriveCandidateNameFromScoringRuns, parseCategoryScores, parseGate, parseGateEntries } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { ScoringPrompt, PromptStatus, PromptTestRun, PromptTestRunDetail, Application } from '@/types'
@@ -500,11 +500,16 @@ function PromptTestWorkflow({
                               ]),
                             )
 
+                        const resolvedCandidateName = application.candidateName
+                          || deriveCandidateNameFromScoringRuns(scoringRuns)
+                          || application.candidateRef
+                          || application.applicationId.slice(0, 8)
+
                         return (
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <span className="text-sm font-medium">
-                            {application.candidateName || application.candidateRef || application.applicationId.slice(0, 8)}
+                            {resolvedCandidateName}
                           </span>
                           <div className="flex items-center gap-2">
                             {onStartManualReview && (

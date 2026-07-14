@@ -133,7 +133,7 @@ export function createApplicationsRouter() {
   router.get('/jobs/:jobId/applications', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
-      const { status, list, sortField, sortOrder, varianceMin, page, pageSize } = req.query
+      const { status, list, sortField, sortOrder, varianceMin, page, pageSize, applicantName } = req.query
 
       const job = await jobRepo.getById(jobId)
       if (!job) {
@@ -150,6 +150,12 @@ export function createApplicationsRouter() {
       // Filter by status
       if (status) {
         filtered = filtered.filter(a => a.status === status)
+      }
+
+      // Case-insensitive applicant-name search for recruiter/admin workflows.
+      if (typeof applicantName === 'string' && applicantName.trim().length > 0) {
+        const needle = applicantName.trim().toLocaleLowerCase()
+        filtered = filtered.filter((a) => (a.candidateName || '').toLocaleLowerCase().includes(needle))
       }
 
       // Filter by list type using thresholds

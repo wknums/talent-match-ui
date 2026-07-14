@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildStackBManualReviewPrepopulation,
   collectEvidenceByRubricCategory,
+  deriveCandidateNameFromScoringRuns,
   matchCategoryToRubric,
 } from '@/lib/stackb-scoring'
 import type { ScoringRun, AggregatedResult, ManualReviewData } from '@/types'
@@ -259,5 +260,52 @@ describe('matchCategoryToRubric', () => {
 
   it('returns null for completely unmatched', () => {
     expect(matchCategoryToRubric('Quantum Physics', ['Technical Skills', 'Communication'])).toBeNull()
+  })
+})
+
+describe('deriveCandidateNameFromScoringRuns', () => {
+  it('returns candidate_name from rawParsedResponse', () => {
+    const runs: ScoringRun[] = [
+      {
+        runId: 'r1', applicationId: 'a1', versionId: 'v1', runIndex: 1,
+        modelDeploymentId: 'm1', promptVersionId: 'p1', overallScore: 84,
+        subScores: {}, mustHaveResult: { passed: true, missingCriteria: [], details: {} },
+        evidenceCitations: [], rationale: '', improvementRecommendations: [],
+        createdAt: '', durationMs: 0, status: 'Success',
+        rawParsedResponse: { candidate_name: 'Jane Doe' },
+      },
+    ]
+
+    expect(deriveCandidateNameFromScoringRuns(runs)).toBe('Jane Doe')
+  })
+
+  it('returns nested candidate fullName from rawResponseText', () => {
+    const runs: ScoringRun[] = [
+      {
+        runId: 'r1', applicationId: 'a1', versionId: 'v1', runIndex: 1,
+        modelDeploymentId: 'm1', promptVersionId: 'p1', overallScore: 79,
+        subScores: {}, mustHaveResult: { passed: true, missingCriteria: [], details: {} },
+        evidenceCitations: [], rationale: '', improvementRecommendations: [],
+        createdAt: '', durationMs: 0, status: 'Success',
+        rawResponseText: JSON.stringify({ candidate: { fullName: 'John Public' } }),
+      },
+    ]
+
+    expect(deriveCandidateNameFromScoringRuns(runs)).toBe('John Public')
+  })
+
+  it('returns null for placeholder values', () => {
+    const runs: ScoringRun[] = [
+      {
+        runId: 'r1', applicationId: 'a1', versionId: 'v1', runIndex: 1,
+        modelDeploymentId: 'm1', promptVersionId: 'p1', overallScore: 65,
+        subScores: {}, mustHaveResult: { passed: true, missingCriteria: [], details: {} },
+        evidenceCitations: [], rationale: '', improvementRecommendations: [],
+        createdAt: '', durationMs: 0, status: 'Success',
+        rawParsedResponse: { candidate_name: 'Unknown' },
+      },
+    ]
+
+    expect(deriveCandidateNameFromScoringRuns(runs)).toBeNull()
   })
 })

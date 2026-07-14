@@ -70,6 +70,9 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<TalentMatch.Domain.Entities.Application>(e =>
         {
             e.HasKey(x => x.Id);
+            e.Property(x => x.CandidateRef).HasMaxLength(100).HasDefaultValue(string.Empty);
+            e.Property(x => x.CandidateName).HasMaxLength(200);
+            e.Property(x => x.CandidateEmail).HasMaxLength(320);
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
             e.Property(x => x.FinalDecision).HasMaxLength(30);
             e.HasMany(x => x.Documents).WithOne(x => x.Application).HasForeignKey(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);

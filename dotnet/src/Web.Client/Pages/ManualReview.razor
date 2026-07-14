@@ -6,6 +6,17 @@
 
 <h3>Manual Review</h3>
 
+@if (application != null)
+{
+    <div style="margin-bottom: 0.75rem; font-size: 0.9rem; color: #4a5568;">
+        <strong>Applicant:</strong> @GetApplicantLabel(application)
+        @if (!string.IsNullOrWhiteSpace(application.CandidateEmail))
+        {
+            <span> · @application.CandidateEmail</span>
+        }
+    </div>
+}
+
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; height: calc(100vh - 150px);">
     <div style="border: 1px solid #ccc; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column;">
         <div style="padding: 0.75rem 1rem; border-bottom: 1px solid #ccc; background: #f9f9f9;">
@@ -739,5 +750,17 @@
         return DecisionOptions.Contains(decision, StringComparer.Ordinal)
             ? decision
             : "NeedsManualReview";
+    }
+
+    private static string GetApplicantLabel(ApplicationDto app)
+    {
+        if (!string.IsNullOrWhiteSpace(app.CandidateName))
+            return app.CandidateName!;
+
+        if (!string.IsNullOrWhiteSpace(app.CandidateRef))
+            return app.CandidateRef;
+
+        var id = app.Id ?? string.Empty;
+        return id.Length > 8 ? $"{id[..8]}..." : id;
     }
 }

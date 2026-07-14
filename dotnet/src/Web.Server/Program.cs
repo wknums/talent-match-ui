@@ -305,6 +305,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         var hasExistingSchema = Convert.ToInt32(hasExistingSchemaCommand.ExecuteScalar()) > 0;
         if (hasExistingSchema)
         {
+            EnsureSqliteApplicationCandidateColumns(connection);
             EnsureSqliteManualReviewHumanEditedColumn(connection);
             EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
             return;
@@ -317,6 +318,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         using var initializeSchemaCommand = connection.CreateCommand();
         initializeSchemaCommand.CommandText = File.ReadAllText(schemaPath);
         initializeSchemaCommand.ExecuteNonQuery();
+        EnsureSqliteApplicationCandidateColumns(connection);
         EnsureSqliteManualReviewHumanEditedColumn(connection);
         EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
     }
@@ -347,6 +349,46 @@ static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connectio
     {
         using var alterCommand = connection.CreateCommand();
         alterCommand.CommandText = "ALTER TABLE ManualReviews ADD COLUMN HumanEdited INTEGER NOT NULL DEFAULT 0;";
+        alterCommand.ExecuteNonQuery();
+    }
+}
+
+static void EnsureSqliteApplicationCandidateColumns(SqliteConnection connection)
+{
+    using var columnCheckCommand = connection.CreateCommand();
+    columnCheckCommand.CommandText = "PRAGMA table_info('Applications');";
+
+    using var reader = columnCheckCommand.ExecuteReader();
+    var hasCandidateRef = false;
+    var hasCandidateName = false;
+    var hasCandidateEmail = false;
+
+    while (reader.Read())
+    {
+        var columnName = reader.GetString(1);
+        if (string.Equals(columnName, "CandidateRef", StringComparison.OrdinalIgnoreCase)) hasCandidateRef = true;
+        if (string.Equals(columnName, "CandidateName", StringComparison.OrdinalIgnoreCase)) hasCandidateName = true;
+        if (string.Equals(columnName, "CandidateEmail", StringComparison.OrdinalIgnoreCase)) hasCandidateEmail = true;
+    }
+
+    if (!hasCandidateRef)
+    {
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE Applications ADD COLUMN CandidateRef TEXT NOT NULL DEFAULT '';";
+        alterCommand.ExecuteNonQuery();
+    }
+
+    if (!hasCandidateName)
+    {
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE Applications ADD COLUMN CandidateName TEXT NULL;";
+        alterCommand.ExecuteNonQuery();
+    }
+
+    if (!hasCandidateEmail)
+    {
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = "ALTER TABLE Applications ADD COLUMN CandidateEmail TEXT NULL;";
         alterCommand.ExecuteNonQuery();
     }
 }
@@ -431,6 +473,30 @@ IF COL_LENGTH('talentmatch.ManualReviews', 'HumanEdited') IS NULL
 BEGIN
     ALTER TABLE [talentmatch].ManualReviews
         ADD [HumanEdited] BIT NOT NULL CONSTRAINT DF_ManualReviews_HumanEdited DEFAULT 0;
+END;
+");
+
+    ExecuteSql(@"
+IF COL_LENGTH('talentmatch.Applications', 'CandidateRef') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].Applications
+    ADD [CandidateRef] NVARCHAR(100) NOT NULL CONSTRAINT DF_Applications_CandidateRef DEFAULT N'';
+END;
+");
+
+    ExecuteSql(@"
+IF COL_LENGTH('talentmatch.Applications', 'CandidateName') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].Applications
+    ADD [CandidateName] NVARCHAR(200) NULL;
+END;
+");
+
+    ExecuteSql(@"
+IF COL_LENGTH('talentmatch.Applications', 'CandidateEmail') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].Applications
+    ADD [CandidateEmail] NVARCHAR(320) NULL;
 END;
 ");
 

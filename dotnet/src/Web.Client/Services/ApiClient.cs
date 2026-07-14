@@ -239,11 +239,17 @@ public class ApiClient
     }
 
     // Applications
-    public async Task<List<ApplicationDto>> GetApplicationsAsync(string jobId, string? list = null)
+    public async Task<List<ApplicationDto>> GetApplicationsAsync(string jobId, string? list = null, string? applicantName = null)
     {
-        var requestUri = string.IsNullOrWhiteSpace(list)
+        var queryParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(list))
+            queryParts.Add($"list={Uri.EscapeDataString(list)}");
+        if (!string.IsNullOrWhiteSpace(applicantName))
+            queryParts.Add($"applicantName={Uri.EscapeDataString(applicantName)}");
+
+        var requestUri = queryParts.Count == 0
             ? $"/api/jobs/{jobId}/applications"
-            : $"/api/jobs/{jobId}/applications?list={Uri.EscapeDataString(list)}";
+            : $"/api/jobs/{jobId}/applications?{string.Join("&", queryParts)}";
 
         var response = await _http.GetAsync(requestUri);
         await EnsureSuccessOrThrowAsync(response, "Failed to load job applications.");
@@ -437,7 +443,7 @@ public record JobDto(string Id, string JobCode, string Title, string Department,
 public record JobSummaryDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt, string CreatedByName, int TotalApplications, int CompletedApplications);
 public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription);
 public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null);
-public record ApplicationDto(string Id, string JobId, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
+public record ApplicationDto(string Id, string JobId, string CandidateRef, string? CandidateName, string? CandidateEmail, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
 public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default);
 public record ReparseScoringRunResultDto(ScoringRunDto ScoringRun, bool FallbackParsingActivated, bool EligibilityFallbackActivated, bool TotalScoreFallbackActivated, bool GateDetected, string EligibilityPath, string Source);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);

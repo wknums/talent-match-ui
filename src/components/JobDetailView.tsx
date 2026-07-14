@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -51,18 +52,19 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
   const [reaggregateMessage, setReaggregateMessage] = useState<string | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingJob, setDeletingJob] = useState(false)
+  const [applicantSearch, setApplicantSearch] = useState('')
 
   useEffect(() => {
     loadData()
     const interval = setInterval(loadData, 10000)
     return () => clearInterval(interval)
-  }, [jobId])
+  }, [jobId, applicantSearch])
 
   const loadData = async () => {
     try {
       const [jobData, appsData] = await Promise.all([
         api.getJob(jobId),
-        api.getApplications(jobId),
+        api.getApplications(jobId, applicantSearch.trim().length > 0 ? { applicantName: applicantSearch } : undefined),
       ])
       if (jobData) setJob(jobData)
       setApplications(appsData)
@@ -376,10 +378,28 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>Applications</CardTitle>
-            <Button variant="outline" size="sm">
-              <Funnel size={16} />
-              Filters
-            </Button>
+            <div className="flex items-center gap-2">
+              <Input
+                value={applicantSearch}
+                onChange={(event) => setApplicantSearch(event.target.value)}
+                placeholder="Search applicant name"
+                className="w-64"
+                aria-label="Search by applicant name"
+              />
+              {applicantSearch.trim().length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setApplicantSearch('')}
+                >
+                  Clear
+                </Button>
+              )}
+              <Button variant="outline" size="sm">
+                <Funnel size={16} />
+                Filters
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

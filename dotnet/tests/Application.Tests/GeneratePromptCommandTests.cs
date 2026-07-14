@@ -53,6 +53,8 @@ public class GeneratePromptCommandTests
         using var templateDoc = JsonDocument.Parse(ExtractTemplateJson(savedPrompt.PromptText));
         var root = templateDoc.RootElement;
 
+        root.TryGetProperty("candidate_name", out var candidateName).Should().BeTrue();
+        candidateName.ValueKind.Should().Be(JsonValueKind.String);
         root.GetProperty("category_scores").GetArrayLength().Should().Be(2);
         root.GetProperty("category_scores").EnumerateArray().Select(x => x.GetProperty("name").GetString())
             .Should().BeEquivalentTo(new[] { "Technical Skills", "Communication" });
@@ -215,6 +217,7 @@ public class GeneratePromptCommandTests
         result.PromptText.Should().Contain("## Output Contract (Mandatory)");
         capturedUserPrompt.Should().NotBeNull();
         capturedUserPrompt.Should().Contain("targetScoringJson");
+        capturedUserPrompt.Should().Contain("candidate_name");
     }
 
     private static Job BuildJobWithApprovedConfig(string rubricJson, string mustHavesJson, string desiredCriteriaJson)

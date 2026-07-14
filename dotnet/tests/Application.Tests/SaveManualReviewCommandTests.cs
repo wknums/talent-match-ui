@@ -4,6 +4,7 @@ using TalentMatch.Application.Applications.Commands;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using ApplicationEntity = TalentMatch.Domain.Entities.Application;
 
 namespace TalentMatch.Application.Tests;
 
@@ -19,6 +20,16 @@ public class SaveManualReviewCommandTests
             .Setup(r => r.GetManualReviewAsync("app-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync((ManualReviewData?)null);
 
+        repository
+            .Setup(r => r.GetByIdAsync("app-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ApplicationEntity { Id = "app-1", FinalDecision = "NeedsManualReview", Status = "NeedsManualReview" });
+        repository
+            .Setup(r => r.UpdateAsync(It.IsAny<ApplicationEntity>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repository
+            .Setup(r => r.GetAggregatedResultAsync("app-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AggregatedResult?)null);
+
         ManualReviewData? saved = null;
         repository
             .Setup(r => r.SetManualReviewAsync(It.IsAny<ManualReviewData>(), It.IsAny<CancellationToken>()))
@@ -32,7 +43,8 @@ public class SaveManualReviewCommandTests
             "Pre-populated from AI scoring...",
             81.5,
             "[]",
-            false);
+            false,
+            null);
 
         var result = await handler.Handle(command, CancellationToken.None);
 
@@ -51,6 +63,16 @@ public class SaveManualReviewCommandTests
             .Setup(r => r.GetManualReviewAsync("app-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync((ManualReviewData?)null);
 
+        repository
+            .Setup(r => r.GetByIdAsync("app-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ApplicationEntity { Id = "app-1", FinalDecision = "NeedsManualReview", Status = "NeedsManualReview" });
+        repository
+            .Setup(r => r.UpdateAsync(It.IsAny<ApplicationEntity>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repository
+            .Setup(r => r.GetAggregatedResultAsync("app-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AggregatedResult?)null);
+
         ManualReviewData? saved = null;
         repository
             .Setup(r => r.SetManualReviewAsync(It.IsAny<ManualReviewData>(), It.IsAny<CancellationToken>()))
@@ -64,7 +86,8 @@ public class SaveManualReviewCommandTests
             "Recruiter override",
             90,
             "[]",
-            true);
+            true,
+            null);
 
         var result = await handler.Handle(command, CancellationToken.None);
 
@@ -90,6 +113,16 @@ public class SaveManualReviewCommandTests
                 AuditTrailJson = "[]",
             });
 
+        repository
+            .Setup(r => r.GetByIdAsync("app-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ApplicationEntity { Id = "app-1", FinalDecision = "NeedsManualReview", Status = "NeedsManualReview" });
+        repository
+            .Setup(r => r.UpdateAsync(It.IsAny<ApplicationEntity>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repository
+            .Setup(r => r.GetAggregatedResultAsync("app-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((AggregatedResult?)null);
+
         ManualReviewData? saved = null;
         repository
             .Setup(r => r.SetManualReviewAsync(It.IsAny<ManualReviewData>(), It.IsAny<CancellationToken>()))
@@ -103,7 +136,8 @@ public class SaveManualReviewCommandTests
             "still edited",
             88,
             "[]",
-            false);
+            false,
+            null);
 
         var result = await handler.Handle(command, CancellationToken.None);
 

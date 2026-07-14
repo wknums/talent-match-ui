@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label'
 import { ArrowLeft, FloppyDisk, Robot } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { getCurrentUser as authGetCurrentUser } from '@/lib/auth'
-import { buildStackBManualReviewPrepopulation, normalizeManualReviewForRubric } from '@/lib/stackb-scoring'
+import { buildStackBManualReviewPrepopulation, deriveCandidateNameFromScoringRuns, normalizeManualReviewForRubric } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
@@ -46,6 +46,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
   const [aiScoringMismatch, setAiScoringMismatch] = useState(false)
   const [mismatchedCategories, setMismatchedCategories] = useState<string[]>([])
   const [aggregatedResult, setAggregatedResult] = useState<AggregatedResult | null>(null)
+  const [scoringRuns, setScoringRuns] = useState<ScoringRun[]>([])
   const [reviewData, setReviewData] = useState<ManualReviewData>(createEmptyReviewData)
   const [baselineReviewData, setBaselineReviewData] = useState<ManualReviewData | null>(null)
 
@@ -95,6 +96,8 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
         api.getAggregatedResult(applicationId).catch(() => null),
         api.getScoringRuns(applicationId).catch(() => [] as ScoringRun[]),
       ])
+
+      setScoringRuns(scoringRuns)
 
       if (aggResult) {
         setAggregatedResult(aggResult)
@@ -346,6 +349,9 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
   }
 
   const totalScore = getDisplayScore()
+  const resolvedCandidateName = application.candidateName
+    || deriveCandidateNameFromScoringRuns(scoringRuns)
+    || application.candidateRef
 
   return (
     <div className="min-h-screen bg-background">
@@ -359,7 +365,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
               <div>
                 <h1 className="text-xl font-bold">Manual Review</h1>
                 <p className="text-sm text-muted-foreground">
-                  {application.candidateName || application.candidateRef} • {job.title}
+                  {resolvedCandidateName} • {job.title}
                 </p>
               </div>
             </div>

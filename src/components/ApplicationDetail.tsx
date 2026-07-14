@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Quotes, File, CheckCircle, XCircle, ShieldCheck, Pencil, Warning, ArrowClockwise, SpinnerGap } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
-import { matchCategoryToRubric, parseCategoryScores, parseGate, parseGateEntries } from '@/lib/stackb-scoring'
+import { deriveCandidateNameFromScoringRuns, matchCategoryToRubric, parseCategoryScores, parseGate, parseGateEntries } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { DocumentViewer } from '@/components/DocumentViewer'
@@ -221,6 +221,9 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
   const firstRun = [...scoringRuns].sort((left, right) => left.runIndex - right.runIndex)[0]
   const mustHaveDetails = firstRun ? parseGate(firstRun) : null
   const hasOverviewData = Boolean(aggregatedResult || scoringRuns.length > 0)
+  const resolvedCandidateName = application.candidateName
+    || deriveCandidateNameFromScoringRuns(scoringRuns)
+    || application.candidateRef
   const mustHaveEntries = (() => {
     if (!firstRun) return [] as Array<{ criterion: string; passed: boolean; evidence?: string }>
 
@@ -260,7 +263,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
       <DraggableDialogHeader>
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1">
-            <DialogTitle className="text-2xl">{application.candidateName || application.candidateRef}</DialogTitle>
+            <DialogTitle className="text-2xl">{resolvedCandidateName}</DialogTitle>
             {application.candidateEmail && (
               <p className="text-sm text-muted-foreground mt-1">{application.candidateEmail}</p>
             )}

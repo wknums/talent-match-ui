@@ -166,6 +166,36 @@ public class ScoreApplicationCommandEvidenceParsingTests
     }
 
     [Fact]
+    public void ExtractCandidateName_TopLevelCandidateName_ReturnsName()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate_name"": ""Jane Doe"", ""overall_score"": 85}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().Be("Jane Doe");
+    }
+
+    [Fact]
+    public void ExtractCandidateName_NestedCandidateObject_ReturnsName()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate"": {""fullName"": ""John Q Public""}, ""overall_score"": 72}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().Be("John Q Public");
+    }
+
+    [Fact]
+    public void ExtractCandidateName_PlaceholderValue_ReturnsNull()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate_name"": ""Unknown"", ""overall_score"": 72}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().BeNull();
+    }
+
+    [Fact]
     public void ParseSingleRun_MixedCasePropertyNames_ExtractsCorrectly()
     {
         var fixture = TestFixtureLoader.LoadFixture("mixedCasePropertyNames");

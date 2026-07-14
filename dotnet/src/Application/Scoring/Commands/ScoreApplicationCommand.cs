@@ -98,6 +98,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             resolvedPrompt, docBytes, primaryDoc.FileName, primaryDoc.FileType, request.RunCount, ct);
 
         var runs = new List<ScoringRun>();
+        string? extractedCandidateName = null;
         EngineAggregatedResult? aggregated = null;
 
         int runIndex = 0;
@@ -110,6 +111,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                 using var doc = JsonDocument.Parse(jsonText);
                 var root = doc.RootElement;
 
+                extractedCandidateName ??= ExtractCandidateName(root);
                 var parsed = ParseSingleRunWithDiagnostics(root, request.ApplicationId, prompt.Id, runIndex);
                 var run = parsed.Run;
                 run.RawResponseText = responseText;
@@ -145,6 +147,17 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                 };
                 await _applicationRepo.AddScoringRunAsync(run, ct);
                 runs.Add(run);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(extractedCandidateName))
+        {
+            var app = await _applicationRepo.GetByIdAsync(request.ApplicationId, ct);
+            if (app != null
+                && !string.Equals(app.CandidateName?.Trim(), extractedCandidateName, StringComparison.Ordinal))
+            {
+                app.CandidateName = extractedCandidateName;
+                await _applicationRepo.UpdateAsync(app, ct);
             }
         }
 
@@ -1095,6 +1108,77 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             warnings.Add("eligibility_gate_not_detected");
 
         return warnings.Count == 0 ? null : JsonSerializer.Serialize(warnings);
+    }
+
+    internal static string? ExtractCandidateName(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return null;
+
+        foreach (var key in new[] { "candidate_name", "candidateName", "candidate_full_name", "candidateFullName", "full_name", "fullName" })
+        {
+            if (!TryGetPropertyCaseInsensitive(root, key, out var value) || value.ValueKind != JsonValueKind.String)
+                continue;
+
+            var normalized = NormalizeCandidateName(value.GetString());
+            if (!string.IsNullOrWhiteSpace(normalized))
+                return normalized;
+        }
+
+        foreach (var containerKey in new[] { "candidate", "applicant" })
+        {
+            if (!TryGetPropertyCaseInsensitive(root, containerKey, out var container)
+                || container.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            foreach (var nestedKey in new[] { "name", "full_name", "fullName", "candidate_name", "candidateName" })
+            {
+                if (!TryGetPropertyCaseInsensitive(container, nestedKey, out var nestedValue)
+                    || nestedValue.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var normalized = NormalizeCandidateName(nestedValue.GetString());
+                if (!string.IsNullOrWhiteSpace(normalized))
+                    return normalized;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeCandidateName(string? rawName)
+    {
+        if (string.IsNullOrWhiteSpace(rawName))
+            return null;
+
+        var trimmed = rawName.Trim();
+        var collapsedWhitespace = System.Text.RegularExpressions.Regex.Replace(trimmed, @"\s+", " ");
+        var normalizedMarker = NormalizeForBoolParsing(collapsedWhitespace);
+
+        if (string.IsNullOrWhiteSpace(normalizedMarker))
+            return null;
+
+        var invalidMarkers = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "n a",
+            "na",
+            "unknown",
+            "not provided",
+            "not available",
+            "candidate",
+            "candidate name",
+            "applicant",
+            "applicant name"
+        };
+
+        if (invalidMarkers.Contains(normalizedMarker))
+            return null;
+
+        return collapsedWhitespace;
     }
 
     public static string ExtractJsonFromResponse(string text) => ExtractJson(text);

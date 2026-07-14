@@ -35,6 +35,17 @@
 
 @if (application != null)
 {
+    <div style="margin-bottom: 0.75rem; font-size: 0.9rem; color: #4a5568;">
+        <strong>Applicant:</strong> @GetApplicantLabel(application)
+        @if (!string.IsNullOrWhiteSpace(application.CandidateEmail))
+        {
+            <span> · @application.CandidateEmail</span>
+        }
+    </div>
+}
+
+@if (application != null)
+{
     <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; height: calc(100vh - 140px);">
 
         @* Panel 1: Original Document (FR-058) - uses DocumentViewer component (T183) *@
@@ -485,6 +496,18 @@ else
 
     private void NavigateToManualReview() => Navigation.NavigateTo($"/manual-review/{ApplicationId}");
     private void NavigateToJob() => Navigation.NavigateTo($"/jobs/{application?.JobId}");
+
+    private static string GetApplicantLabel(ApplicationDto app)
+    {
+        if (!string.IsNullOrWhiteSpace(app.CandidateName))
+            return app.CandidateName!;
+
+        if (!string.IsNullOrWhiteSpace(app.CandidateRef))
+            return app.CandidateRef;
+
+        var id = app.Id ?? string.Empty;
+        return id.Length > 8 ? $"{id[..8]}..." : id;
+    }
 
     // Class (not positional record) so System.Text.Json handles extra/mismatched properties
     private class GateResult

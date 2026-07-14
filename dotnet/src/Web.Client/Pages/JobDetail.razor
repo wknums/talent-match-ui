@@ -62,9 +62,23 @@
         <button @onclick="@(() => activeTab = "excluded")" style="@TabStyle("excluded")">Excluded (@excluded.Count)</button>
     </div>
 
+    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+        <input
+            @bind="applicantSearch"
+            @bind:event="oninput"
+            placeholder="Search applicant name"
+            aria-label="Search by applicant name"
+            style="padding: 0.45rem 0.6rem; min-width: 300px; border: 1px solid #cbd5e0; border-radius: 6px;" />
+        @if (!string.IsNullOrWhiteSpace(applicantSearch))
+        {
+            <button @onclick="() => applicantSearch = string.Empty" style="padding: 0.4rem 0.75rem;">Clear</button>
+        }
+    </div>
+
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ccc;">
+                <th style="padding: 0.5rem; text-align: left;">Applicant</th>
                 <th style="padding: 0.5rem; cursor: pointer;" @onclick="SortByScore">Score ↕</th>
                 <th style="padding: 0.5rem;">Status</th>
                 <th style="padding: 0.5rem;">Decision</th>
@@ -77,6 +91,13 @@
             @foreach (var app in currentList)
             {
                 <tr style="border-bottom: 1px solid #eee;">
+                    <td style="padding: 0.5rem;">
+                        <div style="font-weight: 600;">@(string.IsNullOrWhiteSpace(app.CandidateName) ? app.CandidateRef : app.CandidateName)</div>
+                        @if (!string.IsNullOrWhiteSpace(app.CandidateEmail))
+                        {
+                            <div style="font-size: 0.8rem; color: #718096;">@app.CandidateEmail</div>
+                        }
+                    </td>
                     <td style="padding: 0.5rem;">@(app.FinalScore?.ToString("F1") ?? "—")</td>
                     <td style="padding: 0.5rem;">@app.Status</td>
                     <td style="padding: 0.5rem;">@(app.FinalDecision ?? "—")</td>
@@ -161,6 +182,7 @@ else
     private bool showDeleteDialog;
     private bool showEditDialog;
     private string? deleteError;
+    private string applicantSearch = string.Empty;
     private ScoringPromptDto? activePrompt;
     private JobConfigDto? jobConfig;
     private System.Threading.Timer? _jobPollTimer;
@@ -182,12 +204,32 @@ else
 
     private List<ApplicationDto> excluded => allApps.Where(a => a.FinalDecision == "Excluded").ToList();
 
-    private List<ApplicationDto> currentList => activeTab switch
+    private List<ApplicationDto> currentList
     {
-        "shortlist" => shortlist,
-        "excluded" => excluded,
-        _ => longlist
-    };
+        get
+        {
+            var source = activeTab switch
+            {
+                "shortlist" => shortlist,
+                "excluded" => excluded,
+                _ => longlist
+            };
+
+            if (string.IsNullOrWhiteSpace(applicantSearch))
+                return source;
+
+            var searchTerm = applicantSearch.Trim();
+            return allApps.Where(a => MatchesApplicantSearch(a, searchTerm)).ToList();
+        }
+    }
+
+    private static bool MatchesApplicantSearch(ApplicationDto application, string searchTerm)
+    {
+        return (!string.IsNullOrWhiteSpace(application.CandidateName)
+                && application.CandidateName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+               || (!string.IsNullOrWhiteSpace(application.CandidateRef)
+                   && application.CandidateRef.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
+    }
 
     private string TabStyle(string tab) => activeTab == tab
         ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;"

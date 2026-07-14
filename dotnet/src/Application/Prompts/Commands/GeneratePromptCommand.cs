@@ -31,6 +31,7 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
         7. Include improvement recommendations
         8. Include all eligibility gate details regardless if they are met or not.
         9. Require the scorer to return JSON that matches the provided target template shape exactly.
+        10. Extract the candidate's full name from the application documents and include it in the output JSON.
         Return ONLY the scoring prompt text, ready for use.
         At the end of the prompt, include the instruction to return all output as complete and valid JSON corresponding exactly to the provided rubric-derived template, with no missing keys or partial arrays.
         """;
@@ -202,12 +203,13 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
             {desiredLines}
 
             ## Instructions
-            1. Score each category from 0-100 based on evidence from the candidate's documents
-            2. For each must-have criterion, determine PASS or FAIL with justification
-            3. Note any desired qualifications that are met
-            4. Provide specific evidence citations from the documents
-            5. Calculate a weighted overall score
-            6. Provide improvement recommendations
+            1. Extract the candidate's full name from the application documents and include it in candidate_name
+            2. Score each category from 0-100 based on evidence from the candidate's documents
+            3. For each must-have criterion, determine PASS or FAIL with justification
+            4. Note any desired qualifications that are met
+            5. Provide specific evidence citations from the documents
+            6. Calculate a weighted overall score
+            7. Provide improvement recommendations
 
             Respond with your evaluation as complete and valid JSON.
             """;
@@ -220,6 +222,7 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
     {
         var template = new
         {
+            candidate_name = "",
             overall_score = 0,
             category_scores = rubricCategories.Select(c => new
             {
@@ -268,6 +271,7 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
             Return exactly one JSON object that matches the target template below.
             - Keep all top-level keys and nested keys exactly as provided.
             - Keep rubric category names and weights exactly as provided.
+            - Set candidate_name to the candidate's full name when it can be identified from the documents.
             - Populate score, evidence, pass/fail flags, notes, and tips from candidate evidence.
             - Do not add, remove, or rename keys.
             - Do not wrap the JSON in markdown code fences.

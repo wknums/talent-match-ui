@@ -8,6 +8,7 @@ namespace TalentMatch.Application.Applications.Queries;
 public record GetApplicationsQuery(
     string JobId,
     string? List,
+    string? ApplicantName,
     string? SortField,
     string? SortOrder,
     double? VarianceMin,
@@ -40,6 +41,17 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
         if (!request.IncludeTestCases)
         {
             apps = apps.Where(a => a.TestRunId == null).ToList();
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.ApplicantName))
+        {
+            var searchTerm = request.ApplicantName.Trim();
+            apps = apps.Where(a =>
+                    (!string.IsNullOrWhiteSpace(a.CandidateName)
+                     && a.CandidateName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+                    || (!string.IsNullOrWhiteSpace(a.CandidateRef)
+                        && a.CandidateRef.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
         }
 
         // Remove orphaned failed apps (ScoringFailed/ExtractionFailed with no DLQ entry)

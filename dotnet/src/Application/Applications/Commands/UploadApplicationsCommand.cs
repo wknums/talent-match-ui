@@ -1,6 +1,7 @@
 using MediatR;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using System.IO;
 
 namespace TalentMatch.Application.Applications.Commands;
 
@@ -34,6 +35,8 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
                 var app = new Domain.Entities.Application
                 {
                     JobId = request.JobId,
+                    CandidateRef = $"candidate-{Guid.NewGuid().ToString("N")[..8]}",
+                    CandidateName = DeriveCandidateName(file.FileName),
                     Status = "Queued"
                 };
                 await _applicationRepository.AddAsync(app, cancellationToken);
@@ -87,5 +90,15 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
                 // Best-effort cleanup: preserve the original exception path.
             }
         }
+    }
+
+    private static string DeriveCandidateName(string fileName)
+    {
+        var name = Path.GetFileNameWithoutExtension(fileName)
+            .Replace('_', ' ')
+            .Replace('-', ' ')
+            .Trim();
+
+        return string.IsNullOrWhiteSpace(name) ? "Unknown Applicant" : name;
     }
 }

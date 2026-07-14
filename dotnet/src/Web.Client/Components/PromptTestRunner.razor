@@ -114,7 +114,13 @@
                     {
                         <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; background: white;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                                <strong>@(appDetail.Application.Id[..8])...</strong>
+                                <div>
+                                    <strong>@GetApplicantLabel(appDetail.Application)</strong>
+                                    @if (!string.IsNullOrWhiteSpace(appDetail.Application.CandidateEmail))
+                                    {
+                                        <div style="font-size: 0.8rem; color: #718096;">@appDetail.Application.CandidateEmail</div>
+                                    }
+                                </div>
                                 <div style="display: flex; gap: 0.5rem; align-items: center;">
                                     <button @onclick="() => NavigateToApp(appDetail.Application.Id)" style="padding: 0.2rem 0.5rem; background: #4a5568; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.8rem;">
                                         📋 Detail
@@ -681,6 +687,18 @@
         {
             return 0;
         }
+    }
+
+    private static string GetApplicantLabel(ApplicationDto application)
+    {
+        if (!string.IsNullOrWhiteSpace(application.CandidateName))
+            return application.CandidateName!;
+
+        if (!string.IsNullOrWhiteSpace(application.CandidateRef))
+            return application.CandidateRef;
+
+        var id = application.Id ?? string.Empty;
+        return id.Length > 8 ? $"{id[..8]}..." : id;
     }
 
     private T? ParseJson<T>(string? json) where T : class

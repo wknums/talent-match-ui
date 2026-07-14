@@ -3,7 +3,7 @@ import { applicationRepo, jobRepo, promptRepo, dlqRepo, scoringBatchRepo } from 
 import { auditService } from './audit.js'
 import { runScoring } from '../workers/scoring.js'
 import type { ScoringResult } from '../workers/scoring.js'
-import { buildScoringRunFromParsedResponse, interpretAggregatedResult } from '../workers/scoring.js'
+import { buildScoringRunFromParsedResponse, interpretAggregatedResult, extractCandidateName } from '../workers/scoring.js'
 import { findBestRubricMatch } from '../workers/aggregation.js'
 import { getProductionApprovedPromptId } from './prompt-helpers.js'
 import { createAwrTimeoutSignal } from './awr-timeout.js'
@@ -303,4 +303,4 @@ export async function finalizeApplicationFromScoringResult(
 }
 
 // Re-export for the reconciler.
-export { buildScoringRunFromParsedResponse, interpretAggregatedResult }
+export { buildScoringRunFromParsedResponse, interpretAggregatedResult, extractCandidateName }
