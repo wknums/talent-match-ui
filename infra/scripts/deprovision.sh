@@ -5,7 +5,7 @@
 # Usage: ./infra/scripts/deprovision.sh <env-file> <tf-environment> <target> [--dry-run] [--force]
 #
 # Arguments:
-#   env-file        .env_local, .env_qa, or .env_prod (REQUIRED)
+#   env-file        .env_local, .env_qa, .env_qa_mcaps, or .env_prod (REQUIRED)
 #   tf-environment  dev, test, or prod
 #   target          shared, stack-a, stack-b, or both
 #   --dry-run       Show plan -destroy without destroying

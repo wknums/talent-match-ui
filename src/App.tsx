@@ -13,13 +13,14 @@ import { UserManagementDialog } from '@/components/UserManagementDialog'
 import { AnalyticsView } from '@/components/AnalyticsView'
 import type { Job, User } from '@/types'
 import { api } from '@/lib/api'
-import { initializeAuth, login as authLogin, logout as authLogout, getCurrentUser as authGetCurrentUser, requestPasswordReset } from '@/lib/auth'
+import { initializeAuth, login as authLogin, loginWithEntra as authLoginWithEntra, logout as authLogout, getCurrentUser as authGetCurrentUser, requestPasswordReset, getAuthMode, type AuthMode } from '@/lib/auth'
 import { toast } from 'sonner'
 
 type View = 'dashboard' | 'job-detail' | 'manual-review' | 'analytics'
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [authMode, setAuthMode] = useState<AuthMode>('local')
   const [isAuthInitialized, setIsAuthInitialized] = useState(false)
   const [currentView, setCurrentView] = useState<View>('dashboard')
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
@@ -37,6 +38,8 @@ function App() {
   useEffect(() => {
     async function init() {
       await initializeAuth()
+      const mode = await getAuthMode()
+      setAuthMode(mode)
       const user = await authGetCurrentUser()
       setCurrentUser(user)
       setIsAuthInitialized(true)
@@ -61,7 +64,24 @@ function App() {
     toast.success('Signed out successfully')
   }
 
+  const handleEntraLogin = async (): Promise<boolean> => {
+    const user = await authLoginWithEntra()
+    if (user) {
+      setCurrentUser(user)
+      toast.success(`Welcome back, ${user.fullName}!`)
+      return true
+    }
+
+    window.location.href = '/.auth/login/aad?post_login_redirect_uri=/'
+    return false
+  }
+
   const handleRequestPasswordReset = async () => {
+    if (authMode === 'entra') {
+      toast.error('Password management is handled by Entra ID in this environment.')
+      return
+    }
+
     if (!currentUser) return
     
     try {
@@ -79,7 +99,7 @@ function App() {
   }
 
   if (!currentUser) {
-    return <LoginForm onLogin={handleLogin} />
+    return <LoginForm onLogin={handleLogin} onEntraLogin={handleEntraLogin} authMode={authMode} />
   }
 
   const handleJobClick = (jobId: string) => {
@@ -169,8 +189,8 @@ function App() {
               )}
               <UserMenu
                 user={currentUser}
-                onChangePassword={() => setChangePasswordOpen(true)}
-                onRequestPasswordReset={handleRequestPasswordReset}
+                onChangePassword={authMode === 'local' ? () => setChangePasswordOpen(true) : undefined}
+                onRequestPasswordReset={authMode === 'local' ? handleRequestPasswordReset : undefined}
                 onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
                 onLogout={handleLogout}
               />
@@ -197,8 +217,8 @@ function App() {
             </button>
             <UserMenu
               user={currentUser}
-              onChangePassword={() => setChangePasswordOpen(true)}
-              onRequestPasswordReset={handleRequestPasswordReset}
+              onChangePassword={authMode === 'local' ? () => setChangePasswordOpen(true) : undefined}
+              onRequestPasswordReset={authMode === 'local' ? handleRequestPasswordReset : undefined}
               onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
               onLogout={handleLogout}
             />
@@ -212,8 +232,8 @@ function App() {
           <div className="flex justify-end mb-4">
             <UserMenu
               user={currentUser}
-              onChangePassword={() => setChangePasswordOpen(true)}
-              onRequestPasswordReset={handleRequestPasswordReset}
+              onChangePassword={authMode === 'local' ? () => setChangePasswordOpen(true) : undefined}
+              onRequestPasswordReset={authMode === 'local' ? handleRequestPasswordReset : undefined}
               onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
               onLogout={handleLogout}
             />
@@ -236,8 +256,8 @@ function App() {
           <div className="absolute top-4 right-8 z-10">
             <UserMenu
               user={currentUser}
-              onChangePassword={() => setChangePasswordOpen(true)}
-              onRequestPasswordReset={handleRequestPasswordReset}
+              onChangePassword={authMode === 'local' ? () => setChangePasswordOpen(true) : undefined}
+              onRequestPasswordReset={authMode === 'local' ? handleRequestPasswordReset : undefined}
               onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
               onLogout={handleLogout}
             />
@@ -277,12 +297,14 @@ function App() {
         onSuccess={handleUploadSuccess}
       />
 
-      <ChangePasswordDialog
-        open={changePasswordOpen}
-        onClose={() => setChangePasswordOpen(false)}
-        onSuccess={() => setRefreshKey(prev => prev + 1)}
-        userId={currentUser.userId}
-      />
+      {authMode === 'local' && (
+        <ChangePasswordDialog
+          open={changePasswordOpen}
+          onClose={() => setChangePasswordOpen(false)}
+          onSuccess={() => setRefreshKey(prev => prev + 1)}
+          userId={currentUser.userId}
+        />
+      )}
 
       {currentUser.role === 'admin' && (
         <UserManagementDialog

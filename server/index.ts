@@ -36,6 +36,7 @@ if (existsSync(envPath)) {
 
 const PORT = parseInt(process.env.PORT || '3001', 10)
 const API_MODE = (process.env.API_MODE || 'mock') as 'mock' | 'real'
+const APP_AUTH_MODE = (process.env.APP_AUTH_MODE || 'local').trim().toLowerCase()
 const DIST_DIR = resolve(process.cwd(), 'dist')
 const INDEX_HTML_PATH = resolve(DIST_DIR, 'index.html')
 
@@ -68,7 +69,7 @@ async function main() {
 
   // Config endpoint (public)
   app.get('/api/config', (_req, res) => {
-    res.json({ apiMode: API_MODE })
+    res.json({ apiMode: API_MODE, authMode: APP_AUTH_MODE })
   })
 
   // Health checks (public)
@@ -117,6 +118,7 @@ async function main() {
     console.log(`Server running on http://localhost:${PORT}`)
     console.log(`Storage provider: ${process.env.STORAGE_PROVIDER || 'local'}`)
     console.log(`API mode: ${API_MODE}`)
+    console.log(`Auth mode: ${APP_AUTH_MODE}`)
   })
 
   // Platform-mode reconciler: only starts when AWR_PLATFORM_API_ENDPOINT is

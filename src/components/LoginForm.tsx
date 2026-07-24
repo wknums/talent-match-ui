@@ -7,12 +7,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Lock } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { requestPasswordResetFromLogin } from '@/lib/auth'
+import type { AuthMode } from '@/lib/auth'
 
 interface LoginFormProps {
   onLogin: (username: string, password: string) => Promise<boolean>
+  onEntraLogin: () => Promise<boolean>
+  authMode: AuthMode
 }
 
-export function LoginForm({ onLogin }: LoginFormProps) {
+export function LoginForm({ onLogin, onEntraLogin, authMode }: LoginFormProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -21,6 +24,11 @@ export function LoginForm({ onLogin }: LoginFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (authMode === 'entra') {
+      await onEntraLogin()
+      return
+    }
     
     if (!username || !password) {
       toast.error('Please enter both username and password')
@@ -81,47 +89,51 @@ export function LoginForm({ onLogin }: LoginFormProps) {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="username">Username</Label>
+                <Label htmlFor="username">{authMode === 'entra' ? 'Entra Username (UPN)' : 'Username'}</Label>
                 <Input
                   id="username"
                   type="text"
-                  placeholder="Enter your username"
+                  placeholder={authMode === 'entra' ? 'name@yourtenant.onmicrosoft.com' : 'Enter your username'}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={isLoading}
                   autoComplete="username"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={isLoading}
-                  autoComplete="current-password"
-                />
-              </div>
+              {authMode === 'local' && (
+                <div className="space-y-2">
+                  <Label htmlFor="password">Password</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Enter your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={isLoading}
+                    autoComplete="current-password"
+                  />
+                </div>
+              )}
               <Button type="submit" className="w-full" disabled={isLoading}>
-                {isLoading ? 'Signing in...' : 'Sign In'}
+                {isLoading ? 'Signing in...' : authMode === 'entra' ? 'Sign in with Microsoft Entra ID' : 'Sign In'}
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="w-full text-muted-foreground"
-                disabled={isLoading}
-                onClick={handleOpenResetDialog}
-              >
-                forgot password - request password reset
-              </Button>
+              {authMode === 'local' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full text-muted-foreground"
+                  disabled={isLoading}
+                  onClick={handleOpenResetDialog}
+                >
+                  forgot password - request password reset
+                </Button>
+              )}
             </form>
           </CardContent>
         </Card>
       </div>
 
-      <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
+      <Dialog open={authMode === 'local' && showResetDialog} onOpenChange={setShowResetDialog}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Confirm Password Reset Request</DialogTitle>

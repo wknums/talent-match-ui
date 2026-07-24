@@ -14,8 +14,8 @@ import type { User as UserType } from '@/types'
 
 interface UserMenuProps {
   user: UserType
-  onChangePassword: () => void
-  onRequestPasswordReset: () => void
+  onChangePassword?: () => void
+  onRequestPasswordReset?: () => void
   onManageUsers?: () => void
   onLogout: () => void
 }
@@ -47,14 +47,18 @@ export function UserMenu({ user, onChangePassword, onRequestPasswordReset, onMan
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onChangePassword}>
-          <Key size={16} className="mr-2" />
-          Change Password
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onRequestPasswordReset}>
-          <Key size={16} className="mr-2" />
-          Request Password Reset
-        </DropdownMenuItem>
+        {onChangePassword && (
+          <DropdownMenuItem onClick={onChangePassword}>
+            <Key size={16} className="mr-2" />
+            Change Password
+          </DropdownMenuItem>
+        )}
+        {onRequestPasswordReset && (
+          <DropdownMenuItem onClick={onRequestPasswordReset}>
+            <Key size={16} className="mr-2" />
+            Request Password Reset
+          </DropdownMenuItem>
+        )}
         {user.role === 'admin' && onManageUsers && (
           <>
             <DropdownMenuSeparator />

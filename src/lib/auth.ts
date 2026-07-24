@@ -1,14 +1,35 @@
 import type { PasswordResetRequest, User } from '@/types'
 import { realAPI } from '@/lib/api-real'
 
+export type AuthMode = 'local' | 'entra'
+
 export async function initializeAuth(): Promise<void> {
   // Auth bootstrap is now server-owned. Keep this as a no-op so callers do not
   // trigger legacy KV reads during startup.
 }
 
+export async function getAuthMode(): Promise<AuthMode> {
+  try {
+    const response = await fetch('/api/config')
+    if (!response.ok) return 'local'
+    const data = await response.json()
+    return data.authMode === 'entra' ? 'entra' : 'local'
+  } catch {
+    return 'local'
+  }
+}
+
 export async function login(username: string, password: string): Promise<User | null> {
   try {
     return await realAPI.login(username, password)
+  } catch {
+    return null
+  }
+}
+
+export async function loginWithEntra(): Promise<User | null> {
+  try {
+    return await realAPI.loginWithEntra()
   } catch {
     return null
   }

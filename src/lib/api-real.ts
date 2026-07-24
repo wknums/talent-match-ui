@@ -202,6 +202,13 @@ export const realAPI = {
     })
   },
 
+  async loginWithEntra(): Promise<User> {
+    return fetchJSON(`${API_BASE}/auth/entra/login`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+  },
+
   async logout(): Promise<void> {
     await fetchJSON(`${API_BASE}/auth/logout`, { method: 'POST' })
   },

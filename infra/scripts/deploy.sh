@@ -5,7 +5,7 @@
 # Usage: ./infra/scripts/deploy.sh <env-file> <tf-environment> <action> <target>
 #
 # Arguments:
-#   env-file        .env_local, .env_qa, or .env_prod
+#   env-file        .env_local, .env_qa, .env_qa_mcaps, or .env_prod
 #   tf-environment  dev, test, or prod
 #   action          plan or apply
 #   target          shared-only, stack-a, stack-b, or both

@@ -21,7 +21,9 @@ This runs two processes concurrently:
 - **Backend API** on `http://localhost:3001`
 - **Vite frontend** on `http://localhost:5173`
 
-Open `http://localhost:5173` in your browser. Default login: `admin` / `adm1n99`
+Open `http://localhost:5173` in your browser.
+- Local auth mode (`APP_AUTH_MODE=local`) default login: `admin` / `adm1n99`
+- Entra auth mode (`APP_AUTH_MODE=entra`) login: Microsoft Entra sign-in + app role mapping in `Users` table
 
 ## Available Scripts
 
@@ -115,6 +117,10 @@ Copy `.env.example` to `.env` and configure:
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `3001` | Backend server port |
+| `APP_AUTH_MODE` | `local` | App login mode: `local` (username/password) or `entra` |
+| `ENTRA_ADMIN_USERNAME` | - | Required when `APP_AUTH_MODE=entra`; seeded as app `admin` user at startup |
+| `ENTRA_ADMIN_FULL_NAME` | `Entra Administrator` | Display name for seeded Entra admin user |
+| `ENTRA_ADMIN_EMAIL` | - | Optional email for seeded Entra admin user |
 | `STORAGE_PROVIDER` | `local` | Set to `azuresql` to use Azure SQL in Stack A |
 | `AZURE_SQL_AUTH_MODE` | - | Set to `entra` for managed-identity Azure SQL auth |
 | `AZURE_SQL_SERVER_FQDN` | - | Azure SQL server FQDN for Entra auth |
@@ -126,6 +132,17 @@ Copy `.env.example` to `.env` and configure:
 | `OPENAI_API_KEY` | - | OpenAI API key (option 1) |
 | `AZURE_OPENAI_API_KEY` | - | Azure OpenAI key (option 2) |
 | `AZURE_OPENAI_ENDPOINT` | - | Azure OpenAI endpoint URL |
+
+## Entra Login + Role Assignment
+
+For tenant-specific QA deployment profiles (for example `.env_qa_mcaps`), set these values in that file:
+
+- `AZURE_SUBSCRIPTION_ID` and `AZURE_TENANT_ID` for the target tenant/subscription
+- `APP_AUTH_MODE=entra`
+- `ENTRA_ADMIN_USERNAME=<azure-db-owner-upn>`
+
+Startup seeding ensures that `ENTRA_ADMIN_USERNAME` exists in the app `Users` table with role `admin`, so the Azure DB owner can access admin capabilities on first sign-in.  
+To grant access to additional users, add/update rows in `Users` with `username` (or `email`) matching the user Entra UPN/email and set role to one of `admin`, `recruiter`, `business_panel`.
 
 ## Project Structure
 
