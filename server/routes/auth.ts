@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import { Router } from 'express'
+import type { Request, Response, NextFunction } from 'express'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
 import { userRepo } from '../storage/repos/index.js'
 import { auditService } from '../services/audit.js'
@@ -74,11 +75,49 @@ function normalizeIdentity(value?: string): string | undefined {
   return trimmed ? trimmed.toLowerCase() : undefined
 }
 
+const rateLimitState = new Map<string, { count: number; resetAt: number }>()
+
+function isRateLimited(req: Request, scope: string, identifier?: string, maxAttempts = 10, windowMs = 60_000): boolean {
+  const key = `${scope}:${identifier || req.ip || 'unknown'}`
+  const now = Date.now()
+  const state = rateLimitState.get(key)
+  if (!state || now >= state.resetAt) {
+    rateLimitState.set(key, { count: 1, resetAt: now + windowMs })
+    return false
+  }
+
+  state.count += 1
+  rateLimitState.set(key, state)
+  return state.count > maxAttempts
+}
+
+function createRateLimitMiddleware(
+  scope: string,
+  maxAttempts: number,
+  windowMs: number,
+  resolveIdentifier?: (req: Request) => string | undefined,
+) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const identifier = resolveIdentifier?.(req)
+    if (isRateLimited(req, scope, identifier, maxAttempts, windowMs)) {
+      return res.status(429).json({
+        error: 'Too Many Requests',
+        message: 'Too many requests. Try again shortly.',
+      })
+    }
+    next()
+  }
+}
+
 export function createAuthRouter() {
   const router = Router()
+  const loginRateLimit = createRateLimitMiddleware('auth.login', 8, 60_000, req => String(req.body?.username || '').trim().toLowerCase())
+  const entraLoginRateLimit = createRateLimitMiddleware('auth.entra-login', 12, 60_000, req => req.header('x-ms-client-principal-id') || req.ip)
+  const changePasswordRateLimit = createRateLimitMiddleware('auth.change-password', 6, 60_000, req => (req as AuthenticatedRequest).user?.userId || req.ip)
+  const passwordResetRateLimit = createRateLimitMiddleware('auth.request-password-reset', 6, 60_000, req => String(req.body?.username || '').trim().toLowerCase())
 
   // POST /api/auth/login
-  router.post('/login', async (req, res, next) => {
+  router.post('/login', loginRateLimit, async (req, res, next) => {
     try {
       if (isEntraAuthMode()) {
         return res.status(400).json({
@@ -115,7 +154,7 @@ export function createAuthRouter() {
   })
 
   // POST /api/auth/entra/login
-  router.post('/entra/login', async (req, res, next) => {
+  router.post('/entra/login', entraLoginRateLimit, async (req, res, next) => {
     try {
       if (!isEntraAuthMode()) {
         return res.status(400).json({
@@ -210,7 +249,7 @@ export function createAuthRouter() {
   })
 
   // POST /api/auth/change-password
-  router.post('/change-password', async (req: AuthenticatedRequest, res, next) => {
+  router.post('/change-password', changePasswordRateLimit, async (req: AuthenticatedRequest, res, next) => {
     try {
       if (isEntraAuthMode()) {
         return res.status(400).json({
@@ -244,7 +283,7 @@ export function createAuthRouter() {
   })
 
   // POST /api/auth/request-password-reset
-  router.post('/request-password-reset', async (req, res, next) => {
+  router.post('/request-password-reset', passwordResetRateLimit, async (req, res, next) => {
     try {
       if (isEntraAuthMode()) {
         return res.status(400).json({
