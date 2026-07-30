@@ -4,6 +4,7 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Infrastructure.Persistence.Repositories;
 
+#pragma warning disable EF1002 // SQL values remain parameterized; interpolation is limited to trusted provider-specific table identifiers.
 public class ScoringBatchRepository : IScoringBatchRepository
 {
     private readonly AppDbContext _db;
@@ -232,3 +233,4 @@ public class ScoringBatchRepository : IScoringBatchRepository
         await _db.Database.ExecuteSqlRawAsync(sql, args.ToArray());
     }
 }
+#pragma warning restore EF1002

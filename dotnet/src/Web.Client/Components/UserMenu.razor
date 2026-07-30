@@ -1,5 +1,7 @@
 @using TalentMatch.Web.Client.Services
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
 @inject NavigationManager Navigation
 
 <div style="display: flex; align-items: center; gap: 0.75rem;">
@@ -14,10 +16,13 @@
             @if (showMenu)
             {
                 <div style="position: absolute; right: 0; top: 100%; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 100; min-width: 180px;">
-                    <button @onclick="OpenChangePassword" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Change Password</button>
-                    @if (currentUser.Role != "admin")
+                    @if (AuthConfiguration.IsSimple)
                     {
-                        <button @onclick="OpenRequestReset" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Request Password Reset</button>
+                        <button @onclick="OpenChangePassword" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Change Password</button>
+                        @if (currentUser.Role != "admin")
+                        {
+                            <button @onclick="OpenRequestReset" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Request Password Reset</button>
+                        }
                     }
                     @if (currentUser.Role == "admin")
                     {
@@ -31,7 +36,7 @@
     }
 </div>
 
-@if (showChangePassword)
+@if (AuthConfiguration.IsSimple && showChangePassword)
 {
     <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="CloseChangePassword">
         <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 350px;" @onclick:stopPropagation>
@@ -40,7 +45,7 @@
     </div>
 }
 
-@if (showRequestReset)
+@if (AuthConfiguration.IsSimple && showRequestReset)
 {
     <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="CloseRequestReset">
         <div style="background: white; padding: 1.5rem; border-radius: 8px; width: 100%; max-width: 420px;" @onclick:stopPropagation>
@@ -134,8 +139,22 @@
     private async Task HandleLogout()
     {
         showMenu = false;
-        await Api.LogoutAsync();
-        Navigation.NavigateTo("/login", forceLoad: true);
+        if (AuthConfiguration.IsEntra)
+        {
+            try
+            {
+                await Api.LogoutAsync();
+            }
+            finally
+            {
+                Navigation.NavigateToLogout("authentication/logout");
+            }
+        }
+        else
+        {
+            await Api.LogoutAsync();
+            Navigation.NavigateTo("/login", forceLoad: true);
+        }
     }
 
     [Parameter] public EventCallback<UserInfo?> OnUserLoaded { get; set; }

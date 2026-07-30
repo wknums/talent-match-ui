@@ -1,8 +1,11 @@
 import { createRoot } from 'react-dom/client'
 import { ErrorBoundary } from "react-error-boundary";
+import { MsalProvider } from '@azure/msal-react'
 
 import App from './App.tsx'
 import { ErrorFallback } from './ErrorFallback.tsx'
+import { AuthProvider } from './hooks/useAuth.ts'
+import { appAuthMode, createMsalInstance, initializeMsal } from './lib/msal-config.ts'
 
 import "./main.css"
 import "./styles/theme.css"
@@ -39,8 +42,25 @@ async function logBuildStamp() {
 
 void logBuildStamp()
 
-createRoot(document.getElementById('root')!).render(
-  <ErrorBoundary FallbackComponent={ErrorFallback}>
-    <App />
-   </ErrorBoundary>
-)
+async function renderApp() {
+  const app = (
+    <AuthProvider>
+      <App />
+    </AuthProvider>
+  )
+  const content = appAuthMode === 'entra'
+    ? await (async () => {
+        const msal = createMsalInstance()
+        await initializeMsal(msal)
+        return <MsalProvider instance={msal}>{app}</MsalProvider>
+      })()
+    : app
+
+  createRoot(document.getElementById('root')!).render(
+    <ErrorBoundary FallbackComponent={ErrorFallback}>
+      {content}
+    </ErrorBoundary>,
+  )
+}
+
+void renderApp()

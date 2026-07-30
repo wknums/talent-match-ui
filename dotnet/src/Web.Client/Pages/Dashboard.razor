@@ -32,6 +32,12 @@
     </div>
     <p style="font-size: 0.8rem; color: gray;">Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
 }
+else if (!string.IsNullOrEmpty(statsLoadError))
+{
+    <div style="padding: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; margin-bottom: 1rem;">
+        Failed to load statistics: @statsLoadError
+    </div>
+}
 
 <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
     <select @bind="departmentFilter" style="padding: 0.5rem;">
@@ -123,6 +129,7 @@ else if (string.IsNullOrEmpty(jobLoadError))
     private System.Threading.Timer? refreshTimer;
     private bool showCreateJob;
     private string? jobLoadError;
+    private string? statsLoadError;
     private string? deleteError;
     private bool isAdmin;
     private bool canViewAnalytics;
@@ -169,8 +176,17 @@ else if (string.IsNullOrEmpty(jobLoadError))
 
     private async Task LoadStats()
     {
-        stats = await Api.GetSystemStatsAsync();
-        lastUpdated = DateTime.Now;
+        try
+        {
+            statsLoadError = null;
+            stats = await Api.GetSystemStatsAsync();
+            lastUpdated = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            stats = null;
+            statsLoadError = ex.Message;
+        }
     }
 
     private void ViewJob(string jobId)

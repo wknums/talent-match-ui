@@ -18,6 +18,45 @@ public class UserRepository : IUserRepository
     public async Task<User?> GetByUsernameAsync(string username, CancellationToken ct = default)
         => await _context.Users.FirstOrDefaultAsync(u => u.Username == username, ct);
 
+    public async Task<User?> GetByEntraIdentityAsync(string tenantId, string objectId, CancellationToken ct = default)
+        => await _context.Users.FirstOrDefaultAsync(u => u.AuthenticationProvider == "entra" && u.EntraTenantId == tenantId && u.EntraObjectId == objectId, ct);
+
+    public async Task<User> UpsertEntraProfileAsync(User user, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(user.EntraTenantId) || string.IsNullOrWhiteSpace(user.EntraObjectId))
+            throw new InvalidOperationException("Entra tenant and object IDs are required.");
+        var existing = await GetByEntraIdentityAsync(user.EntraTenantId, user.EntraObjectId, ct);
+        if (existing is null)
+        {
+            user.AuthenticationProvider = "entra";
+            user.PasswordHash = null;
+            user.PasswordResetRequired = false;
+            _context.Users.Add(user);
+            await _context.SaveChangesAsync(ct);
+            return user;
+        }
+        existing.Username = user.Username;
+        existing.FullName = user.FullName;
+        existing.Email = user.Email;
+        existing.LastLogin = user.LastLogin;
+        await _context.SaveChangesAsync(ct);
+        return existing;
+    }
+
+    public async Task SetActiveAsync(string id, bool isActive, CancellationToken ct = default)
+    {
+        var user = await _context.Users.FindAsync(new object[] { id }, ct) ?? throw new KeyNotFoundException($"User '{id}' was not found.");
+        user.IsActive = isActive;
+        await _context.SaveChangesAsync(ct);
+    }
+
+    public async Task UpdateLastLoginAsync(string id, DateTime lastLogin, CancellationToken ct = default)
+    {
+        var user = await _context.Users.FindAsync(new object[] { id }, ct) ?? throw new KeyNotFoundException($"User '{id}' was not found.");
+        user.LastLogin = lastLogin;
+        await _context.SaveChangesAsync(ct);
+    }
+
     public async Task AddAsync(User user, CancellationToken ct = default)
     {
         await _context.Users.AddAsync(user, ct);

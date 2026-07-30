@@ -132,7 +132,35 @@
 
     private string GetContentUrl(DocumentDto doc)
     {
+        if (!string.IsNullOrEmpty(doc.ContentBase64))
+        {
+            return $"data:{ResolveContentType(doc)};base64,{doc.ContentBase64}";
+        }
+
         return $"/api/applications/{ApplicationId}/documents/{doc.Id}/content";
+    }
+
+    private static string ResolveContentType(DocumentDto doc)
+    {
+        var kind = ResolveKind(doc);
+        if (kind == "pdf") return "application/pdf";
+
+        var mime = (doc.FileType ?? string.Empty).Split(';', 2)[0].Trim().ToLowerInvariant();
+        if (kind == "image" && mime.StartsWith("image/") && mime.All(c => char.IsLetterOrDigit(c) || c is '/' or '+' or '-' or '.'))
+        {
+            return mime;
+        }
+
+        return System.IO.Path.GetExtension(doc.FileName ?? string.Empty).ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            ".svg" => "image/svg+xml",
+            _ => "application/octet-stream"
+        };
     }
 
     private static string ResolveKind(DocumentDto doc)

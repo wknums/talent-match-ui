@@ -1,11 +1,17 @@
 {
-  "transitions": [
+  "currentStep": "tasks",
+  "status": "implemented",
+  "specName": "Selective Azure Deploy",
+  "workflow": "speckit",
+  "branch": "",
+  "history": [
     {
       "step": "plan",
       "substep": null,
       "from": null,
       "by": "extension",
-      "at": "2026-04-15T19:44:50.680Z"
+      "at": "2026-04-15T19:44:50.680Z",
+      "kind": "start"
     },
     {
       "step": "specify",
@@ -15,7 +21,8 @@
         "substep": null
       },
       "by": "extension",
-      "at": "2026-04-16T07:35:43.377Z"
+      "at": "2026-04-16T07:35:43.377Z",
+      "kind": "start"
     },
     {
       "step": "tasks",
@@ -25,7 +32,8 @@
         "substep": null
       },
       "by": "extension",
-      "at": "2026-04-16T15:34:24.015Z"
+      "at": "2026-04-16T15:34:24.015Z",
+      "kind": "start"
     },
     {
       "step": "plan",
@@ -35,7 +43,8 @@
         "substep": null
       },
       "by": "extension",
-      "at": "2026-04-16T16:12:44.671Z"
+      "at": "2026-04-16T16:12:44.671Z",
+      "kind": "start"
     },
     {
       "step": "tasks",
@@ -45,24 +54,15 @@
         "substep": null
       },
       "by": "extension",
-      "at": "2026-04-16T19:49:25.652Z"
-    }
-  ],
-  "currentStep": "tasks",
-  "stepHistory": {
-    "plan": {
-      "startedAt": "2026-04-15T19:44:50.679Z",
-      "completedAt": "2026-04-16T07:35:43.375Z"
+      "at": "2026-04-16T19:49:25.652Z",
+      "kind": "start"
     },
-    "specify": {
-      "startedAt": "2026-04-16T07:35:43.375Z",
-      "completedAt": "2026-04-16T15:34:24.012Z"
-    },
-    "tasks": {
-      "startedAt": "2026-04-16T15:34:24.012Z",
-      "completedAt": "2026-04-16T16:12:44.669Z"
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-20T07:54:04.775Z"
     }
-  },
-  "status": "active",
-  "specName": "Selective Azure Deploy"
+  ]
 }

@@ -1,10 +1,58 @@
-﻿@using Microsoft.AspNetCore.Components.Routing
+﻿@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
 @using TalentMatch.Web.Client.Services
 @inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
 @inject NavigationManager Navigation
 @implements IDisposable
 
-@if (_authChecked)
+@if (_state == ApplicationAuthState.Loading)
+{
+    <main style="max-width: 640px; margin: 5rem auto; padding: 2rem; text-align: center;">
+        <h1>Loading</h1>
+        <p>Checking your application access...</p>
+    </main>
+}
+else if (_state == ApplicationAuthState.ProviderError)
+{
+    <main style="max-width: 640px; margin: 5rem auto; padding: 2rem;">
+        <h1>Sign-in service unavailable</h1>
+        <p>@_errorMessage</p>
+        @if (!string.IsNullOrWhiteSpace(_correlationId))
+        {
+            <p>Correlation ID: <code>@_correlationId</code></p>
+        }
+        <button @onclick="RetryAsync">Try again</button>
+    </main>
+}
+else if (_state == ApplicationAuthState.AccessDenied)
+{
+    <main style="max-width: 640px; margin: 5rem auto; padding: 2rem;">
+        <h1>Access denied</h1>
+        <p>@_errorMessage</p>
+        @if (!string.IsNullOrWhiteSpace(_correlationId))
+        {
+            <p>Correlation ID: <code>@_correlationId</code></p>
+        }
+        @if (AuthConfiguration.IsEntra)
+        {
+            <button @onclick="LogoutAsync">Sign out</button>
+        }
+    </main>
+}
+else if (AuthConfiguration.IsEntra)
+{
+    <CascadingAuthenticationState>
+        <Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+            <Found Context="routeData">
+                <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)"/>
+                <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+            </Found>
+        </Router>
+    </CascadingAuthenticationState>
+}
+else
 {
     <Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
         <Found Context="routeData">
@@ -15,47 +63,120 @@
 }
 
 @code {
-    private bool _authChecked;
-    private bool _isAuthenticated;
+    private ApplicationAuthState _state = ApplicationAuthState.Loading;
+    private string? _errorMessage;
+    private string? _correlationId;
 
     protected override async Task OnInitializedAsync()
     {
         Navigation.LocationChanged += HandleLocationChanged;
+
+        if (!AuthConfiguration.IsValid)
+        {
+            SetProviderError(AuthConfiguration.ProviderError ?? "Authentication is not configured.");
+            return;
+        }
+
         await RefreshAuthAndEnforceNavigationAsync();
     }
 
     private async void HandleLocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        await InvokeAsync(RefreshAuthAndEnforceNavigationAsync);
+        await InvokeAsync(async () =>
+        {
+            await RefreshAuthAndEnforceNavigationAsync();
+            StateHasChanged();
+        });
     }
 
     private async Task RefreshAuthAndEnforceNavigationAsync()
     {
         var currentPath = NormalizePath(Navigation.ToBaseRelativePath(Navigation.Uri));
+        _state = ApplicationAuthState.Loading;
+        _errorMessage = null;
+        _correlationId = null;
 
-        _isAuthenticated = await IsUserAuthenticatedAsync();
-        _authChecked = true;
-
-        if (!_isAuthenticated && !IsLoginPath(currentPath))
+        if (IsAuthenticationPath(currentPath) || (AuthConfiguration.IsEntra && IsLoginPath(currentPath)))
         {
-            Navigation.NavigateTo("/login", replace: true);
+            _state = ApplicationAuthState.Ready;
             return;
         }
 
-        if (_isAuthenticated && IsLoginPath(currentPath))
+        try
         {
-            Navigation.NavigateTo("/", replace: true);
+            var result = await Api.GetCurrentUserResultAsync();
+            if (result.User is not null)
+            {
+                _state = ApplicationAuthState.Ready;
+                if (IsLoginPath(currentPath))
+                    Navigation.NavigateTo("/", replace: true);
+                return;
+            }
+
+            if (result.StatusCode == 403)
+            {
+                _state = ApplicationAuthState.AccessDenied;
+                _errorMessage = result.Message ?? "No active SQL-backed application access is assigned to this identity.";
+                _correlationId = result.CorrelationId;
+                return;
+            }
+
+            if (result.StatusCode is 0 or 401 || result.StatusCode == 200)
+            {
+                if (IsLoginPath(currentPath))
+                    _state = ApplicationAuthState.Ready;
+                else
+                    Navigation.NavigateTo("/login", replace: true);
+                return;
+            }
+
+            SetProviderError(result.Message ?? "The sign-in service returned an unexpected response.", result.CorrelationId);
+        }
+        catch (AccessTokenNotAvailableException)
+        {
+            Navigation.NavigateTo("/login", replace: true);
+        }
+        catch (Exception ex)
+        {
+            SetProviderError(ex.Message);
         }
     }
 
-    private async Task<bool> IsUserAuthenticatedAsync()
+    private Task RetryAsync()
     {
-        var currentUser = await Api.GetCurrentUserAsync();
-        return currentUser is not null;
+        if (!AuthConfiguration.IsValid)
+        {
+            Navigation.NavigateTo(Navigation.Uri, forceLoad: true);
+            return Task.CompletedTask;
+        }
+
+        return RefreshAuthAndEnforceNavigationAsync();
+    }
+
+    private async Task LogoutAsync()
+    {
+        try
+        {
+            await Api.LogoutAsync();
+        }
+        finally
+        {
+            Navigation.NavigateToLogout("authentication/logout");
+        }
+    }
+
+    private void SetProviderError(string message, string? correlationId = null)
+    {
+        _state = ApplicationAuthState.ProviderError;
+        _errorMessage = message;
+        _correlationId = correlationId;
     }
 
     private static bool IsLoginPath(string relativePath)
         => string.Equals(relativePath, "login", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAuthenticationPath(string relativePath)
+        => relativePath.StartsWith("authentication/", StringComparison.OrdinalIgnoreCase);
 
     private static string NormalizePath(string rawPath)
     {
@@ -78,5 +199,13 @@
     public void Dispose()
     {
         Navigation.LocationChanged -= HandleLocationChanged;
+    }
+
+    private enum ApplicationAuthState
+    {
+        Loading,
+        Ready,
+        AccessDenied,
+        ProviderError,
     }
 }

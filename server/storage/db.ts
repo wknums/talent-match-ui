@@ -58,6 +58,15 @@ export async function getPool(): Promise<any> {
   return _pool
 }
 
+export async function getStorageProvider(): Promise<import('./types.js').StorageProvider> {
+  const [{ userRepo }, { organizationRepo }, { roleAssignmentRepo }] = await Promise.all([
+    import('./repos/user-repo.js'),
+    import('./repos/organization-repo.js'),
+    import('./repos/role-assignment-repo.js'),
+  ])
+  return { users: userRepo, organizations: organizationRepo, roleAssignments: roleAssignmentRepo }
+}
+
 // ===========================================================================
 // Azure SQL (mssql) driver
 // ===========================================================================
@@ -348,16 +357,62 @@ function ensureSqliteColumn(db: any, tableName: string, columnName: string, defi
   }
 }
 
+function ensureSqliteEntraUsersSchema(db: any): void {
+  ensureSqliteColumn(db, 'Users', 'AuthenticationProvider', "TEXT NOT NULL DEFAULT 'simple'")
+  ensureSqliteColumn(db, 'Users', 'EntraTenantId', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Users', 'EntraObjectId', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Users', 'IsActive', 'INTEGER NOT NULL DEFAULT 1')
+
+  const passwordHash = db.prepare('PRAGMA table_info(Users)').all()
+    .find((column: { name: string }) => column.name === 'PasswordHash') as { notnull: number } | undefined
+  if (!passwordHash?.notnull) return
+
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    BEGIN;
+    CREATE TABLE Users_EntraUpgrade (
+      Id TEXT NOT NULL PRIMARY KEY,
+      Username TEXT NOT NULL,
+      Role TEXT NOT NULL,
+      FullName TEXT NOT NULL DEFAULT '',
+      Email TEXT NOT NULL DEFAULT '',
+      Department TEXT NOT NULL DEFAULT '',
+      PasswordHash TEXT NULL,
+      CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      LastLogin TEXT NULL,
+      PasswordResetRequired INTEGER NOT NULL DEFAULT 0,
+      AuthenticationProvider TEXT NOT NULL DEFAULT 'simple',
+      EntraTenantId TEXT NULL,
+      EntraObjectId TEXT NULL,
+      IsActive INTEGER NOT NULL DEFAULT 1,
+      CHECK ((AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0))
+    );
+    INSERT INTO Users_EntraUpgrade (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, LastLogin, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive)
+    SELECT Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, LastLogin, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive FROM Users;
+    DROP TABLE Users;
+    ALTER TABLE Users_EntraUpgrade RENAME TO Users;
+    CREATE UNIQUE INDEX UX_Users_Username ON Users (Username);
+    CREATE UNIQUE INDEX UX_Users_EntraIdentity ON Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
+    COMMIT;
+    PRAGMA foreign_keys = ON;
+  `)
+}
+
 function ensureSqliteCompatibilitySchema(db: any): void {
   ensureSqliteColumn(db, 'Users', 'PasswordResetRequired', 'INTEGER NOT NULL DEFAULT 0')
+  ensureSqliteEntraUsersSchema(db)
 
   ensureSqliteColumn(db, 'PasswordResetRequests', 'FullName', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'PasswordResetRequests', 'Reason', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'PasswordResetRequests', 'RequestedAt', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'PasswordResetRequests', 'CreatedAt', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'PasswordResetRequests', 'ResolvedAt', 'TEXT NULL')
   ensureSqliteColumn(db, 'PasswordResetRequests', 'ResolvedBy', 'TEXT NULL')
 
   ensureSqliteColumn(db, 'Jobs', 'SpecDocumentId', 'TEXT NULL')
   ensureSqliteColumn(db, 'Jobs', 'RubricDocumentId', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Jobs', 'OrganizationId', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Jobs', 'DepartmentId', 'TEXT NULL')
 
   ensureSqliteColumn(db, 'JobConfigVersions', 'MustHavesJson', "TEXT NOT NULL DEFAULT '[]'")
   ensureSqliteColumn(db, 'JobConfigVersions', 'RunsPerApplication', 'INTEGER NOT NULL DEFAULT 3')
@@ -464,6 +519,27 @@ IF COL_LENGTH('talentmatch.ApplicationDocuments', 'ContentSha256') IS NULL
   ALTER TABLE [talentmatch].ApplicationDocuments ADD ContentSha256 CHAR(64) NULL;
 IF COL_LENGTH('talentmatch.Applications', 'BatchId') IS NULL
   ALTER TABLE [talentmatch].Applications ADD BatchId UNIQUEIDENTIFIER NULL;
+`)
+
+    await pool.request().query(`
+IF COL_LENGTH('talentmatch.Users', 'AuthenticationProvider') IS NULL
+  ALTER TABLE [talentmatch].Users ADD AuthenticationProvider NVARCHAR(20) NOT NULL CONSTRAINT DF_Users_AuthenticationProvider DEFAULT 'simple';
+IF COL_LENGTH('talentmatch.Users', 'EntraTenantId') IS NULL
+  ALTER TABLE [talentmatch].Users ADD EntraTenantId NVARCHAR(36) NULL;
+IF COL_LENGTH('talentmatch.Users', 'EntraObjectId') IS NULL
+  ALTER TABLE [talentmatch].Users ADD EntraObjectId NVARCHAR(36) NULL;
+IF COL_LENGTH('talentmatch.Users', 'IsActive') IS NULL
+  ALTER TABLE [talentmatch].Users ADD IsActive BIT NOT NULL CONSTRAINT DF_Users_IsActive DEFAULT 1;
+ALTER TABLE [talentmatch].Users ALTER COLUMN PasswordHash NVARCHAR(128) NULL;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_EntraIdentity' AND object_id = OBJECT_ID('talentmatch.Users'))
+  CREATE UNIQUE INDEX UX_Users_EntraIdentity ON [talentmatch].Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
+
+IF COL_LENGTH('talentmatch.Jobs', 'OrganizationId') IS NULL
+  ALTER TABLE [talentmatch].Jobs ADD OrganizationId NVARCHAR(36) NULL;
+IF COL_LENGTH('talentmatch.Jobs', 'DepartmentId') IS NULL
+  ALTER TABLE [talentmatch].Jobs ADD DepartmentId NVARCHAR(36) NULL;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Organization_Department' AND object_id = OBJECT_ID('talentmatch.Jobs'))
+  CREATE INDEX IX_Jobs_Organization_Department ON [talentmatch].Jobs (OrganizationId, DepartmentId);
 `)
   } else {
     // SQLite — run the DDL using the underlying db handle directly

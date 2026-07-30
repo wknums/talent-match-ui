@@ -4,13 +4,17 @@ import { T } from '../table-names.js'
 export interface StoredUser {
   userId: string
   username: string
-  role: 'admin' | 'recruiter' | 'business_panel'
+  role: 'admin' | 'organization_admin' | 'recruiter' | 'business_panel'
+  authenticationProvider?: 'simple' | 'entra'
+  entraTenantId?: string
+  entraObjectId?: string
+  isActive?: boolean
   department?: string
   fullName: string
   email?: string
   createdAt: string
   lastLogin?: string
-  passwordHash: string
+  passwordHash?: string
   passwordResetRequired?: boolean
 }
 
@@ -30,12 +34,16 @@ function rowToUser(r: any): StoredUser {
     userId: r.Id,
     username: r.Username,
     role: r.Role,
+    authenticationProvider: r.AuthenticationProvider ?? 'simple',
+    entraTenantId: r.EntraTenantId ?? undefined,
+    entraObjectId: r.EntraObjectId ?? undefined,
+    isActive: r.IsActive === undefined ? true : r.IsActive === true || r.IsActive === 1,
     department: r.Department || undefined,
     fullName: r.FullName,
     email: r.Email || undefined,
     createdAt: r.CreatedAt?.toISOString?.() ?? r.CreatedAt,
     lastLogin: r.LastLogin?.toISOString?.() ?? r.LastLogin ?? undefined,
-    passwordHash: r.PasswordHash,
+    passwordHash: r.PasswordHash ?? undefined,
     passwordResetRequired: r.PasswordResetRequired === true || r.PasswordResetRequired === 1,
   }
 }
@@ -76,6 +84,15 @@ export const userRepo = {
     return result.recordset[0] ? rowToUser(result.recordset[0]) : undefined
   },
 
+  async getByEntraIdentity(tenantId: string, objectId: string): Promise<StoredUser | undefined> {
+    const pool = await getPool()
+    const result = await pool.request()
+      .input('tenantId', sql.NVarChar, tenantId)
+      .input('objectId', sql.NVarChar, objectId)
+      .query(`SELECT * FROM ${T('Users')} WHERE AuthenticationProvider = 'entra' AND EntraTenantId = @tenantId AND EntraObjectId = @objectId`)
+    return result.recordset[0] ? rowToUser(result.recordset[0]) : undefined
+  },
+
   async create(user: StoredUser): Promise<void> {
     const pool = await getPool()
     await pool.request()
@@ -85,14 +102,30 @@ export const userRepo = {
       .input('fullName', sql.NVarChar, user.fullName)
       .input('email', sql.NVarChar, user.email || '')
       .input('department', sql.NVarChar, user.department || '')
-      .input('passwordHash', sql.NVarChar, user.passwordHash)
+      .input('passwordHash', sql.NVarChar, user.passwordHash ?? null)
       .input('createdAt', sql.DateTime2, new Date(user.createdAt))
-            .input('passwordResetRequired', sql.Bit, user.passwordResetRequired ? 1 : 0)
-            .query(`INSERT INTO ${T('Users')} (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, PasswordResetRequired)
-              VALUES (@id, @username, @role, @fullName, @email, @department, @passwordHash, @createdAt, @passwordResetRequired)`)
+      .input('passwordResetRequired', sql.Bit, user.passwordResetRequired ? 1 : 0)
+      .input('authenticationProvider', sql.NVarChar, user.authenticationProvider ?? 'simple')
+      .input('entraTenantId', sql.NVarChar, user.entraTenantId ?? null)
+      .input('entraObjectId', sql.NVarChar, user.entraObjectId ?? null)
+      .input('isActive', sql.Bit, user.isActive === false ? 0 : 1)
+      .query(`INSERT INTO ${T('Users')} (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive)
+        VALUES (@id, @username, @role, @fullName, @email, @department, @passwordHash, @createdAt, @passwordResetRequired, @authenticationProvider, @entraTenantId, @entraObjectId, @isActive)`)
   },
 
-  async update(userId: string, fields: Partial<Pick<StoredUser, 'fullName' | 'email' | 'role' | 'department' | 'passwordHash' | 'lastLogin' | 'passwordResetRequired'>>): Promise<void> {
+  async upsertEntraProfile(user: Required<Pick<StoredUser, 'userId' | 'username' | 'fullName' | 'createdAt'>> & Pick<StoredUser, 'email' | 'role' | 'entraTenantId' | 'entraObjectId'>): Promise<StoredUser> {
+    if (!user.entraTenantId || !user.entraObjectId) throw new Error('Entra tenant and object IDs are required.')
+    const existing = await this.getByEntraIdentity(user.entraTenantId, user.entraObjectId)
+    if (existing) {
+      await this.update(existing.userId, { fullName: user.fullName, email: user.email })
+      return { ...existing, username: user.username, fullName: user.fullName, email: user.email }
+    }
+    const created: StoredUser = { ...user, role: user.role ?? 'recruiter', authenticationProvider: 'entra', passwordHash: undefined, passwordResetRequired: false, isActive: true }
+    await this.create(created)
+    return created
+  },
+
+  async update(userId: string, fields: Partial<Pick<StoredUser, 'fullName' | 'email' | 'role' | 'department' | 'passwordHash' | 'lastLogin' | 'passwordResetRequired' | 'isActive'>>): Promise<void> {
     const pool = await getPool()
     const sets: string[] = []
     const req = pool.request().input('id', sql.NVarChar, userId)
@@ -103,6 +136,7 @@ export const userRepo = {
     if (fields.passwordHash !== undefined) { sets.push('PasswordHash = @passwordHash'); req.input('passwordHash', sql.NVarChar, fields.passwordHash) }
     if (fields.lastLogin !== undefined) { sets.push('LastLogin = @lastLogin'); req.input('lastLogin', sql.DateTime2, new Date(fields.lastLogin)) }
     if (fields.passwordResetRequired !== undefined) { sets.push('PasswordResetRequired = @pwr'); req.input('pwr', sql.Bit, fields.passwordResetRequired ? 1 : 0) }
+    if (fields.isActive !== undefined) { sets.push('IsActive = @isActive'); req.input('isActive', sql.Bit, fields.isActive ? 1 : 0) }
     if (sets.length === 0) return
     await req.query(`UPDATE ${T('Users')} SET ${sets.join(', ')} WHERE Id = @id`)
   },

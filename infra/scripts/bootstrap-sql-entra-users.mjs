@@ -43,6 +43,12 @@ const pool = await sql.connect({
 })
 
 try {
+  await pool.request().query(`
+IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = N'talentmatch')
+    EXEC(N'CREATE SCHEMA [talentmatch]');
+`)
+  console.log('[sql-bootstrap] Ensured talentmatch schema')
+
   for (const identityName of identityNames) {
     const escapedIdentityName = identityName.replace(/]/g, ']]')
     const identityLiteral = identityName.replace(/'/g, "''")

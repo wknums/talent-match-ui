@@ -20,7 +20,7 @@ import type {
   ManualReviewData,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
-import { realAPI } from '@/lib/api-real'
+import { configureAuthenticatedTransport, realAPI } from '@/lib/api-real'
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -1095,6 +1095,14 @@ function createApiProxy() {
 }
 
 export const api = createApiProxy()
+
+export const authApi = {
+  getAuthorizationContext: () => realAPI.getAuthorizationContext(),
+  logout: () => realAPI.logout(),
+}
+
+export const configureApiAuthentication = configureAuthenticatedTransport
+export { TalentMatchApiError } from '@/lib/api-real'
 
 // Re-export for backwards compatibility
 export { mockAPI }

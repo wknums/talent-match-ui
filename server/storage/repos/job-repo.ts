@@ -92,6 +92,8 @@ function rowToJob(r: any, configVersion?: JobConfigVersion): Job {
     title: r.Title,
     department: r.Department,
     organization: r.Organisation,
+    organizationId: r.OrganizationId ?? undefined,
+    departmentId: r.DepartmentId ?? undefined,
     postingDate: r.PostingDate?.toISOString?.() ?? r.PostingDate,
     createdBy: r.CreatedBy ?? '',
     createdAt: r.CreatedAt?.toISOString?.() ?? r.CreatedAt,
@@ -141,6 +143,30 @@ export const jobRepo = {
     })
   },
 
+  async getByScope(organizationId: string, departmentId?: string): Promise<Job[]> {
+    const pool = await getPool()
+    const request = pool.request().input('organizationId', sql.NVarChar, organizationId)
+    const departmentFilter = departmentId ? ' AND j.DepartmentId = @departmentId' : ''
+    if (departmentId) request.input('departmentId', sql.NVarChar, departmentId)
+    const result = await request.query(`
+      SELECT j.*, cv.Id AS CvId, cv.JobId AS CvJobId, cv.VersionNumber, cv.RubricJson, cv.MustHavesJson,
+             cv.DesiredCriteriaJson, cv.RunsPerApplication, cv.AggregationStrategy, cv.LonglistThreshold,
+             cv.ShortlistThreshold, cv.VarianceThreshold, cv.RubricApprovalStatus, cv.RubricSource,
+             cv.RawExtractionResponse, cv.CreatedAt AS CvCreatedAt
+      FROM ${T('Jobs')} j
+      LEFT JOIN ${T('JobConfigVersions')} cv ON cv.Id = j.CurrentConfigVersionId
+      WHERE j.OrganizationId = @organizationId${departmentFilter}
+      ORDER BY j.CreatedAt DESC`)
+    return result.recordset.map((row: any) => rowToJob(row, row.CvId ? rowToConfigVersion({ ...row, Id: row.CvId, JobId: row.CvJobId, CreatedAt: row.CvCreatedAt }) : createEmptyConfig(row.Id)))
+  },
+
+  async isValidScope(organizationId: string, departmentId: string): Promise<boolean> {
+    const pool = await getPool()
+    const result = await pool.request().input('organizationId', sql.NVarChar, organizationId).input('departmentId', sql.NVarChar, departmentId)
+      .query(`SELECT d.Id FROM ${T('Departments')} d INNER JOIN ${T('Organizations')} o ON o.Id = d.OrganizationId WHERE d.Id = @departmentId AND d.OrganizationId = @organizationId AND d.Status = 'active' AND o.Status = 'active'`)
+    return Boolean(result.recordset[0])
+  },
+
   async getById(jobId: string): Promise<Job | undefined> {
     const pool = await getPool()
     const result = await pool.request()
@@ -162,6 +188,9 @@ export const jobRepo = {
 
   async create(job: Job): Promise<void> {
     const pool = await getPool()
+    if ((job.organizationId || job.departmentId) && (!job.organizationId || !job.departmentId || !await this.isValidScope(job.organizationId, job.departmentId))) {
+      throw new Error('Job organization and department must be a valid active pair.')
+    }
     const txn = pool.transaction()
     await txn.begin()
     try {
@@ -251,10 +280,12 @@ export const jobRepo = {
         .input('createdAt', sql.DateTime2, new Date(job.createdAt))
         .input('specDocumentId', sql.NVarChar, job.specDocumentId ?? null)
         .input('rubricDocumentId', sql.NVarChar, job.rubricDocumentId ?? null)
+        .input('organizationId', sql.NVarChar, job.organizationId ?? null)
+        .input('departmentId', sql.NVarChar, job.departmentId ?? null)
         .query(`INSERT INTO ${T('Jobs')} (Id, JobCode, Title, Department, Organisation, PostingDate, Status,
-                JobDescription, CurrentConfigVersionId, CreatedBy, CreatedAt, SpecDocumentId, RubricDocumentId)
+          JobDescription, CurrentConfigVersionId, CreatedBy, CreatedAt, SpecDocumentId, RubricDocumentId, OrganizationId, DepartmentId)
                 VALUES (@id, @jobCode, @title, @department, @organisation, @postingDate, @status,
-                @jobDescription, @currentConfigVersionId, @createdBy, @createdAt, @specDocumentId, @rubricDocumentId)`)
+          @jobDescription, @currentConfigVersionId, @createdBy, @createdAt, @specDocumentId, @rubricDocumentId, @organizationId, @departmentId)`)
 
       await txn.commit()
     } catch (err) {

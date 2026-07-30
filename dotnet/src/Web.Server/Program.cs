@@ -2,16 +2,23 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
+using Microsoft.Identity.Web;
+using Microsoft.IdentityModel.Tokens;
 using TalentMatch.Application;
 using TalentMatch.Domain.Entities;
+using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure;
 using TalentMatch.Infrastructure.Persistence;
 using TalentMatch.Infrastructure.Services;
 using TalentMatch.Web.Server.Endpoints;
+using TalentMatch.Web.Server.Middleware;
+using TalentMatch.Web.Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,27 +26,120 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.ContentRootPath);
 
-// Auth - using cookie-based auth for demo, Entra ID for production
-builder.Services.AddAuthentication("cookie")
-    .AddCookie("cookie", options =>
-    {
-        options.LoginPath = "/api/auth/login";
-        options.Cookie.HttpOnly = true;
-        options.Cookie.SameSite = SameSiteMode.Strict;
-        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-        options.Events.OnRedirectToLogin = context =>
-        {
-            context.Response.StatusCode = 401;
-            return Task.CompletedTask;
-        };
-    });
-builder.Services.AddAuthorization(options =>
+var appAuthMode = builder.Configuration["APP_AUTH_MODE"] ?? "simple";
+var useEntraAuthentication = string.Equals(appAuthMode, "entra", StringComparison.OrdinalIgnoreCase);
+
+if (useEntraAuthentication)
 {
-    options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
-});
+    var tenantId = RequireConfiguration(builder.Configuration, "AZURE_TENANT_ID");
+    var apiClientId = RequireConfiguration(builder.Configuration, "ENTRA_API_APP_CLIENT_ID");
+    _ = RequireConfiguration(builder.Configuration, "ENTRA_API_IDENTIFIER_URI");
+    var apiScope = builder.Configuration["ENTRA_API_SCOPE"] ?? "access_as_user";
+    var allowedClientIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        RequireConfiguration(builder.Configuration, "ENTRA_STACK_A_CLIENT_ID"),
+        RequireConfiguration(builder.Configuration, "ENTRA_STACK_B_CLIENT_ID"),
+    };
+    var issuer = $"https://login.microsoftonline.com/{tenantId}/v2.0";
+
+    builder.Services
+        .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddMicrosoftIdentityWebApi(
+            jwtOptions =>
+            {
+                jwtOptions.Authority = issuer;
+                jwtOptions.Audience = apiClientId;
+                jwtOptions.MapInboundClaims = false;
+                jwtOptions.TokenValidationParameters.ValidIssuer = issuer;
+                jwtOptions.TokenValidationParameters.ValidAudience = apiClientId;
+                jwtOptions.TokenValidationParameters.NameClaimType = "preferred_username";
+                jwtOptions.TokenValidationParameters.RoleClaimType = "roles";
+                jwtOptions.TokenValidationParameters.ClockSkew = TimeSpan.FromMinutes(2);
+                jwtOptions.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = context =>
+                    {
+                        context.HttpContext.Items["AuthActor"] = context.Principal?.FindFirstValue("oid") ?? "unknown";
+                        context.HttpContext.Items["AuthTenantId"] = context.Principal?.FindFirstValue("tid");
+                        var error = ValidateEntraClaims(
+                            context.Principal,
+                            tenantId,
+                            apiScope,
+                            allowedClientIds);
+                        if (error is not null)
+                        {
+                            context.HttpContext.Items["AuthErrorCode"] = error.Value.Code;
+                            context.HttpContext.Items["AuthErrorMessage"] = error.Value.Message;
+                            context.Fail(error.Value.Code);
+                        }
+
+                        return Task.CompletedTask;
+                    },
+                    OnAuthenticationFailed = context =>
+                    {
+                        var code = context.Exception switch
+                        {
+                            SecurityTokenInvalidAudienceException => "invalid_audience",
+                            SecurityTokenInvalidIssuerException => "wrong_tenant",
+                            _ => "invalid_token",
+                        };
+                        context.HttpContext.Items["AuthErrorCode"] = code;
+                        context.HttpContext.Items["AuthErrorMessage"] = GetSafeAuthMessage(code);
+                        return Task.CompletedTask;
+                    },
+                    OnChallenge = WriteEntraChallengeAsync,
+                };
+            },
+            identityOptions =>
+            {
+                identityOptions.Instance = "https://login.microsoftonline.com/";
+                identityOptions.TenantId = tenantId;
+                identityOptions.ClientId = apiClientId;
+            });
+
+    builder.Services.AddAuthorization(options =>
+    {
+        options.AddPolicy("AccessAsUser", policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireAssertion(context =>
+                context.User.FindAll("scp")
+                    .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    .Contains(apiScope, StringComparer.Ordinal)
+                && context.User.FindAll("azp")
+                    .Any(claim => allowedClientIds.Contains(claim.Value)));
+        });
+        options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+    });
+}
+else
+{
+    builder.Services.AddAuthentication("cookie")
+        .AddCookie("cookie", options =>
+        {
+            options.LoginPath = "/api/auth/login";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.Events.OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = 401;
+                return Task.CompletedTask;
+            };
+        });
+    builder.Services.AddAuthorization(options =>
+    {
+        options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+    });
+}
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<IAzureSqlProbe, EfCoreAzureSqlProbe>();
+builder.Services.AddSingleton<IAzureSqlReadinessService>(serviceProvider =>
+    new AzureSqlReadinessService(
+        serviceProvider.GetRequiredService<IAzureSqlProbe>(),
+        new AzureSqlReadinessOptions()));
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new() { Title = "TalentMatch API", Version = "v1" });
@@ -70,7 +170,11 @@ if (useBackgroundAzureSqlWarmup)
     {
         try
         {
-            await ExecuteWithSqlWarmupRetryAsync(() => InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment));
+            await ExecuteWithSqlWarmupRetryAsync(() => InitializeApplicationDataAsync(
+                app.Services,
+                app.Environment.ContentRootPath,
+                app.Environment,
+                seedDefaultAdmin: !useEntraAuthentication));
             Console.WriteLine("[startup] Background database initialization complete.");
         }
         catch (Exception ex)
@@ -81,10 +185,18 @@ if (useBackgroundAzureSqlWarmup)
 }
 else
 {
-    await InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment);
+    await InitializeApplicationDataAsync(
+        app.Services,
+        app.Environment.ContentRootPath,
+        app.Environment,
+        seedDefaultAdmin: !useEntraAuthentication);
 }
 
-static Task InitializeApplicationDataAsync(IServiceProvider services, string contentRootPath, IHostEnvironment environment)
+static Task InitializeApplicationDataAsync(
+    IServiceProvider services,
+    string contentRootPath,
+    IHostEnvironment environment,
+    bool seedDefaultAdmin)
 {
     using var scope = services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -103,7 +215,7 @@ static Task InitializeApplicationDataAsync(IServiceProvider services, string con
         EnsureSharedAzureSqlSchemaIfNeeded(db, contentRootPath);
     }
 
-    if (!db.Users.Any())
+    if (seedDefaultAdmin && !db.Users.Any())
     {
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("adm1n99")));
         db.Users.Add(new User
@@ -524,6 +636,28 @@ BEGIN
 END;
 ");
 
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.PasswordResetRequests', 'Reason') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].PasswordResetRequests
+        ADD [Reason] NVARCHAR(1000) NOT NULL CONSTRAINT DF_PasswordResetRequests_Reason DEFAULT N'';
+END;
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.PasswordResetRequests', 'CreatedAt') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].PasswordResetRequests
+        ADD [CreatedAt] DATETIME2 NOT NULL CONSTRAINT DF_PasswordResetRequests_CreatedAt DEFAULT SYSUTCDATETIME();
+END;
+");
+
+        ExecuteSql(@"
+UPDATE [talentmatch].PasswordResetRequests
+SET [CreatedAt] = [RequestedAt]
+WHERE [RequestedAt] IS NOT NULL AND [CreatedAt] <> [RequestedAt];
+");
+
         void ExecuteSql(string sql)
         {
             using var command = connection.CreateCommand();
@@ -564,6 +698,9 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
+if (useBackgroundAzureSqlWarmup)
+    app.UseMiddleware<AzureSqlReadinessMiddleware>();
+
 // Map endpoints
 app.MapAuthEndpoints();
 app.MapHealthEndpoints();
@@ -578,6 +715,99 @@ app.MapAnalyticsEndpoints();
 app.MapFallbackToFile("index.html");
 
 app.Run();
+
+static string RequireConfiguration(IConfiguration configuration, string key)
+{
+    var value = configuration[key];
+    return string.IsNullOrWhiteSpace(value)
+        ? throw new InvalidOperationException($"{key} is required when APP_AUTH_MODE=entra.")
+        : value;
+}
+
+static (string Code, string Message)? ValidateEntraClaims(
+    ClaimsPrincipal? principal,
+    string tenantId,
+    string apiScope,
+    IReadOnlySet<string> allowedClientIds)
+{
+    if (principal is null)
+        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+
+    if (!string.Equals(principal.FindFirstValue("ver"), "2.0", StringComparison.Ordinal))
+        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+
+    if (!string.Equals(principal.FindFirstValue("tid"), tenantId, StringComparison.OrdinalIgnoreCase))
+        return ("wrong_tenant", GetSafeAuthMessage("wrong_tenant"));
+
+    if (!Guid.TryParse(principal.FindFirstValue("oid"), out _))
+        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+
+    var authorizedClient = principal.FindFirstValue("azp");
+    if (authorizedClient is null || !allowedClientIds.Contains(authorizedClient))
+        return ("unauthorized_client", GetSafeAuthMessage("unauthorized_client"));
+
+    var scopes = principal.FindAll("scp")
+        .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    if (!scopes.Contains(apiScope, StringComparer.Ordinal))
+        return ("invalid_token", "The required API permission is missing from this session.");
+
+    if (!long.TryParse(principal.FindFirstValue("iat"), out var issuedAtSeconds))
+        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+
+    if (DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(issuedAtSeconds) > TimeSpan.FromMinutes(15))
+        return ("token_stale", GetSafeAuthMessage("token_stale"));
+
+    return null;
+}
+
+static async Task WriteEntraChallengeAsync(JwtBearerChallengeContext context)
+{
+    context.HandleResponse();
+    var code = context.HttpContext.Items["AuthErrorCode"] as string ?? "auth_required";
+    var message = context.HttpContext.Items["AuthErrorMessage"] as string ?? GetSafeAuthMessage(code);
+    var correlationId = Guid.NewGuid().ToString();
+    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+    context.Response.ContentType = "application/json";
+    context.Response.Headers["X-Correlation-ID"] = correlationId;
+    try
+    {
+        var eventRepository = context.HttpContext.RequestServices.GetRequiredService<IProcessingEventRepository>();
+        var actor = context.HttpContext.Items["AuthActor"] as string ?? "unknown";
+        await eventRepository.AddAuthorizationEventAsync(
+            actor,
+            ProcessingEvent.AuthorizationActions.LoginDenied,
+            actor,
+            new Dictionary<string, object?>
+            {
+                ["result"] = code,
+                ["tenantId"] = context.HttpContext.Items["AuthTenantId"],
+            },
+            correlationId,
+            context.HttpContext.RequestAborted);
+    }
+    catch (Exception exception)
+    {
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("EntraAuthentication");
+        logger.LogWarning(exception, "Unable to record an Entra authentication denial audit event.");
+    }
+
+    await JsonSerializer.SerializeAsync(
+        context.Response.Body,
+        new { error = code, message, correlationId },
+        cancellationToken: context.HttpContext.RequestAborted);
+}
+
+static string GetSafeAuthMessage(string code)
+    => code switch
+    {
+        "wrong_tenant" => "Sign in with an account from the configured organization.",
+        "invalid_audience" => "This session is not valid for the TalentMatch API.",
+        "unauthorized_client" => "This application is not authorized to call the TalentMatch API.",
+        "token_stale" => "Your session must be refreshed before continuing.",
+        "auth_required" => "Sign in is required to access this application.",
+        _ => "Your session could not be validated. Sign in again.",
+    };
 
 // Make Program class accessible for integration tests
 public partial class Program { }

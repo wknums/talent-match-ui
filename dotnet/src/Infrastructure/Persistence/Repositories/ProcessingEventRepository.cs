@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -13,6 +14,23 @@ public class ProcessingEventRepository : IProcessingEventRepository
     {
         await _context.ProcessingEvents.AddAsync(evt, ct);
         await _context.SaveChangesAsync(ct);
+    }
+
+    public async Task AddAuthorizationEventAsync(string actor, string action, string subjectId, IReadOnlyDictionary<string, object?> safeDetails, string correlationId, CancellationToken ct = default)
+    {
+        var forbiddenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "token", "accessToken", "idToken", "refreshToken", "authorization" };
+        if (safeDetails.Keys.Any(forbiddenKeys.Contains))
+            throw new InvalidOperationException("Authorization audit details must not contain token material.");
+
+        await AddAsync(new ProcessingEvent
+        {
+            Actor = actor,
+            EventType = action,
+            EntityType = "Authorization",
+            EntityId = subjectId,
+            PayloadJson = JsonSerializer.Serialize(safeDetails),
+            CorrelationId = correlationId,
+        }, ct);
     }
 
     public async Task<IReadOnlyList<ProcessingEvent>> GetFilteredAsync(

@@ -1,0 +1,371 @@
+openapi: 3.1.0
+info:
+  title: TalentMatch Organization Administration API
+  version: 1.0.0
+  description: Equivalent organization-scoped administration contract for Stack A and Stack B.
+servers:
+  - url: /
+security:
+  - entraBearer:
+      - access_as_user
+paths:
+  /api/organizations:
+    post:
+      operationId: createOrganization
+      summary: Create an organization with its first department
+      description: Requires application-wide Admin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+      responses:
+        "201":
+          description: Organization and first department created atomically.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "400":
+          $ref: "#/components/responses/InvalidScope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/organizations/{organizationId}/departments:
+    post:
+      operationId: createDepartment
+      summary: Create a department in an organization
+      description: Requires application-wide Admin or Organization Admin for organizationId.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDepartmentRequest"
+      responses:
+        "201":
+          description: Department created in the requested organization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+        "400":
+          $ref: "#/components/responses/InvalidScope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/organizations/{organizationId}/departments/{departmentId}:
+    patch:
+      operationId: updateDepartment
+      summary: Rename or retire an organization department
+      description: Requires application-wide Admin or Organization Admin for organizationId. Department reparenting is not supported.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationId"
+        - $ref: "#/components/parameters/DepartmentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDepartmentRequest"
+      responses:
+        "200":
+          description: Department updated without changing its parent organization.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Department"
+        "400":
+          $ref: "#/components/responses/InvalidScope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/organizations/{organizationId}/memberships:
+    post:
+      operationId: registerOrganizationMember
+      summary: Register a user in an organization and one or more departments
+      description: Requires application-wide Admin or Organization Admin for organizationId.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterMembershipRequest"
+      responses:
+        "200":
+          description: Memberships are active and idempotently converged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationMembership"
+        "400":
+          $ref: "#/components/responses/InvalidScope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/organizations/{organizationId}/role-assignments:
+    post:
+      operationId: grantOrganizationRole
+      summary: Grant an application-managed role within an organization
+      description: Requires application-wide Admin or Organization Admin for organizationId. Application-wide Admin cannot be granted here.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GrantRoleRequest"
+      responses:
+        "201":
+          description: Scoped delegated assignment created or reactivated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoleAssignment"
+        "400":
+          $ref: "#/components/responses/InvalidScope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/organizations/{organizationId}/role-assignments/{assignmentId}:
+    delete:
+      operationId: revokeOrganizationRole
+      summary: Revoke one role assignment without changing unrelated scopes
+      description: Requires application-wide Admin or Organization Admin for organizationId. Application-wide Admin assignments cannot be revoked here.
+      parameters:
+        - $ref: "#/components/parameters/OrganizationId"
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Targeted assignment revoked and audited.
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Assignment does not exist in the requested organization.
+components:
+  securitySchemes:
+    entraBearer:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+          scopes:
+            access_as_user: Call the TalentMatch API as the signed-in user.
+  parameters:
+    OrganizationId:
+      name: organizationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DepartmentId:
+      name: departmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    InvalidScope:
+      description: Organization, department, membership, or role scope is invalid.
+    Forbidden:
+      description: The actor has no administrative authority in the requested organization.
+    Conflict:
+      description: The change would create a duplicate or orphan active jobs, memberships, mappings, or assignments.
+  schemas:
+    CreateOrganizationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - initialDepartmentName
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        initialDepartmentName:
+          type: string
+          minLength: 1
+          maxLength: 100
+    CreateDepartmentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    UpdateDepartmentRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        status:
+          type: string
+          enum:
+            - active
+            - retired
+    RegisterMembershipRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - userObjectId
+        - departmentIds
+      properties:
+        userObjectId:
+          type: string
+          format: uuid
+        departmentIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+    GrantRoleRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - userObjectId
+        - role
+      properties:
+        userObjectId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - organization_admin
+            - recruiter
+            - business_panel
+        departmentId:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: Required for Recruiter, optional for Analytics Viewer, and forbidden for Organization Admin.
+    Organization:
+      type: object
+      required:
+        - id
+        - name
+        - status
+        - departments
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+            - active
+            - retired
+        departments:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Department"
+    Department:
+      type: object
+      required:
+        - id
+        - organizationId
+        - name
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+            - active
+            - retired
+    OrganizationMembership:
+      type: object
+      required:
+        - userObjectId
+        - organizationId
+        - departmentIds
+      properties:
+        userObjectId:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        departmentIds:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: uuid
+    RoleAssignment:
+      type: object
+      required:
+        - id
+        - userObjectId
+        - role
+        - organizationId
+        - departmentId
+        - source
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        userObjectId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - organization_admin
+            - recruiter
+            - business_panel
+        organizationId:
+          type: string
+          format: uuid
+        departmentId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        source:
+          type: string
+          const: delegated
+        status:
+          type: string
+          enum:
+            - active
+            - revoked

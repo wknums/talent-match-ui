@@ -1,0 +1,237 @@
+openapi: 3.1.0
+info:
+  title: TalentMatch Authentication API
+  version: 1.0.0
+  description: Equivalent authentication and authorization-context contract for Stack A and Stack B.
+servers:
+  - url: /
+paths:
+  /api/auth/me:
+    get:
+      operationId: getAuthorizationContext
+      summary: Resolve the current user's application authorization context
+      security:
+        - entraBearer:
+            - access_as_user
+      responses:
+        "200":
+          description: Token, application assignment, and business scope agree.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthorizationContext"
+        "401":
+          description: Token is absent, invalid, expired, or older than the authorization freshness window.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthError"
+        "403":
+          description: Identity is valid but has no active authorization applicable to the requested scope.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthError"
+  /api/auth/logout:
+    post:
+      operationId: recordLogout
+      summary: Record application logout before the client ends its Entra session
+      security:
+        - entraBearer:
+            - access_as_user
+      responses:
+        "204":
+          description: Logout audit event recorded. The browser client must then invoke MSAL logout.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+        "401":
+          description: No valid current user token was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthError"
+components:
+  securitySchemes:
+    entraBearer:
+      type: oauth2
+      description: Single-tenant Microsoft Entra authorization code flow with PKCE.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/authorize
+          tokenUrl: https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token
+          scopes:
+            access_as_user: Call the TalentMatch API as the signed-in user.
+  headers:
+    CorrelationId:
+      description: Correlates the request, authorization decision, and audit event.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    AuthorizationContext:
+      type: object
+      additionalProperties: false
+      required:
+        - userId
+        - tenantId
+        - objectId
+        - username
+        - fullName
+        - globalRole
+        - memberships
+        - authorizations
+        - tokenIssuedAt
+        - refreshRequiredAt
+      properties:
+        userId:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        objectId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        fullName:
+          type: string
+        email:
+          type:
+            - string
+            - "null"
+          format: email
+        globalRole:
+          oneOf:
+            - type: string
+              const: admin
+            - type: "null"
+        memberships:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OrganizationMembership"
+        authorizations:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ScopedAuthorization"
+        tokenIssuedAt:
+          type: string
+          format: date-time
+        refreshRequiredAt:
+          type: string
+          format: date-time
+    ApplicationRole:
+      type: string
+      enum:
+        - admin
+        - organization_admin
+        - recruiter
+        - business_panel
+    OrganizationMembership:
+      type: object
+      additionalProperties: false
+      required:
+        - organizationId
+        - organizationName
+        - departments
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        organizationName:
+          type: string
+        departments:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/DepartmentMembership"
+    DepartmentMembership:
+      type: object
+      additionalProperties: false
+      required:
+        - departmentId
+        - departmentName
+      properties:
+        departmentId:
+          type: string
+          format: uuid
+        departmentName:
+          type: string
+    ScopedAuthorization:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+        - roleLabel
+        - organizationId
+        - departmentId
+        - assignmentSource
+      properties:
+        role:
+          $ref: "#/components/schemas/ApplicationRole"
+        roleLabel:
+          type: string
+          enum:
+            - Admin
+            - Organization Admin
+            - Recruiter
+            - Analytics Viewer
+        organizationId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        departmentId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        assignmentSource:
+          type: string
+          enum:
+            - group
+            - delegated
+            - bootstrap
+    AuthError:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+        - message
+        - correlationId
+      properties:
+        error:
+          type: string
+          enum:
+            - auth_required
+            - invalid_token
+            - wrong_tenant
+            - invalid_audience
+            - unauthorized_client
+            - token_stale
+            - role_missing
+            - role_conflict
+            - assignment_missing
+            - assignment_revoked
+            - scope_unmapped
+            - membership_missing
+            - invalid_job_scope
+            - identity_disabled
+        message:
+          type: string
+          description: Safe user-facing next action without internal identity details.
+        correlationId:
+          type: string
+          format: uuid

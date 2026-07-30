@@ -40,6 +40,8 @@ public static class DependencyInjection
         services.AddScoped<IJobRepository, JobRepository>();
         services.AddScoped<IApplicationRepository, ApplicationRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IOrganizationRepository, OrganizationRepository>();
+        services.AddScoped<IRoleAssignmentRepository, RoleAssignmentRepository>();
         services.AddScoped<IProcessingEventRepository, ProcessingEventRepository>();
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();

@@ -143,14 +143,65 @@ az webapp deploy \
 
 ```bash
 # 1) Provision/update shared + Stack B infrastructure
-./infra/scripts/deploy.sh .env_qa test apply stack-b
+./infra/scripts/deploy.sh .env_qa_mcaps test apply stack-b
 
 # 2) Publish/package Stack B artifact (artifacts/stack-b.zip)
 ./infra/scripts/package-stack-b.sh
 
 # 3) Deploy packaged zip to App Service (loads env + resolves app name)
-./infra/scripts/deploy-stack-b-app.sh .env_qa artifacts/stack-b.zip
+./infra/scripts/deploy-stack-b-app.sh .env_qa_mcaps artifacts/stack-b.zip
 ```
+
+The artifact deployment script verifies Kudu deployment history if Azure CLI
+loses its OneDeploy polling connection. It succeeds only when Kudu reports the
+latest deployment with success status `4`.
+
+Both deployment entry points require the environment profile as their first
+argument. They pass that path unchanged to `load_env_file`; no deployment script
+selects a default profile. For QA MCAPS, always pass `.env_qa_mcaps` explicitly.
+
+Terraform state is isolated in a workspace named from `AZURE_SUBSCRIPTION_ID`
+and `ENVIRONMENT`. This prevents local state from one subscription being reused
+by another deployment profile. If the profile's resource group already exists,
+the deployment wrapper imports it into a new workspace before planning.
+
+For `APP_AUTH_MODE=entra`, set `ENTRA_API_IDENTIFIER_URI`,
+`ENTRA_STACK_A_REDIRECT_URIS`, `ENTRA_STACK_B_REDIRECT_URIS`, and
+`ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID`. Set `ENTRA_REUSE=TRUE` only when all existing
+application and service-principal IDs are present; otherwise Terraform creates
+the protected API and both SPA registrations and assigns the bootstrap user the
+API `admin` app role. Stack B receives both SPA client IDs because the protected
+API accepts delegated tokens issued to either frontend.
+
+Browser clients must request the delegated scope as
+`<ENTRA_API_IDENTIFIER_URI>/<ENTRA_API_SCOPE>`; do not synthesize it from
+`ENTRA_API_APP_CLIENT_ID` when the registration uses a custom identifier URI.
+Stack B's explicit **Sign in with Microsoft** action sends
+`prompt=select_account` so users choose an account before the tenant-bound
+authorization request continues. Silent token refresh does not use this prompt.
+
+When creating Azure SQL, set `SQL_AAD_ADMIN_LOGIN` and
+`SQL_AAD_ADMIN_OBJECT_ID`. Leaving `SQL_ADMIN_PASSWORD` empty enables Entra-only
+administration. The token-based post-provisioning bootstrap creates the
+`talentmatch` schema and grants both managed identities their database roles.
+It runs by default. For a reused private-only database that the operator host
+cannot reach, set `AZ_SQL_BOOTSTRAP_ENABLED=FALSE`; then run
+`infra/scripts/bootstrap-sql-entra-users.mjs` with `SQL_SERVER_FQDN`,
+`SQL_DATABASE_NAME`, `STACK_A_IDENTITY_NAME`, and `STACK_B_IDENTITY_NAME` from
+a VNet-connected host before application use.
+
+API Management is optional. Set `AZ_APIM_ENABLED=FALSE` to skip both APIM
+creation and lookup. `AZ_APIM_REUSE` is considered only when APIM is enabled.
+For `AWR_AUTH_MODE=entra`, set `AWR_AAD_AUDIENCE` to the API's `.default`
+scope and `AWR_API_CLIENT_ID` to its application client ID. Shared Terraform
+assigns `AWR_API_APP_ROLE_VALUE` (default `TalentMatch.Access`) to both stack
+managed identities.
+New Azure SQL creation is fail-closed: `AZ_SQL_REUSE=FALSE` also requires the
+explicit `ALLOW_CREATE_AZURE_SQL=TRUE` opt-in. Existing-database profiles should
+keep `AZ_SQL_REUSE=TRUE` and provide `SQL_SERVER_NAME`, `SQL_DATABASE_NAME`, and
+`SQL_RG`; Terraform then treats the server and database as read-only data sources.
+For newly created SQL servers, `AZ_ALLOWED_IPS` also creates matching SQL
+firewall rules so the operator can run that bootstrap.
 
 ### Both Stacks: Full Deploy (One Infra Pass + Both Packages + Both App Deploys)
 
@@ -412,6 +463,8 @@ The module performs a data source lookup on an existing VNet (never creates one)
 - **Reuse mode**: Looks up an existing delegated subnet by name (`existing_subnet_name`)
 - **Create mode**: Creates a new delegated subnet with the specified CIDR (`subnet_cidr`)
 
+When `AZ_SQL_PRIVATE_ENDPOINT_REUSE=FALSE`, it also creates a dedicated private endpoint subnet, an Azure SQL private endpoint, the `privatelink.database.windows.net` private DNS zone, a VNet link, and the endpoint DNS zone group.
+
 The module outputs a stable `integration_subnet_id` regardless of mode.
 
 ### Output Flow
@@ -443,7 +496,9 @@ AZ_VNET_REUSE=TRUE
 AZ_VNET_NAME=vnet-awr-platform
 AZ_VNET_RG=rg-awr-networking
 AZ_INTEGRATION_SUBNET_NAME=snet-appservice-integration
-AZ_SQL_PRIVATE_ENDPOINT_REUSE=TRUE
+AZ_SQL_PRIVATE_ENDPOINT_REUSE=FALSE
+AZ_SQL_PRIVATE_ENDPOINT_SUBNET_NAME=snet-sql-private-endpoints
+AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR=10.200.3.0/27
 AZ_ALLOWED_IPS=203.0.113.10,198.51.100.20
 ```
 
@@ -461,6 +516,7 @@ The deploy script validates before any Terraform execution:
 - `AZ_VNET_NAME` and `AZ_VNET_RG` must be set when `AZ_VNET_REUSE=TRUE`
 - Exactly one of `AZ_INTEGRATION_SUBNET_NAME` or `AZ_INTEGRATION_SUBNET_CIDR` must be set
 - CIDR prefix must be ≤26 when creating a new subnet
+- `AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR` must be set when Terraform creates SQL Private Link
 - `AZ_ALLOWED_IPS` must be non-empty when VNet is configured
 
 ## Scripts Reference

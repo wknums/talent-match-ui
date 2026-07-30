@@ -100,7 +100,9 @@ public static class ApplicationsEndpoints
         appGroup.MapGet("/manual-review", async (string applicationId, IApplicationRepository repo) =>
         {
             var review = await repo.GetManualReviewAsync(applicationId);
-            return review != null ? Results.Ok(review) : Results.NotFound();
+            return review != null
+                ? Results.Ok(review)
+                : Results.Text("null", "application/json");
         });
 
         appGroup.MapPost("/manual-review", async (string applicationId, SaveManualReviewRequest request, ISender mediator) =>

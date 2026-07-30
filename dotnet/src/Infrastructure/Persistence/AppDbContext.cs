@@ -25,6 +25,12 @@ public class AppDbContext : DbContext
     public DbSet<PromptTestRun> PromptTestRuns => Set<PromptTestRun>();
     public DbSet<ScoringBatch> ScoringBatches => Set<ScoringBatch>();
     public DbSet<ScoringJobProgress> ScoringJobProgress => Set<ScoringJobProgress>();
+    public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<OrganizationMembership> OrganizationMemberships => Set<OrganizationMembership>();
+    public DbSet<DepartmentMembership> DepartmentMemberships => Set<DepartmentMembership>();
+    public DbSet<RoleGroupMapping> RoleGroupMappings => Set<RoleGroupMapping>();
+    public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -42,7 +48,89 @@ public class AppDbContext : DbContext
             e.HasIndex(x => x.Username).IsUnique();
             e.Property(x => x.Username).HasMaxLength(100).IsRequired();
             e.Property(x => x.Role).HasMaxLength(20).IsRequired();
-            e.Property(x => x.PasswordHash).IsRequired();
+            e.Property(x => x.AuthenticationProvider).HasMaxLength(20).HasDefaultValue("simple").IsRequired();
+            e.Property(x => x.EntraTenantId).HasMaxLength(36);
+            e.Property(x => x.EntraObjectId).HasMaxLength(36);
+            e.Property(x => x.PasswordHash).HasMaxLength(128);
+            e.Property(x => x.IsActive).HasDefaultValue(true);
+            e.HasIndex(x => new { x.EntraTenantId, x.EntraObjectId }).IsUnique()
+                .HasFilter("[AuthenticationProvider] = 'entra'");
+            e.ToTable(t => t.HasCheckConstraint("CK_Users_IdentityProvider", "(AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0)"));
+        });
+
+        modelBuilder.Entity<Organization>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => x.Name).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_Organizations_Status", "Status IN ('active', 'retired')"));
+        });
+
+        modelBuilder.Entity<Department>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasAlternateKey(x => new { x.Id, x.OrganizationId });
+            e.Property(x => x.OrganizationId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.Organization).WithMany(x => x.Departments).HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.OrganizationId, x.Name }).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_Departments_Status", "Status IN ('active', 'retired')"));
+        });
+
+        modelBuilder.Entity<OrganizationMembership>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.User).WithMany(x => x.OrganizationMemberships).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Organization).WithMany(x => x.Memberships).HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.UserId, x.OrganizationId }).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_OrganizationMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
+        });
+
+        modelBuilder.Entity<DepartmentMembership>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.User).WithMany(x => x.DepartmentMemberships).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Organization).WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Department).WithMany(x => x.Memberships)
+                .HasForeignKey(x => new { x.DepartmentId, x.OrganizationId })
+                .HasPrincipalKey(x => new { x.Id, x.OrganizationId }).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.UserId, x.DepartmentId }).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_DepartmentMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
+        });
+
+        modelBuilder.Entity<RoleGroupMapping>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.GroupObjectId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(30).IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.GroupObjectId }).IsUnique();
+            e.ToTable(t => t.HasCheckConstraint("CK_RoleGroupMappings_Scope", "(Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL)"));
+        });
+
+        modelBuilder.Entity<RoleAssignment>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.UserObjectId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Source).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.User).WithMany(x => x.RoleAssignments).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.RoleGroupMapping).WithMany().HasForeignKey(x => x.RoleGroupMappingId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.RoleGroupMappingId }).IsUnique().HasFilter("[Status] = 'active' AND [RoleGroupMappingId] IS NOT NULL");
+            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.Source, x.Role, x.OrganizationId, x.DepartmentId }).IsUnique();
+            e.ToTable(t => t.HasCheckConstraint("CK_RoleAssignments_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
         });
 
         // Job
@@ -53,8 +141,15 @@ public class AppDbContext : DbContext
             e.Property(x => x.Department).HasMaxLength(100).IsRequired();
             e.Property(x => x.Organisation).HasMaxLength(200);
             e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.OrganizationId).HasMaxLength(36);
+            e.Property(x => x.DepartmentId).HasMaxLength(36);
             e.HasMany(x => x.ConfigVersions).WithOne(x => x.Job).HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.Applications).WithOne(x => x.Job).HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Organization).WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.DepartmentEntity).WithMany()
+                .HasForeignKey(x => new { x.DepartmentId, x.OrganizationId })
+                .HasPrincipalKey(x => new { x.Id, x.OrganizationId }).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.OrganizationId, x.DepartmentId });
         });
 
         // JobConfigVersion
@@ -62,6 +157,7 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.AggregationStrategy).HasMaxLength(20);
+            e.Ignore(x => x.MustHaveCriteriaJson);
             e.Property(x => x.MustHavesJson).HasColumnName("MustHavesJson");
             e.Property(x => x.RunsPerApplication).HasColumnName("RunsPerApplication");
         });

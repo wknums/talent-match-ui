@@ -29,6 +29,11 @@ variable "project_name" {
   default     = "talentmatch"
 }
 
+variable "tenant_id" {
+  description = "Microsoft Entra tenant ID from the authoritative environment profile"
+  type        = string
+}
+
 # --- Shared outputs consumed by this root ---
 variable "app_service_plan_id" {
   description = "Shared App Service plan ID from shared root"
@@ -65,6 +70,55 @@ variable "apim_gateway_url" {
   type        = string
 }
 
+variable "app_auth_mode" {
+  description = "Application authentication mode"
+  type        = string
+  default     = "entra"
+
+  validation {
+    condition     = contains(["simple", "entra"], var.app_auth_mode)
+    error_message = "app_auth_mode must be simple or entra."
+  }
+}
+
+variable "entra_api_app_client_id" {
+  description = "Protected API application client ID from shared root"
+  type        = string
+}
+
+variable "entra_api_service_principal_object_id" {
+  description = "Protected API enterprise application object ID from shared root"
+  type        = string
+}
+
+variable "entra_api_identifier_uri" {
+  description = "Protected API audience/identifier URI from shared root"
+  type        = string
+}
+
+variable "entra_api_scope" {
+  description = "Delegated protected-API scope value from shared root"
+  type        = string
+}
+
+variable "entra_spa_client_id" {
+  description = "Stack A SPA application client ID from shared root"
+  type        = string
+}
+
+variable "entra_app_role_ids" {
+  description = "Stable protected-API role UUIDs from shared root"
+  type        = map(string)
+
+  validation {
+    condition = length(setsubtract(
+      toset(["admin", "organization_admin", "recruiter", "business_panel"]),
+      toset(keys(var.entra_app_role_ids))
+    )) == 0
+    error_message = "entra_app_role_ids must define all four application roles."
+  }
+}
+
 variable "use_key_vault_secret_refs" {
   description = "When true, app settings use Key Vault references for runtime secrets"
   type        = bool
@@ -73,13 +127,6 @@ variable "use_key_vault_secret_refs" {
 
 variable "awr_api_key" {
   description = "Direct AWR API key value for non-sensitive environments"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "openai_api_key" {
-  description = "Direct OpenAI API key value for non-sensitive environments"
   type        = string
   default     = ""
   sensitive   = true
@@ -95,6 +142,12 @@ variable "awr_auth_mode" {
   description = "AWReason auth mode passed to app settings"
   type        = string
   default     = "none"
+}
+
+variable "awr_aad_audience" {
+  description = "AWReason API token scope used by managed-identity authentication"
+  type        = string
+  default     = ""
 }
 
 variable "awr_max_parallel" {

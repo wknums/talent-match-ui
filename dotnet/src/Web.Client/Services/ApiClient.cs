@@ -1,45 +1,67 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 
 namespace TalentMatch.Web.Client.Services;
 
 public class ApiException : Exception
 {
     public int StatusCode { get; }
+    public string? ErrorCode { get; }
+    public string? CorrelationId { get; }
 
-    public ApiException(string message, int statusCode) : base(message)
+    public ApiException(
+        string message,
+        int statusCode,
+        string? errorCode = null,
+        string? correlationId = null) : base(message)
     {
         StatusCode = statusCode;
+        ErrorCode = errorCode;
+        CorrelationId = correlationId;
     }
 }
 
 public class ApiClient
 {
     private readonly HttpClient _http;
+    private readonly PublicAuthConfiguration _authConfiguration;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public ApiClient(HttpClient http)
+        : this(http, PublicAuthConfiguration.Simple(http.BaseAddress?.ToString() ?? "http://localhost/"))
+    {
+    }
+
+    public ApiClient(HttpClient http, PublicAuthConfiguration authConfiguration)
     {
         _http = http;
+        _authConfiguration = authConfiguration;
     }
 
     private static async Task EnsureSuccessOrThrowAsync(HttpResponseMessage response, string fallbackMessage)
     {
         if (response.IsSuccessStatusCode) return;
 
-        string errorMessage = fallbackMessage;
+        var correlationId = response.Headers.TryGetValues("X-Correlation-ID", out var values)
+            ? values.FirstOrDefault()
+            : null;
+        var details = new ApiErrorDetails(fallbackMessage, null, correlationId);
         try
         {
             var body = await response.Content.ReadAsStringAsync();
             if (!string.IsNullOrWhiteSpace(body))
-                errorMessage = ExtractErrorMessage(body, fallbackMessage);
+                details = ExtractErrorDetails(body, fallbackMessage, correlationId);
         }
         catch { /* use fallback */ }
 
-        throw new ApiException(errorMessage, (int)response.StatusCode);
+        throw new ApiException(details.Message, (int)response.StatusCode, details.ErrorCode, details.CorrelationId);
     }
 
-    private static string ExtractErrorMessage(string body, string fallbackMessage)
+    private static ApiErrorDetails ExtractErrorDetails(
+        string body,
+        string fallbackMessage,
+        string? headerCorrelationId = null)
     {
         try
         {
@@ -47,10 +69,28 @@ public class ApiClient
             var root = document.RootElement;
 
             if (root.ValueKind == JsonValueKind.String)
-                return root.GetString() ?? fallbackMessage;
+                return new(root.GetString() ?? fallbackMessage, null, headerCorrelationId);
 
             if (root.ValueKind == JsonValueKind.Object)
             {
+                var correlationId = root.TryGetProperty("correlationId", out var correlation)
+                    && correlation.ValueKind == JsonValueKind.String
+                        ? correlation.GetString()
+                        : headerCorrelationId;
+                var errorCode = root.TryGetProperty("error", out var error)
+                    && error.ValueKind == JsonValueKind.String
+                        ? error.GetString()
+                        : null;
+
+                if (root.TryGetProperty("message", out var canonicalMessage)
+                    && canonicalMessage.ValueKind == JsonValueKind.String)
+                {
+                    return new(
+                        canonicalMessage.GetString() ?? fallbackMessage,
+                        errorCode,
+                        correlationId);
+                }
+
                 if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Object)
                 {
                     var messages = errors.EnumerateObject()
@@ -64,17 +104,14 @@ public class ApiClient
                         .ToList();
 
                     if (messages.Count > 0)
-                        return string.Join(" ", messages);
+                        return new(string.Join(" ", messages), errorCode, correlationId);
                 }
 
-                if (root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
-                    return message.GetString() ?? fallbackMessage;
-
-                if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
-                    return error.GetString() ?? fallbackMessage;
-
                 if (root.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
-                    return title.GetString() ?? fallbackMessage;
+                    return new(title.GetString() ?? fallbackMessage, errorCode, correlationId);
+
+                if (!string.IsNullOrWhiteSpace(errorCode))
+                    return new(errorCode, errorCode, correlationId);
             }
         }
         catch
@@ -82,7 +119,7 @@ public class ApiClient
             // Fall back to the raw response body when it is not valid JSON.
         }
 
-        return body.Trim().Trim('"');
+        return new(body.Trim().Trim('"'), null, headerCorrelationId);
     }
 
     // Auth
@@ -94,15 +131,55 @@ public class ApiClient
     }
 
     public async Task LogoutAsync()
-        => await _http.PostAsync("/api/auth/logout", null);
+    {
+        var response = await _http.PostAsync("/api/auth/logout", null);
+        if (_authConfiguration.IsEntra)
+            await EnsureSuccessOrThrowAsync(response, "Failed to record logout.");
+    }
 
     public async Task<UserInfo?> GetCurrentUserAsync()
     {
         try
         {
-            return await _http.GetFromJsonAsync<UserInfo>("/api/auth/me");
+            return (await GetCurrentUserResultAsync()).User;
         }
-        catch { return null; }
+        catch (AccessTokenNotAvailableException) when (_authConfiguration.IsEntra)
+        {
+            return null;
+        }
+        catch when (_authConfiguration.IsSimple)
+        {
+            return null;
+        }
+    }
+
+    public async Task<CurrentUserResult> GetCurrentUserResultAsync()
+    {
+        var response = await _http.GetAsync("/api/auth/me");
+        var headerCorrelationId = response.Headers.TryGetValues("X-Correlation-ID", out var values)
+            ? values.FirstOrDefault()
+            : null;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            var details = string.IsNullOrWhiteSpace(body)
+                ? new ApiErrorDetails("Sign in is required.", null, headerCorrelationId)
+                : ExtractErrorDetails(body, "Sign in is required.", headerCorrelationId);
+            return new(null, (int)response.StatusCode, details.ErrorCode, details.Message, details.CorrelationId);
+        }
+
+        if (_authConfiguration.IsEntra)
+        {
+            var context = await response.Content.ReadFromJsonAsync<AuthorizationContextResponse>(JsonOptions);
+            if (context is null)
+                throw new ApiException("The authorization context response was empty.", 200, correlationId: headerCorrelationId);
+
+            return new(context.ToUserInfo(), 200, null, null, headerCorrelationId);
+        }
+
+        var user = await response.Content.ReadFromJsonAsync<UserInfo>(JsonOptions);
+        return new(user, 200, null, null, headerCorrelationId);
     }
 
     public async Task<bool> ChangePasswordAsync(string currentPassword, string newPassword)
@@ -438,6 +515,118 @@ public class ApiClient
 }
 
 // DTOs
+public sealed record PublicAuthConfiguration(
+    string AuthMode,
+    string? TenantId = null,
+    string? ClientId = null,
+    string? Authority = null,
+    string? ApiScope = null,
+    string ApiBaseAddress = "",
+    string? ProviderError = null)
+{
+    public bool IsSimple => string.Equals(AuthMode, "simple", StringComparison.OrdinalIgnoreCase);
+    public bool IsEntra => string.Equals(AuthMode, "entra", StringComparison.OrdinalIgnoreCase);
+    public bool IsValid => ProviderError is null && (IsSimple || IsEntra);
+    public string ApiOrigin => new Uri(ApiBaseAddress).GetLeftPart(UriPartial.Authority);
+    public string ApiAuthorizationUrl => $"{ApiOrigin}/api";
+
+    public PublicAuthConfiguration WithBaseAddress(string baseAddress) => this with { ApiBaseAddress = baseAddress };
+
+    public PublicAuthConfiguration Validate()
+    {
+        if (IsSimple)
+            return this;
+
+        if (!IsEntra)
+            return this with { ProviderError = $"Unsupported authentication mode '{AuthMode}'." };
+
+        if (string.IsNullOrWhiteSpace(TenantId)
+            || string.IsNullOrWhiteSpace(ClientId)
+            || string.IsNullOrWhiteSpace(Authority)
+            || string.IsNullOrWhiteSpace(ApiScope))
+        {
+            return this with { ProviderError = "Microsoft Entra authentication configuration is incomplete." };
+        }
+
+        return this;
+    }
+
+    public static PublicAuthConfiguration Simple(string baseAddress)
+        => new("simple", ApiBaseAddress: baseAddress);
+
+    public static PublicAuthConfiguration Failed(string baseAddress, string message)
+        => new("unavailable", ApiBaseAddress: baseAddress, ProviderError: message);
+}
+
+public sealed record CurrentUserResult(
+    UserInfo? User,
+    int StatusCode,
+    string? ErrorCode,
+    string? Message,
+    string? CorrelationId);
+
+public sealed record AuthorizationContextResponse(
+    string UserId,
+    string TenantId,
+    string ObjectId,
+    string Username,
+    string FullName,
+    string? Email,
+    string? GlobalRole,
+    IReadOnlyList<OrganizationMembershipResponse> Memberships,
+    IReadOnlyList<ScopedAuthorizationResponse> Authorizations,
+    DateTimeOffset TokenIssuedAt,
+    DateTimeOffset RefreshRequiredAt)
+{
+    public UserInfo ToUserInfo()
+    {
+        var primaryAuthorization = Authorizations
+            .OrderByDescending(authorization => GetRoleRank(authorization.Role))
+            .FirstOrDefault();
+        var role = GlobalRole ?? primaryAuthorization?.Role ?? "business_panel";
+        var departments = Memberships
+            .Where(membership => primaryAuthorization?.OrganizationId is null
+                || membership.OrganizationId == primaryAuthorization.OrganizationId)
+            .SelectMany(membership => membership.Departments);
+        var department = departments
+            .Where(item => primaryAuthorization?.DepartmentId is null
+                || item.DepartmentId == primaryAuthorization.DepartmentId)
+            .Select(item => item.DepartmentName)
+            .FirstOrDefault()
+            ?? Memberships.SelectMany(membership => membership.Departments)
+                .Select(item => item.DepartmentName)
+                .FirstOrDefault()
+            ?? string.Empty;
+
+        return new UserInfo(UserId, Username, role, department, FullName, Email ?? string.Empty);
+    }
+
+    private static int GetRoleRank(string role) => role switch
+    {
+        "admin" => 4,
+        "organization_admin" => 3,
+        "recruiter" => 2,
+        "business_panel" => 1,
+        _ => 0,
+    };
+}
+
+public sealed record OrganizationMembershipResponse(
+    string OrganizationId,
+    string OrganizationName,
+    IReadOnlyList<DepartmentMembershipResponse> Departments);
+
+public sealed record DepartmentMembershipResponse(string DepartmentId, string DepartmentName);
+
+public sealed record ScopedAuthorizationResponse(
+    string Role,
+    string RoleLabel,
+    string? OrganizationId,
+    string? DepartmentId,
+    string AssignmentSource);
+
+internal sealed record ApiErrorDetails(string Message, string? ErrorCode, string? CorrelationId);
+
 public record UserInfo(string Id, string Username, string Role, string Department, string FullName, string Email, DateTime? LastLogin = null);
 public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt);
 public record JobSummaryDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt, string CreatedByName, int TotalApplications, int CompletedApplications);

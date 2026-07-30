@@ -7,6 +7,7 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Infrastructure.Persistence.Repositories;
 
+#pragma warning disable EF1002 // SQL values remain parameterized; interpolation is limited to trusted provider-specific table identifiers.
 public class ApplicationRepository : IApplicationRepository
 {
     private readonly AppDbContext _context;
@@ -725,3 +726,4 @@ public class ApplicationRepository : IApplicationRepository
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.ApplicationId == applicationId, ct);
 }
+#pragma warning restore EF1002

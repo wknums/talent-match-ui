@@ -47,6 +47,8 @@ export interface Job {
   title: string
   department: string
   organization: string
+  organizationId?: string
+  departmentId?: string
   postingDate: string
   createdBy: string
   createdByName?: string
@@ -245,12 +247,122 @@ export interface ManualReviewData {
   lastModifiedBy: string
 }
 
-export type UserRole = 'admin' | 'recruiter' | 'business_panel'
+export type AuthenticationProvider = 'simple' | 'entra'
+export type UserRole = 'admin' | 'organization_admin' | 'recruiter' | 'business_panel'
+export type MembershipStatus = 'active' | 'revoked'
+export type OrganizationStatus = 'active' | 'retired'
+export type RoleAssignmentSource = 'group' | 'delegated' | 'bootstrap'
+export type RoleAssignmentStatus = 'active' | 'revoked'
+
+export interface Organization {
+  organizationId: string
+  name: string
+  status: OrganizationStatus
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface Department {
+  departmentId: string
+  organizationId: string
+  name: string
+  status: OrganizationStatus
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface OrganizationMembership {
+  membershipId: string
+  userId: string
+  organizationId: string
+  status: MembershipStatus
+  effectiveAt: string
+  revokedAt?: string
+  updatedBy: string
+}
+
+export interface DepartmentMembership {
+  membershipId: string
+  userId: string
+  organizationId: string
+  departmentId: string
+  status: MembershipStatus
+  effectiveAt: string
+  revokedAt?: string
+  updatedBy: string
+}
+
+export interface RoleGroupMapping {
+  mappingId: string
+  tenantId: string
+  groupObjectId: string
+  role: UserRole
+  organizationId?: string
+  departmentId?: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface RoleAssignment {
+  assignmentId: string
+  userId: string
+  tenantId: string
+  userObjectId: string
+  role: UserRole
+  organizationId?: string
+  departmentId?: string
+  roleGroupMappingId?: string
+  source: RoleAssignmentSource
+  status: RoleAssignmentStatus
+  effectiveAt: string
+  revokedAt?: string
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface AuthorizationContext {
+  userId: string
+  tenantId: string
+  objectId: string
+  username: string
+  fullName: string
+  email?: string
+  globalRole: 'admin' | null
+  memberships: Array<{
+    organizationId: string
+    organizationName: string
+    departments: Array<{ departmentId: string; departmentName: string }>
+  }>
+  authorizations: Array<{
+    role: UserRole
+    roleLabel: string
+    organizationId: string | null
+    departmentId: string | null
+    assignmentSource: RoleAssignmentSource
+  }>
+  tokenIssuedAt: string
+  refreshRequiredAt: string
+}
+
+export type AuthErrorCode =
+  | 'auth_required' | 'invalid_token' | 'wrong_tenant' | 'invalid_audience'
+  | 'unauthorized_client' | 'token_stale' | 'role_missing' | 'role_conflict'
+  | 'assignment_missing' | 'assignment_revoked' | 'scope_unmapped'
+  | 'membership_missing' | 'invalid_job_scope' | 'identity_disabled'
 
 export interface User {
   userId: string
   username: string
   role: UserRole
+  authenticationProvider?: AuthenticationProvider
+  entraTenantId?: string
+  entraObjectId?: string
+  isActive?: boolean
   department?: string
   fullName: string
   email?: string

@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import express from 'express'
-import { initializeDatabase, isAzureSql } from './storage/db.js'
+import { getStorageProvider, initializeDatabase, isAzureSql } from './storage/db.js'
 import { createLLMRouter } from './routes/llm.js'
 import { createAuthRouter } from './routes/auth.js'
 import { createUsersRouter } from './routes/users.js'
@@ -16,6 +16,9 @@ import { errorHandler } from './middleware/error-handler.js'
 import { buildHealthReport } from './services/health.js'
 import { initializeUsers } from './services/init-users.js'
 import { validateAwrAuthConfig } from './services/awr-auth.js'
+import { auditService } from './services/audit.js'
+import { createAuthorizationResolver } from './services/authorization.js'
+import { createEntraTokenValidator } from './services/entra-token.js'
 
 // Load .env file
 const envPath = resolve(process.cwd(), '.env')
@@ -38,6 +41,54 @@ const PORT = parseInt(process.env.PORT || '3001', 10)
 const API_MODE = (process.env.API_MODE || 'mock') as 'mock' | 'real'
 const DIST_DIR = resolve(process.cwd(), 'dist')
 const INDEX_HTML_PATH = resolve(DIST_DIR, 'index.html')
+const AUTH_MODE = process.env.APP_AUTH_MODE === 'entra' ? 'entra' : 'simple'
+
+function requireEnvironment(name: string): string {
+  const value = process.env[name]?.trim()
+  if (!value) throw new Error(`${name} is required when APP_AUTH_MODE=entra.`)
+  return value
+}
+
+async function createAuthentication() {
+  if (AUTH_MODE === 'simple') {
+    const middleware = createAuthMiddleware({ mode: 'simple' })
+    return { middleware, router: createAuthRouter({ mode: 'simple' }) }
+  }
+
+  const storage = await getStorageProvider()
+  const authorizedClientIds = [
+    process.env.ENTRA_STACK_A_CLIENT_ID,
+    process.env.ENTRA_STACK_B_CLIENT_ID,
+  ].map(value => value?.trim()).filter((value): value is string => Boolean(value))
+  if (authorizedClientIds.length === 0) {
+    throw new Error('At least one ENTRA_STACK_A_CLIENT_ID or ENTRA_STACK_B_CLIENT_ID is required when APP_AUTH_MODE=entra.')
+  }
+
+  const tokenValidator = createEntraTokenValidator({
+    tenantId: requireEnvironment('AZURE_TENANT_ID'),
+    audience: requireEnvironment('ENTRA_API_APP_CLIENT_ID'),
+    authorizedClientIds,
+    requiredScope: requireEnvironment('ENTRA_API_SCOPE'),
+  })
+  const authorizationResolver = createAuthorizationResolver(storage, {
+    bootstrapObjectId: requireEnvironment('ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID'),
+  })
+  const middleware = createAuthMiddleware({
+    mode: 'entra',
+    tokenValidator,
+    authorizationResolver,
+    audit: auditService,
+  })
+  return {
+    middleware,
+    router: createAuthRouter({
+      mode: 'entra',
+      authMiddleware: middleware,
+      audit: auditService,
+      users: storage.users,
+    }),
+  }
+}
 
 async function initializeAppState() {
   await initializeDatabase()
@@ -57,13 +108,15 @@ async function main() {
     await initializeAppState()
   }
 
+  const authentication = await createAuthentication()
+
   const app = express()
 
   // Parse JSON bodies
   app.use(express.json({ limit: '10mb' }))
 
   // Public routes (no auth required)
-  app.use('/api/auth', createAuthRouter())
+  app.use('/api/auth', authentication.router)
   app.use('/api/llm', createLLMRouter())
 
   // Config endpoint (public)
@@ -86,7 +139,7 @@ async function main() {
   })
 
   // Auth middleware for protected routes
-  const authMiddleware = createAuthMiddleware()
+  const authMiddleware = authentication.middleware
 
   // Protected routes
   const applicationsRouter = createApplicationsRouter()

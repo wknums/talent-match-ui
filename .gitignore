@@ -112,7 +112,13 @@ TestResult.xml
 .env_local
 .env_qa
 .env_prod
+.env*
 !.env_*.example
+
+docs/SAP_Integration_Considerations.md
+specs/archive/
+tests/fixtures/
+.npmrc
 
 # Terraform
 .terraform/

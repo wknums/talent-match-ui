@@ -77,6 +77,12 @@ variable "database_sku" {
   default     = "Basic"
 }
 
+variable "allowed_ips" {
+  description = "Operator IPs allowed to connect for post-provisioning bootstrap"
+  type        = list(string)
+  default     = []
+}
+
 variable "tags" {
   description = "Resource tags"
   type        = map(string)

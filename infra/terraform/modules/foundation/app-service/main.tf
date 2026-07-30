@@ -5,13 +5,15 @@
 # It is used by stack-a and stack-b composition modules.
 
 resource "azurerm_linux_web_app" "main" {
-  name                      = var.name
-  location                  = var.location
-  resource_group_name       = var.resource_group_name
-  service_plan_id           = var.service_plan_id
-  key_vault_reference_identity_id = var.identity_id
-  https_only                = true
-  virtual_network_subnet_id = var.virtual_network_subnet_id
+  name                                           = var.name
+  location                                       = var.location
+  resource_group_name                            = var.resource_group_name
+  service_plan_id                                = var.service_plan_id
+  key_vault_reference_identity_id                = var.identity_id
+  ftp_publish_basic_authentication_enabled       = false
+  https_only                                     = true
+  webdeploy_publish_basic_authentication_enabled = false
+  virtual_network_subnet_id                      = var.virtual_network_subnet_id
 
   identity {
     type         = "UserAssigned"

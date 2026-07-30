@@ -14,6 +14,15 @@ import { isAzureSql } from './db.js'
 /** The dedicated database schema used in Azure SQL deployments. */
 export const SCHEMA_NAME = 'talentmatch'
 
+export const AUTHORIZATION_TABLES = {
+  organizations: 'Organizations',
+  departments: 'Departments',
+  organizationMemberships: 'OrganizationMemberships',
+  departmentMemberships: 'DepartmentMemberships',
+  roleGroupMappings: 'RoleGroupMappings',
+  roleAssignments: 'RoleAssignments',
+} as const
+
 /**
  * Return a schema-qualified table name for Azure SQL, or a plain table name
  * for SQLite.

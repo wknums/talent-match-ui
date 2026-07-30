@@ -14,6 +14,9 @@ import type {
   ScoringPrompt,
   PromptTestRun,
   PromptTestRunDetail,
+  AuthErrorCode,
+  AuthenticationProvider,
+  AuthorizationContext,
 } from '@/types'
 
 function normalizeMustHaveResult(raw: any) {
@@ -163,8 +166,114 @@ function mapApplication(raw: any): Application {
 
 const API_BASE = '/api'
 
+type AccessTokenRequest = { forceRefresh: boolean }
+type AccessTokenProvider = (request: AccessTokenRequest) => Promise<string>
+
+interface AuthenticatedTransportConfig {
+  authMode: AuthenticationProvider
+  acquireAccessToken?: AccessTokenProvider
+  apiOrigin?: string
+}
+
+let authenticatedTransport: AuthenticatedTransportConfig = { authMode: 'simple' }
+
+export class TalentMatchApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly errorCode?: AuthErrorCode,
+    public readonly correlationId?: string,
+  ) {
+    super(message)
+    this.name = 'TalentMatchApiError'
+  }
+}
+
+export function configureAuthenticatedTransport(config: AuthenticatedTransportConfig): void {
+  authenticatedTransport = { ...config }
+}
+
+export function resetAuthenticatedTransport(): void {
+  authenticatedTransport = { authMode: 'simple' }
+}
+
+function isTalentMatchApiUrl(url: string): boolean {
+  if (url === API_BASE || url.startsWith(`${API_BASE}/`)) {
+    return true
+  }
+
+  if (!authenticatedTransport.apiOrigin) {
+    return false
+  }
+
+  try {
+    const configuredOrigin = new URL(authenticatedTransport.apiOrigin).origin
+    const target = new URL(url)
+    return target.origin === configuredOrigin
+      && (target.pathname === API_BASE || target.pathname.startsWith(`${API_BASE}/`))
+  } catch {
+    return false
+  }
+}
+
+function isIdempotent(method: string): boolean {
+  return method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+}
+
+async function readApiError(response: Response): Promise<TalentMatchApiError> {
+  const body = await response.json().catch(() => ({ message: response.statusText })) as {
+    error?: AuthErrorCode
+    message?: string
+    correlationId?: string
+  }
+
+  return new TalentMatchApiError(
+    body.message || `Request failed: ${response.status}`,
+    response.status,
+    body.error,
+    body.correlationId,
+  )
+}
+
+export async function fetchWithAuthentication(
+  url: string,
+  options: RequestInit = {},
+  hasRetried = false,
+): Promise<Response> {
+  const method = (options.method ?? 'GET').toUpperCase()
+  const headers = new Headers(options.headers)
+
+  if (
+    authenticatedTransport.authMode === 'entra'
+    && authenticatedTransport.acquireAccessToken
+    && isTalentMatchApiUrl(url)
+  ) {
+    const accessToken = await authenticatedTransport.acquireAccessToken({
+      forceRefresh: hasRetried,
+    })
+    headers.set('Authorization', `Bearer ${accessToken}`)
+  }
+
+  const response = await fetch(url, { ...options, headers })
+  if (
+    response.status === 401
+    && !hasRetried
+    && isIdempotent(method)
+    && authenticatedTransport.authMode === 'entra'
+    && authenticatedTransport.acquireAccessToken
+    && isTalentMatchApiUrl(url)
+  ) {
+    const body = await response.clone().json().catch(() => null) as { error?: string } | null
+    if (body?.error === 'token_stale') {
+      return fetchWithAuthentication(url, options, true)
+    }
+  }
+
+  return response
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const res = await fetchWithAuthentication(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -172,14 +281,13 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
     },
   })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }))
-    throw new Error(err.message || `Request failed: ${res.status}`)
+    throw await readApiError(res)
   }
   return res.json()
 }
 
 async function fetchVoid(url: string, options?: RequestInit): Promise<void> {
-  const res = await fetch(url, {
+  const res = await fetchWithAuthentication(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -188,8 +296,7 @@ async function fetchVoid(url: string, options?: RequestInit): Promise<void> {
   })
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }))
-    throw new Error(err.message || `Request failed: ${res.status}`)
+    throw await readApiError(res)
   }
 }
 
@@ -203,7 +310,7 @@ export const realAPI = {
   },
 
   async logout(): Promise<void> {
-    await fetchJSON(`${API_BASE}/auth/logout`, { method: 'POST' })
+    await fetchVoid(`${API_BASE}/auth/logout`, { method: 'POST' })
   },
 
   async getCurrentUser(): Promise<User | null> {
@@ -212,6 +319,10 @@ export const realAPI = {
     } catch {
       return null
     }
+  },
+
+  async getAuthorizationContext(): Promise<AuthorizationContext> {
+    return fetchJSON(`${API_BASE}/auth/me`)
   },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {

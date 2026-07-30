@@ -22,3 +22,8 @@ output "integration_subnet_name" {
   description = "Integration subnet name"
   value       = var.existing_subnet_name != "" ? data.azurerm_subnet.existing[0].name : azurerm_subnet.integration[0].name
 }
+
+output "sql_private_endpoint_id" {
+  description = "Created SQL private endpoint ID, or empty when reusing one"
+  value       = var.reuse_sql_private_endpoint ? "" : azurerm_private_endpoint.sql[0].id
+}

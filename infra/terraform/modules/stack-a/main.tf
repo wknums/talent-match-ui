@@ -33,7 +33,6 @@ module "app_service" {
       "KEY_VAULT_URI"                  = var.key_vault_uri
       "APIM_GATEWAY_URL"               = var.apim_gateway_url
       "AWR_API_KEY"                    = var.use_key_vault_secret_refs ? "@Microsoft.KeyVault(SecretUri=${var.key_vault_uri}secrets/awr-api-key)" : var.awr_api_key
-      "OPENAI_API_KEY"                 = var.use_key_vault_secret_refs ? "@Microsoft.KeyVault(SecretUri=${var.key_vault_uri}secrets/openai-api-key)" : var.openai_api_key
     },
     var.extra_app_settings
   )

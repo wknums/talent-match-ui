@@ -91,22 +91,13 @@ When cold-start retries occur, the service logs retry scheduling, eventual succe
 
 ## LLM Configuration (Optional)
 
-Document extraction features (uploading job specs and rubrics) require an LLM API key. Configure in `.env`:
-
-### OpenAI
+Document extraction features (uploading job specs and rubrics) use Azure OpenAI with Entra RBAC:
 
 ```env
-OPENAI_API_KEY=sk-...
-```
-
-### Azure OpenAI
-
-```env
-AZURE_OPENAI_API_KEY=your-key
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 ```
 
-Without an LLM key configured, the app works fully - document extraction will show an error but manual entry of jobs/rubrics works.
+The application identity must have the `Cognitive Services OpenAI User` role on the Azure OpenAI resource. Local development uses the developer identity selected by `DefaultAzureCredential`. Without an endpoint, document extraction shows an error but manual entry of jobs and rubrics works.
 
 ## Environment Variables
 
@@ -123,9 +114,7 @@ Copy `.env.example` to `.env` and configure:
 | `AZURE_SQL_WAKEUP_MAX_ATTEMPTS` | `8` | Stack A Azure SQL startup retry budget |
 | `AZURE_SQL_WAKEUP_INITIAL_DELAY_MS` | `2000` | Stack A initial Azure SQL retry delay |
 | `AZURE_SQL_WAKEUP_MAX_DELAY_MS` | `15000` | Stack A cap for Azure SQL retry backoff |
-| `OPENAI_API_KEY` | - | OpenAI API key (option 1) |
-| `AZURE_OPENAI_API_KEY` | - | Azure OpenAI key (option 2) |
-| `AZURE_OPENAI_ENDPOINT` | - | Azure OpenAI endpoint URL |
+| `AZURE_OPENAI_ENDPOINT` | - | Azure OpenAI endpoint URL; authentication uses Entra RBAC |
 
 ## Project Structure
 

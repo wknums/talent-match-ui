@@ -68,6 +68,29 @@ validate_required() {
 }
 
 # ---------------------------------------------------------------------------
+# validate_azure_context — Require the active Azure CLI context to match profile
+# ---------------------------------------------------------------------------
+validate_azure_context() {
+  validate_required "AZURE_TENANT_ID" "AZURE_SUBSCRIPTION_ID"
+
+  local expected_tenant expected_subscription active_tenant active_subscription
+  expected_tenant="$(printf '%s' "$AZURE_TENANT_ID" | tr -d '\r')"
+  expected_subscription="$(printf '%s' "$AZURE_SUBSCRIPTION_ID" | tr -d '\r')"
+
+  active_tenant="$(az account show --query tenantId --output tsv 2>/dev/null | tr -d '\r')" \
+    || log_fatal "Unable to read the active Azure CLI tenant. Run az login for the target tenant first."
+  active_subscription="$(az account show --query id --output tsv 2>/dev/null | tr -d '\r')" \
+    || log_fatal "Unable to read the active Azure CLI subscription. Run az login for the target subscription first."
+
+  [[ "$active_tenant" == "$expected_tenant" ]] \
+    || log_fatal "Active Azure tenant does not match AZURE_TENANT_ID. Refusing to continue."
+  [[ "$active_subscription" == "$expected_subscription" ]] \
+    || log_fatal "Active Azure subscription does not match AZURE_SUBSCRIPTION_ID. Refusing to continue."
+
+  log_success "Active Azure CLI context matches the environment profile"
+}
+
+# ---------------------------------------------------------------------------
 # validate_enum — Check a variable's value is in an allowed set
 # ---------------------------------------------------------------------------
 validate_enum() {
@@ -85,6 +108,7 @@ validate_enum() {
 # ---------------------------------------------------------------------------
 export_tf_vars() {
   # Core variables
+  export TF_VAR_tenant_id="${AZURE_TENANT_ID:?}"
   export TF_VAR_environment="${ENVIRONMENT:?}"
   export TF_VAR_location="${AZURE_LOCATION:?}"
   export TF_VAR_resource_group_name="${RESOURCE_GROUP:?}"
@@ -103,13 +127,18 @@ export_tf_vars() {
   export TF_VAR_existing_sql_database_name="${SQL_DATABASE_NAME:-}"
   export TF_VAR_existing_sql_rg="${SQL_RG:-}"
   export TF_VAR_sql_admin_login="${SQL_ADMIN_LOGIN:-sqladmin}"
+  export TF_VAR_sql_admin_password="${SQL_ADMIN_PASSWORD:-}"
+  export TF_VAR_sql_aad_admin_login="${SQL_AAD_ADMIN_LOGIN:-}"
+  export TF_VAR_sql_aad_admin_object_id="${SQL_AAD_ADMIN_OBJECT_ID:-}"
 
   # Key Vault
+  export TF_VAR_enable_key_vault="$(bool_to_tf "${AZ_KEY_VAULT_ENABLED:-FALSE}")"
   export TF_VAR_reuse_key_vault="$(bool_to_tf "${AZ_KEY_VAULT_REUSE:-FALSE}")"
   export TF_VAR_existing_key_vault_name="${AZ_KEY_VAULT_NAME:-}"
   export TF_VAR_existing_key_vault_rg="${AZ_KEY_VAULT_RG:-}"
 
   # APIM
+  export TF_VAR_enable_apim="$(bool_to_tf "${AZ_APIM_ENABLED:-FALSE}")"
   export TF_VAR_reuse_apim="$(bool_to_tf "${AZ_APIM_REUSE:-FALSE}")"
   export TF_VAR_existing_apim_name="${AZ_APIM_NAME:-}"
   export TF_VAR_existing_apim_rg="${AZ_APIM_RG:-}"
@@ -120,6 +149,24 @@ export_tf_vars() {
   export TF_VAR_existing_identity_stack_b_name="${AZ_IDENTITY_STACK_B_NAME:-}"
   export TF_VAR_existing_identities_rg="${AZ_IDENTITIES_RG:-}"
 
+  # Microsoft Entra applications
+  export TF_VAR_reuse_entra="$(bool_to_tf "${ENTRA_REUSE:-FALSE}")"
+  export TF_VAR_existing_entra_api_app_client_id="${ENTRA_API_APP_CLIENT_ID:-}"
+  export TF_VAR_existing_entra_api_service_principal_object_id="${ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID:-}"
+  export TF_VAR_existing_entra_stack_a_client_id="${ENTRA_STACK_A_CLIENT_ID:-}"
+  export TF_VAR_existing_entra_stack_b_client_id="${ENTRA_STACK_B_CLIENT_ID:-}"
+  export TF_VAR_entra_api_identifier_uri="${ENTRA_API_IDENTIFIER_URI:-}"
+  export TF_VAR_entra_api_scope="${ENTRA_API_SCOPE:-access_as_user}"
+  export TF_VAR_entra_stack_a_redirect_uris="$(csv_to_json "${ENTRA_STACK_A_REDIRECT_URIS:-}")"
+  export TF_VAR_entra_stack_b_redirect_uris="$(csv_to_json "${ENTRA_STACK_B_REDIRECT_URIS:-}")"
+  export TF_VAR_entra_create_role_groups="$(bool_to_tf "${ENTRA_CREATE_ROLE_GROUPS:-FALSE}")"
+  export TF_VAR_entra_bootstrap_admin_object_id="${ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID:-}"
+
+  if [[ -n "${ENTRA_ADMIN_APP_ROLE_ID:-}" && -n "${ENTRA_ORGANIZATION_ADMIN_APP_ROLE_ID:-}" \
+    && -n "${ENTRA_RECRUITER_APP_ROLE_ID:-}" && -n "${ENTRA_BUSINESS_PANEL_APP_ROLE_ID:-}" ]]; then
+    export TF_VAR_entra_app_role_ids="{\"admin\":\"$ENTRA_ADMIN_APP_ROLE_ID\",\"organization_admin\":\"$ENTRA_ORGANIZATION_ADMIN_APP_ROLE_ID\",\"recruiter\":\"$ENTRA_RECRUITER_APP_ROLE_ID\",\"business_panel\":\"$ENTRA_BUSINESS_PANEL_APP_ROLE_ID\"}"
+  fi
+
 
   # APIM settings
   export TF_VAR_apim_sku="${APIM_SKU:-Consumption_0}"
@@ -129,6 +176,9 @@ export_tf_vars() {
   # Runtime settings (non-secret, safe to export)
   export TF_VAR_storage_provider="${STORAGE_PROVIDER:-azuresql}"
   export TF_VAR_awr_auth_mode="${AWR_AUTH_MODE:-none}"
+  export TF_VAR_awr_aad_audience="${AWR_AAD_AUDIENCE:-}"
+  export TF_VAR_awr_api_client_id="${AWR_API_CLIENT_ID:-}"
+  export TF_VAR_awr_api_app_role_value="${AWR_API_APP_ROLE_VALUE:-TalentMatch.Access}"
   export TF_VAR_awr_max_parallel="${AWR_MAX_PARALLEL:-1}"
   export TF_VAR_awr_seq_api_endpoint="${AWR_SEQ_API_ENDPOINT:-}"
   export TF_VAR_api_mode="${API_MODE:-mock}"
@@ -137,9 +187,12 @@ export_tf_vars() {
   if [[ "${ENVIRONMENT:-}" != "prod" ]]; then
     use_key_vault_default="FALSE"
   fi
-  export TF_VAR_use_key_vault_secret_refs="$(bool_to_tf "${USE_KEY_VAULT_SECRET_REFS:-$use_key_vault_default}")"
+  if [[ "${AZ_KEY_VAULT_ENABLED:-FALSE}" == "TRUE" ]]; then
+    export TF_VAR_use_key_vault_secret_refs="$(bool_to_tf "${USE_KEY_VAULT_SECRET_REFS:-$use_key_vault_default}")"
+  else
+    export TF_VAR_use_key_vault_secret_refs="false"
+  fi
   export TF_VAR_awr_api_key="${AWR_API_KEY:-}"
-  export TF_VAR_openai_api_key="${OPENAI_API_KEY:-}"
 
   # VNet / Networking (US6)
   export TF_VAR_reuse_vnet="$(bool_to_tf "${AZ_VNET_REUSE:-FALSE}")"
@@ -148,22 +201,12 @@ export_tf_vars() {
   export TF_VAR_existing_integration_subnet_name="${AZ_INTEGRATION_SUBNET_NAME:-}"
   export TF_VAR_integration_subnet_cidr="${AZ_INTEGRATION_SUBNET_CIDR:-}"
   export TF_VAR_reuse_sql_private_endpoint="$(bool_to_tf "${AZ_SQL_PRIVATE_ENDPOINT_REUSE:-FALSE}")"
+  export TF_VAR_sql_private_endpoint_subnet_name="${AZ_SQL_PRIVATE_ENDPOINT_SUBNET_NAME:-snet-sql-private-endpoints}"
+  export TF_VAR_sql_private_endpoint_subnet_cidr="${AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR:-}"
 
   # IP Restrictions (US6)
   # Convert comma-separated IPs to JSON array for Terraform list variable
-  if [[ -n "${AZ_ALLOWED_IPS:-}" ]]; then
-    IFS=',' read -ra IP_ARRAY <<< "$AZ_ALLOWED_IPS"
-    TF_IPS="["
-    for i in "${!IP_ARRAY[@]}"; do
-      ip=$(echo "${IP_ARRAY[$i]}" | xargs)
-      [[ $i -gt 0 ]] && TF_IPS+=","
-      TF_IPS+="\"$ip\""
-    done
-    TF_IPS+="]"
-    export TF_VAR_allowed_ips="$TF_IPS"
-  else
-    export TF_VAR_allowed_ips="[]"
-  fi
+  export TF_VAR_allowed_ips="$(csv_to_json "${AZ_ALLOWED_IPS:-}")"
 
   log_info "Exported TF_VAR_* variables for environment=$ENVIRONMENT"
 }
@@ -174,6 +217,23 @@ export_tf_vars() {
 bool_to_tf() {
   local val="${1^^}"  # uppercase
   [[ "$val" == "TRUE" ]] && echo "true" || echo "false"
+}
+
+csv_to_json() {
+  local value="${1:-}"
+  local items=()
+  local result="["
+
+  [[ -z "$value" ]] && { echo "[]"; return; }
+  IFS=',' read -ra items <<< "$value"
+  for i in "${!items[@]}"; do
+    local item
+    item="$(echo "${items[$i]}" | xargs)"
+    [[ $i -gt 0 ]] && result+=","
+    result+="\"$item\""
+  done
+  result+="]"
+  echo "$result"
 }
 
 # ---------------------------------------------------------------------------
@@ -191,11 +251,14 @@ validate_reuse_coordinates() {
     [[ -z "${SQL_DATABASE_NAME:-}" ]] && errors+=("SQL_DATABASE_NAME required when AZ_SQL_REUSE=TRUE")
     [[ -z "${SQL_RG:-}" ]]            && errors+=("SQL_RG required when AZ_SQL_REUSE=TRUE")
   fi
-  if [[ "${AZ_KEY_VAULT_REUSE:-FALSE}" == "TRUE" ]]; then
+  if [[ "${AZ_KEY_VAULT_ENABLED:-FALSE}" == "TRUE" && "${AZ_KEY_VAULT_REUSE:-FALSE}" == "TRUE" ]]; then
     [[ -z "${AZ_KEY_VAULT_NAME:-}" ]] && errors+=("AZ_KEY_VAULT_NAME required when AZ_KEY_VAULT_REUSE=TRUE")
     [[ -z "${AZ_KEY_VAULT_RG:-}" ]]   && errors+=("AZ_KEY_VAULT_RG required when AZ_KEY_VAULT_REUSE=TRUE")
   fi
-  if [[ "${AZ_APIM_REUSE:-FALSE}" == "TRUE" ]]; then
+  if [[ "${AZ_KEY_VAULT_ENABLED:-FALSE}" != "TRUE" && "${AZ_KEY_VAULT_REUSE:-FALSE}" == "TRUE" ]]; then
+    errors+=("AZ_KEY_VAULT_REUSE cannot be TRUE when AZ_KEY_VAULT_ENABLED is not TRUE")
+  fi
+  if [[ "${AZ_APIM_ENABLED:-FALSE}" == "TRUE" && "${AZ_APIM_REUSE:-FALSE}" == "TRUE" ]]; then
     [[ -z "${AZ_APIM_NAME:-}" ]] && errors+=("AZ_APIM_NAME required when AZ_APIM_REUSE=TRUE")
     [[ -z "${AZ_APIM_RG:-}" ]]   && errors+=("AZ_APIM_RG required when AZ_APIM_REUSE=TRUE")
   fi
@@ -203,6 +266,28 @@ validate_reuse_coordinates() {
     [[ -z "${AZ_IDENTITY_STACK_A_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_A_NAME required when AZ_IDENTITIES_REUSE=TRUE")
     [[ -z "${AZ_IDENTITY_STACK_B_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_B_NAME required when AZ_IDENTITIES_REUSE=TRUE")
     [[ -z "${AZ_IDENTITIES_RG:-}" ]]         && errors+=("AZ_IDENTITIES_RG required when AZ_IDENTITIES_REUSE=TRUE")
+  fi
+
+  if [[ "${APP_AUTH_MODE:-entra}" == "entra" ]]; then
+    [[ -z "${ENTRA_API_IDENTIFIER_URI:-}" ]] && errors+=("ENTRA_API_IDENTIFIER_URI is required when APP_AUTH_MODE=entra")
+    [[ -z "${ENTRA_STACK_A_REDIRECT_URIS:-}" ]] && errors+=("ENTRA_STACK_A_REDIRECT_URIS is required when APP_AUTH_MODE=entra")
+    [[ -z "${ENTRA_STACK_B_REDIRECT_URIS:-}" ]] && errors+=("ENTRA_STACK_B_REDIRECT_URIS is required when APP_AUTH_MODE=entra")
+    [[ -z "${ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID:-}" ]] && errors+=("ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID is required when APP_AUTH_MODE=entra")
+  fi
+  if [[ "${AWR_AUTH_MODE:-none}" == "entra" ]]; then
+    [[ -z "${AWR_AAD_AUDIENCE:-}" ]] && errors+=("AWR_AAD_AUDIENCE is required when AWR_AUTH_MODE=entra")
+    [[ -z "${AWR_API_CLIENT_ID:-}" ]] && errors+=("AWR_API_CLIENT_ID is required when AWR_AUTH_MODE=entra")
+  fi
+  if [[ "${ENTRA_REUSE:-FALSE}" == "TRUE" ]]; then
+    [[ -z "${ENTRA_API_APP_CLIENT_ID:-}" ]] && errors+=("ENTRA_API_APP_CLIENT_ID required when ENTRA_REUSE=TRUE")
+    [[ -z "${ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID:-}" ]] && errors+=("ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID required when ENTRA_REUSE=TRUE")
+    [[ -z "${ENTRA_STACK_A_CLIENT_ID:-}" ]] && errors+=("ENTRA_STACK_A_CLIENT_ID required when ENTRA_REUSE=TRUE")
+    [[ -z "${ENTRA_STACK_B_CLIENT_ID:-}" ]] && errors+=("ENTRA_STACK_B_CLIENT_ID required when ENTRA_REUSE=TRUE")
+  fi
+  if [[ "${AZ_SQL_REUSE:-FALSE}" != "TRUE" ]]; then
+    [[ -z "${SQL_AAD_ADMIN_LOGIN:-}" ]] && errors+=("SQL_AAD_ADMIN_LOGIN is required when creating Azure SQL")
+    [[ -z "${SQL_AAD_ADMIN_OBJECT_ID:-}" ]] && errors+=("SQL_AAD_ADMIN_OBJECT_ID is required when creating Azure SQL")
+    [[ "${ALLOW_CREATE_AZURE_SQL:-FALSE}" != "TRUE" ]] && errors+=("ALLOW_CREATE_AZURE_SQL=TRUE is required when AZ_SQL_REUSE is not TRUE")
   fi
 
   # VNet / Networking (US6)
@@ -222,6 +307,9 @@ validate_reuse_coordinates() {
       if [[ "$PREFIX_LEN" -gt 26 ]]; then
         errors+=("AZ_INTEGRATION_SUBNET_CIDR prefix /$PREFIX_LEN is too small; minimum is /26 for App Service delegation")
       fi
+    fi
+    if [[ "${AZ_SQL_PRIVATE_ENDPOINT_REUSE:-FALSE}" != "TRUE" ]]; then
+      [[ -z "${AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR:-}" ]] && errors+=("AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR required when AZ_SQL_PRIVATE_ENDPOINT_REUSE is not TRUE")
     fi
     # AZ_ALLOWED_IPS required when VNet is configured
     [[ -z "${AZ_ALLOWED_IPS:-}" ]] && errors+=("AZ_ALLOWED_IPS is required — App Services must not be deployed without IP restrictions")
@@ -243,14 +331,24 @@ validate_reuse_coordinates() {
 run_terraform() {
   local root_dir="${1:?Usage: run_terraform <root_dir> <action>}"
   local action="${2:?Usage: run_terraform <root_dir> <action>}"
+  local plan_exit_code=0
+
+  TERRAFORM_PLAN_HAS_CHANGES=false
 
   log_info "Running terraform $action in $root_dir"
   pushd "$root_dir" > /dev/null
 
   terraform init -input=false
+  terraform workspace select -or-create "$(terraform_workspace_name)"
   case "$action" in
     plan)
-      terraform plan -input=false -out=tfplan
+      terraform plan -input=false -detailed-exitcode -out=tfplan || plan_exit_code=$?
+      if [[ "$plan_exit_code" -eq 2 ]]; then
+        TERRAFORM_PLAN_HAS_CHANGES=true
+      elif [[ "$plan_exit_code" -ne 0 ]]; then
+        popd > /dev/null
+        log_fatal "Terraform plan failed in $root_dir with exit code $plan_exit_code"
+      fi
       ;;
     apply)
       terraform plan -input=false -out=tfplan
@@ -269,6 +367,23 @@ run_terraform() {
   log_success "Terraform $action completed in $root_dir"
 }
 
+import_existing_resource_group() {
+  local root_dir="${1:?Usage: import_existing_resource_group <root_dir>}"
+  local resource_group="${RESOURCE_GROUP:?RESOURCE_GROUP is required}"
+  local subscription="${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
+
+  [[ "$(az group exists --name "$resource_group" --output tsv)" == "true" ]] || return
+
+  pushd "$root_dir" > /dev/null
+  terraform init -input=false
+  terraform workspace select -or-create "$(terraform_workspace_name)"
+  if ! terraform state show azurerm_resource_group.main >/dev/null 2>&1; then
+    log_info "Importing existing resource group '$resource_group' into the isolated Terraform workspace"
+    terraform import azurerm_resource_group.main "/subscriptions/$subscription/resourceGroups/$resource_group"
+  fi
+  popd > /dev/null
+}
+
 # ---------------------------------------------------------------------------
 # get_terraform_output — Retrieve a terraform output from a root directory
 # ---------------------------------------------------------------------------
@@ -276,10 +391,31 @@ get_terraform_output() {
   local root_dir="${1:?}"
   local output_name="${2:?}"
   pushd "$root_dir" > /dev/null
-  local output
-  output="$(terraform output -raw "$output_name" 2>/dev/null || true)"
+  local output_json output
+  output_json="$(TF_WORKSPACE="$(terraform_workspace_name)" terraform output -json "$output_name" 2>/dev/null || true)"
+  if [[ -n "$output_json" ]]; then
+    output="$(node -e 'let input=""; process.stdin.on("data", chunk => input += chunk).on("end", () => process.stdout.write(String(JSON.parse(input))))' <<< "$output_json")"
+  else
+    output=""
+  fi
   popd > /dev/null
   echo "$output"
+}
+
+get_terraform_output_json() {
+  local root_dir="${1:?}"
+  local output_name="${2:?}"
+  pushd "$root_dir" > /dev/null
+  local output
+  output="$(TF_WORKSPACE="$(terraform_workspace_name)" terraform output -json "$output_name" 2>/dev/null || true)"
+  popd > /dev/null
+  echo "$output"
+}
+
+terraform_workspace_name() {
+  local subscription="${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
+  local environment="${ENVIRONMENT:?ENVIRONMENT is required}"
+  printf '%s' "${subscription}-${environment}" | tr -c '[:alnum:]_-' '-'
 }
 
 # ---------------------------------------------------------------------------

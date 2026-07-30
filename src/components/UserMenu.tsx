@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { User, Key, SignOut, Users } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
@@ -10,17 +9,25 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
-import type { User as UserType } from '@/types'
+import type { AuthenticationProvider, User as UserType } from '@/types'
 
 interface UserMenuProps {
   user: UserType
-  onChangePassword: () => void
-  onRequestPasswordReset: () => void
+  authMode?: AuthenticationProvider
+  onChangePassword?: () => void
+  onRequestPasswordReset?: () => void
   onManageUsers?: () => void
   onLogout: () => void
 }
 
-export function UserMenu({ user, onChangePassword, onRequestPasswordReset, onManageUsers, onLogout }: UserMenuProps) {
+export function UserMenu({
+  user,
+  authMode = user.authenticationProvider ?? 'simple',
+  onChangePassword,
+  onRequestPasswordReset,
+  onManageUsers,
+  onLogout,
+}: UserMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -47,14 +54,18 @@ export function UserMenu({ user, onChangePassword, onRequestPasswordReset, onMan
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onChangePassword}>
-          <Key size={16} className="mr-2" />
-          Change Password
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onRequestPasswordReset}>
-          <Key size={16} className="mr-2" />
-          Request Password Reset
-        </DropdownMenuItem>
+        {authMode === 'simple' && onChangePassword && (
+          <DropdownMenuItem onClick={onChangePassword}>
+            <Key size={16} className="mr-2" />
+            Change Password
+          </DropdownMenuItem>
+        )}
+        {authMode === 'simple' && onRequestPasswordReset && (
+          <DropdownMenuItem onClick={onRequestPasswordReset}>
+            <Key size={16} className="mr-2" />
+            Request Password Reset
+          </DropdownMenuItem>
+        )}
         {user.role === 'admin' && onManageUsers && (
           <>
             <DropdownMenuSeparator />

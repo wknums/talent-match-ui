@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Toaster } from '@/components/ui/sonner'
 import { DashboardView } from '@/components/DashboardView'
 import { JobDetailView } from '@/components/JobDetailView'
@@ -7,20 +7,20 @@ import { CreateJobDialog } from '@/components/CreateJobDialog'
 import { UploadApplicationsDialog } from '@/components/UploadApplicationsDialog'
 import { ManualReviewView } from '@/components/ManualReviewView'
 import { LoginForm } from '@/components/LoginForm'
+import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { UserMenu } from '@/components/UserMenu'
 import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
 import { UserManagementDialog } from '@/components/UserManagementDialog'
 import { AnalyticsView } from '@/components/AnalyticsView'
-import type { Job, User } from '@/types'
-import { api } from '@/lib/api'
-import { initializeAuth, login as authLogin, logout as authLogout, getCurrentUser as authGetCurrentUser, requestPasswordReset } from '@/lib/auth'
+import type { Job } from '@/types'
+import { requestPasswordReset } from '@/lib/auth'
+import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
 
 type View = 'dashboard' | 'job-detail' | 'manual-review' | 'analytics'
 
 function App() {
-  const [currentUser, setCurrentUser] = useState<User | null>(null)
-  const [isAuthInitialized, setIsAuthInitialized] = useState(false)
+  const { authMode, status: authStatus, user: currentUser, error: authError, signIn, logout } = useAuth()
   const [currentView, setCurrentView] = useState<View>('dashboard')
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null)
@@ -34,20 +34,9 @@ function App() {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const [userManagementOpen, setUserManagementOpen] = useState(false)
 
-  useEffect(() => {
-    async function init() {
-      await initializeAuth()
-      const user = await authGetCurrentUser()
-      setCurrentUser(user)
-      setIsAuthInitialized(true)
-    }
-    init()
-  }, [])
-
   const handleLogin = async (username: string, password: string): Promise<boolean> => {
-    const user = await authLogin(username, password)
+    const user = await signIn({ username, password })
     if (user) {
-      setCurrentUser(user)
       toast.success(`Welcome back, ${user.fullName}!`)
       return true
     }
@@ -55,14 +44,13 @@ function App() {
   }
 
   const handleLogout = async () => {
-    await authLogout()
-    setCurrentUser(null)
+    await logout()
     setCurrentView('dashboard')
     toast.success('Signed out successfully')
   }
 
   const handleRequestPasswordReset = async () => {
-    if (!currentUser) return
+    if (authMode !== 'simple' || !currentUser) return
     
     try {
       await requestPasswordReset(currentUser.userId)
@@ -72,14 +60,24 @@ function App() {
     }
   }
 
-  if (!isAuthInitialized) {
-    return <div className="min-h-screen bg-background flex items-center justify-center">
-      <div className="text-muted-foreground">Loading...</div>
-    </div>
-  }
-
-  if (!currentUser) {
-    return <LoginForm onLogin={handleLogin} />
+  if (authStatus !== 'authenticated' || !currentUser) {
+    return (
+      <ProtectedRoute
+        status={authStatus}
+        error={authError}
+        onSignIn={() => void signIn()}
+        onLogout={() => void handleLogout()}
+        signedOut={(
+          <LoginForm
+            authMode={authMode}
+            onLogin={handleLogin}
+            onEntraLogin={() => signIn()}
+          />
+        )}
+      >
+        {null}
+      </ProtectedRoute>
+    )
   }
 
   const handleJobClick = (jobId: string) => {
@@ -168,10 +166,11 @@ function App() {
                 </button>
               )}
               <UserMenu
+                authMode={authMode}
                 user={currentUser}
-                onChangePassword={() => setChangePasswordOpen(true)}
-                onRequestPasswordReset={handleRequestPasswordReset}
-                onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+                onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
+                onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
+                onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
                 onLogout={handleLogout}
               />
             </div>
@@ -196,10 +195,11 @@ function App() {
               ← Back to Dashboard
             </button>
             <UserMenu
+              authMode={authMode}
               user={currentUser}
-              onChangePassword={() => setChangePasswordOpen(true)}
-              onRequestPasswordReset={handleRequestPasswordReset}
-              onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
+              onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
+              onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -211,10 +211,11 @@ function App() {
         <div className="container mx-auto px-8 py-6">
           <div className="flex justify-end mb-4">
             <UserMenu
+              authMode={authMode}
               user={currentUser}
-              onChangePassword={() => setChangePasswordOpen(true)}
-              onRequestPasswordReset={handleRequestPasswordReset}
-              onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
+              onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
+              onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -235,10 +236,11 @@ function App() {
         <>
           <div className="absolute top-4 right-8 z-10">
             <UserMenu
+              authMode={authMode}
               user={currentUser}
-              onChangePassword={() => setChangePasswordOpen(true)}
-              onRequestPasswordReset={handleRequestPasswordReset}
-              onManageUsers={currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
+              onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
+              onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -277,14 +279,16 @@ function App() {
         onSuccess={handleUploadSuccess}
       />
 
-      <ChangePasswordDialog
-        open={changePasswordOpen}
-        onClose={() => setChangePasswordOpen(false)}
-        onSuccess={() => setRefreshKey(prev => prev + 1)}
-        userId={currentUser.userId}
-      />
+      {authMode === 'simple' && (
+        <ChangePasswordDialog
+          open={changePasswordOpen}
+          onClose={() => setChangePasswordOpen(false)}
+          onSuccess={() => setRefreshKey(prev => prev + 1)}
+          userId={currentUser.userId}
+        />
+      )}
 
-      {currentUser.role === 'admin' && (
+      {authMode === 'simple' && currentUser.role === 'admin' && (
         <UserManagementDialog
           open={userManagementOpen}
           onClose={() => setUserManagementOpen(false)}

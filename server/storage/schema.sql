@@ -17,14 +17,24 @@ CREATE TABLE [talentmatch].Users (
     FullName        NVARCHAR(200)   NOT NULL DEFAULT '',
     Email           NVARCHAR(320)   NOT NULL DEFAULT '',
     Department      NVARCHAR(100)   NOT NULL DEFAULT '',
-    PasswordHash    NVARCHAR(128)   NOT NULL,
+    PasswordHash    NVARCHAR(128)   NULL,
     CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     LastLogin       DATETIME2       NULL,
-    PasswordResetRequired BIT       NOT NULL DEFAULT 0
+    PasswordResetRequired BIT       NOT NULL DEFAULT 0,
+    AuthenticationProvider NVARCHAR(20) NOT NULL DEFAULT 'simple',
+    EntraTenantId   NVARCHAR(36)    NULL,
+    EntraObjectId   NVARCHAR(36)    NULL,
+    IsActive        BIT             NOT NULL DEFAULT 1,
+    CONSTRAINT CK_Users_IdentityProvider CHECK (
+        (AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL)
+        OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0)
+    )
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_Username')
     CREATE UNIQUE INDEX UX_Users_Username ON [talentmatch].Users (Username);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_EntraIdentity')
+    CREATE UNIQUE INDEX UX_Users_EntraIdentity ON [talentmatch].Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
 
 -- 2. PASSWORD RESET REQUESTS
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PasswordResetRequests' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -33,8 +43,10 @@ CREATE TABLE [talentmatch].PasswordResetRequests (
     UserId          NVARCHAR(36)    NOT NULL,
     Username        NVARCHAR(100)   NOT NULL,
     FullName        NVARCHAR(200)   NOT NULL DEFAULT '',
+    Reason          NVARCHAR(1000)  NOT NULL DEFAULT '',
     Status          NVARCHAR(20)    NOT NULL DEFAULT 'pending',
     RequestedAt     DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     ResolvedAt      DATETIME2       NULL,
     ResolvedBy      NVARCHAR(100)   NULL
 );
@@ -58,13 +70,17 @@ CREATE TABLE [talentmatch].Jobs (
     CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     SpecDocumentId          NVARCHAR(36)    NULL,
-    RubricDocumentId        NVARCHAR(36)    NULL
+    RubricDocumentId        NVARCHAR(36)    NULL,
+    OrganizationId          NVARCHAR(36)    NULL,
+    DepartmentId            NVARCHAR(36)    NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Department')
     CREATE INDEX IX_Jobs_Department ON [talentmatch].Jobs (Department);
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_CreatedBy')
     CREATE INDEX IX_Jobs_CreatedBy ON [talentmatch].Jobs (CreatedBy);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Organization_Department')
+    CREATE INDEX IX_Jobs_Organization_Department ON [talentmatch].Jobs (OrganizationId, DepartmentId);
 
 -- 4. JOB CONFIG VERSIONS
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobConfigVersions' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -343,4 +359,103 @@ CREATE TABLE [talentmatch].ScoringJobProgress (
     StartedAt         DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt         DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME()
 );
+
+-- 18. NORMALIZED ORGANIZATION AUTHORIZATION
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Organizations' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].Organizations (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    Name NVARCHAR(200) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT CK_Organizations_Status CHECK (Status IN ('active', 'retired'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Organizations_ActiveName')
+    CREATE UNIQUE INDEX UX_Organizations_ActiveName ON [talentmatch].Organizations (Name) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Departments' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].Departments (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    OrganizationId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Organizations(Id),
+    Name NVARCHAR(100) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT UQ_Departments_Id_Organization UNIQUE (Id, OrganizationId),
+    CONSTRAINT CK_Departments_Status CHECK (Status IN ('active', 'retired'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Departments_ActiveOrganizationName')
+    CREATE UNIQUE INDEX UX_Departments_ActiveOrganizationName ON [talentmatch].Departments (OrganizationId, Name) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'OrganizationMemberships' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].OrganizationMemberships (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    UserId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Users(Id),
+    OrganizationId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Organizations(Id),
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    RevokedAt DATETIME2 NULL,
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT CK_OrganizationMemberships_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_OrganizationMemberships_ActiveUserOrganization')
+    CREATE UNIQUE INDEX UX_OrganizationMemberships_ActiveUserOrganization ON [talentmatch].OrganizationMemberships (UserId, OrganizationId) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'DepartmentMemberships' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].DepartmentMemberships (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    UserId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Users(Id),
+    OrganizationId NVARCHAR(36) NOT NULL,
+    DepartmentId NVARCHAR(36) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    RevokedAt DATETIME2 NULL,
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT FK_DepartmentMemberships_Department FOREIGN KEY (DepartmentId, OrganizationId) REFERENCES [talentmatch].Departments(Id, OrganizationId),
+    CONSTRAINT CK_DepartmentMemberships_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_DepartmentMemberships_ActiveUserDepartment')
+    CREATE UNIQUE INDEX UX_DepartmentMemberships_ActiveUserDepartment ON [talentmatch].DepartmentMemberships (UserId, DepartmentId) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'RoleGroupMappings' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].RoleGroupMappings (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    TenantId NVARCHAR(36) NOT NULL,
+    GroupObjectId NVARCHAR(36) NOT NULL,
+    Role NVARCHAR(30) NOT NULL,
+    OrganizationId NVARCHAR(36) NULL,
+    DepartmentId NVARCHAR(36) NULL,
+    Enabled BIT NOT NULL DEFAULT 1,
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT UQ_RoleGroupMappings_TenantGroup UNIQUE (TenantId, GroupObjectId),
+    CONSTRAINT CK_RoleGroupMappings_Scope CHECK ((Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'RoleAssignments' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].RoleAssignments (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    UserId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Users(Id),
+    TenantId NVARCHAR(36) NOT NULL,
+    UserObjectId NVARCHAR(36) NOT NULL,
+    Role NVARCHAR(30) NOT NULL,
+    OrganizationId NVARCHAR(36) NULL,
+    DepartmentId NVARCHAR(36) NULL,
+    RoleGroupMappingId NVARCHAR(36) NULL REFERENCES [talentmatch].RoleGroupMappings(Id),
+    Source NVARCHAR(20) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    RevokedAt DATETIME2 NULL,
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT CK_RoleAssignments_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveGroup')
+    CREATE UNIQUE INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_Idempotency')
+    CREATE UNIQUE INDEX UX_RoleAssignments_Idempotency ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Source, Role, OrganizationId, DepartmentId);
 

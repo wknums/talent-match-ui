@@ -6,6 +6,8 @@ function sha256(input: string): string {
 }
 
 export async function initializeUsers(): Promise<void> {
+  if (process.env.APP_AUTH_MODE === 'entra') return
+
   const count = await userRepo.count()
   if (count === 0) {
     await userRepo.create({
