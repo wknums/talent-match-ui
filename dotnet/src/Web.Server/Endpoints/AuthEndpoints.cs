@@ -76,14 +76,30 @@ public static class AuthEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                var correlationId = AddCorrelationId(httpContext);
+                var correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext);
                 var result = await mediator.Send(new ResolveUserAuthorizationQuery(), cancellationToken);
                 if (!result.IsSuccess)
                 {
                     var error = result.Error!;
+                    if (result.PendingProfileCreated)
+                    {
+                        await eventRepository.AddAuthorizationEventAsync(
+                            GetActor(httpContext),
+                            ProcessingEvent.AuthorizationActions.ProfilePending,
+                            GetActor(httpContext),
+                            new Dictionary<string, object?>
+                            {
+                                ["result"] = "pending",
+                                ["tenantId"] = httpContext.User.FindFirstValue("tid"),
+                            },
+                            correlationId,
+                            cancellationToken);
+                    }
                     await eventRepository.AddAuthorizationEventAsync(
                         GetActor(httpContext),
-                        ProcessingEvent.AuthorizationActions.LoginDenied,
+                        error.Code == AuthorizationErrorCodes.TokenStale
+                            ? ProcessingEvent.AuthorizationActions.TokenStale
+                            : ProcessingEvent.AuthorizationActions.LoginDenied,
                         GetActor(httpContext),
                         new Dictionary<string, object?>
                         {
@@ -92,9 +108,7 @@ public static class AuthEndpoints
                         },
                         correlationId,
                         cancellationToken);
-                    return Results.Json(
-                        new { error = error.Code, error.Message, correlationId },
-                        statusCode: error.StatusCode);
+                    return AuthorizationErrorResults.Create(httpContext, error.Code);
                 }
 
                 var context = result.Context!;
@@ -119,7 +133,7 @@ public static class AuthEndpoints
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
-                var correlationId = AddCorrelationId(httpContext);
+                var correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext);
                 var actor = GetActor(httpContext);
                 await eventRepository.AddAuthorizationEventAsync(
                     actor,
@@ -191,13 +205,6 @@ public static class AuthEndpoints
                 });
             }).AllowAnonymous();
         }
-    }
-
-    private static string AddCorrelationId(HttpContext httpContext)
-    {
-        var correlationId = Guid.NewGuid().ToString();
-        httpContext.Response.Headers["X-Correlation-ID"] = correlationId;
-        return correlationId;
     }
 
     private static string GetActor(HttpContext httpContext)

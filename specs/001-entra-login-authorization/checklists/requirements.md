@@ -33,5 +33,8 @@
 
 - Validation iteration 1 passed all checklist items on 2026-07-24.
 - Validation iteration 2 passed all checklist items after adding organization hierarchy, multi-organization/department membership, organization-owned job scope, and Organization Admin delegation.
+- Validation iteration 3 passed all checklist items after replacing documented-only Entra onboarding with mode-specific in-application access management, atomic identity/scope assignment, and explicit default-department behavior.
+- Validation iteration 4 passed all checklist items after adding a Stack B navigation collapse/expand capability on every application-shell screen, including route persistence, responsive behavior, accessibility, and dense three-panel workspace outcomes.
 - Azure service names, the two existing application stacks, and the authoritative environment profile are stated as product constraints, not implementation prescriptions.
 - No clarification markers remain; assumptions cover the database-owner identity shape, role-label alignment, operator-managed groups, and application-managed organization delegation.
+- Planning iteration 1 synchronized the implementation plan, research, data model, authentication and organization-administration contracts, operator contract, and quickstart with atomic onboarding, explicit defaults, mode-aware administration, and global Stack B navigation. `tasks.md` remains intentionally deferred to `/speckit.tasks`.

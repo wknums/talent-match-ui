@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { LoginForm } from '@/components/LoginForm'
@@ -11,7 +11,8 @@ import {
   fetchWithAuthentication,
   resetAuthenticatedTransport,
 } from '@/lib/api-real'
-import type { User } from '@/types'
+import { authorizationContextToUser } from '@/lib/auth'
+import type { AuthorizationContext, User } from '@/types'
 
 const entraUser: User = {
   userId: 'user-1',
@@ -24,11 +25,50 @@ const entraUser: User = {
 }
 
 afterEach(() => {
+  cleanup()
   resetAuthenticatedTransport()
   vi.unstubAllGlobals()
 })
 
 describe('Entra authentication UI', () => {
+  it('uses the explicit default for initial context without broadening scoped authorization', () => {
+    const context: AuthorizationContext = {
+      userId: 'user-1',
+      tenantId: 'tenant-1',
+      objectId: 'object-1',
+      username: 'ada@example.com',
+      fullName: 'Ada Lovelace',
+      email: 'ada@example.com',
+      globalRole: null,
+      authorizationVersion: 7,
+      memberships: [{
+        organizationId: 'organization-1',
+        organizationName: 'Analytical Engines',
+        defaultDepartmentId: 'department-default',
+        departments: [
+          { departmentId: 'department-authorized', departmentName: 'Authorized first' },
+          { departmentId: 'department-default', departmentName: 'Explicit default' },
+        ],
+      }],
+      authorizations: [{
+        role: 'business_panel',
+        roleLabel: 'Business Panel',
+        organizationId: 'organization-1',
+        departmentId: 'department-authorized',
+        assignmentSource: 'delegated',
+      }],
+      tokenIssuedAt: '2026-07-31T10:00:00.000Z',
+      refreshRequiredAt: '2026-07-31T10:15:00.000Z',
+    }
+
+    const user = authorizationContextToUser(context)
+
+    expect(user.department).toBe('Explicit default')
+    expect(user.role).toBe('business_panel')
+    expect(context.authorizations).toHaveLength(1)
+    expect(context.authorizations[0].departmentId).toBe('department-authorized')
+  })
+
   it('offers Microsoft sign-in without password or reset controls', () => {
     const onEntraLogin = vi.fn()
 
@@ -117,6 +157,33 @@ describe('Entra authentication UI', () => {
 
     fireEvent.click(screen.getByText('Sign Out'))
     expect(onLogout).toHaveBeenCalledOnce()
+  })
+
+  it('offers Entra access management only to Entra administration roles', async () => {
+    const onManageEntraAccess = vi.fn()
+    const view = render(
+      <UserMenu
+        authMode="entra"
+        user={{ ...entraUser, role: 'organization_admin' }}
+        onManageEntraAccess={onManageEntraAccess}
+        onLogout={vi.fn()}
+      />,
+    )
+
+    fireEvent.pointerDown(view.getByRole('button', { name: /ada lovelace/i }), { button: 0 })
+    fireEvent.click(await screen.findByText('Manage Entra Access'))
+    expect(onManageEntraAccess).toHaveBeenCalledOnce()
+
+    view.rerender(
+      <UserMenu
+        authMode="entra"
+        user={{ ...entraUser, role: 'recruiter' }}
+        onManageEntraAccess={onManageEntraAccess}
+        onLogout={vi.fn()}
+      />,
+    )
+    fireEvent.pointerDown(view.getByRole('button', { name: /ada lovelace/i }), { button: 0 })
+    await waitFor(() => expect(screen.queryByText('Manage Entra Access')).toBeNull())
   })
 })
 

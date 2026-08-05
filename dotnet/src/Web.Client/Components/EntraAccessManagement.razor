@@ -1,0 +1,658 @@
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<section class="entra-access" aria-labelledby="entra-access-title">
+    <header class="entra-access__header">
+        <div>
+            <p class="entra-access__eyebrow">Identity administration</p>
+            <h1 id="entra-access-title">Entra Access Management</h1>
+            <p>Inspect tenant-verified profiles and converge application access by organization.</p>
+        </div>
+        <span class="entra-access__authority">@(GlobalAdmin ? "Application Admin" : "Scoped administrator")</span>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="entra-access__notice entra-access__notice--@messageKind"
+             role="@(messageKind == "error" ? "alert" : "status")">
+            <span>@message</span>
+            @if (messageKind == "error" && canRetry)
+            {
+                <button type="button" class="entra-access__link-button" @onclick="LoadUsersAsync">Retry</button>
+            }
+        </div>
+    }
+
+    <div class="entra-access__workspace">
+        <aside class="entra-access__directory" aria-label="Entra profiles">
+            <div class="entra-access__search">
+                <label for="entra-access-search">Search profiles</label>
+                <div class="entra-access__search-row">
+                    <input id="entra-access-search"
+                           type="search"
+                           placeholder="Name, email, or username"
+                           @bind="searchText" />
+                    <button type="button" @onclick="LoadUsersAsync" disabled="@isLoading">Search</button>
+                </div>
+                <label for="entra-access-status">Status</label>
+                <select id="entra-access-status" @bind="statusFilter">
+                    <option value="">All profiles</option>
+                    <option value="pending">Pending</option>
+                    <option value="active">Active</option>
+                    <option value="disabled">Disabled</option>
+                </select>
+            </div>
+
+            <div class="entra-access__results" aria-live="polite">
+                @if (isLoading)
+                {
+                    <div class="entra-access__state">
+                        <span class="entra-access__spinner" aria-hidden="true"></span>
+                        Loading access profiles...
+                    </div>
+                }
+                else if (users.Count == 0 && messageKind != "error")
+                {
+                    <div class="entra-access__state">No Entra profiles match this search.</div>
+                }
+                else
+                {
+                    @foreach (var user in users)
+                    {
+                        <button type="button"
+                                data-action="inspect-user"
+                                class="entra-access__user @(selected?.ObjectId == user.ObjectId ? "is-selected" : null)"
+                                @onclick="() => InspectUserAsync(user.ObjectId)">
+                            <span>
+                                <strong>@user.FullName</strong>
+                                <small>@user.Username</small>
+                            </span>
+                            <span class="entra-access__badge entra-access__badge--@ProfileStatus(user)">@ProfileStatus(user)</span>
+                        </button>
+                    }
+                }
+            </div>
+        </aside>
+
+        <main class="entra-access__detail" aria-label="Access profile details">
+            @if (selected is null)
+            {
+                <div class="entra-access__blank">
+                    <h2>Select a profile</h2>
+                    <p>Choose a tenant-verified identity to inspect memberships, defaults, and delegated roles.</p>
+                </div>
+            }
+            else
+            {
+                <header class="entra-access__identity">
+                    <div>
+                        <p class="entra-access__eyebrow">Immutable object ID</p>
+                        <h2>@selected.FullName</h2>
+                        <code>@selected.ObjectId</code>
+                    </div>
+                    <div class="entra-access__identity-actions">
+                        <span class="entra-access__version">Version @selected.AuthorizationVersion</span>
+                        @if (GlobalAdmin)
+                        {
+                            <button type="button"
+                                    data-action="toggle-identity"
+                                    class="@(selected.IsActive ? "entra-access__danger" : "entra-access__primary")"
+                                    @onclick="ReviewIdentityChange">
+                                @(selected.IsActive ? "Disable identity" : "Reactivate identity")
+                            </button>
+                        }
+                    </div>
+                </header>
+
+                <section class="entra-access__section" aria-labelledby="entra-profile-heading">
+                    <div class="entra-access__section-heading">
+                        <div>
+                            <h3 id="entra-profile-heading">Profile</h3>
+                            <p>Presentation fields do not change the immutable Entra identity.</p>
+                        </div>
+                        @if (GlobalAdmin)
+                        {
+                            <button type="button" class="entra-access__secondary" @onclick="ReviewProfileChange">Review profile change</button>
+                        }
+                    </div>
+                    <div class="entra-access__form-grid">
+                        <div>
+                            <label for="entra-username">Username</label>
+                            <input id="entra-username" @bind="profileUsername" />
+                        </div>
+                        <div>
+                            <label for="entra-full-name">Full name</label>
+                            <input id="entra-full-name" @bind="profileFullName" />
+                        </div>
+                        <div class="entra-access__wide-field">
+                            <label for="entra-email">Email</label>
+                            <input id="entra-email" type="email" @bind="profileEmail" />
+                        </div>
+                    </div>
+                </section>
+
+                <section class="entra-access__section" aria-labelledby="entra-organization-heading">
+                    <div class="entra-access__section-heading">
+                        <div>
+                            <h3 id="entra-organization-heading">Organization access</h3>
+                            <p>The selected default must be one of the active department memberships.</p>
+                        </div>
+                    </div>
+
+                    <div class="entra-access__form-grid">
+                        <div class="entra-access__wide-field">
+                            <label for="entra-organization-id">Organization ID</label>
+                            <input id="entra-organization-id" @bind="organizationId" @bind:after="LoadOrganizationState" />
+                        </div>
+                        <div>
+                            <label for="entra-membership-status">Membership state</label>
+                            <select id="entra-membership-status" @bind="membershipStatus">
+                                <option value="active">Active</option>
+                                <option value="revoked">Revoked</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="entra-default-department">Explicit default department</label>
+                            <select id="entra-default-department"
+                                    @bind="defaultDepartmentId"
+                                    disabled="@(membershipStatus == "revoked")">
+                                <option value="">Select explicit default</option>
+                                @foreach (var departmentId in DepartmentIds)
+                                {
+                                    <option value="@departmentId">@departmentId</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="entra-access__wide-field">
+                            <label for="entra-department-ids">Active department IDs</label>
+                            <input id="entra-department-ids"
+                                   placeholder="Comma-separated department IDs"
+                                   @bind="departmentText"
+                                   disabled="@(membershipStatus == "revoked")" />
+                        </div>
+                    </div>
+
+                    <div class="entra-access__roles">
+                        <div class="entra-access__section-heading">
+                            <div>
+                                <h4>Desired delegated roles</h4>
+                                <p>Group-sourced assignments remain read-only and are never replaced here.</p>
+                            </div>
+                        </div>
+
+                        @if (desiredRoles.Count == 0)
+                        {
+                            <p class="entra-access__muted">No delegated roles selected.</p>
+                        }
+                        else
+                        {
+                            @foreach (var role in desiredRoles.ToArray())
+                            {
+                                <div class="entra-access__role-row">
+                                    <span>@RoleLabel(role.Role) @(role.DepartmentId is null ? "" : $"/ {role.DepartmentId}")</span>
+                                    <button type="button" class="entra-access__link-button" @onclick="() => RemoveDesiredRole(role)">Remove</button>
+                                </div>
+                            }
+                        }
+
+                        @if (membershipStatus == "active")
+                        {
+                            <div class="entra-access__role-editor">
+                                <div>
+                                    <label for="entra-new-role">Delegated role</label>
+                                    <select id="entra-new-role" @bind="newRole">
+                                        @if (GlobalAdmin)
+                                        {
+                                            <option value="organization_admin">Organization administrator</option>
+                                        }
+                                        <option value="recruiter">Recruiter</option>
+                                        <option value="business_panel">Analytics viewer</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="entra-role-department">Role department</label>
+                                    <select id="entra-role-department" @bind="newRoleDepartment" disabled="@(newRole == "organization_admin")">
+                                        <option value="">Organization-wide</option>
+                                        @foreach (var departmentId in DepartmentIds)
+                                        {
+                                            <option value="@departmentId">@departmentId</option>
+                                        }
+                                    </select>
+                                </div>
+                                <button type="button" class="entra-access__secondary" @onclick="AddDesiredRole">Add role</button>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="entra-access__actions">
+                        <button type="button"
+                                data-action="review-access"
+                                class="entra-access__primary"
+                                disabled="@isSaving"
+                                @onclick="ReviewOrganizationAccess">
+                            Review organization access
+                        </button>
+                    </div>
+                </section>
+
+                <section class="entra-access__section" aria-labelledby="entra-current-roles-heading">
+                    <div class="entra-access__section-heading">
+                        <div>
+                            <h3 id="entra-current-roles-heading">Current role assignments</h3>
+                            <p>Targeted revoke changes only the selected delegated assignment.</p>
+                        </div>
+                    </div>
+                    @if (!selected.Organizations.SelectMany(item => item.RoleAssignments).Any())
+                    {
+                        <p class="entra-access__muted">No active role assignments.</p>
+                    }
+                    @foreach (var role in selected.Organizations.SelectMany(item => item.RoleAssignments))
+                    {
+                        <div class="entra-access__role-row">
+                            <span>
+                                <strong>@RoleLabel(role.Role)</strong>
+                                <small>@role.Source / @role.OrganizationId @(role.DepartmentId is null ? "" : $"/ {role.DepartmentId}")</small>
+                            </span>
+                            @if (role.Source == "delegated")
+                            {
+                                <button type="button"
+                                        data-action="revoke-role"
+                                        class="entra-access__secondary"
+                                        @onclick="() => ReviewRoleRevoke(role)">
+                                    Revoke @RoleLabel(role.Role)
+                                </button>
+                            }
+                            else
+                            {
+                                <span class="entra-access__badge">Read only</span>
+                            }
+                        </div>
+                    }
+                </section>
+            }
+        </main>
+    </div>
+</section>
+
+@if (confirmationKind is not null)
+{
+    <div class="entra-access__overlay" role="presentation">
+        <section class="entra-access__dialog" role="dialog" aria-modal="true" aria-labelledby="entra-confirmation-title">
+            <p class="entra-access__eyebrow">Confirmation required</p>
+            <h2 id="entra-confirmation-title">@ConfirmationTitle</h2>
+            <p>@ConfirmationDescription</p>
+            @if (confirmationKind == "organization")
+            {
+                <dl class="entra-access__summary">
+                    <div><dt>Organization</dt><dd>@organizationId</dd></div>
+                    <div><dt>Membership</dt><dd>@membershipStatus</dd></div>
+                    <div><dt>Default</dt><dd>@(defaultDepartmentId.Length == 0 ? "None" : defaultDepartmentId)</dd></div>
+                    <div><dt>Delegated roles</dt><dd>@desiredRoles.Count</dd></div>
+                </dl>
+            }
+            <div class="entra-access__dialog-actions">
+                <button type="button" class="entra-access__secondary" disabled="@isSaving" @onclick="CancelConfirmation">Cancel</button>
+                <button type="button"
+                        data-action="@ConfirmationAction"
+                        class="@(confirmationKind is "identity" or "revoke" ? "entra-access__danger" : "entra-access__primary")"
+                        disabled="@isSaving"
+                        @onclick="ConfirmAsync">
+                    @(isSaving ? "Applying..." : ConfirmationButtonText)
+                </button>
+            </div>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public bool GlobalAdmin { get; set; }
+
+    private readonly List<EntraAccessUser> users = [];
+    private readonly List<EntraDesiredRole> desiredRoles = [];
+    private EntraAccessUser? selected;
+    private EntraAccessRoleAssignment? pendingRole;
+    private bool isLoading = true;
+    private bool isSaving;
+    private bool canRetry;
+    private string searchText = "";
+    private string statusFilter = "";
+    private string? message;
+    private string messageKind = "success";
+    private string? confirmationKind;
+    private bool pendingIdentityActivation;
+    private string profileUsername = "";
+    private string profileFullName = "";
+    private string profileEmail = "";
+    private string organizationId = "";
+    private string membershipStatus = "active";
+    private string departmentText = "";
+    private string defaultDepartmentId = "";
+    private string newRole = "recruiter";
+    private string newRoleDepartment = "";
+
+    private IReadOnlyList<string> DepartmentIds => departmentText
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    protected override Task OnInitializedAsync() => LoadUsersAsync();
+
+    private async Task LoadUsersAsync()
+    {
+        isLoading = true;
+        canRetry = false;
+        ClearMessage();
+        try
+        {
+            var page = await Api.ListEntraAccessUsersAsync(
+                searchText.Trim().Length == 0 ? null : searchText.Trim(),
+                status: statusFilter.Length == 0 ? null : statusFilter,
+                limit: 50);
+            users.Clear();
+            users.AddRange(page.Items);
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "Access profiles could not be loaded.");
+            canRetry = true;
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task InspectUserAsync(string objectId)
+    {
+        isLoading = true;
+        ClearMessage();
+        try
+        {
+            selected = await Api.GetEntraAccessUserAsync(objectId);
+            LoadProfileState();
+            var firstOrganization = selected.Organizations.FirstOrDefault();
+            organizationId = firstOrganization?.OrganizationId ?? "";
+            LoadOrganizationState();
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "The access profile could not be loaded.");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void LoadProfileState()
+    {
+        if (selected is null)
+            return;
+        profileUsername = selected.Username;
+        profileFullName = selected.FullName;
+        profileEmail = selected.Email ?? "";
+    }
+
+    private void LoadOrganizationState()
+    {
+        var organization = selected?.Organizations.FirstOrDefault(item =>
+            string.Equals(item.OrganizationId, organizationId, StringComparison.OrdinalIgnoreCase));
+        membershipStatus = organization?.Status ?? "active";
+        departmentText = organization is null ? "" : string.Join(", ", organization.DepartmentIds);
+        defaultDepartmentId = organization?.DefaultDepartmentId ?? "";
+        desiredRoles.Clear();
+        if (organization is not null)
+        {
+            desiredRoles.AddRange(organization.RoleAssignments
+                .Where(item => item.Source == "delegated")
+                .Select(item => new EntraDesiredRole(item.Role, item.DepartmentId)));
+        }
+        newRole = "recruiter";
+        newRoleDepartment = defaultDepartmentId;
+    }
+
+    private void ReviewOrganizationAccess()
+    {
+        ClearMessage();
+        if (selected is null || !Guid.TryParse(organizationId, out _))
+        {
+            ShowValidation("A valid organization ID is required.");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(profileUsername) || string.IsNullOrWhiteSpace(profileFullName))
+        {
+            ShowValidation("Username and full name are required.");
+            return;
+        }
+        if (membershipStatus == "active"
+            && (DepartmentIds.Count == 0
+                || defaultDepartmentId.Length == 0
+                || !DepartmentIds.Contains(defaultDepartmentId, StringComparer.OrdinalIgnoreCase)))
+        {
+            ShowValidation("Active access requires an explicit default from the active departments.");
+            return;
+        }
+        if (membershipStatus == "revoked"
+            && (DepartmentIds.Count > 0 || defaultDepartmentId.Length > 0 || desiredRoles.Count > 0))
+        {
+            ShowValidation("Revoked access cannot retain departments, an explicit default, or delegated roles.");
+            return;
+        }
+        if (desiredRoles.Any(item => item.DepartmentId is not null
+            && !DepartmentIds.Contains(item.DepartmentId, StringComparer.OrdinalIgnoreCase)))
+        {
+            ShowValidation("Every role department must be an active department membership.");
+            return;
+        }
+        confirmationKind = "organization";
+    }
+
+    private void ReviewProfileChange()
+    {
+        ClearMessage();
+        if (string.IsNullOrWhiteSpace(profileUsername) || string.IsNullOrWhiteSpace(profileFullName))
+        {
+            ShowValidation("Username and full name are required.");
+            return;
+        }
+        confirmationKind = "profile";
+    }
+
+    private void ReviewIdentityChange()
+    {
+        if (selected is null)
+            return;
+        pendingIdentityActivation = !selected.IsActive;
+        confirmationKind = "identity";
+    }
+
+    private void ReviewRoleRevoke(EntraAccessRoleAssignment role)
+    {
+        pendingRole = role;
+        confirmationKind = "revoke";
+    }
+
+    private void AddDesiredRole()
+    {
+        ClearMessage();
+        var departmentId = newRole == "organization_admin" || newRoleDepartment.Length == 0
+            ? null
+            : newRoleDepartment;
+        if (newRole == "recruiter" && departmentId is null)
+        {
+            ShowValidation("Recruiter access requires a department.");
+            return;
+        }
+        if (departmentId is not null && !DepartmentIds.Contains(departmentId, StringComparer.OrdinalIgnoreCase))
+        {
+            ShowValidation("The role department must be an active department membership.");
+            return;
+        }
+        if (desiredRoles.Any(item => item.Role == newRole
+            && string.Equals(item.DepartmentId, departmentId, StringComparison.OrdinalIgnoreCase)))
+        {
+            ShowValidation("That delegated role is already selected.");
+            return;
+        }
+        desiredRoles.Add(new EntraDesiredRole(newRole, departmentId));
+    }
+
+    private void RemoveDesiredRole(EntraDesiredRole role) => desiredRoles.Remove(role);
+
+    private async Task ConfirmAsync()
+    {
+        if (selected is null || confirmationKind is null)
+            return;
+        isSaving = true;
+        ClearMessage();
+        try
+        {
+            EntraAccessUser updated;
+            if (confirmationKind == "organization")
+            {
+                updated = await Api.PutEntraOrganizationAccessAsync(
+                    selected.ObjectId,
+                    organizationId.Trim(),
+                    new PutEntraOrganizationAccessRequest(
+                        selected.AuthorizationVersion,
+                        ProfileRequest(),
+                        new EntraAccessMembership(
+                            membershipStatus,
+                            membershipStatus == "active" ? DepartmentIds : [],
+                            membershipStatus == "active" ? defaultDepartmentId : null),
+                        membershipStatus == "active" ? desiredRoles.ToArray() : []));
+            }
+            else if (confirmationKind == "profile")
+            {
+                updated = await Api.UpdateEntraAccessUserAsync(
+                    selected.ObjectId,
+                    new UpdateEntraAccessUserRequest(selected.AuthorizationVersion, ProfileRequest()));
+            }
+            else if (confirmationKind == "identity")
+            {
+                updated = await Api.UpdateEntraAccessUserAsync(
+                    selected.ObjectId,
+                    new UpdateEntraAccessUserRequest(selected.AuthorizationVersion, IsActive: pendingIdentityActivation));
+            }
+            else
+            {
+                updated = await Api.RevokeEntraRoleAssignmentAsync(
+                    selected.ObjectId,
+                    pendingRole!.OrganizationId,
+                    pendingRole.Id,
+                    selected.AuthorizationVersion);
+            }
+
+            selected = updated;
+            var listIndex = users.FindIndex(item => item.ObjectId == updated.ObjectId);
+            if (listIndex >= 0)
+                users[listIndex] = updated;
+            LoadProfileState();
+            LoadOrganizationState();
+            ShowSuccess(confirmationKind == "revoke" ? "Role access revoked." : "Access updated.");
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "The access change could not be completed.");
+        }
+        finally
+        {
+            isSaving = false;
+            confirmationKind = null;
+            pendingRole = null;
+        }
+    }
+
+    private EntraAccessProfile ProfileRequest() => new(
+        profileUsername.Trim(),
+        profileFullName.Trim(),
+        profileEmail.Trim().Length == 0 ? null : profileEmail.Trim());
+
+    private void CancelConfirmation()
+    {
+        confirmationKind = null;
+        pendingRole = null;
+    }
+
+    private void ClearMessage()
+    {
+        message = null;
+        canRetry = false;
+    }
+
+    private void ShowValidation(string text)
+    {
+        messageKind = "error";
+        message = text;
+    }
+
+    private void ShowSuccess(string text)
+    {
+        messageKind = "success";
+        message = text;
+    }
+
+    private void ShowError(Exception error, string fallback)
+    {
+        messageKind = "error";
+        if (error is ApiException conflict
+            && (conflict.StatusCode == 409 || conflict.ErrorCode == "version_conflict"))
+        {
+            message = $"Access changed by another administrator. Reload and retry.{CorrelationSuffix(conflict.CorrelationId)}";
+            return;
+        }
+        if (error is ApiException apiException)
+        {
+            message = $"{apiException.Message}{CorrelationSuffix(apiException.CorrelationId)}";
+            return;
+        }
+        message = string.IsNullOrWhiteSpace(error.Message) ? fallback : error.Message;
+    }
+
+    private static string CorrelationSuffix(string? correlationId) =>
+        string.IsNullOrWhiteSpace(correlationId) ? "" : $" Correlation ID: {correlationId}";
+
+    private static string ProfileStatus(EntraAccessUser user) =>
+        !user.IsActive ? "disabled" : user.Organizations.Count == 0 ? "pending" : "active";
+
+    private static string RoleLabel(string role) => role switch
+    {
+        "organization_admin" => "Organization administrator",
+        "business_panel" => "Analytics viewer",
+        "recruiter" => "Recruiter",
+        _ => role,
+    };
+
+    private string ConfirmationTitle => confirmationKind switch
+    {
+        "identity" => pendingIdentityActivation ? "Reactivate identity?" : "Disable identity?",
+        "revoke" => "Revoke delegated role?",
+        "profile" => "Update profile presentation?",
+        _ => "Confirm organization access",
+    };
+
+    private string ConfirmationDescription => confirmationKind switch
+    {
+        "identity" => pendingIdentityActivation
+            ? "The identity can use its effective assignments again."
+            : "The identity will be denied even while assignments remain active.",
+        "revoke" => "Only this delegated assignment will be revoked. Group-sourced access is preserved.",
+        "profile" => "Only presentation fields will change. The Entra tenant and object ID remain immutable.",
+        _ => "This replaces active departments, the explicit default, and delegated roles for this organization only.",
+    };
+
+    private string ConfirmationAction => confirmationKind switch
+    {
+        "identity" => "confirm-identity",
+        "revoke" => "confirm-revoke",
+        _ => "confirm-access",
+    };
+
+    private string ConfirmationButtonText => confirmationKind switch
+    {
+        "identity" => "Confirm identity change",
+        "revoke" => "Confirm role revocation",
+        "profile" => "Confirm profile change",
+        _ => "Confirm access change",
+    };
+}

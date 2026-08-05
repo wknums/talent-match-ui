@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, ReactNode, createContext, useContext } from 'react'
-import { Dialog, DialogContent, DialogPortal } from '@/components/ui/dialog'
+import { Dialog, DialogPortal } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { ArrowsOutCardinal, X } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'

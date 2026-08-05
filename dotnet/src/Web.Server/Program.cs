@@ -11,6 +11,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Identity.Web;
 using Microsoft.IdentityModel.Tokens;
 using TalentMatch.Application;
+using TalentMatch.Application.Authorization;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure;
@@ -59,8 +60,8 @@ if (useEntraAuthentication)
                 {
                     OnTokenValidated = context =>
                     {
-                        context.HttpContext.Items["AuthActor"] = context.Principal?.FindFirstValue("oid") ?? "unknown";
-                        context.HttpContext.Items["AuthTenantId"] = context.Principal?.FindFirstValue("tid");
+                        context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationActorItemKey] = context.Principal?.FindFirstValue("oid") ?? "unknown";
+                        context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationTenantItemKey] = context.Principal?.FindFirstValue("tid");
                         var error = ValidateEntraClaims(
                             context.Principal,
                             tenantId,
@@ -68,7 +69,7 @@ if (useEntraAuthentication)
                             allowedClientIds);
                         if (error is not null)
                         {
-                            context.HttpContext.Items["AuthErrorCode"] = error.Value.Code;
+                            context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationErrorItemKey] = error.Value.Code;
                             context.HttpContext.Items["AuthErrorMessage"] = error.Value.Message;
                             context.Fail(error.Value.Code);
                         }
@@ -79,12 +80,11 @@ if (useEntraAuthentication)
                     {
                         var code = context.Exception switch
                         {
-                            SecurityTokenInvalidAudienceException => "invalid_audience",
-                            SecurityTokenInvalidIssuerException => "wrong_tenant",
-                            _ => "invalid_token",
+                            SecurityTokenInvalidAudienceException => AuthorizationErrorCodes.InvalidAudience,
+                            SecurityTokenInvalidIssuerException => AuthorizationErrorCodes.WrongTenant,
+                            _ => AuthorizationErrorCodes.InvalidToken,
                         };
-                        context.HttpContext.Items["AuthErrorCode"] = code;
-                        context.HttpContext.Items["AuthErrorMessage"] = GetSafeAuthMessage(code);
+                        context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationErrorItemKey] = code;
                         return Task.CompletedTask;
                     },
                     OnChallenge = WriteEntraChallengeAsync,
@@ -109,7 +109,11 @@ if (useEntraAuthentication)
                 && context.User.FindAll("azp")
                     .Any(claim => allowedClientIds.Contains(claim.Value)));
         });
-        options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+        options.AddPolicy("AdminOnly", policy => policy.RequireAssertion(context =>
+            context.Resource is HttpContext httpContext
+            && httpContext.Items[EntraApplicationAuthorizationMiddleware.ContextItemKey]
+                is AuthorizationContextResponse authorizationContext
+            && authorizationContext.GlobalRole == "admin"));
     });
 }
 else
@@ -420,6 +424,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
             EnsureSqliteApplicationCandidateColumns(connection);
             EnsureSqliteManualReviewHumanEditedColumn(connection);
             EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
+            EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
             return;
         }
 
@@ -433,6 +438,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         EnsureSqliteApplicationCandidateColumns(connection);
         EnsureSqliteManualReviewHumanEditedColumn(connection);
         EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
+        EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
     }
     finally
     {
@@ -463,6 +469,35 @@ static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connectio
         alterCommand.CommandText = "ALTER TABLE ManualReviews ADD COLUMN HumanEdited INTEGER NOT NULL DEFAULT 0;";
         alterCommand.ExecuteNonQuery();
     }
+}
+
+static void EnsureSqliteJobConfigVersionsScoringRunCountColumn(SqliteConnection connection)
+{
+    using var columnCheckCommand = connection.CreateCommand();
+    columnCheckCommand.CommandText = "PRAGMA table_info('JobConfigVersions');";
+
+    using var reader = columnCheckCommand.ExecuteReader();
+    var hasColumn = false;
+    while (reader.Read())
+    {
+        if (string.Equals(reader.GetString(1), "ScoringRunCount", StringComparison.OrdinalIgnoreCase))
+        {
+            hasColumn = true;
+            break;
+        }
+    }
+    reader.Close();
+
+    if (hasColumn)
+        return;
+
+    using var alterCommand = connection.CreateCommand();
+    alterCommand.CommandText = "ALTER TABLE JobConfigVersions ADD COLUMN ScoringRunCount INTEGER NOT NULL DEFAULT 3;";
+    alterCommand.ExecuteNonQuery();
+
+    using var backfillCommand = connection.CreateCommand();
+    backfillCommand.CommandText = "UPDATE JobConfigVersions SET ScoringRunCount = COALESCE(RunsPerApplication, 3);";
+    backfillCommand.ExecuteNonQuery();
 }
 
 static void EnsureSqliteApplicationCandidateColumns(SqliteConnection connection)
@@ -551,6 +586,18 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
         })
         .Where(batch => batch.Length > 0);
 
+    var preBatchPath = ResolveSharedSchemaPath(contentRootPath, "schema-pre-batch-upgrades.sql");
+    if (!File.Exists(preBatchPath))
+        throw new FileNotFoundException($"Shared Azure SQL pre-batch upgrade file not found: {preBatchPath}");
+
+    var preBatchUpgrades = Regex.Split(File.ReadAllText(preBatchPath), @"\r?\n\s*GO\s*(?:\r?\n|$)")
+        .Select(batch =>
+        {
+            var lines = batch.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            return string.Join("\n", lines.Where(line => !line.Trim().StartsWith("--"))).Trim();
+        })
+        .Where(batch => batch.Length > 0);
+
     var connection = db.Database.GetDbConnection();
     var shouldClose = connection.State != System.Data.ConnectionState.Open;
     if (shouldClose)
@@ -558,6 +605,15 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
 
     try
     {
+        // Must precede the batch loop; see the header of the upgrades file for why.
+        foreach (var upgrade in preBatchUpgrades)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = upgrade;
+            command.CommandTimeout = 180;
+            command.ExecuteNonQuery();
+        }
+
         foreach (var batch in batches)
         {
             using var command = connection.CreateCommand();
@@ -694,8 +750,10 @@ if (app.Environment.IsDevelopment())
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 
+app.UseRouting();
 app.UseCors();
 app.UseAuthentication();
+app.UseMiddleware<EntraApplicationAuthorizationMiddleware>();
 app.UseAuthorization();
 
 if (useBackgroundAzureSqlWarmup)
@@ -704,13 +762,20 @@ if (useBackgroundAzureSqlWarmup)
 // Map endpoints
 app.MapAuthEndpoints();
 app.MapHealthEndpoints();
-app.MapUsersEndpoints();
+if (useEntraAuthentication)
+{
+    app.MapAccessManagementEndpoints();
+    app.MapOrganizationEndpoints();
+}
+else
+    app.MapUsersEndpoints();
 app.MapJobsEndpoints();
 app.MapApplicationsEndpoints();
 app.MapStatsEndpoints();
 app.MapDlqEndpoints();
 app.MapPromptEndpoints();
 app.MapAnalyticsEndpoints();
+app.MapNavigationAuditEndpoints();
 
 app.MapFallbackToFile("index.html");
 
@@ -731,31 +796,31 @@ static (string Code, string Message)? ValidateEntraClaims(
     IReadOnlySet<string> allowedClientIds)
 {
     if (principal is null)
-        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     if (!string.Equals(principal.FindFirstValue("ver"), "2.0", StringComparison.Ordinal))
-        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     if (!string.Equals(principal.FindFirstValue("tid"), tenantId, StringComparison.OrdinalIgnoreCase))
-        return ("wrong_tenant", GetSafeAuthMessage("wrong_tenant"));
+        return AuthFailure(AuthorizationErrorCodes.WrongTenant);
 
     if (!Guid.TryParse(principal.FindFirstValue("oid"), out _))
-        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     var authorizedClient = principal.FindFirstValue("azp");
     if (authorizedClient is null || !allowedClientIds.Contains(authorizedClient))
-        return ("unauthorized_client", GetSafeAuthMessage("unauthorized_client"));
+        return AuthFailure(AuthorizationErrorCodes.UnauthorizedClient);
 
     var scopes = principal.FindAll("scp")
         .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
     if (!scopes.Contains(apiScope, StringComparer.Ordinal))
-        return ("invalid_token", "The required API permission is missing from this session.");
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     if (!long.TryParse(principal.FindFirstValue("iat"), out var issuedAtSeconds))
-        return ("invalid_token", GetSafeAuthMessage("invalid_token"));
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     if (DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(issuedAtSeconds) > TimeSpan.FromMinutes(15))
-        return ("token_stale", GetSafeAuthMessage("token_stale"));
+        return AuthFailure(AuthorizationErrorCodes.TokenStale);
 
     return null;
 }
@@ -763,16 +828,13 @@ static (string Code, string Message)? ValidateEntraClaims(
 static async Task WriteEntraChallengeAsync(JwtBearerChallengeContext context)
 {
     context.HandleResponse();
-    var code = context.HttpContext.Items["AuthErrorCode"] as string ?? "auth_required";
-    var message = context.HttpContext.Items["AuthErrorMessage"] as string ?? GetSafeAuthMessage(code);
-    var correlationId = Guid.NewGuid().ToString();
-    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-    context.Response.ContentType = "application/json";
-    context.Response.Headers["X-Correlation-ID"] = correlationId;
+    var code = context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationErrorItemKey] as string
+        ?? AuthorizationErrorCodes.AuthRequired;
+    var correlationId = AuthorizationErrorResults.EnsureCorrelationId(context.HttpContext);
     try
     {
         var eventRepository = context.HttpContext.RequestServices.GetRequiredService<IProcessingEventRepository>();
-        var actor = context.HttpContext.Items["AuthActor"] as string ?? "unknown";
+        var actor = context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationActorItemKey] as string ?? "unknown";
         await eventRepository.AddAuthorizationEventAsync(
             actor,
             ProcessingEvent.AuthorizationActions.LoginDenied,
@@ -780,7 +842,7 @@ static async Task WriteEntraChallengeAsync(JwtBearerChallengeContext context)
             new Dictionary<string, object?>
             {
                 ["result"] = code,
-                ["tenantId"] = context.HttpContext.Items["AuthTenantId"],
+                ["tenantId"] = context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationTenantItemKey],
             },
             correlationId,
             context.HttpContext.RequestAborted);
@@ -792,22 +854,17 @@ static async Task WriteEntraChallengeAsync(JwtBearerChallengeContext context)
         logger.LogWarning(exception, "Unable to record an Entra authentication denial audit event.");
     }
 
-    await JsonSerializer.SerializeAsync(
-        context.Response.Body,
-        new { error = code, message, correlationId },
-        cancellationToken: context.HttpContext.RequestAborted);
+    await AuthorizationErrorResults.WriteAsync(
+        context.HttpContext,
+        code,
+        context.HttpContext.RequestAborted);
 }
 
-static string GetSafeAuthMessage(string code)
-    => code switch
-    {
-        "wrong_tenant" => "Sign in with an account from the configured organization.",
-        "invalid_audience" => "This session is not valid for the TalentMatch API.",
-        "unauthorized_client" => "This application is not authorized to call the TalentMatch API.",
-        "token_stale" => "Your session must be refreshed before continuing.",
-        "auth_required" => "Sign in is required to access this application.",
-        _ => "Your session could not be validated. Sign in again.",
-    };
+static (string Code, string Message) AuthFailure(string code)
+{
+    var error = AuthorizationErrorCodes.Resolve(code);
+    return (error.Code, error.Message);
+}
 
 // Make Program class accessible for integration tests
 public partial class Program { }

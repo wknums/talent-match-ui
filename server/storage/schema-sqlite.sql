@@ -19,9 +19,10 @@ CREATE TABLE IF NOT EXISTS Users (
     EntraTenantId TEXT NULL,
     EntraObjectId TEXT NULL,
     IsActive INTEGER NOT NULL DEFAULT 1,
+    AuthorizationVersion INTEGER NOT NULL DEFAULT 0,
     CHECK ((AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS UX_Users_Username ON Users (Username);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_Users_Username ON Users (Username) WHERE AuthenticationProvider = 'simple';
 CREATE UNIQUE INDEX IF NOT EXISTS UX_Users_EntraIdentity ON Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
 
 -- 2. PASSWORD RESET REQUESTS
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS JobConfigVersions (
     RubricJson              TEXT    NOT NULL DEFAULT '[]',
     MustHavesJson           TEXT    NOT NULL DEFAULT '[]',
     DesiredCriteriaJson     TEXT    NOT NULL DEFAULT '[]',
+    ScoringRunCount         INTEGER NOT NULL DEFAULT 3,
     RunsPerApplication      INTEGER NOT NULL DEFAULT 3,
     AggregationStrategy     TEXT    NOT NULL DEFAULT 'median',
     LonglistThreshold       REAL    NOT NULL DEFAULT 70,
@@ -325,11 +327,13 @@ CREATE TABLE IF NOT EXISTS OrganizationMemberships (
     Id TEXT NOT NULL PRIMARY KEY,
     UserId TEXT NOT NULL REFERENCES Users(Id),
     OrganizationId TEXT NOT NULL REFERENCES Organizations(Id),
+    DefaultDepartmentMembershipId TEXT NULL,
     Status TEXT NOT NULL DEFAULT 'active',
     EffectiveAt TEXT NOT NULL DEFAULT (datetime('now')),
     RevokedAt TEXT NULL,
     UpdatedBy TEXT NOT NULL,
-    CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+    FOREIGN KEY (DefaultDepartmentMembershipId, UserId, OrganizationId) REFERENCES DepartmentMemberships(Id, UserId, OrganizationId) DEFERRABLE INITIALLY DEFERRED,
+    CHECK ((Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS UX_OrganizationMemberships_ActiveUserOrganization ON OrganizationMemberships (UserId, OrganizationId) WHERE Status = 'active';
 
@@ -342,6 +346,7 @@ CREATE TABLE IF NOT EXISTS DepartmentMemberships (
     EffectiveAt TEXT NOT NULL DEFAULT (datetime('now')),
     RevokedAt TEXT NULL,
     UpdatedBy TEXT NOT NULL,
+    UNIQUE (Id, UserId, OrganizationId),
     FOREIGN KEY (DepartmentId, OrganizationId) REFERENCES Departments(Id, OrganizationId),
     CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
 );
@@ -381,5 +386,5 @@ CREATE TABLE IF NOT EXISTS RoleAssignments (
     CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveGroup ON RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_Idempotency ON RoleAssignments (TenantId, UserObjectId, Source, Role, OrganizationId, DepartmentId);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveDelegated ON RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
 

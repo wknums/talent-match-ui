@@ -1,6 +1,7 @@
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
+using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.Authorization;
 
@@ -8,14 +9,19 @@ public sealed record ResolveUserAuthorizationQuery : IRequest<AuthorizationResol
 
 public sealed record AuthorizationResolutionResult(
     AuthorizationContextResponse? Context,
-    AuthorizationErrorResponse? Error)
+    AuthorizationErrorResponse? Error,
+    bool PendingProfileCreated = false)
 {
     public bool IsSuccess => Context is not null;
 
     public static AuthorizationResolutionResult Success(AuthorizationContextResponse context) => new(context, null);
 
-    public static AuthorizationResolutionResult Failure(string code, string message, int statusCode) =>
-        new(null, new AuthorizationErrorResponse(code, message, statusCode));
+    public static AuthorizationResolutionResult Failure(
+        string code,
+        string message,
+        int statusCode,
+        bool pendingProfileCreated = false) =>
+        new(null, new AuthorizationErrorResponse(code, message, statusCode), pendingProfileCreated);
 }
 
 public sealed record AuthorizationErrorResponse(string Code, string Message, int StatusCode);
@@ -28,6 +34,7 @@ public sealed record AuthorizationContextResponse(
     string FullName,
     string? Email,
     string? GlobalRole,
+    int AuthorizationVersion,
     IReadOnlyList<OrganizationMembershipResponse> Memberships,
     IReadOnlyList<ScopedAuthorizationResponse> Authorizations,
     DateTimeOffset TokenIssuedAt,
@@ -36,6 +43,7 @@ public sealed record AuthorizationContextResponse(
 public sealed record OrganizationMembershipResponse(
     string OrganizationId,
     string OrganizationName,
+    string DefaultDepartmentId,
     IReadOnlyList<DepartmentMembershipResponse> Departments);
 
 public sealed record DepartmentMembershipResponse(string DepartmentId, string DepartmentName);
@@ -47,7 +55,9 @@ public sealed record ScopedAuthorizationResponse(
     string? DepartmentId,
     string AssignmentSource);
 
-public sealed class ResolveUserAuthorizationQueryHandler(ICurrentUserService currentUser)
+public sealed class ResolveUserAuthorizationQueryHandler(
+    ICurrentUserService currentUser,
+    IUserRepository userRepository)
     : IRequestHandler<ResolveUserAuthorizationQuery, AuthorizationResolutionResult>
 {
     private static readonly HashSet<string> SupportedRoles =
@@ -76,13 +86,50 @@ public sealed class ResolveUserAuthorizationQueryHandler(ICurrentUserService cur
             return Failure("role_conflict", "Your assigned access could not be verified.", 403);
 
         var user = state.User;
-        if (user is null
-            || !string.Equals(user.AuthenticationProvider, "entra", StringComparison.Ordinal)
+        if (user is null)
+        {
+            await userRepository.UpsertEntraProfileAsync(new User
+            {
+                Id = state.Claims.ObjectId,
+                AuthenticationProvider = "entra",
+                EntraTenantId = state.Claims.TenantId,
+                EntraObjectId = state.Claims.ObjectId,
+                Username = state.Claims.Username,
+                FullName = state.Claims.FullName,
+                Email = state.Claims.Email,
+                PasswordHash = null,
+                IsActive = true,
+                AuthorizationVersion = 0,
+            }, cancellationToken);
+            return Failure(
+                "assignment_missing",
+                "No active application access is assigned to this identity.",
+                403,
+                pendingProfileCreated: true);
+        }
+
+        if (!string.Equals(user.AuthenticationProvider, "entra", StringComparison.Ordinal)
             || !string.Equals(user.EntraTenantId, state.Claims.TenantId, StringComparison.OrdinalIgnoreCase)
             || !string.Equals(user.EntraObjectId, state.Claims.ObjectId, StringComparison.OrdinalIgnoreCase))
         {
             return Failure("assignment_missing", "No active application access is assigned to this identity.", 403);
         }
+
+        user = await userRepository.UpsertEntraProfileAsync(new User
+        {
+            Id = user.Id,
+            AuthenticationProvider = "entra",
+            EntraTenantId = state.Claims.TenantId,
+            EntraObjectId = state.Claims.ObjectId,
+            Username = state.Claims.Username,
+            FullName = state.Claims.FullName,
+            Email = state.Claims.Email,
+            PasswordHash = null,
+            IsActive = user.IsActive,
+            AuthorizationVersion = user.AuthorizationVersion,
+            CreatedAt = user.CreatedAt,
+            LastLogin = user.LastLogin,
+        }, cancellationToken);
 
         if (!user.IsActive)
             return Failure("identity_disabled", "This application identity is disabled.", 403);
@@ -91,7 +138,7 @@ public sealed class ResolveUserAuthorizationQueryHandler(ICurrentUserService cur
             return Failure("assignment_missing", "No active application access is assigned to this identity.", 403);
 
         var memberships = BuildMemberships(state);
-        if (memberships.Count == 0)
+        if (memberships is null || memberships.Count == 0)
             return Failure("membership_missing", "An active organization and department membership is required.", 403);
 
         var organizationIds = memberships.Select(membership => membership.OrganizationId).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -128,29 +175,42 @@ public sealed class ResolveUserAuthorizationQueryHandler(ICurrentUserService cur
             user.FullName,
             string.IsNullOrWhiteSpace(user.Email) ? null : user.Email,
             authorizations.Any(authorization => authorization.Role == "admin") ? "admin" : null,
+            user.AuthorizationVersion,
             memberships,
             authorizations,
             state.Claims.TokenIssuedAt,
             state.Claims.TokenIssuedAt.AddMinutes(15)));
     }
 
-    private static IReadOnlyList<OrganizationMembershipResponse> BuildMemberships(CurrentAuthorizationState state)
+    private static IReadOnlyList<OrganizationMembershipResponse>? BuildMemberships(CurrentAuthorizationState state)
     {
-        return state.OrganizationMemberships
-            .Where(membership => membership.Status == "active")
-            .Select(membership => new OrganizationMembershipResponse(
+        var result = new List<OrganizationMembershipResponse>();
+        foreach (var membership in state.OrganizationMemberships.Where(membership =>
+            membership.Status == "active" && membership.Organization.Status == "active"))
+        {
+            var departmentMemberships = state.DepartmentMemberships
+                .Where(departmentMembership =>
+                    departmentMembership.Status == "active"
+                    && departmentMembership.OrganizationId == membership.OrganizationId
+                    && departmentMembership.Organization.Status == "active"
+                    && departmentMembership.Department.Status == "active")
+                .ToList();
+            var defaultMembership = departmentMemberships.SingleOrDefault(departmentMembership =>
+                departmentMembership.Id == membership.DefaultDepartmentMembershipId);
+            if (defaultMembership is null)
+                return null;
+
+            result.Add(new OrganizationMembershipResponse(
                 membership.OrganizationId,
                 membership.Organization.Name,
-                state.DepartmentMemberships
-                    .Where(departmentMembership =>
-                        departmentMembership.Status == "active"
-                        && departmentMembership.OrganizationId == membership.OrganizationId)
+                defaultMembership.DepartmentId,
+                departmentMemberships
                     .Select(departmentMembership => new DepartmentMembershipResponse(
                         departmentMembership.DepartmentId,
                         departmentMembership.Department.Name))
-                    .ToList()))
-            .Where(membership => membership.Departments.Count > 0)
-            .ToList();
+                    .ToList()));
+        }
+        return result;
     }
 
     private static AuthorizationResolutionResult? ValidateAssignment(
@@ -256,6 +316,17 @@ public sealed class ResolveUserAuthorizationQueryHandler(ICurrentUserService cur
             _ => throw new InvalidOperationException("Unsupported role."),
         };
 
-    private static AuthorizationResolutionResult Failure(string code, string message, int statusCode)
-        => AuthorizationResolutionResult.Failure(code, message, statusCode);
+    private static AuthorizationResolutionResult Failure(
+        string code,
+        string message,
+        int statusCode,
+        bool pendingProfileCreated = false)
+    {
+        var error = AuthorizationErrorCodes.Resolve(code);
+        return AuthorizationResolutionResult.Failure(
+            error.Code,
+            error.Message,
+            error.StatusCode,
+            pendingProfileCreated);
+    }
 }

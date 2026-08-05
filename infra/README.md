@@ -143,13 +143,13 @@ az webapp deploy \
 
 ```bash
 # 1) Provision/update shared + Stack B infrastructure
-./infra/scripts/deploy.sh .env_qa_mcaps test apply stack-b
+./infra/scripts/deploy.sh .env_qa test apply stack-b
 
 # 2) Publish/package Stack B artifact (artifacts/stack-b.zip)
 ./infra/scripts/package-stack-b.sh
 
 # 3) Deploy packaged zip to App Service (loads env + resolves app name)
-./infra/scripts/deploy-stack-b-app.sh .env_qa_mcaps artifacts/stack-b.zip
+./infra/scripts/deploy-stack-b-app.sh .env_qa artifacts/stack-b.zip
 ```
 
 The artifact deployment script verifies Kudu deployment history if Azure CLI
@@ -158,7 +158,7 @@ latest deployment with success status `4`.
 
 Both deployment entry points require the environment profile as their first
 argument. They pass that path unchanged to `load_env_file`; no deployment script
-selects a default profile. For QA MCAPS, always pass `.env_qa_mcaps` explicitly.
+selects a default profile. For QA deployments, always pass `.env_qa` explicitly.
 
 Terraform state is isolated in a workspace named from `AZURE_SUBSCRIPTION_ID`
 and `ENVIRONMENT`. This prevents local state from one subscription being reused

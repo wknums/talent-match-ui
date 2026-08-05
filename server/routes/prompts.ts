@@ -8,7 +8,7 @@ import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
 import { createPipelineOrchestrator } from '../services/pipeline.js'
 import type {
   ScoringPrompt, PromptTestRun, Application,
-  ApplicationDocument, ScoringRun, AggregatedResult, ManualReviewData
+  ApplicationDocument
 } from '../../src/types/index.js'
 
 // FR-065: Prompt generation ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
@@ -309,7 +309,7 @@ Return ONLY the scoring prompt text, ready for use.
           const responseText = await response.text()
           promptText = responseText
           generationMetadata = { source: 'AWR_SEQ_API', timestamp: new Date().toISOString() }
-        } catch (apiErr) {
+        } catch {
           // Fallback to locally generated prompt
           promptText = generateFallbackPrompt(rubricContext)
           generationMetadata = { source: 'fallback', reason: 'API call failed', timestamp: new Date().toISOString() }

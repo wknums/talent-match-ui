@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { ProcessingEvent } from '../../src/types/index.js'
 import { auditRepo } from '../storage/repos/index.js'
+import type { OrganizationAdminAudit } from './organization-admin.js'
 
 export type AuthorizationAuditAction =
-  | 'auth.login.succeeded' | 'auth.login.denied' | 'auth.logout'
+  | 'auth.login.succeeded' | 'auth.login.denied' | 'auth.logout' | 'auth.profile.pending'
   | 'auth.token.stale' | 'auth.role.missing' | 'auth.role.conflict'
   | 'auth.assignment.activated' | 'auth.assignment.revoked'
   | 'auth.membership.activated' | 'auth.membership.revoked'
@@ -16,7 +17,7 @@ export interface AuthorizationAuditDetails {
   organizationId?: string
   departmentId?: string
   source?: string
-  result: 'succeeded' | 'denied' | 'revoked' | 'partial'
+  result: 'succeeded' | 'denied' | 'revoked' | 'partial' | 'pending'
   reasonCode?: string
 }
 
@@ -54,6 +55,22 @@ export const auditService = {
 
   async appendAuthorizationEvent(actor: string, action: AuthorizationAuditAction, subjectId: string, details: AuthorizationAuditDetails, correlationId?: string): Promise<ProcessingEvent> {
     return this.appendEvent(actor, action, 'Authorization', subjectId, details as unknown as Record<string, unknown>, correlationId)
+  },
+}
+
+export const organizationAdminAudit: OrganizationAdminAudit = {
+  async record(actor, action, entityType, entityId, details) {
+    await auditService.appendEvent(
+      actor.objectId,
+      action,
+      entityType,
+      entityId || actor.objectId,
+      {
+        ...details,
+        tenantId: actor.tenantId,
+      },
+      actor.correlationId,
+    )
   },
 }
 

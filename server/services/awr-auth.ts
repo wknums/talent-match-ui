@@ -1,4 +1,7 @@
+import { createRequire } from 'node:module'
 import type { DefaultAzureCredential } from '@azure/identity'
+
+const require = createRequire(import.meta.url)
 
 interface UserContext {
   username: string

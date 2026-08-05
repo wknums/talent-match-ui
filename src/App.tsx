@@ -11,6 +11,8 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { UserMenu } from '@/components/UserMenu'
 import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
 import { UserManagementDialog } from '@/components/UserManagementDialog'
+import { EntraAccessManagementDialog } from '@/components/EntraAccessManagementDialog'
+import { OrganizationAdmin } from '@/components/OrganizationAdmin'
 import { AnalyticsView } from '@/components/AnalyticsView'
 import type { Job } from '@/types'
 import { requestPasswordReset } from '@/lib/auth'
@@ -33,6 +35,8 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const [userManagementOpen, setUserManagementOpen] = useState(false)
+  const [entraAccessManagementOpen, setEntraAccessManagementOpen] = useState(false)
+  const [organizationAdminOpen, setOrganizationAdminOpen] = useState(false)
 
   const handleLogin = async (username: string, password: string): Promise<boolean> => {
     const user = await signIn({ username, password })
@@ -55,7 +59,7 @@ function App() {
     try {
       await requestPasswordReset(currentUser.userId)
       toast.success('Password reset request submitted. An admin will review it shortly.')
-    } catch (error) {
+    } catch {
       toast.error('Failed to submit password reset request')
     }
   }
@@ -171,6 +175,8 @@ function App() {
                 onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
                 onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
                 onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+                onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
+                onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
                 onLogout={handleLogout}
               />
             </div>
@@ -200,6 +206,8 @@ function App() {
               onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
               onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
               onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
+              onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -216,6 +224,8 @@ function App() {
               onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
               onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
               onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
+              onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -241,6 +251,8 @@ function App() {
               onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
               onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
               onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
+              onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -293,6 +305,22 @@ function App() {
           open={userManagementOpen}
           onClose={() => setUserManagementOpen(false)}
           currentUserId={currentUser.userId}
+        />
+      )}
+
+      {authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') && (
+        <EntraAccessManagementDialog
+          open={entraAccessManagementOpen}
+          onClose={() => setEntraAccessManagementOpen(false)}
+          globalAdmin={currentUser.role === 'admin'}
+        />
+      )}
+
+      {authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') && (
+        <OrganizationAdmin
+          open={organizationAdminOpen}
+          onClose={() => setOrganizationAdminOpen(false)}
+          globalAdmin={currentUser.role === 'admin'}
         />
       )}
 

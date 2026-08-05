@@ -42,6 +42,10 @@ mkdir -p "$ARTIFACT_DIR"
 # Copy server build output
 cp -r dist-server/* "$ARTIFACT_DIR/"
 
+# tsc emits only JS, but db.ts reads these at runtime from its own directory
+mkdir -p "$ARTIFACT_DIR/server/storage"
+cp server/storage/*.sql "$ARTIFACT_DIR/server/storage/"
+
 # Copy client build output
 mkdir -p "$ARTIFACT_DIR/dist"
 cp -r dist/* "$ARTIFACT_DIR/dist/"

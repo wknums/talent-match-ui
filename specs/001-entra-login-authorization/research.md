@@ -55,7 +55,7 @@ Microsoft's application-RBAC guidance explicitly supports custom datastores for 
 
 ## Decision 5: Use a Fail-Closed, Idempotent Bootstrap Seed
 
-**Decision**: Implement a Bash wrapper with `check` and `apply` modes and a TypeScript storage CLI. The wrapper loads the selected environment profile, validates the active tenant and subscription, reads the Azure SQL logical server's Microsoft Entra administrator, confirms its object ID matches `ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID`, and confirms it is a tenant member user. It then ensures one direct Admin app-role assignment through Microsoft Graph and transactionally upserts the initial organization/department, both memberships, one active bootstrap `RoleAssignment`, and audit events through the storage abstraction.
+**Decision**: Implement a Bash wrapper with `check` and `apply` modes and a TypeScript storage CLI. The wrapper loads the active environment definition file, validates the active tenant and subscription, reads the selected Azure SQL logical server's Microsoft Entra administrator, confirms its object ID matches `ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID`, and confirms it is a tenant member user. It then ensures one direct Admin app-role assignment through Microsoft Graph and transactionally upserts the initial organization/department, both memberships, one active bootstrap `RoleAssignment`, and audit events through the storage abstraction.
 
 **Rationale**: Microsoft documents that the Azure SQL Microsoft Entra administrator enters every user database as `dbo`/`db_owner`. Verifying the ARM administrator property is therefore a deterministic owner check. Graph and SQL cannot share a transaction, so the safe order is identity verification, idempotent Graph assignment, then SQL activation. A partial failure leaves application access denied until a rerun converges.
 
@@ -68,7 +68,7 @@ Microsoft's application-RBAC guidance explicitly supports custom datastores for 
 
 ## Decision 6: Guard Every Azure Operation with the Environment Context
 
-**Decision**: Add `validate_azure_context` to `infra/scripts/lib/common.sh`. After loading `.env_qa_mcaps`, compare `az account show` tenant and subscription values byte-for-byte with `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`, stripping Windows carriage returns. Terraform providers receive both identifiers explicitly. Seed and deployment scripts stop before discovery or mutation on mismatch.
+**Decision**: Add `validate_azure_context` to `infra/scripts/lib/common.sh`. After loading the active environment definition file, compare `az account show` tenant and subscription values byte-for-byte with `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`, stripping Windows carriage returns. Terraform providers receive both identifiers explicitly. Seed and deployment scripts stop before discovery or mutation on mismatch.
 
 **Rationale**: The current deployment wrapper exports the subscription to Terraform but does not verify the active Azure CLI tenant or subscription. The user has moved tenants, so implicit CLI context is unsafe.
 
@@ -123,21 +123,62 @@ Microsoft's application-RBAC guidance explicitly supports custom datastores for 
 - Duplicate department names as scope keys: rejected because departments are specific to an organization and names can collide.
 - Permit department reparenting: rejected because it silently changes the authorization boundary for jobs, memberships, and roles.
 
-## Decision 11: Benchmark Both API Implementations Against One Fixed Authorization Profile
+## Decision 11: Discover Entra Profiles Through Validated Sign-In Before Onboarding
 
-**Decision**: Measure the authorization-stage elapsed time separately in release-mode Express and ASP.NET Core APIs against QA Azure SQL. Seed 10,000 users, 100 organizations, 1,000 departments, and 100,000 active assignments; exercise an identity with 10 organization memberships, 25 department memberships, and 20 active assignments. After a 60-second warm-up that primes JWKS metadata and database connection pools, run at least 20,000 protected requests from 25 concurrent clients. Each API must add less than 100 ms p95 for bearer-token validation plus scoped authorization resolution, excluding browser and network transit.
+**Decision**: When a configured-tenant user presents a valid TalentMatch API token but has no application assignment, each API may idempotently create or refresh an Entra profile in a pending-access state before returning `403 assignment_missing`. Entra Access Management lists and mutates only these tenant-verified profiles. Administrators cannot stage arbitrary object IDs, and ordinary onboarding does not call Microsoft Graph.
 
-**Rationale**: A fixed dataset, representative multi-scope identity, concurrency level, warm-up, request count, measurement boundary, and per-stack report make the performance target repeatable and expose query/index regressions without conflating them with client or network latency.
+**Rationale**: The immutable object ID proves identity only when it arrives in a token whose signature, issuer, tenant, audience, client, scope, lifetime, and freshness have all been validated. Accepting a caller-supplied UUID without Graph would not prove that the object exists in the configured tenant. First-sign-in discovery preserves the no-runtime-Graph design and gives administrators a safe in-application target without granting protected access.
 
 **Alternatives considered**:
 
-- Unqualified "normal load": rejected because implementations could use incomparable datasets, concurrency, and cache states.
-- End-to-end browser timing: rejected because network and rendering variance would obscure authorization-stage performance.
-- One combined result for both stacks: rejected because it could hide a regression in either API implementation.
+- Accept any administrator-entered object ID: rejected because tenant membership and object existence would be unverified.
+- Query Microsoft Graph during every onboarding operation: rejected because it introduces elevated directory permissions, another runtime dependency, and a broader failure surface.
+- Require operators to run the CLI for every new profile: rejected because it does not satisfy the in-application administration requirement.
+- Grant temporary protected access on first sign-in: rejected because authentication must remain distinct from authorization and default deny.
+
+## Decision 12: Mutate One Organization Access Aggregate Transactionally
+
+**Decision**: Add one access-management application service and one aggregate repository implementation per API. A single serializable transaction converges the target profile, organization membership, department memberships, explicit default, delegated role assignments, optimistic `AuthorizationVersion`, and success audit event. Actor authority is re-read inside the transaction. Equivalent retries return the existing result; a stale version with a different desired state returns `409`.
+
+**Rationale**: Current repositories commit individual user, membership, assignment, and audit changes independently, so composing them can expose partial authorization. A target-organization aggregate is the smallest transaction boundary that can satisfy atomic onboarding while preserving unrelated organizations and centrally managed group/bootstrap assignments. Version checking prevents a confirmed UI change from silently overwriting a concurrent administrator.
+
+**Alternatives considered**:
+
+- Compose existing independently committing repositories: rejected because rollback cannot cover the whole onboarding operation.
+- Use a distributed transaction across Microsoft Graph and SQL: rejected because ordinary delegated onboarding changes only application data and must not require Graph.
+- Replace every organization for a user in one command: rejected because Organization Admins may mutate only their own scope and unrelated access must remain unchanged.
+- Blind last-write-wins updates: rejected because concurrent administrators could silently revoke or replace each other's intended access.
+
+## Decision 13: Store the Default as an Organization-Membership Pointer
+
+**Decision**: Add `DefaultDepartmentMembershipId` to `OrganizationMembership`. It references `DepartmentMembership (Id, UserId, OrganizationId)` so the selected default must be one of the same user's department grants in that organization. Active organization memberships require one valid active default; revoked memberships may retain a historical pointer but cannot use it for authorization. API responses expose `defaultDepartmentId`, not the internal membership-row ID.
+
+**Rationale**: The default department is a navigation/context preference over an existing grant, not a grant itself. A scalar pointer on the organization membership naturally represents exactly one default and can be validated against the same user and organization. It also avoids two-row updates when changing a boolean default flag.
+
+**Alternatives considered**:
+
+- Store `DefaultDepartmentId` without referencing membership: rejected because the selected department could exist without being granted to the user.
+- Add a separate one-to-one preference table: rejected because it adds lifecycle and join complexity without another independent concept.
+- Add `IsDefault` to department memberships: rejected because a filtered unique index enforces at most one, not at least one, and changing defaults requires coordinated row updates.
+- Infer the first department by sort or creation order: rejected because ordering is not an explicit user/admin decision and can differ between stacks.
+
+## Decision 14: Make Administration Mode-Aware and Navigation Shell-Owned
+
+**Decision**: Keep password-oriented User Management and its endpoints available only in simple mode. In Entra mode, the same administration entry renders Entra Access Management for application Admins and authorized Organization Admins. In Stack B, `MainLayout` owns navigation state through a scoped service: desktop collapse preference is stored in `sessionStorage`, compact overlay state is transient, and the routed body remains mounted. Each authenticated user-triggered collapse or expansion records an immutable correlated audit outcome before state or preference changes; audit failure preserves the prior state and displays a visible notification. Dense and three-panel pages use content-aware reflow rather than hidden overflow.
+
+**Rationale**: Authentication mode is the controlling boundary for user lifecycle behavior; showing password controls in Entra mode is misleading and unsafe. Sidebar state must live above `NavMenu` to release the grid column on every route. Browser-session storage meets the specified lifetime, while separate compact state avoids restoring a blocking overlay after a viewport change. Keeping the body mounted preserves route and unsaved component state.
+
+**Alternatives considered**:
+
+- Add Entra controls beside password controls: rejected because Entra mode forbids local credential management and the workflows have different identity semantics.
+- Keep collapse state inside `NavMenu`: rejected because the parent layout would continue reserving sidebar width.
+- Persist one state bit in `localStorage`: rejected because it outlives the browser session and conflates desktop preference with compact overlay state.
+- Conditionally replace the routed body or reload on toggle: rejected because it discards unsaved inputs and route-local state.
+- Apply global `overflow-x: hidden`: rejected because it conceals clipping instead of making dense screens usable.
 
 ## Azure Policy Discovery Result
 
-The read-only policy-assignment query for the subscription declared in `.env_qa_mcaps` returned `403 AuthorizationFailed` for the currently authenticated Azure MCP identity. This does not change the application design, but Azure implementation and deployment are blocked until an operator authenticates to the declared tenant/subscription with at least Reader access and reruns policy discovery. No resource changes were attempted.
+The read-only policy-assignment query for the subscription declared in the active environment definition file returned `403 AuthorizationFailed` for the planning-time Azure identity. This does not change the application design, but Azure implementation and deployment are blocked until an operator authenticates to the declared tenant/subscription with at least Reader access and reruns policy discovery. No resource changes were attempted.
 
 ## Primary References
 

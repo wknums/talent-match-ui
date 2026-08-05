@@ -1,0 +1,21 @@
+.user-administration__state {
+    max-width: 42rem;
+    margin: 4rem auto;
+    padding: 1.5rem;
+    color: #172033;
+}
+
+.user-administration__state h1 {
+    margin: 0;
+    font-size: 2rem;
+    letter-spacing: 0;
+}
+
+.user-administration__state p {
+    margin-top: 0.75rem;
+    color: #536178;
+}
+
+.user-administration__state [role='alert'] {
+    color: #8f1f1f;
+}

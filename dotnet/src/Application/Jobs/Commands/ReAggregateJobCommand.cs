@@ -1,6 +1,8 @@
 using System.Text.Json;
 using MediatR;
 using Microsoft.Extensions.Logging;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -15,21 +17,30 @@ public class ReAggregateJobCommandHandler : IRequestHandler<ReAggregateJobComman
     private readonly IJobRepository _jobRepo;
     private readonly IApplicationRepository _appRepo;
     private readonly ILogger<ReAggregateJobCommandHandler> _logger;
+    private readonly ICurrentUserService? _currentUser;
+    private readonly IOrganizationRepository? _organizationRepository;
 
     public ReAggregateJobCommandHandler(
         IJobRepository jobRepo,
         IApplicationRepository appRepo,
-        ILogger<ReAggregateJobCommandHandler> logger)
+        ILogger<ReAggregateJobCommandHandler> logger,
+        ICurrentUserService? currentUser = null,
+        IOrganizationRepository? organizationRepository = null)
     {
         _jobRepo = jobRepo;
         _appRepo = appRepo;
         _logger = logger;
+        _currentUser = currentUser;
+        _organizationRepository = organizationRepository;
     }
 
     public async Task<ReAggregateJobResult> Handle(ReAggregateJobCommand request, CancellationToken ct)
     {
         var job = await _jobRepo.GetByIdAsync(request.JobId, ct)
             ?? throw new InvalidOperationException($"Job {request.JobId} not found");
+
+        await JobAuthorization.EnsureCanMutateAsync(
+            job, _currentUser, _organizationRepository, ct);
 
         var config = job.ConfigVersions.FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
             ?? job.ConfigVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();

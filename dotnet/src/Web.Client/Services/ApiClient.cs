@@ -22,7 +22,7 @@ public class ApiException : Exception
     }
 }
 
-public class ApiClient
+public class ApiClient : INavigationAuditClient
 {
     private readonly HttpClient _http;
     private readonly PublicAuthConfiguration _authConfiguration;
@@ -220,6 +220,157 @@ public class ApiClient
     {
         var response = await _http.PutAsJsonAsync($"/api/users/{userId}", new { FullName = fullName, Email = email, Role = role, Department = department });
         await EnsureSuccessOrThrowAsync(response, "Failed to update user.");
+    }
+
+    // Entra access management
+    public async Task<EntraAccessUserPage> ListEntraAccessUsersAsync(
+        string? search = null,
+        string? organizationId = null,
+        string? status = null,
+        string? cursor = null,
+        int limit = 25)
+    {
+        var query = new List<string> { $"limit={limit}" };
+        AddQueryValue(query, "search", search);
+        AddQueryValue(query, "organizationId", organizationId);
+        AddQueryValue(query, "status", status);
+        AddQueryValue(query, "cursor", cursor);
+
+        var response = await _http.GetAsync($"/api/access-management/users?{string.Join("&", query)}");
+        return await ReadRequiredResponseAsync<EntraAccessUserPage>(response, "Failed to load Entra access profiles.");
+    }
+
+    public async Task<EntraAccessUser> GetEntraAccessUserAsync(string objectId)
+    {
+        var response = await _http.GetAsync($"/api/access-management/users/{Uri.EscapeDataString(objectId)}");
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to load the Entra access profile.");
+    }
+
+    public async Task<EntraAccessUser> PutEntraOrganizationAccessAsync(
+        string objectId,
+        string organizationId,
+        PutEntraOrganizationAccessRequest request)
+    {
+        var response = await _http.PutAsJsonAsync(
+            $"/api/access-management/users/{Uri.EscapeDataString(objectId)}/organizations/{Uri.EscapeDataString(organizationId)}",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to update organization access.");
+    }
+
+    public async Task<EntraAccessUser> UpdateEntraAccessUserAsync(
+        string objectId,
+        UpdateEntraAccessUserRequest request)
+    {
+        var response = await _http.PatchAsJsonAsync(
+            $"/api/access-management/users/{Uri.EscapeDataString(objectId)}",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to update the Entra identity.");
+    }
+
+    public async Task<EntraAccessUser> RevokeEntraRoleAssignmentAsync(
+        string objectId,
+        string organizationId,
+        string assignmentId,
+        int expectedVersion)
+    {
+        var response = await _http.DeleteAsync(
+            $"/api/access-management/users/{Uri.EscapeDataString(objectId)}/organizations/{Uri.EscapeDataString(organizationId)}/role-assignments/{Uri.EscapeDataString(assignmentId)}?expectedVersion={expectedVersion}");
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to revoke the delegated role.");
+    }
+
+    // Organization administration
+    public async Task<IReadOnlyList<OrganizationAdministrationOrganization>> ListOrganizationsAsync()
+    {
+        var response = await _http.GetAsync("/api/organizations");
+        return await ReadRequiredResponseAsync<IReadOnlyList<OrganizationAdministrationOrganization>>(
+            response, "Failed to load organizations.");
+    }
+
+    public async Task<OrganizationAdministrationOrganization> CreateOrganizationAsync(
+        CreateOrganizationRequest request)
+    {
+        var response = await _http.PostAsJsonAsync("/api/organizations", request, JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationOrganization>(
+            response, "Failed to create the organization.");
+    }
+
+    public async Task<OrganizationAdministrationDepartment> CreateDepartmentAsync(
+        string organizationId,
+        CreateDepartmentRequest request)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/departments",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationDepartment>(
+            response, "Failed to create the department.");
+    }
+
+    public async Task<OrganizationAdministrationDepartment> UpdateDepartmentAsync(
+        string organizationId,
+        string departmentId,
+        UpdateDepartmentRequest request)
+    {
+        var response = await _http.PatchAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/departments/{Uri.EscapeDataString(departmentId)}",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationDepartment>(
+            response, "Failed to update the department.");
+    }
+
+    public async Task<OrganizationAdministrationMembership> RegisterOrganizationMembershipAsync(
+        string organizationId,
+        RegisterOrganizationMembershipRequest request)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/memberships",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationMembership>(
+            response, "Failed to update organization membership.");
+    }
+
+    public async Task<OrganizationAdministrationRoleAssignment> GrantOrganizationRoleAsync(
+        string organizationId,
+        GrantOrganizationRoleRequest request)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/role-assignments",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationRoleAssignment>(
+            response, "Failed to grant the delegated role.");
+    }
+
+    public async Task RevokeOrganizationRoleAsync(string organizationId, string assignmentId)
+    {
+        var response = await _http.DeleteAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/role-assignments/{Uri.EscapeDataString(assignmentId)}");
+        await EnsureSuccessOrThrowAsync(response, "Failed to revoke the delegated role.");
+    }
+
+    private static void AddQueryValue(List<string> query, string name, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            query.Add($"{name}={Uri.EscapeDataString(value)}");
+    }
+
+    private static async Task<T> ReadRequiredResponseAsync<T>(
+        HttpResponseMessage response,
+        string fallbackMessage)
+    {
+        await EnsureSuccessOrThrowAsync(response, fallbackMessage);
+        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions);
+        if (result is not null)
+            return result;
+
+        var correlationId = response.Headers.TryGetValues("X-Correlation-ID", out var values)
+            ? values.FirstOrDefault()
+            : null;
+        throw new ApiException("The server returned an empty response.", (int)response.StatusCode, correlationId: correlationId);
     }
 
     // Password Reset Requests
@@ -507,12 +658,32 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
+    public async Task<NavigationAuditResult> RecordNavigationAsync(
+        NavigationAuditRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await _http.PostAsJsonAsync("/api/navigation/audit", new
+        {
+            action = request.Action.ToString().ToLowerInvariant(),
+            correlationId = request.CorrelationId,
+            requestedAt = request.RequestedAt,
+        }, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Navigation change could not be recorded.");
+
+        var result = await response.Content.ReadFromJsonAsync<NavigationAuditResponse>(
+            JsonOptions, cancellationToken);
+        return new NavigationAuditResult(
+            Guid.TryParse(result?.CorrelationId, out var correlationId) ? correlationId : request.CorrelationId);
+    }
+
     public async Task<List<DocumentDto>> GetDocumentsAsync(string applicationId)
     {
         try { return await _http.GetFromJsonAsync<List<DocumentDto>>($"/api/applications/{applicationId}/documents") ?? new(); }
         catch { return new(); }
     }
 }
+
+public sealed record NavigationAuditResponse(string? CorrelationId);
 
 // DTOs
 public sealed record PublicAuthConfiguration(
@@ -573,6 +744,7 @@ public sealed record AuthorizationContextResponse(
     string FullName,
     string? Email,
     string? GlobalRole,
+    int AuthorizationVersion,
     IReadOnlyList<OrganizationMembershipResponse> Memberships,
     IReadOnlyList<ScopedAuthorizationResponse> Authorizations,
     DateTimeOffset TokenIssuedAt,
@@ -584,18 +756,11 @@ public sealed record AuthorizationContextResponse(
             .OrderByDescending(authorization => GetRoleRank(authorization.Role))
             .FirstOrDefault();
         var role = GlobalRole ?? primaryAuthorization?.Role ?? "business_panel";
-        var departments = Memberships
-            .Where(membership => primaryAuthorization?.OrganizationId is null
-                || membership.OrganizationId == primaryAuthorization.OrganizationId)
-            .SelectMany(membership => membership.Departments);
-        var department = departments
-            .Where(item => primaryAuthorization?.DepartmentId is null
-                || item.DepartmentId == primaryAuthorization.DepartmentId)
-            .Select(item => item.DepartmentName)
-            .FirstOrDefault()
-            ?? Memberships.SelectMany(membership => membership.Departments)
-                .Select(item => item.DepartmentName)
-                .FirstOrDefault()
+        var department = Memberships
+            .Select(membership => membership.Departments.FirstOrDefault(candidate =>
+                candidate.DepartmentId == membership.DefaultDepartmentId))
+            .FirstOrDefault(candidate => candidate is not null)
+            ?.DepartmentName
             ?? string.Empty;
 
         return new UserInfo(UserId, Username, role, department, FullName, Email ?? string.Empty);
@@ -614,6 +779,7 @@ public sealed record AuthorizationContextResponse(
 public sealed record OrganizationMembershipResponse(
     string OrganizationId,
     string OrganizationName,
+    string DefaultDepartmentId,
     IReadOnlyList<DepartmentMembershipResponse> Departments);
 
 public sealed record DepartmentMembershipResponse(string DepartmentId, string DepartmentName);
@@ -625,12 +791,99 @@ public sealed record ScopedAuthorizationResponse(
     string? DepartmentId,
     string AssignmentSource);
 
+public sealed record EntraAccessProfile(string Username, string FullName, string? Email);
+
+public sealed record EntraAccessMembership(
+    string Status,
+    IReadOnlyList<string> DepartmentIds,
+    string? DefaultDepartmentId);
+
+public sealed record EntraDesiredRole(string Role, string? DepartmentId);
+
+public sealed record PutEntraOrganizationAccessRequest(
+    int ExpectedVersion,
+    EntraAccessProfile Profile,
+    EntraAccessMembership Membership,
+    IReadOnlyList<EntraDesiredRole> RoleAssignments);
+
+public sealed record UpdateEntraAccessUserRequest(
+    int ExpectedVersion,
+    EntraAccessProfile? Profile = null,
+    bool? IsActive = null);
+
+public sealed record EntraAccessUserPage(
+    IReadOnlyList<EntraAccessUser> Items,
+    string? NextCursor);
+
+public sealed record EntraAccessUser(
+    string ObjectId,
+    string Username,
+    string FullName,
+    string? Email,
+    bool IsActive,
+    int AuthorizationVersion,
+    IReadOnlyList<EntraOrganizationAccess> Organizations);
+
+public sealed record EntraOrganizationAccess(
+    string OrganizationId,
+    string Status,
+    IReadOnlyList<string> DepartmentIds,
+    string? DefaultDepartmentId,
+    IReadOnlyList<EntraAccessRoleAssignment> RoleAssignments);
+
+public sealed record EntraAccessRoleAssignment(
+    string Id,
+    string Role,
+    string OrganizationId,
+    string? DepartmentId,
+    string Source,
+    string Status);
+
+public sealed record OrganizationAdministrationOrganization(
+    string Id,
+    string Name,
+    string Status,
+    IReadOnlyList<OrganizationAdministrationDepartment> Departments);
+
+public sealed record OrganizationAdministrationDepartment(
+    string Id,
+    string OrganizationId,
+    string Name,
+    string Status);
+
+public sealed record OrganizationAdministrationMembership(
+    string UserObjectId,
+    string OrganizationId,
+    IReadOnlyList<string> DepartmentIds,
+    string DefaultDepartmentId);
+
+public sealed record OrganizationAdministrationRoleAssignment(
+    string Id,
+    string UserObjectId,
+    string Role,
+    string OrganizationId,
+    string? DepartmentId,
+    string Source,
+    string Status);
+
+public sealed record CreateOrganizationRequest(string Name, string InitialDepartmentName);
+public sealed record CreateDepartmentRequest(string Name);
+public sealed record UpdateDepartmentRequest(string? Name = null, string? Status = null);
+public sealed record RegisterOrganizationMembershipRequest(
+    string UserObjectId,
+    IReadOnlyList<string> DepartmentIds,
+    string DefaultDepartmentId);
+public sealed record GrantOrganizationRoleRequest(
+    string UserObjectId,
+    string Role,
+    string? DepartmentId);
+
 internal sealed record ApiErrorDetails(string Message, string? ErrorCode, string? CorrelationId);
 
 public record UserInfo(string Id, string Username, string Role, string Department, string FullName, string Email, DateTime? LastLogin = null);
 public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt);
 public record JobSummaryDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt, string CreatedByName, int TotalApplications, int CompletedApplications);
-public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription);
+public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription, string? OrganizationId = null, string? DepartmentId = null);
 public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null);
 public record ApplicationDto(string Id, string JobId, string CandidateRef, string? CandidateName, string? CandidateEmail, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
 public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default);

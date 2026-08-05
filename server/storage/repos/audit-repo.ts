@@ -1,4 +1,4 @@
-import { getPool, isAzureSql, sql } from '../db.js'
+import { getPool, sql } from '../db.js'
 import type { ProcessingEvent, DLQItem, SystemStats } from '../../../src/types/index.js'
 import { T } from '../table-names.js'
 

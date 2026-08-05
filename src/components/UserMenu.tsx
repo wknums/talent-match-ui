@@ -1,4 +1,4 @@
-import { User, Key, SignOut, Users } from '@phosphor-icons/react'
+import { Buildings, User, Key, ShieldCheck, SignOut, Users } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -17,6 +17,8 @@ interface UserMenuProps {
   onChangePassword?: () => void
   onRequestPasswordReset?: () => void
   onManageUsers?: () => void
+  onManageEntraAccess?: () => void
+  onManageOrganization?: () => void
   onLogout: () => void
 }
 
@@ -26,6 +28,8 @@ export function UserMenu({
   onChangePassword,
   onRequestPasswordReset,
   onManageUsers,
+  onManageEntraAccess,
+  onManageOrganization,
   onLogout,
 }: UserMenuProps) {
   return (
@@ -74,6 +78,25 @@ export function UserMenu({
               Manage Users
             </DropdownMenuItem>
           </>
+        )}
+        {authMode === 'entra'
+          && (user.role === 'admin' || user.role === 'organization_admin')
+          && onManageEntraAccess && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onManageEntraAccess}>
+              <ShieldCheck size={16} className="mr-2" />
+              Manage Entra Access
+            </DropdownMenuItem>
+          </>
+        )}
+        {authMode === 'entra'
+          && (user.role === 'admin' || user.role === 'organization_admin')
+          && onManageOrganization && (
+          <DropdownMenuItem onClick={onManageOrganization}>
+            <Buildings size={16} className="mr-2" />
+            Manage Organization
+          </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onLogout} className="text-destructive">

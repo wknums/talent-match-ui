@@ -10,6 +10,9 @@ public static class UsersEndpoints
 {
     public static void MapUsersEndpoints(this WebApplication app)
     {
+        if (string.Equals(app.Configuration["APP_AUTH_MODE"], "entra", StringComparison.OrdinalIgnoreCase))
+            return;
+
         var group = app.MapGroup("/api/users").WithTags("Users").RequireAuthorization("AdminOnly");
 
         group.MapGet("/", async (ISender mediator) =>

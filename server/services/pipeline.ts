@@ -1,13 +1,12 @@
 ﻿import { randomUUID } from 'node:crypto'
-import { applicationRepo, jobRepo, promptRepo, dlqRepo, scoringBatchRepo } from '../storage/repos/index.js'
+import { applicationRepo, jobRepo, dlqRepo, scoringBatchRepo } from '../storage/repos/index.js'
 import { auditService } from './audit.js'
 import { runScoring } from '../workers/scoring.js'
 import type { ScoringResult } from '../workers/scoring.js'
 import { buildScoringRunFromParsedResponse, interpretAggregatedResult, extractCandidateName } from '../workers/scoring.js'
 import { findBestRubricMatch } from '../workers/aggregation.js'
 import { getProductionApprovedPromptId } from './prompt-helpers.js'
-import { createAwrTimeoutSignal } from './awr-timeout.js'
-import type { Application, DLQItem, AggregatedResult } from '../../src/types/index.js'
+import type { DLQItem, AggregatedResult } from '../../src/types/index.js'
 
 const MAX_RETRIES = 3
 const BACKOFF_MS = 1000

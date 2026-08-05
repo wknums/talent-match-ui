@@ -15,6 +15,9 @@ public interface ICurrentUserService
 public sealed record CurrentEntraClaims(
     string TenantId,
     string ObjectId,
+    string Username,
+    string FullName,
+    string Email,
     DateTimeOffset TokenIssuedAt,
     IReadOnlySet<string> Roles,
     IReadOnlySet<string> Groups);

@@ -7,6 +7,9 @@ import type {
 } from '../../src/types/index.js'
 import type { NormalizedEntraClaims } from './entra-token.js'
 import type { StoredUser } from '../storage/repos/user-repo.js'
+import { getAuthorizationErrorMessage } from './authorization-errors.js'
+
+export { getAuthorizationErrorMessage } from './authorization-errors.js'
 
 const roleLabels: Record<UserRole, string> = {
   admin: 'Admin',
@@ -22,23 +25,6 @@ const roleRank: Record<UserRole, number> = {
   business_panel: 1,
 }
 
-const errorMessages: Record<AuthErrorCode, string> = {
-  auth_required: 'Authentication is required.',
-  invalid_token: 'The access token is invalid.',
-  wrong_tenant: 'The access token tenant is not authorized.',
-  invalid_audience: 'The access token audience is not authorized.',
-  unauthorized_client: 'The calling client is not authorized.',
-  token_stale: 'The access token must be refreshed.',
-  role_missing: 'The required application role is missing.',
-  role_conflict: 'The access token contains conflicting roles.',
-  assignment_missing: 'No active role assignment was found.',
-  assignment_revoked: 'The role assignment is no longer active.',
-  scope_unmapped: 'The assigned scope is not configured.',
-  membership_missing: 'An active scope membership is required.',
-  invalid_job_scope: 'The requested job scope is not authorized.',
-  identity_disabled: 'The user identity is disabled.',
-}
-
 export interface AuthorizationDepartmentMembership {
   departmentId: string
   departmentName: string
@@ -47,6 +33,7 @@ export interface AuthorizationDepartmentMembership {
 export interface AuthorizationMembership {
   organizationId: string
   organizationName: string
+  defaultDepartmentId: string | null
   departments: AuthorizationDepartmentMembership[]
 }
 
@@ -66,6 +53,7 @@ export interface ServerAuthorizationContext {
   fullName: string
   email: string | null
   globalRole: 'admin' | null
+  authorizationVersion: number
   memberships: AuthorizationMembership[]
   authorizations: ServerAuthorization[]
   tokenIssuedAt: string
@@ -98,12 +86,14 @@ export interface AuthorizationResolverOptions {
 export class AuthorizationError extends Error {
   readonly code: AuthErrorCode
   readonly statusCode: 403
+  readonly pendingProfileCreated: boolean
 
-  constructor(code: AuthErrorCode) {
-    super(errorMessages[code])
+  constructor(code: AuthErrorCode, pendingProfileCreated = false) {
+    super(getAuthorizationErrorMessage(code))
     this.name = 'AuthorizationError'
     this.code = code
     this.statusCode = 403
+    this.pendingProfileCreated = pendingProfileCreated
   }
 }
 
@@ -125,6 +115,14 @@ function requireMembership(
   if (role === 'organization_admin' && departmentId) throw new AuthorizationError('scope_unmapped')
   if (role === 'recruiter' && !departmentId) throw new AuthorizationError('scope_unmapped')
   if (departmentId && !organization.departments.some(item => item.departmentId === departmentId)) {
+    throw new AuthorizationError('membership_missing')
+  }
+}
+
+function validateMembershipDefaults(memberships: AuthorizationMembership[]) {
+  if (memberships.some(membership =>
+    !membership.defaultDepartmentId
+    || !membership.departments.some(department => department.departmentId === membership.defaultDepartmentId))) {
     throw new AuthorizationError('membership_missing')
   }
 }
@@ -224,12 +222,15 @@ export function createAuthorizationResolver(
         claims.tenantId,
         claims.objectId,
       )
-      if (assignments.length === 0) throw new AuthorizationError('assignment_missing')
+      if (assignments.length === 0) {
+        throw new AuthorizationError('assignment_missing', existing === undefined)
+      }
 
       const memberships = await repositories.organizations.getAuthorizationMemberships(user.userId)
       if (memberships.length === 0 || memberships.every(item => item.departments.length === 0)) {
         throw new AuthorizationError('membership_missing')
       }
+      validateMembershipDefaults(memberships)
       const mappingIds = assignments
         .filter(item => item.source === 'group' && item.roleGroupMappingId)
         .map(item => item.roleGroupMappingId!)
@@ -282,6 +283,7 @@ export function createAuthorizationResolver(
         fullName: user.fullName,
         email: user.email ?? null,
         globalRole: authorizations.some(item => item.role === 'admin') ? 'admin' : null,
+        authorizationVersion: user.authorizationVersion ?? 0,
         memberships,
         authorizations,
         tokenIssuedAt,
@@ -289,8 +291,4 @@ export function createAuthorizationResolver(
       }
     },
   }
-}
-
-export function getAuthorizationErrorMessage(code: AuthErrorCode): string {
-  return errorMessages[code]
 }

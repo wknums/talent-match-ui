@@ -9,8 +9,10 @@ function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex')
 }
 
-export function createUsersRouter() {
+export function createUsersRouter(options: { mode: 'simple' | 'entra' } = { mode: 'simple' }) {
   const router = Router()
+  if (options.mode === 'entra') return router
+
   const audit = auditService
 
   // GET /api/users - admin: list all users

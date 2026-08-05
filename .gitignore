@@ -61,6 +61,14 @@ deployment_logs.json
 curl_cookies.txt
 deplog.json
 oryxlog.json
+.applogs/
+.applogs.zip
+SECURITY.md
+
+# Short-lived access tokens staged for operator scripts
+.kudu_token
+.sqltoken*
+.kudu-body.json
 
 # Local build/deploy artifacts
 artifacts/
@@ -113,11 +121,15 @@ TestResult.xml
 .env_qa
 .env_prod
 .env*
+!.env.example
 !.env_*.example
 
 docs/SAP_Integration_Considerations.md
 specs/archive/
 tests/fixtures/
+!tests/fixtures/
+tests/fixtures/*
+!tests/fixtures/authorization-parity-cases.json
 .npmrc
 
 # Terraform

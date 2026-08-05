@@ -1,5 +1,6 @@
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.Jobs.Queries;
@@ -40,13 +41,23 @@ public class GetJobSummariesQueryHandler : IRequestHandler<GetJobSummariesQuery,
 
     public async Task<IReadOnlyList<JobSummaryDto>> Handle(GetJobSummariesQuery request, CancellationToken cancellationToken)
     {
-        // Replicate RBAC filtering from GetJobsQueryHandler
-        var jobs = (_currentUser.IsAdmin || string.Equals(_currentUser.Department, "all", StringComparison.OrdinalIgnoreCase))
-            ? await _jobRepository.GetAllAsync(cancellationToken)
-            : await _jobRepository.GetByDepartmentsOrCreatorAsync(
-                (_currentUser.Department ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-                _currentUser.UserId ?? "",
-                cancellationToken);
+        var authorizationState = await _currentUser.GetAuthorizationStateAsync(cancellationToken);
+        IReadOnlyList<Domain.Entities.Job> jobs;
+        if (authorizationState is null)
+        {
+            jobs = (_currentUser.IsAdmin || string.Equals(_currentUser.Department, "all", StringComparison.OrdinalIgnoreCase))
+                ? await _jobRepository.GetAllAsync(cancellationToken)
+                : await _jobRepository.GetByDepartmentsOrCreatorAsync(
+                    (_currentUser.Department ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                    _currentUser.UserId ?? "",
+                    cancellationToken);
+        }
+        else
+        {
+            jobs = (await _jobRepository.GetAllAsync(cancellationToken))
+                .Where(job => JobAuthorization.CanRead(authorizationState, job))
+                .ToArray();
+        }
 
         // Batch-load all users for creator name resolution
         var allUsers = await _userRepository.GetAllAsync(cancellationToken);
@@ -56,7 +67,6 @@ public class GetJobSummariesQueryHandler : IRequestHandler<GetJobSummariesQuery,
         // GetAllAsync/GetByDepartmentsOrCreatorAsync don't include Applications,
         // so we fetch each job by ID (which includes Applications) for count data.
         // Optimization: load all job IDs and query applications in bulk.
-        var jobIds = jobs.Select(j => j.Id).ToHashSet();
         var jobsWithApps = new Dictionary<string, (int Total, int Completed)>();
 
         foreach (var job in jobs)

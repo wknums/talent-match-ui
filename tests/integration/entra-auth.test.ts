@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RoleAssignment, RoleGroupMapping } from '../../src/types/index.js'
 import { createAuthMiddleware } from '../../server/middleware/auth.js'
 import { createAuthRouter } from '../../server/routes/auth.js'
+import { createUsersRouter } from '../../server/routes/users.js'
 import {
-  AuthorizationError,
   createAuthorizationResolver,
   type AuthorizationMembership,
   type AuthorizationRepositories,
@@ -26,6 +26,7 @@ const issuedAt = new Date('2026-07-25T12:00:00.000Z')
 const membership: AuthorizationMembership = {
   organizationId,
   organizationName: 'Analytical Engines',
+  defaultDepartmentId: departmentId,
   departments: [{ departmentId, departmentName: 'Engineering' }],
 }
 
@@ -37,6 +38,7 @@ const assignedUser = {
   entraTenantId: tenantId,
   entraObjectId: assignedObjectId,
   isActive: true,
+  authorizationVersion: 7,
   fullName: 'Ada Lovelace',
   email: 'ada@example.com',
   createdAt: issuedAt.toISOString(),
@@ -75,20 +77,25 @@ function claims(objectId = assignedObjectId): NormalizedEntraClaims {
 }
 
 function createRepositories(): AuthorizationRepositories {
+  const usersByIdentity = new Map<string, typeof assignedUser>([
+    [assignedObjectId, assignedUser],
+    [disabledObjectId, { ...assignedUser, userId: disabledObjectId, entraObjectId: disabledObjectId, isActive: false }],
+    [scopeObjectId, { ...assignedUser, userId: scopeObjectId, entraObjectId: scopeObjectId }],
+  ])
   return {
     users: {
-      getByEntraIdentity: vi.fn(async (_tenant, objectId) => {
-        if (objectId === assignedObjectId) return assignedUser
-        if (objectId === unassignedObjectId) return { ...assignedUser, userId: objectId, entraObjectId: objectId }
-        if (objectId === disabledObjectId) return { ...assignedUser, userId: objectId, entraObjectId: objectId, isActive: false }
-        if (objectId === scopeObjectId) return { ...assignedUser, userId: objectId, entraObjectId: objectId }
-        return undefined
+      getByEntraIdentity: vi.fn(async (_tenant, objectId) => usersByIdentity.get(objectId)),
+      upsertEntraProfile: vi.fn(async profile => {
+        const existing = usersByIdentity.get(profile.entraObjectId)
+        const persisted = {
+          ...assignedUser,
+          ...profile,
+          authorizationVersion: existing?.authorizationVersion ?? 0,
+          isActive: profile.entraObjectId === disabledObjectId ? false : true,
+        }
+        usersByIdentity.set(profile.entraObjectId, persisted)
+        return persisted
       }),
-      upsertEntraProfile: vi.fn(async profile => ({
-        ...assignedUser,
-        ...profile,
-        isActive: profile.entraObjectId === disabledObjectId ? false : true,
-      })),
       update: vi.fn(async () => undefined),
     },
     organizations: {
@@ -143,6 +150,7 @@ async function createTestServer() {
     audit,
     users: repositories.users,
   }))
+  app.use('/api/users', authMiddleware, createUsersRouter({ mode: 'entra' }))
   const server = app.listen(0)
   await once(server, 'listening')
   const port = (server.address() as AddressInfo).port
@@ -186,6 +194,7 @@ describe('Stack A Entra authentication contract', () => {
       fullName: assignedUser.fullName,
       email: assignedUser.email,
       globalRole: null,
+      authorizationVersion: 7,
       memberships: [membership],
       authorizations: [{
         role: 'recruiter',
@@ -209,6 +218,49 @@ describe('Stack A Entra authentication contract', () => {
       response.headers.get('x-correlation-id'),
     )
     expect(JSON.stringify(server.audit.appendAuthorizationEvent.mock.calls)).not.toContain('Bearer')
+  })
+
+  it('persists and reuses a pending profile for a valid unassigned identity', async () => {
+    const server = await setup()
+
+    const firstResponse = await server.request('/api/auth/me', bearer('opaque-unassigned-token'))
+    const secondResponse = await server.request('/api/auth/me', bearer('opaque-unassigned-token'))
+
+    expect(firstResponse.status).toBe(403)
+    await expect(firstResponse.json()).resolves.toMatchObject({ error: 'assignment_missing' })
+    expect(secondResponse.status).toBe(403)
+    await expect(secondResponse.json()).resolves.toMatchObject({ error: 'assignment_missing' })
+    expect(server.repositories.users.upsertEntraProfile).toHaveBeenCalledTimes(2)
+    expect(server.repositories.users.upsertEntraProfile).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      userId: unassignedObjectId,
+      entraTenantId: tenantId,
+      entraObjectId: unassignedObjectId,
+    }))
+    expect(server.repositories.users.upsertEntraProfile).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      userId: unassignedObjectId,
+      entraTenantId: tenantId,
+      entraObjectId: unassignedObjectId,
+    }))
+    const pendingEvents = server.audit.appendAuthorizationEvent.mock.calls
+      .filter(([, action]) => action === 'auth.profile.pending')
+    expect(pendingEvents).toEqual([[
+      unassignedObjectId,
+      'auth.profile.pending',
+      unassignedObjectId,
+      expect.objectContaining({ result: 'pending', tenantId }),
+      firstResponse.headers.get('x-correlation-id'),
+    ]])
+    expect(JSON.stringify(pendingEvents)).not.toContain('opaque-unassigned-token')
+  })
+
+  it('rejects a wrong-tenant token before repositories can discover a profile', async () => {
+    const server = await setup()
+
+    const response = await server.request('/api/auth/me', bearer('opaque-wrong-tenant-token'))
+
+    expect(response.status).toBe(401)
+    expect(server.repositories.users.getByEntraIdentity).not.toHaveBeenCalled()
+    expect(server.repositories.users.upsertEntraProfile).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -285,9 +337,44 @@ describe('Stack A Entra authentication contract', () => {
       expect(response.headers.get('x-correlation-id')).toMatch(/^[0-9a-f-]{36}$/i)
     },
   )
+
+  it.each([
+    '/',
+    `/${assignedObjectId}/reset-password`,
+    '/reset-requests',
+  ])('does not expose legacy user/password endpoint %s in Entra mode', async path => {
+    const server = await setup()
+
+    const response = await server.request(`/api/users${path}`, {
+      method: 'POST',
+      ...bearer('assigned'),
+      headers: {
+        ...bearer('assigned').headers,
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    })
+
+    expect([404, 405]).toContain(response.status)
+  })
 })
 
 describe('authorization resolver invariants', () => {
+  it.each([
+    ['missing', null],
+    ['foreign or inactive', missingDepartmentId],
+  ])('rejects a %s explicit default without returning a partial context', async (_case, defaultDepartmentId) => {
+    const repositories = createRepositories()
+    vi.mocked(repositories.organizations.getAuthorizationMemberships).mockResolvedValue([{
+      ...membership,
+      defaultDepartmentId,
+    }])
+    const resolver = createAuthorizationResolver(repositories)
+
+    await expect(resolver.resolve(claims()))
+      .rejects.toMatchObject({ code: 'membership_missing', statusCode: 403 })
+  })
+
   it('requires enabled mappings plus matching roles and groups for group assignments', async () => {
     const repositories = createRepositories()
     const groupAssignment = {

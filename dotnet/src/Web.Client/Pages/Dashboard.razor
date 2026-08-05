@@ -30,7 +30,7 @@
             <div>Failed</div>
         </div>
     </div>
-    <p style="font-size: 0.8rem; color: gray;">Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
+    <p style="font-size: 0.8rem; color: #595959;">Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
 }
 else if (!string.IsNullOrEmpty(statsLoadError))
 {
@@ -40,7 +40,14 @@ else if (!string.IsNullOrEmpty(statsLoadError))
 }
 
 <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
-    <select @bind="departmentFilter" style="padding: 0.5rem;">
+    <select @bind="organisationFilter" @bind:after="OnOrganisationFilterChanged" aria-label="Filter jobs by organisation" style="padding: 0.5rem;">
+        <option value="">All Organisations</option>
+        @foreach (var org in organisations)
+        {
+            <option value="@org">@org</option>
+        }
+    </select>
+    <select @bind="departmentFilter" aria-label="Filter jobs by department" style="padding: 0.5rem;">
         <option value="">All Departments</option>
         @foreach (var dept in departments)
         {
@@ -48,10 +55,10 @@ else if (!string.IsNullOrEmpty(statsLoadError))
         }
     </select>
     <button @onclick="LoadJobs">Filter</button>
-    <button @onclick="() => showCreateJob = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Create Job</button>
+    <button @onclick="() => showCreateJob = true" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">Create Job</button>
     @if (canViewAnalytics)
     {
-        <button @onclick='() => Navigation.NavigateTo("/analytics")' style="padding: 0.5rem 1rem; background: #38a169; color: white; border: none; border-radius: 4px;">View Analytics</button>
+        <button @onclick='() => Navigation.NavigateTo("/analytics")' style="padding: 0.5rem 1rem; background: #276749; color: white; border: none; border-radius: 4px;">View Analytics</button>
     }
 </div>
 
@@ -91,8 +98,8 @@ else if (!string.IsNullOrEmpty(statsLoadError))
                     }
                 </div>
                 <p style="margin: 0.25rem 0;">@job.Organisation — @job.Department</p>
-                <p style="font-size: 0.8rem; color: gray; margin: 0.25rem 0;">Posted @((DateTime.UtcNow - job.PostingDate).Days) days ago</p>
-                <p style="font-size: 0.8rem; color: gray; margin: 0.25rem 0;">Created @job.CreatedAt.ToString("MMM d, yyyy") by @job.CreatedByName</p>
+                <p style="font-size: 0.8rem; color: #595959; margin: 0.25rem 0;">Posted @((DateTime.UtcNow - job.PostingDate).Days) days ago</p>
+                <p style="font-size: 0.8rem; color: #595959; margin: 0.25rem 0;">Created @job.CreatedAt.ToString("MMM d, yyyy") by @job.CreatedByName</p>
                 @if (job.TotalApplications > 0)
                 {
                     <p style="font-size: 0.8rem; color: #555; margin: 0.25rem 0;">@job.CompletedApplications / @job.TotalApplications completed</p>
@@ -124,8 +131,8 @@ else if (string.IsNullOrEmpty(jobLoadError))
     private List<JobSummaryDto> jobs = new();
     private SystemStatsDto? stats;
     private DateTime lastUpdated;
+    private string organisationFilter = "";
     private string departmentFilter = "";
-    private List<string> departments = new();
     private System.Threading.Timer? refreshTimer;
     private bool showCreateJob;
     private string? jobLoadError;
@@ -136,8 +143,25 @@ else if (string.IsNullOrEmpty(jobLoadError))
     private bool showDeleteDialog;
     private JobSummaryDto? jobToDelete;
 
+    private List<string> organisations => jobs
+        .Select(j => j.Organisation).Distinct().OrderBy(o => o).ToList();
+
+    // Departments are scoped to the selected organisation so the two filters cannot form an empty combination.
+    private IEnumerable<JobSummaryDto> organisationScopedJobs => string.IsNullOrEmpty(organisationFilter)
+        ? jobs : jobs.Where(j => j.Organisation == organisationFilter);
+
+    private List<string> departments => organisationScopedJobs
+        .Select(j => j.Department).Distinct().OrderBy(d => d).ToList();
+
     private IEnumerable<JobSummaryDto> filteredJobs => string.IsNullOrEmpty(departmentFilter)
-        ? jobs : jobs.Where(j => j.Department == departmentFilter);
+        ? organisationScopedJobs
+        : organisationScopedJobs.Where(j => j.Department == departmentFilter);
+
+    private void OnOrganisationFilterChanged()
+    {
+        if (!string.IsNullOrEmpty(departmentFilter) && !departments.Contains(departmentFilter))
+            departmentFilter = "";
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -165,7 +189,6 @@ else if (string.IsNullOrEmpty(jobLoadError))
         {
             jobLoadError = null;
             jobs = await Api.GetJobsAsync();
-            departments = jobs.Select(j => j.Department).Distinct().OrderBy(d => d).ToList();
         }
         catch (Exception ex)
         {

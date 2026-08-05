@@ -50,6 +50,7 @@ The existing shared `Users` table remains the user profile surface for both stac
 | `PasswordHash` | string(128) | Simple only | Null for Entra users |
 | `PasswordResetRequired` | boolean | Simple only | Always false for Entra users |
 | `IsActive` | boolean | Yes | Local application deny switch; defaults true |
+| `AuthorizationVersion` | integer | Entra only | Optimistic concurrency token; starts at 0 and increments after each successful access-management mutation |
 | `CreatedAt` | UTC timestamp | Yes | Immutable creation time |
 | `LastLogin` | UTC timestamp | No | Updated after successful authorization resolution |
 
@@ -65,6 +66,8 @@ The existing shared `Users` table remains the user profile surface for both stac
 - `entra` requires both Entra identifiers, requires null `PasswordHash`, and sets `PasswordResetRequired=false`.
 - Email, username, and full name changes never change identity or authorization.
 - An Entra user has no tenant-wide role snapshot; active scoped assignments and validated token claims are always required.
+- A tenant-validated first sign-in may create or refresh an active profile with no memberships or assignments; this is a pending-access profile and remains denied with `assignment_missing` until atomic onboarding succeeds.
+- A disabled Entra profile remains discoverable to authorized administrators but always fails protected authorization with `identity_disabled`.
 
 ## Entity: Organization
 
@@ -104,12 +107,13 @@ Registers a user in an organization independently of role.
 | `Id` | UUID | Yes | Primary key |
 | `UserId` | UUID/string | Yes | Foreign key to `Users.Id` |
 | `OrganizationId` | UUID | Yes | Foreign key to active organization |
+| `DefaultDepartmentMembershipId` | UUID | Active only | Composite reference to one `DepartmentMembership` for this user and organization |
 | `Status` | enum | Yes | `active` or `revoked` |
 | `EffectiveAt` | UTC timestamp | Yes | Activation time |
 | `RevokedAt` | UTC timestamp | Revoked only | Required when revoked |
 | `UpdatedBy` | string | Yes | Actor immutable identity |
 
-At most one active membership exists per (`UserId`, `OrganizationId`). Every active organization membership must have at least one active `DepartmentMembership` for that user in the same organization; activation and revocation enforce this invariant transactionally.
+At most one active membership exists per (`UserId`, `OrganizationId`). Every active organization membership must have at least one active `DepartmentMembership` for that user in the same organization and exactly one valid default pointer. The pointer is nullable in storage only for migration staging and revoked history. Activation, default replacement, and revocation enforce the active invariant transactionally.
 
 ## Entity: DepartmentMembership
 
@@ -127,6 +131,14 @@ Registers a user in a department under one of the user's organizations.
 | `UpdatedBy` | string | Yes | Actor immutable identity |
 
 At most one active membership exists per (`UserId`, `DepartmentId`). A composite (`DepartmentId`, `OrganizationId`) reference prevents cross-organization membership.
+
+### Explicit Default Constraints
+
+- Add a candidate key on `DepartmentMembership (Id, UserId, OrganizationId)`.
+- Add a composite foreign key from `OrganizationMembership (DefaultDepartmentMembershipId, UserId, OrganizationId)` to that candidate key with restricted deletion.
+- A service-level invariant requires the referenced department membership and its department to be active whenever the organization membership is active; ordinary Azure SQL and SQLite foreign keys cannot express current status across rows.
+- Changing a default updates one organization-membership pointer and never creates a membership, assignment, or authorization.
+- Revoking a non-default department membership does not change the default. Revoking the default requires a replacement in the same transaction unless the entire organization membership is revoked.
 
 ## Entity: RoleGroupMapping
 
@@ -188,6 +200,36 @@ Represents the application's explicit authorization of one Entra user. It comple
 - A user cannot activate an assignment when `Users.IsActive=false`.
 - Assignment rows are revoked, never deleted, so history remains auditable.
 
+## Logical Model: EntraAccessAggregate
+
+The aggregate is returned by access-management search/detail and mutation operations. It is assembled from persisted entities and is not a separate table.
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `objectId` | UUID | Immutable target identity in the configured tenant |
+| `username`, `fullName`, `email` | display fields | Presentation only; updates do not change identity |
+| `isActive` | boolean | Application-wide activation state; only application Admin may change globally |
+| `authorizationVersion` | integer | Required as `expectedVersion` for mutations |
+| `organizations` | array | Only organization scopes visible to the actor |
+| `organizations[].organizationId` | UUID | Immutable application scope |
+| `organizations[].status` | enum | `active` or `revoked` |
+| `organizations[].departmentIds` | UUID array | Complete active department-membership set in that organization |
+| `organizations[].defaultDepartmentId` | UUID | Exactly one member of `departmentIds` while active |
+| `organizations[].roleAssignments` | array | Complete delegated role set managed by the aggregate command; group/bootstrap rows are read-only |
+
+### Logical Model: PutOrganizationAccessRequest
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `expectedVersion` | integer | Yes | `409` when stale unless the desired result already exists |
+| `profile` | object | Yes | Presentation fields only; immutable tenant/object IDs come from the path/configuration |
+| `membership.status` | enum | Yes | `active` or `revoked` |
+| `membership.departmentIds` | UUID array | Active only | Non-empty, unique, and all owned by the path organization |
+| `membership.defaultDepartmentId` | UUID | Active only | Must occur in `departmentIds` |
+| `roleAssignments` | array | Yes | Complete desired delegated assignments for the path organization; excludes global Admin |
+
+The configured tenant is never request data. One command changes one target organization only and preserves unrelated organizations, group assignments, and bootstrap assignments.
+
 ## Existing Entity: Job
 
 Jobs are migrated from free-text scope to normalized authorization keys.
@@ -211,7 +253,9 @@ Returned by `/api/auth/me` and attached to protected server requests after succe
 | `username`, `fullName`, `email` | User display profile |
 | `globalRole` | `admin` for a valid bootstrap/platform assignment; otherwise null; membership is still required |
 | `memberships` | Active organizations and their active departments |
+| `memberships[].defaultDepartmentId` | Explicit active default selected for that organization |
 | `authorizations` | All active role assignments with role, organization ID, optional department ID, and source |
+| `authorizationVersion` | Current optimistic version of the Entra access aggregate |
 | `tokenIssuedAt` | Access-token `iat` |
 | `refreshRequiredAt` | `tokenIssuedAt + 15 minutes` |
 
@@ -226,8 +270,9 @@ An Entra request is authorized only when all conditions hold:
 5. For each group assignment, token `groups` contains the mapped group and the mapping is enabled.
 6. For `bootstrap` source, the user object ID equals the configured bootstrap administrator and the user has at least one valid organization/department membership.
 7. Every scoped assignment has the required active organization and department memberships.
-8. The requested job/action has a valid organization/department pair and is satisfied by an applicable assignment.
-9. If multiple assignments apply, the highest role in the hierarchy is used only inside that exact scope; assignments never broaden access into another organization.
+8. Every active organization membership has a valid explicit default pointing to one of its active department memberships; this validation never grants authority.
+9. The requested job/action has a valid organization/department pair and is satisfied by an applicable assignment.
+10. If multiple assignments apply, the highest role in the hierarchy is used only inside that exact scope; assignments never broaden access into another organization.
 
 Failure of any invariant produces no partial authorization context.
 
@@ -246,13 +291,20 @@ Reuse the shared immutable audit stream. Required authorization actions are:
 - `auth.membership.revoked`
 - `auth.assignment.activated`
 - `auth.assignment.revoked`
+- `auth.access.onboarded`
+- `auth.access.updated`
+- `auth.access.disabled`
+- `auth.access.reactivated`
+- `auth.access.failed`
 - `auth.organization.changed`
 - `auth.department.changed`
 - `auth.seed.checked`
 - `auth.seed.applied`
 - `auth.seed.failed`
+- `navigation.sidebar.collapsed`
+- `navigation.sidebar.expanded`
 
-Audit details contain tenant/object IDs, role, assignment/mapping IDs, result code, and correlation ID. They never contain access tokens, refresh tokens, credentials, or complete raw claim sets.
+Access-management audit details contain actor and target tenant/object IDs, affected organization/department/default/role IDs, requested action, resulting authorization version when successful, result/reason code, and correlation ID. One success outcome is inserted in the aggregate transaction; one failure outcome is inserted after rollback. Navigation audit details contain the authenticated actor, requested collapsed/expanded state, correlation ID, timestamp, and success result; the client does not change or persist navigation state until that immutable outcome succeeds. Audit records never contain access tokens, refresh tokens, credentials, or complete raw claim sets.
 
 ## Relationships
 
@@ -263,6 +315,7 @@ User 1 ─────── 1..* DepartmentMembership
 Organization 1 ─────── 1..* Department
 Organization 1 ─────── 0..* OrganizationMembership
 Department 1 ─────── 0..* DepartmentMembership
+OrganizationMembership 1 ─────── 1 default DepartmentMembership (while active)
 Organization/Department 1 ─────── 0..* Job
 RoleGroupMapping 1 ─────── 0..* RoleAssignment (group source only)
 User/Membership/RoleAssignment/RoleGroupMapping 1 ─────── 0..* ProcessingEvent (logical audit link)
@@ -278,9 +331,11 @@ active ──documented revoke starts──────> revoked
 revoked ──documented reassign succeeds─> active
 ```
 
-- New scoped assignment: ensure organization/department membership, Entra group membership, and app-role assignment first, then activate SQL assignment.
-- Revocation: revoke the targeted SQL assignment first, then remove only the corresponding Entra group membership; retain unrelated scopes and memberships.
-- Role change: revoke old SQL assignment, complete Entra changes, then activate the new SQL assignment.
+- New group-sourced assignment: ensure organization/department membership, Entra group membership, and app-role assignment first, then activate the SQL assignment.
+- New delegated assignment: validate the tenant-verified profile, actor authority, and memberships, then activate the audited SQL assignment without Microsoft Graph mutation.
+- Group revocation: revoke the targeted SQL assignment first, then remove only the corresponding Entra group membership; retain unrelated scopes and memberships.
+- Delegated revocation: revoke only the targeted SQL assignment and retain unrelated scopes and memberships.
+- Role change: revoke the old assignment, complete source-specific group changes when applicable, then activate the replacement assignment.
 - Partial failures remain denied. Rerunning the operation converges by idempotency key.
 
 ### Role Group Mapping
@@ -299,14 +354,59 @@ Mapping disablement immediately denies all dependent assignments. Mapping scope 
 - Departments cannot be reparented. A replacement department is created in the target organization and references are explicitly migrated before retirement.
 - Organization Admin operations require a matching active `organization_admin` assignment for the target organization and cannot create global Admin assignments.
 
+### Entra Access Aggregate
+
+```text
+pending profile ──atomic onboarding──> active scoped access
+active scoped access ──scope update──> active scoped access (version + 1)
+active scoped access ──global disable──> disabled profile
+disabled profile ──reactivate + valid scope──> active scoped access
+active organization membership ──revoke scope──> revoked organization membership
+```
+
+- Onboard/reactivate: create or activate department memberships first, then publish the active organization membership with an explicit default and delegated assignments in the same transaction.
+- Add department: leave the default unchanged unless the request explicitly selects the new department.
+- Change default: validate the target membership and update one pointer.
+- Remove default department: require a replacement in the same transaction unless revoking the organization membership.
+- Retire department: require valid replacement defaults for every active organization membership that points to it before retirement.
+- Revoke organization membership: revoke that organization's department memberships and delegated assignments together; preserve unrelated organizations and immutable history.
+- Reactivate organization membership: require an explicit currently active default; never reuse a stale pointer silently.
+- Repeated equivalent commands converge. A divergent stale command returns `409` and leaves the aggregate unchanged.
+
+## Session Model: Stack B NavigationShellState
+
+This state is browser-session presentation data and is not stored in the shared database or authorization context.
+
+| Field | Lifetime | Rules |
+| --- | --- | --- |
+| `desktopCollapsed` | Current browser tab/session | Persist in `sessionStorage`; restore across routes and same-tab reloads |
+| `compactOverlayOpen` | Current rendered shell | Never persist; close on route change, backdrop, Escape, or compact/desktop transition |
+| `isCompact` | Current viewport | Derived from the shell breakpoint; does not change authorization or route |
+
+The routed body remains mounted while these fields change so unsaved component input and route state are preserved.
+
+### Navigation Audit Contract
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `action` | enum | `collapse` or `expand` |
+| `correlationId` | UUID | Generated once by the client and returned unchanged |
+| `requestedAt` | timestamp | UTC request time |
+| `actorObjectId` | UUID | Server-derived from the validated token; never accepted from request data |
+| `recordedAt` | timestamp | Server timestamp for the immutable audit outcome |
+
+The audit endpoint authenticates the actor, derives immutable actor identity from the token, and appends exactly one `navigation.sidebar.collapsed` or `navigation.sidebar.expanded` outcome. The client updates `desktopCollapsed` or `compactOverlayOpen` and writes `sessionStorage` only after a successful response with the matching correlation ID. Timeout or failure leaves state and preference unchanged and produces a visible retryable notification.
+
 ## Migration and Backfill
 
-1. Add nullable Entra fields to `Users`; add `AuthenticationProvider` and `IsActive` with safe defaults. Retain legacy role/department fields for simple mode only.
+1. Add nullable Entra fields to `Users`; add `AuthenticationProvider`, `IsActive`, and `AuthorizationVersion` with safe defaults. Retain legacy role/department fields for simple mode only.
 2. Backfill all existing rows to `AuthenticationProvider=simple` and `IsActive=true` without changing credentials or IDs.
 3. Make `PasswordHash` nullable only after the provider constraint exists.
 4. Replace the global username unique index with a simple-provider filtered unique index.
 5. Create `Organizations`, `Departments`, `OrganizationMemberships`, `DepartmentMemberships`, `RoleGroupMappings`, and `RoleAssignments` with equivalent Azure SQL and SQLite definitions.
 6. Normalize distinct existing job organization/department text pairs. Stop migration for blank or ambiguous pairs; do not guess parentage.
 7. Add `OrganizationId` and `DepartmentId` to `Jobs`, backfill only validated pairs, then enforce the composite foreign key and required fields.
-8. Add matching EF Core entities/migration and Stack A repositories; retain guarded SQL schema updates for shared bootstrap.
-9. Do not convert existing users into Entra memberships automatically. Entra user profiles and memberships are provisioned only by documented assignment/seed flows.
+8. Add nullable `DefaultDepartmentMembershipId` and the department-membership candidate key. Backfill active organization memberships only when exactly one valid active department membership exists; stop readiness for zero or multiple candidates and require explicit operator selection.
+9. After backfill validation, add the composite default foreign key and enforce the active aggregate invariant in both persistence implementations. Existing SQLite databases use a guarded table rebuild where required.
+10. Add matching EF Core entities/migration and Stack A repositories; retain guarded SQL schema updates for shared bootstrap.
+11. Do not convert existing simple users into Entra memberships automatically. A validated Entra sign-in may create a pending profile, while memberships/defaults/assignments are provisioned only by the documented aggregate or seed flows.

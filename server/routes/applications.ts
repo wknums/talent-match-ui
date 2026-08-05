@@ -4,8 +4,8 @@ import type { AuthenticatedRequest } from '../middleware/auth.js'
 import { jobRepo, applicationRepo } from '../storage/repos/index.js'
 import { auditService } from '../services/audit.js'
 import type {
-  Application, ApplicationDocument, ExtractionArtifact,
-  ScoringRun, AggregatedResult, ManualReviewData, ManualReviewAuditEntry
+  Application, ApplicationDocument,
+  ManualReviewData, ManualReviewAuditEntry
 } from '../../src/types/index.js'
 
 function normalizeCategoryName(name: string): string {
@@ -141,7 +141,7 @@ export function createApplicationsRouter() {
       }
 
       const includeTestCases = req.query.includeTestCases === 'true'
-      let apps = includeTestCases
+      const apps = includeTestCases
         ? await applicationRepo.getByJobIdAll(jobId)
         : await applicationRepo.getByJobId(jobId)
 
@@ -335,7 +335,6 @@ export function createApplicationsRouter() {
       const effectiveJobId = existing?.jobId || req.body.jobId || ''
       const job = effectiveJobId ? await jobRepo.getById(effectiveJobId) : null
       const rubricCategories = job?.currentVersion.rubric ?? []
-      const categoryNameById = new Map(job?.currentVersion.rubric.map(category => [category.id, category.name]) ?? [])
       const existingRubricScores = (existing?.rubricScores || {}) as Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>
       const incomingRubricScores = (rubricScores || {}) as Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>
       const responseRubricScores: Record<string, { score: number; points: number; maxPoints: number; comment: string }> = {}

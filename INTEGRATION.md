@@ -160,35 +160,97 @@ Create a `.env` file in the project root:
 
 ```bash
 VITE_API_BASE_URL=https://your-api.azure.com/api
-VITE_ENABLE_AUTH=true
-VITE_AZURE_AD_CLIENT_ID=your-client-id
-VITE_AZURE_AD_TENANT_ID=your-tenant-id
 ```
 
-### Authentication Integration
-
-For Azure AD authentication, install and configure MSAL:
+Authentication is selected by `APP_AUTH_MODE` (`simple` or `entra`). In Entra mode both stacks read
+the same shared block:
 
 ```bash
-npm install @azure/msal-browser @azure/msal-react
+APP_AUTH_MODE=entra
+AZURE_TENANT_ID=<tenant-guid>
+ENTRA_API_APP_CLIENT_ID=<protected-api-app-client-id>
+ENTRA_API_IDENTIFIER_URI=api://<protected-api-app-client-id>
+ENTRA_API_SCOPE=access_as_user
+ENTRA_STACK_A_CLIENT_ID=<node-react-spa-client-id>
+ENTRA_STACK_B_CLIENT_ID=<blazor-spa-client-id>
+ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID=<first-admin-object-id>
 ```
 
-Create an auth wrapper:
+### Cross-Stack Authentication
 
-```typescript
-// src/lib/auth.ts
-import { PublicClientApplication } from '@azure/msal-browser'
+Stack A (Node/Express + React) and Stack B (ASP.NET Core + Blazor WebAssembly) are separate public
+SPA clients in front of one protected API registration. They share behaviour, not code:
 
-const msalConfig = {
-  auth: {
-    clientId: import.meta.env.VITE_AZURE_AD_CLIENT_ID,
-    authority: `https://login.microsoftonline.com/${import.meta.env.VITE_AZURE_AD_TENANT_ID}`,
-    redirectUri: window.location.origin,
-  },
-}
+| Concern | Stack A | Stack B | Shared contract |
+| --- | --- | --- | --- |
+| Sign-in | `@azure/msal-browser` + `@azure/msal-react` | `Microsoft.Authentication.WebAssembly.Msal` | Authorization code + PKCE, no client secret |
+| Token validation | `jose` remote JWKS | `Microsoft.Identity.Web` | Same issuer, audience, `scp`, and `azp` checks |
+| Client allow-list | `ENTRA_STACK_A_CLIENT_ID`, `ENTRA_STACK_B_CLIENT_ID` | same | `azp` must be a registered SPA client |
+| Freshness | 15-minute maximum token age | same | one silent refresh, then `token_stale` |
+| Authorization state | `/api/auth/me` | `/api/auth/me` | Persisted assignments only, never Graph |
+| Public configuration | `GET /api/auth/config` | `GET /api/auth/config` | No secrets returned |
 
-export const msalInstance = new PublicClientApplication(msalConfig)
+Both stacks expose identical route shapes so a client can move between them without changing calls.
+
+### Access Management Endpoints (Entra mode)
+
+| HTTP | Endpoint | Description |
+| --- | --- | --- |
+| GET | `/api/access-management/users` | Search and page identities within the actor's scope |
+| GET | `/api/access-management/users/:objectId` | Inspect one identity's memberships and assignments |
+| PUT | `/api/access-management/users/:objectId/organizations/:organizationId` | Grant or update organization access with an explicit default department |
+| DELETE | `/api/access-management/users/:objectId/organizations/:organizationId/role-assignments/:assignmentId` | Revoke a single role assignment |
+
+Mutations take `?expectedVersion=<n>` and fail with `version_conflict` when the stored authorization
+version has moved on.
+
+### Organization Endpoints (Entra mode)
+
+| HTTP | Endpoint | Description |
+| --- | --- | --- |
+| GET | `/api/organizations` | List organizations visible to the actor |
+| POST | `/api/organizations` | Create an organization |
+| POST | `/api/organizations/:organizationId/departments` | Create a department |
+| POST | `/api/organizations/:organizationId/memberships` | Create or update a membership and its explicit default department |
+| POST | `/api/organizations/:organizationId/role-assignments` | Create a scoped role assignment |
+| DELETE | `/api/organizations/:organizationId/role-assignments/:assignmentId` | Remove a scoped role assignment |
+
+### Canonical Error Mapping
+
+Every authorization failure in both stacks returns the same JSON body and an `X-Correlation-ID`
+header:
+
+```json
+{ "error": "assignment_missing", "message": "No active application access is assigned to this identity.", "correlationId": "..." }
 ```
+
+| Code | Status | Meaning |
+| --- | --- | --- |
+| `auth_required` | 401 | No usable token |
+| `invalid_token` | 401 | Token failed validation |
+| `wrong_tenant` | 401 | Token from another tenant |
+| `invalid_audience` | 401 | Token not issued for the TalentMatch API |
+| `unauthorized_client` | 401 | `azp` is not a registered SPA client |
+| `token_stale` | 401 | Token older than 15 minutes |
+| `role_missing` | 403 | No supported application role |
+| `role_conflict` | 403 | Roles or assignment shape cannot be reconciled |
+| `assignment_missing` | 403 | No active application access |
+| `assignment_revoked` | 403 | Assignment exists but is inactive |
+| `scope_unmapped` | 403 | Group mapping has no active application scope |
+| `membership_missing` | 403 | No active organization or department membership |
+| `identity_disabled` | 403 | Application identity disabled |
+| `forbidden` | 403 | Operation not permitted for this actor |
+| `invalid_scope` | 400 | Request payload or scope is invalid |
+| `invalid_job_scope` | 400 | Job organization and department are not a valid pair |
+| `not_found` | 404 | Resource does not exist within the actor's scope |
+| `version_conflict` | 409 | Optimistic concurrency check failed |
+| `conflict` | 409 | Change conflicts with current state |
+| `service_unavailable` | 503 | Dependency temporarily unavailable |
+| `persistence_unavailable` | 503 | Store temporarily unavailable |
+| `audit_unavailable` | 503 | Audit write failed; the operation was not applied |
+| `internal_error` | 500 | Unexpected failure, details withheld |
+
+Response bodies never contain tokens, credentials, secrets, stack traces, or exception text.
 
 ## Project Structure
 

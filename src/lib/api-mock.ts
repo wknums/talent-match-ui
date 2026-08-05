@@ -1,6 +1,5 @@
 ﻿import type {
   Job,
-  JobConfigVersion,
   Application,
   ScoringRun,
   AggregatedResult,
@@ -678,7 +677,7 @@ export const mockAPI = {
     ]
   },
 
-  async retryDLQItem(itemId: string): Promise<void> {
+  async retryDLQItem(_itemId: string): Promise<void> {
     await delay(500)
   },
 
@@ -689,7 +688,7 @@ export const mockAPI = {
     }
   },
 
-  async getAuditEvents(filters?: {
+  async getAuditEvents(_filters?: {
     entityType?: string
     entityId?: string
     startDate?: string
@@ -849,7 +848,7 @@ export const mockAPI = {
     }
   },
 
-  async generatePrompt(jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
+  async generatePrompt(_jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
     await delay(2000)
     return {
       promptText: 'You are evaluating a candidate for a position. Score each rubric category from 0-100 based on evidence from their documents.',
@@ -873,7 +872,7 @@ export const mockAPI = {
     }
   },
 
-  async getTestRuns(jobId: string, promptId: string): Promise<PromptTestRun[]> {
+  async getTestRuns(_jobId: string, _promptId: string): Promise<PromptTestRun[]> {
     await delay(300)
     return []
   },

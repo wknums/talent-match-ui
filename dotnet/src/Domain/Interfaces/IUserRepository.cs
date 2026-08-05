@@ -9,6 +9,7 @@ public interface IUserRepository
     Task<User?> GetByUsernameAsync(string username, CancellationToken cancellationToken = default);
     Task<User?> GetByEntraIdentityAsync(string tenantId, string objectId, CancellationToken cancellationToken = default);
     Task<User> UpsertEntraProfileAsync(User user, CancellationToken cancellationToken = default);
+    Task<bool> TryAdvanceAuthorizationVersionAsync(string id, int expectedVersion, CancellationToken cancellationToken = default);
     Task SetActiveAsync(string id, bool isActive, CancellationToken cancellationToken = default);
     Task UpdateLastLoginAsync(string id, DateTime lastLogin, CancellationToken cancellationToken = default);
     Task AddAsync(User user, CancellationToken cancellationToken = default);

@@ -6,11 +6,11 @@
     <h4>Upload Applications</h4>
     <p>Select PDF, MD, DOCX, TXT, JPG, or PNG files to upload (max 15 MB each).</p>
 
-    <div style="border: 2px dashed @(isDragOver ? "#3182ce" : "#ccc"); border-radius: 8px; padding: 2rem; text-align: center; margin-bottom: 1rem; background: @(isDragOver ? "#ebf8ff" : "transparent"); transition: all 0.2s;"
+    <div style="border: 2px dashed @(isDragOver ? "#2b6cb0" : "#ccc"); border-radius: 8px; padding: 2rem; text-align: center; margin-bottom: 1rem; background: @(isDragOver ? "#ebf8ff" : "transparent"); transition: all 0.2s;"
          @ondragenter="() => isDragOver = true"
          @ondragleave="() => isDragOver = false"
          @ondragover:preventDefault>
-        <p style="margin: 0 0 0.5rem 0; font-size: 1.2rem;">📄</p>
+        <p style="margin: 0 0 0.5rem 0; font-size: 1.25rem;">📄</p>
         <p style="margin: 0;">Drag & drop files here, or click to browse</p>
         <InputFile OnChange="HandleFileSelection" multiple style="margin-top: 0.5rem;" accept=".pdf,.md,.docx,.txt,.jpg,.png" />
     </div>
@@ -33,7 +33,7 @@
                     }
                     else if (isUploading)
                     {
-                        <span style="color: #3182ce;">⏳</span>
+                        <span style="color: #2b6cb0;">⏳</span>
                     }
                     <button @onclick="() => fileEntries.Remove(entry)" style="color: red; border: none; background: none; cursor: pointer;">✕</button>
                 </div>

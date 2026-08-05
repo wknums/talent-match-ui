@@ -70,6 +70,8 @@ export function DocumentViewer({ applicationId, document: doc, className = '' }:
       } else {
         // Last-resort: attempt to decode as text so users can still see something useful.
         const text = new TextDecoder().decode(buffer)
+        // Tab, LF and CR are legitimate printable-text markers here.
+        // eslint-disable-next-line no-control-regex
         if (text && /[\x09\x0A\x0D\x20-\x7E]/.test(text)) {
           setTextContent(text)
         }

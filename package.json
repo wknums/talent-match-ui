@@ -13,7 +13,11 @@
         "lint": "eslint .",
         "preview": "vite preview",
         "test": "vitest run",
-        "test:watch": "vitest"
+        "test:auth-parity": "tsx tests/integration/run-auth-parity.ts",
+        "test:watch": "vitest",
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui",
+        "test:e2e:auth": "tsx tests/e2e/capture-auth-state.ts"
     },
     "dependencies": {
         "@azure/identity": "^4.13.0",

@@ -14,9 +14,22 @@ import type {
   ScoringPrompt,
   PromptTestRun,
   PromptTestRunDetail,
-  AuthErrorCode,
   AuthenticationProvider,
   AuthorizationContext,
+  CanonicalApiError,
+  EntraAccessUser,
+  EntraAccessUserPage,
+  PutOrganizationAccessRequest,
+  UpdateEntraAccessUserRequest,
+  CreateOrganizationAdminRequest,
+  CreateOrganizationDepartmentRequest,
+  GrantOrganizationRoleRequest,
+  OrganizationAdminDepartment,
+  OrganizationAdminMembership,
+  OrganizationAdminOrganization,
+  OrganizationAdminRoleAssignment,
+  RegisterOrganizationMembershipRequest,
+  UpdateOrganizationDepartmentRequest,
 } from '@/types'
 
 function normalizeMustHaveResult(raw: any) {
@@ -181,7 +194,7 @@ export class TalentMatchApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
-    public readonly errorCode?: AuthErrorCode,
+    public readonly errorCode?: CanonicalApiError['error'],
     public readonly correlationId?: string,
   ) {
     super(message)
@@ -222,7 +235,7 @@ function isIdempotent(method: string): boolean {
 
 async function readApiError(response: Response): Promise<TalentMatchApiError> {
   const body = await response.json().catch(() => ({ message: response.statusText })) as {
-    error?: AuthErrorCode
+    error?: CanonicalApiError['error']
     message?: string
     correlationId?: string
   }
@@ -387,6 +400,117 @@ export const realAPI = {
     })
   },
 
+  // Entra access management
+  async listEntraAccessUsers(options: {
+    search?: string
+    organizationId?: string
+    status?: 'pending' | 'active' | 'disabled'
+    cursor?: string
+    limit?: number
+  } = {}): Promise<EntraAccessUserPage> {
+    const query = new URLSearchParams()
+    if (options.search) query.set('search', options.search)
+    if (options.organizationId) query.set('organizationId', options.organizationId)
+    if (options.status) query.set('status', options.status)
+    if (options.cursor) query.set('cursor', options.cursor)
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    const suffix = query.size > 0 ? `?${query}` : ''
+    return fetchJSON(`${API_BASE}/access-management/users${suffix}`)
+  },
+
+  async getEntraAccessUser(objectId: string): Promise<EntraAccessUser> {
+    return fetchJSON(`${API_BASE}/access-management/users/${encodeURIComponent(objectId)}`)
+  },
+
+  async updateEntraAccessUser(
+    objectId: string,
+    request: UpdateEntraAccessUserRequest,
+  ): Promise<EntraAccessUser> {
+    return fetchJSON(`${API_BASE}/access-management/users/${encodeURIComponent(objectId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async putEntraOrganizationAccess(
+    objectId: string,
+    organizationId: string,
+    request: PutOrganizationAccessRequest,
+  ): Promise<EntraAccessUser> {
+    return fetchJSON(
+      `${API_BASE}/access-management/users/${encodeURIComponent(objectId)}/organizations/${encodeURIComponent(organizationId)}`,
+      { method: 'PUT', body: JSON.stringify(request) },
+    )
+  },
+
+  async revokeEntraRoleAssignment(
+    objectId: string,
+    organizationId: string,
+    assignmentId: string,
+    expectedVersion: number,
+  ): Promise<EntraAccessUser> {
+    return fetchJSON(
+      `${API_BASE}/access-management/users/${encodeURIComponent(objectId)}/organizations/${encodeURIComponent(organizationId)}/role-assignments/${encodeURIComponent(assignmentId)}?expectedVersion=${expectedVersion}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  // Organization administration
+  async createOrganization(request: CreateOrganizationAdminRequest): Promise<OrganizationAdminOrganization> {
+    return fetchJSON(`${API_BASE}/organizations`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async createOrganizationDepartment(
+    organizationId: string,
+    request: CreateOrganizationDepartmentRequest,
+  ): Promise<OrganizationAdminDepartment> {
+    return fetchJSON(`${API_BASE}/organizations/${encodeURIComponent(organizationId)}/departments`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async updateOrganizationDepartment(
+    organizationId: string,
+    departmentId: string,
+    request: UpdateOrganizationDepartmentRequest,
+  ): Promise<OrganizationAdminDepartment> {
+    return fetchJSON(
+      `${API_BASE}/organizations/${encodeURIComponent(organizationId)}/departments/${encodeURIComponent(departmentId)}`,
+      { method: 'PATCH', body: JSON.stringify(request) },
+    )
+  },
+
+  async registerOrganizationMembership(
+    organizationId: string,
+    request: RegisterOrganizationMembershipRequest,
+  ): Promise<OrganizationAdminMembership> {
+    return fetchJSON(`${API_BASE}/organizations/${encodeURIComponent(organizationId)}/memberships`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async grantOrganizationRole(
+    organizationId: string,
+    request: GrantOrganizationRoleRequest,
+  ): Promise<OrganizationAdminRoleAssignment> {
+    return fetchJSON(`${API_BASE}/organizations/${encodeURIComponent(organizationId)}/role-assignments`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async revokeOrganizationRole(organizationId: string, assignmentId: string): Promise<void> {
+    await fetchVoid(
+      `${API_BASE}/organizations/${encodeURIComponent(organizationId)}/role-assignments/${encodeURIComponent(assignmentId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
   // Jobs
   async getJobs(): Promise<Job[]> {
     return fetchJSON(`${API_BASE}/jobs`)
@@ -480,7 +604,7 @@ export const realAPI = {
     })
   },
 
-  async updateJobRubric(jobId: string, rubricDocumentId: string): Promise<void> {
+  async updateJobRubric(_jobId: string, _rubricDocumentId: string): Promise<void> {
     // No-op for now; rubric is updated via config
   },
 

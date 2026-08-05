@@ -12,10 +12,9 @@ import { api } from '@/lib/api'
 import { getCurrentUser as authGetCurrentUser } from '@/lib/auth'
 import { buildStackBManualReviewPrepopulation, deriveCandidateNameFromScoringRuns, normalizeManualReviewForRubric } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { DocumentViewer } from '@/components/DocumentViewer'
-import type { Application, Job, AggregatedResult, ManualReviewData, ManualReviewAuditEntry, ScoringRun } from '@/types'
+import type { Application, Job, AggregatedResult, ManualReviewData, ScoringRun } from '@/types'
 
 interface ManualReviewViewProps {
   applicationId: string
@@ -63,7 +62,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       if (user) {
         setCurrentUser({ login: user.username, name: user.fullName })
       }
-    } catch (error) {
+    } catch {
       setCurrentUser({ login: 'reviewer', name: 'Reviewer' })
     }
   }
@@ -308,7 +307,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       setReviewData(nextReview)
       setBaselineReviewData(nextReview)
       toast.success('Manual review saved successfully')
-    } catch (error) {
+    } catch {
       toast.error('Failed to save review')
     } finally {
       setSaving(false)

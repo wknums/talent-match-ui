@@ -1,6 +1,8 @@
 ﻿using System.Text.Json;
 using FluentValidation;
 using MediatR;
+using TalentMatch.Application.Authorization;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Application.Jobs.Commands;
 using TalentMatch.Application.Jobs.Queries;
 
@@ -11,6 +13,31 @@ public static class JobsEndpoints
     public static void MapJobsEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/jobs").WithTags("Jobs").RequireAuthorization();
+        group.AddEndpointFilter(async (context, next) =>
+        {
+            try
+            {
+                return await next(context);
+            }
+            catch (InvalidJobScopeException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext,
+                    AuthorizationErrorCodes.InvalidJobScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext,
+                    AuthorizationErrorCodes.Forbidden);
+            }
+            catch (InvalidOperationException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext,
+                    AuthorizationErrorCodes.InvalidScope);
+            }
+        });
 
         group.MapGet("/", async (ISender mediator) =>
         {
@@ -18,7 +45,10 @@ public static class JobsEndpoints
             return Results.Ok(jobs);
         });
 
-        group.MapPost("/", async (CreateJobRequest request, ISender mediator) =>
+        group.MapPost("/", async (
+            CreateJobRequest request,
+            ISender mediator,
+            HttpContext httpContext) =>
         {
             try
             {
@@ -27,7 +57,8 @@ public static class JobsEndpoints
                     request.RubricJson, request.MustHavesJson, request.DesiredCriteriaJson,
                     request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
                     request.ShortlistThreshold, request.VarianceThreshold, request.JobDescription,
-                    request.RubricSource ?? "manual", request.RawExtractionResponse));
+                    request.RubricSource ?? "manual", request.RawExtractionResponse,
+                    request.OrganizationId, request.DepartmentId));
                 return Results.Created($"/api/jobs/{job.Id}", new
                 {
                     job.Id, job.JobCode, job.Title, job.Department,
@@ -35,15 +66,30 @@ public static class JobsEndpoints
                     job.JobDescription, job.CreatedBy, job.CreatedAt, job.UpdatedAt
                 });
             }
-            catch (ValidationException ex)
+            catch (ValidationException exception)
             {
-                var errors = ex.Errors
-                    .GroupBy(error => error.PropertyName)
-                    .ToDictionary(
-                        group => group.Key,
-                        group => group.Select(error => error.ErrorMessage).ToArray());
-
-                return Results.ValidationProblem(errors);
+                var errorCode = IsOrganizationAliasValidation(exception, request)
+                    ? AuthorizationErrorCodes.InvalidJobScope
+                    : AuthorizationErrorCodes.InvalidScope;
+                return AuthorizationErrorResults.Create(httpContext, errorCode);
+            }
+            catch (InvalidJobScopeException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.InvalidJobScope);
+            }
+            catch (InvalidOperationException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.InvalidScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.Forbidden);
             }
         });
 
@@ -188,10 +234,11 @@ public static class JobsEndpoints
             return Results.Content(extracted.GetRawText(), "application/json");
         });
 
-        group.MapGet("/{jobId}", async (string jobId, ISender mediator) =>
+        group.MapGet("/{jobId}", async (string jobId, ISender mediator, HttpContext httpContext) =>
         {
             var job = await mediator.Send(new GetJobDetailQuery(jobId));
-            if (job is null) return Results.NotFound();
+            if (job is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
             return Results.Ok(new
             {
                 job.Id, job.JobCode, job.Title, job.Department,
@@ -200,10 +247,11 @@ public static class JobsEndpoints
             });
         });
 
-        group.MapGet("/{jobId}/config", async (string jobId, ISender mediator) =>
+        group.MapGet("/{jobId}/config", async (string jobId, ISender mediator, HttpContext httpContext) =>
         {
             var config = await mediator.Send(new GetJobConfigQuery(jobId));
-            if (config is null) return Results.NotFound();
+            if (config is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
             return Results.Ok(new
             {
                 config.RubricJson,
@@ -245,7 +293,7 @@ public static class JobsEndpoints
             });
         });
 
-        group.MapPost("/{jobId}/process", async (string jobId, ISender mediator) =>
+        group.MapPost("/{jobId}/process", async (string jobId, ISender mediator, HttpContext httpContext) =>
         {
             // Check for production-approved prompt before allowing scoring pipeline trigger
             var prompts = await mediator.Send(new TalentMatch.Application.Prompts.Queries.GetPromptsQuery(jobId));
@@ -256,7 +304,7 @@ public static class JobsEndpoints
             // Load job to get run count from config
             var job = await mediator.Send(new GetJobDetailQuery(jobId));
             if (job == null)
-                return Results.NotFound();
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
 
             var config = job.ConfigVersions
                 .FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
@@ -289,8 +337,14 @@ public static class JobsEndpoints
         // Platform-mode progress rollup. Returns null progress if no platform run
         // is in flight for this job (caller treats that as sequential / idle).
         group.MapGet("/{jobId}/scoring/progress", async (string jobId,
-            TalentMatch.Domain.Interfaces.IScoringBatchRepository batchRepo) =>
+            ISender mediator,
+            TalentMatch.Domain.Interfaces.IScoringBatchRepository batchRepo,
+            HttpContext httpContext) =>
         {
+            var job = await mediator.Send(new GetJobDetailQuery(jobId));
+            if (job is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
+
             var progress = await batchRepo.GetProgressAsync(jobId);
             return Results.Ok(new { progress });
         });
@@ -301,12 +355,37 @@ public static class JobsEndpoints
             return Results.Ok(result);
         });
 
-        group.MapDelete("/{jobId}", async (string jobId, ISender mediator) =>
+        group.MapDelete("/{jobId}", async (string jobId, ISender mediator, HttpContext httpContext) =>
         {
-            var result = await mediator.Send(new DeleteJobCommand(jobId));
-            return result ? Results.NoContent() : Results.NotFound();
-        }).RequireAuthorization("AdminOnly");
+            try
+            {
+                var result = await mediator.Send(new DeleteJobCommand(jobId));
+                return result
+                    ? Results.NoContent()
+                    : AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
+            }
+            catch (InvalidOperationException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.InvalidScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.Forbidden);
+            }
+        });
     }
+
+    private static bool IsOrganizationAliasValidation(
+        ValidationException exception,
+        CreateJobRequest request)
+        => !string.IsNullOrWhiteSpace(request.OrganizationId)
+            && !string.IsNullOrWhiteSpace(request.DepartmentId)
+            && exception.Errors.All(error =>
+                error.PropertyName == nameof(CreateJobCommand.Organisation));
 }
 
 public record CreateJobRequest(
@@ -314,7 +393,8 @@ public record CreateJobRequest(
     string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,
     int ScoringRunCount, string AggregationStrategy, double LonglistThreshold,
     double ShortlistThreshold, double VarianceThreshold, string? JobDescription,
-    string? RubricSource = "manual", string? RawExtractionResponse = null);
+    string? RubricSource = "manual", string? RawExtractionResponse = null,
+    string? OrganizationId = null, string? DepartmentId = null);
 
 public record UpdateJobConfigRequest(
     string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,

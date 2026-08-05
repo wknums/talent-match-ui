@@ -43,6 +43,15 @@ public class UserRepository : IUserRepository
         return existing;
     }
 
+    public async Task<bool> TryAdvanceAuthorizationVersionAsync(string id, int expectedVersion, CancellationToken ct = default)
+    {
+        var affected = await _context.Users
+            .Where(user => user.Id == id && user.AuthorizationVersion == expectedVersion)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(user => user.AuthorizationVersion, user => user.AuthorizationVersion + 1), ct);
+        return affected == 1;
+    }
+
     public async Task SetActiveAsync(string id, bool isActive, CancellationToken ct = default)
     {
         var user = await _context.Users.FindAsync(new object[] { id }, ct) ?? throw new KeyNotFoundException($"User '{id}' was not found.");

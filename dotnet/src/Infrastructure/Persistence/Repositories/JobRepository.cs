@@ -14,7 +14,8 @@ public class JobRepository : IJobRepository
 
     public async Task<IReadOnlyList<Job>> GetByDepartmentAsync(string department, CancellationToken ct = default)
         => await _context.Jobs.Include(j => j.ConfigVersions)
-            .Where(j => j.Department == department).AsNoTracking().ToListAsync(ct);
+            .Where(j => string.IsNullOrWhiteSpace(department) || j.Department == department)
+            .AsNoTracking().ToListAsync(ct);
 
     public async Task<IReadOnlyList<Job>> GetByDepartmentsOrCreatorAsync(IEnumerable<string> departments, string creatorId, CancellationToken ct = default)
     {

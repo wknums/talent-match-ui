@@ -4,6 +4,8 @@ import express from 'express'
 import { getStorageProvider, initializeDatabase, isAzureSql } from './storage/db.js'
 import { createLLMRouter } from './routes/llm.js'
 import { createAuthRouter } from './routes/auth.js'
+import { createAccessManagementRouter } from './routes/access-management.js'
+import { createOrganizationsRouter } from './routes/organizations.js'
 import { createUsersRouter } from './routes/users.js'
 import { createJobsRouter } from './routes/jobs.js'
 import { createApplicationsRouter } from './routes/applications.js'
@@ -16,8 +18,10 @@ import { errorHandler } from './middleware/error-handler.js'
 import { buildHealthReport } from './services/health.js'
 import { initializeUsers } from './services/init-users.js'
 import { validateAwrAuthConfig } from './services/awr-auth.js'
-import { auditService } from './services/audit.js'
+import { auditService, organizationAdminAudit } from './services/audit.js'
 import { createAuthorizationResolver } from './services/authorization.js'
+import { EntraAccessManagementService } from './services/entra-access-management.js'
+import { OrganizationAdminService } from './services/organization-admin.js'
 import { createEntraTokenValidator } from './services/entra-token.js'
 
 // Load .env file
@@ -143,7 +147,20 @@ async function main() {
 
   // Protected routes
   const applicationsRouter = createApplicationsRouter()
-  app.use('/api/users', authMiddleware, createUsersRouter())
+  app.use('/api/users', authMiddleware, createUsersRouter({ mode: AUTH_MODE }))
+  if (AUTH_MODE === 'entra') {
+    const storage = await getStorageProvider()
+    app.use(
+      '/api/access-management',
+      authMiddleware,
+      createAccessManagementRouter(new EntraAccessManagementService(storage.accessManagement)),
+    )
+    app.use(
+      '/api/organizations',
+      authMiddleware,
+      createOrganizationsRouter(new OrganizationAdminService(storage.organizations, organizationAdminAudit)),
+    )
+  }
   app.use('/api/jobs', authMiddleware, createJobsRouter())
   app.use('/api/jobs', authMiddleware, createPromptsRouter())
   app.use('/api', authMiddleware, applicationsRouter)

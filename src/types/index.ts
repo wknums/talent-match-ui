@@ -277,6 +277,8 @@ export interface OrganizationMembership {
   membershipId: string
   userId: string
   organizationId: string
+  defaultDepartmentMembershipId?: string
+  defaultDepartmentId?: string
   status: MembershipStatus
   effectiveAt: string
   revokedAt?: string
@@ -333,9 +335,11 @@ export interface AuthorizationContext {
   fullName: string
   email?: string
   globalRole: 'admin' | null
+  authorizationVersion: number
   memberships: Array<{
     organizationId: string
     organizationName: string
+    defaultDepartmentId: string
     departments: Array<{ departmentId: string; departmentName: string }>
   }>
   authorizations: Array<{
@@ -354,6 +358,151 @@ export type AuthErrorCode =
   | 'unauthorized_client' | 'token_stale' | 'role_missing' | 'role_conflict'
   | 'assignment_missing' | 'assignment_revoked' | 'scope_unmapped'
   | 'membership_missing' | 'invalid_job_scope' | 'identity_disabled'
+  | 'invalid_navigation_action' | 'navigation_audit_unavailable'
+
+export interface EntraAccessRoleAssignment {
+  id: string
+  role: Exclude<UserRole, 'admin'>
+  organizationId: string
+  departmentId: string | null
+  source: Exclude<RoleAssignmentSource, 'bootstrap'>
+  status: RoleAssignmentStatus
+}
+
+export interface EntraOrganizationAccess {
+  organizationId: string
+  status: MembershipStatus
+  departmentIds: string[]
+  defaultDepartmentId: string | null
+  roleAssignments: EntraAccessRoleAssignment[]
+}
+
+export interface EntraAccessUser {
+  objectId: string
+  username: string
+  fullName: string
+  email: string | null
+  isActive: boolean
+  authorizationVersion: number
+  organizations: EntraOrganizationAccess[]
+}
+
+export interface EntraAccessUserPage {
+  items: EntraAccessUser[]
+  nextCursor: string | null
+}
+
+export interface EntraProfileInput {
+  username: string
+  fullName: string
+  email: string | null
+}
+
+export interface DesiredDelegatedRole {
+  role: Exclude<UserRole, 'admin'>
+  departmentId: string | null
+}
+
+export interface PutOrganizationAccessRequest {
+  expectedVersion: number
+  profile: EntraProfileInput
+  membership: {
+    status: MembershipStatus
+    departmentIds: string[]
+    defaultDepartmentId: string | null
+  }
+  roleAssignments: DesiredDelegatedRole[]
+}
+
+export interface UpdateEntraAccessUserRequest {
+  expectedVersion: number
+  profile?: EntraProfileInput
+  isActive?: boolean
+}
+
+export interface CanonicalApiError {
+  error: AuthErrorCode | 'invalid_scope' | 'forbidden' | 'not_found' | 'conflict' | 'version_conflict'
+  message: string
+  correlationId: string
+}
+
+export interface OrganizationAdminDepartment {
+  id: string
+  organizationId: string
+  name: string
+  status: OrganizationStatus
+}
+
+export interface OrganizationAdminOrganization {
+  id: string
+  name: string
+  status: OrganizationStatus
+  departments: OrganizationAdminDepartment[]
+}
+
+export interface OrganizationAdminMembership {
+  userObjectId: string
+  organizationId: string
+  departmentIds: string[]
+  defaultDepartmentId: string
+}
+
+export interface OrganizationAdminRoleAssignment {
+  id: string
+  userObjectId: string
+  role: Exclude<UserRole, 'admin'>
+  organizationId: string
+  departmentId: string | null
+  source: 'delegated'
+  status: RoleAssignmentStatus
+}
+
+export interface CreateOrganizationAdminRequest {
+  name: string
+  initialDepartmentName: string
+}
+
+export interface CreateOrganizationDepartmentRequest {
+  name: string
+}
+
+export interface UpdateOrganizationDepartmentRequest {
+  name?: string
+  status?: OrganizationStatus
+}
+
+export interface RegisterOrganizationMembershipRequest {
+  userObjectId: string
+  departmentIds: string[]
+  defaultDepartmentId: string
+}
+
+export interface GrantOrganizationRoleRequest {
+  userObjectId: string
+  role: Exclude<UserRole, 'admin'>
+  departmentId: string | null
+}
+
+export type NavigationAction = 'collapse' | 'expand'
+
+export interface NavigationShellState {
+  desktopCollapsed: boolean
+  compactOverlayOpen: boolean
+  isCompact: boolean
+}
+
+export interface NavigationAuditRequest {
+  action: NavigationAction
+  correlationId: string
+  requestedAt: string
+}
+
+export interface NavigationAuditOutcome {
+  action: NavigationAction
+  correlationId: string
+  actorObjectId: string
+  recordedAt: string
+}
 
 export interface User {
   userId: string
@@ -363,6 +512,7 @@ export interface User {
   entraTenantId?: string
   entraObjectId?: string
   isActive?: boolean
+  authorizationVersion?: number
   department?: string
   fullName: string
   email?: string

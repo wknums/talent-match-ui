@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
@@ -29,6 +30,8 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
     private readonly IScoringBatchRepository _batchRepo;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ProcessJobCommandHandler> _logger;
+    private readonly ICurrentUserService? _currentUser;
+    private readonly IOrganizationRepository? _organizationRepository;
 
     private static readonly string? SeqEndpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
     private static readonly string? PlatformEndpoint = Environment.GetEnvironmentVariable("AWR_PLATFORM_API_ENDPOINT");
@@ -53,19 +56,26 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         IApplicationRepository applicationRepo,
         IScoringBatchRepository batchRepo,
         IServiceScopeFactory scopeFactory,
-        ILogger<ProcessJobCommandHandler> logger)
+        ILogger<ProcessJobCommandHandler> logger,
+        ICurrentUserService? currentUser = null,
+        IOrganizationRepository? organizationRepository = null)
     {
         _jobRepo = jobRepo;
         _applicationRepo = applicationRepo;
         _batchRepo = batchRepo;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _currentUser = currentUser;
+        _organizationRepository = organizationRepository;
     }
 
     public async Task<ProcessJobResult> Handle(ProcessJobCommand request, CancellationToken ct)
     {
         var job = await _jobRepo.GetByIdAsync(request.JobId, ct)
             ?? throw new InvalidOperationException($"Job {request.JobId} not found");
+
+        await JobAuthorization.EnsureCanMutateAsync(
+            job, _currentUser, _organizationRepository, ct);
 
         var jobDescriptionText = job.JobDescription ?? job.Title;
         var config = job.ConfigVersions.FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)

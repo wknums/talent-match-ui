@@ -45,7 +45,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<User>(e =>
         {
             e.HasKey(x => x.Id);
-            e.HasIndex(x => x.Username).IsUnique();
+            e.HasIndex(x => x.Username).IsUnique()
+                .HasFilter("[AuthenticationProvider] = 'simple'");
             e.Property(x => x.Username).HasMaxLength(100).IsRequired();
             e.Property(x => x.Role).HasMaxLength(20).IsRequired();
             e.Property(x => x.AuthenticationProvider).HasMaxLength(20).HasDefaultValue("simple").IsRequired();
@@ -53,6 +54,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.EntraObjectId).HasMaxLength(36);
             e.Property(x => x.PasswordHash).HasMaxLength(128);
             e.Property(x => x.IsActive).HasDefaultValue(true);
+            e.Property(x => x.AuthorizationVersion).HasDefaultValue(0).IsConcurrencyToken();
             e.HasIndex(x => new { x.EntraTenantId, x.EntraObjectId }).IsUnique()
                 .HasFilter("[AuthenticationProvider] = 'entra'");
             e.ToTable(t => t.HasCheckConstraint("CK_Users_IdentityProvider", "(AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0)"));
@@ -88,13 +90,18 @@ public class AppDbContext : DbContext
             e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
             e.HasOne(x => x.User).WithMany(x => x.OrganizationMemberships).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.Organization).WithMany(x => x.Memberships).HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.DefaultDepartmentMembership).WithMany(x => x.DefaultForOrganizationMemberships)
+                .HasForeignKey(x => new { x.DefaultDepartmentMembershipId, x.UserId, x.OrganizationId })
+                .HasPrincipalKey(x => new { x.Id, x.UserId, x.OrganizationId })
+                .OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.UserId, x.OrganizationId }).IsUnique().HasFilter("[Status] = 'active'");
-            e.ToTable(t => t.HasCheckConstraint("CK_OrganizationMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
+            e.ToTable(t => t.HasCheckConstraint("CK_OrganizationMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
         });
 
         modelBuilder.Entity<DepartmentMembership>(e =>
         {
             e.HasKey(x => x.Id);
+            e.HasAlternateKey(x => new { x.Id, x.UserId, x.OrganizationId });
             e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
             e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
             e.HasOne(x => x.User).WithMany(x => x.DepartmentMemberships).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
@@ -129,7 +136,8 @@ public class AppDbContext : DbContext
             e.HasOne(x => x.User).WithMany(x => x.RoleAssignments).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.RoleGroupMapping).WithMany().HasForeignKey(x => x.RoleGroupMappingId).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.RoleGroupMappingId }).IsUnique().HasFilter("[Status] = 'active' AND [RoleGroupMappingId] IS NOT NULL");
-            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.Source, x.Role, x.OrganizationId, x.DepartmentId }).IsUnique();
+            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.Role, x.OrganizationId, x.DepartmentId }).IsUnique()
+                .HasFilter("[Status] = 'active' AND [Source] = 'delegated'");
             e.ToTable(t => t.HasCheckConstraint("CK_RoleAssignments_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
         });
 

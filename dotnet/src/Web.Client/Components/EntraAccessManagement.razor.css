@@ -1,0 +1,436 @@
+.entra-access {
+    color: #172033;
+    max-width: 96rem;
+    margin: 0 auto;
+}
+
+.entra-access__header,
+.entra-access__identity,
+.entra-access__section-heading,
+.entra-access__actions,
+.entra-access__dialog-actions,
+.entra-access__role-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.entra-access__header {
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid #d9e0ea;
+}
+
+.entra-access__header h1,
+.entra-access__identity h2,
+.entra-access__section h3,
+.entra-access__section h4,
+.entra-access__dialog h2,
+.entra-access__blank h2 {
+    margin: 0;
+    letter-spacing: 0;
+}
+
+.entra-access__header h1 {
+    font-size: clamp(1.65rem, 3vw, 2.35rem);
+}
+
+.entra-access__header p:not(.entra-access__eyebrow),
+.entra-access__section-heading p,
+.entra-access__blank p,
+.entra-access__dialog > p {
+    margin: 0.35rem 0 0;
+    color: #536178;
+}
+
+.entra-access__eyebrow {
+    margin: 0 0 0.3rem;
+    color: #526175;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.entra-access__authority,
+.entra-access__version,
+.entra-access__badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.75rem;
+    padding: 0.15rem 0.55rem;
+    border: 1px solid #bdc8d8;
+    border-radius: 4px;
+    color: #3c4c63;
+    background: #f7f9fc;
+    font-size: 0.75rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.entra-access__badge--active {
+    color: #166534;
+    border-color: #86c59d;
+    background: #effaf2;
+}
+
+.entra-access__badge--pending {
+    color: #7a4a0a;
+    border-color: #dfbd79;
+    background: #fff8e7;
+}
+
+.entra-access__badge--disabled {
+    color: #9f2525;
+    border-color: #e4a5a5;
+    background: #fff3f3;
+}
+
+.entra-access__notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 1rem 0;
+    padding: 0.75rem 0.9rem;
+    border: 1px solid;
+    border-radius: 6px;
+}
+
+.entra-access__notice--error {
+    color: #8f1f1f;
+    border-color: #e4a5a5;
+    background: #fff3f3;
+}
+
+.entra-access__notice--success {
+    color: #166534;
+    border-color: #86c59d;
+    background: #effaf2;
+}
+
+.entra-access__workspace {
+    display: grid;
+    grid-template-columns: minmax(15rem, 0.72fr) minmax(0, 1.75fr);
+    min-height: 36rem;
+}
+
+.entra-access__directory {
+    padding: 1.25rem 1.25rem 1.25rem 0;
+    border-right: 1px solid #d9e0ea;
+}
+
+.entra-access__detail {
+    min-width: 0;
+    padding: 1.25rem 0 2rem 1.5rem;
+}
+
+.entra-access__search,
+.entra-access__form-grid {
+    display: grid;
+    gap: 0.7rem;
+}
+
+.entra-access label {
+    display: block;
+    margin-bottom: 0.25rem;
+    color: #344258;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.entra-access input,
+.entra-access select {
+    width: 100%;
+    min-height: 2.5rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid #b9c5d4;
+    border-radius: 4px;
+    color: #172033;
+    background: #fff;
+}
+
+.entra-access input:focus,
+.entra-access select:focus,
+.entra-access button:focus-visible {
+    outline: 3px solid #8bb8e8;
+    outline-offset: 2px;
+}
+
+.entra-access input:disabled,
+.entra-access select:disabled {
+    color: #697589;
+    background: #edf1f6;
+}
+
+.entra-access__search-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+}
+
+.entra-access button {
+    min-height: 2.5rem;
+    padding: 0.48rem 0.8rem;
+    border: 1px solid #9eabbd;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 650;
+}
+
+.entra-access button:disabled {
+    cursor: wait;
+    opacity: 0.62;
+}
+
+.entra-access__primary,
+.entra-access__search-row button {
+    color: #fff;
+    border-color: #15548a;
+    background: #15548a;
+}
+
+.entra-access__secondary {
+    color: #25364d;
+    background: #f7f9fc;
+}
+
+.entra-access__danger {
+    color: #fff;
+    border-color: #a62b2b !important;
+    background: #a62b2b;
+}
+
+.entra-access__link-button {
+    min-height: auto !important;
+    padding: 0.2rem 0.35rem !important;
+    color: currentColor;
+    border: 0 !important;
+    background: transparent;
+    text-decoration: underline;
+}
+
+.entra-access__results {
+    margin-top: 1.25rem;
+    border-top: 1px solid #d9e0ea;
+}
+
+.entra-access__state,
+.entra-access__blank {
+    color: #617087;
+    padding: 1.25rem 0.25rem;
+}
+
+.entra-access__spinner {
+    display: inline-block;
+    width: 0.9rem;
+    height: 0.9rem;
+    margin-right: 0.4rem;
+    border: 2px solid #b9c5d4;
+    border-top-color: #15548a;
+    border-radius: 50%;
+    animation: entra-spin 0.75s linear infinite;
+}
+
+.entra-access__user {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.85rem 0.4rem !important;
+    border: 0 !important;
+    border-bottom: 1px solid #e1e6ed !important;
+    border-radius: 0 !important;
+    color: inherit;
+    background: transparent;
+    text-align: left;
+}
+
+.entra-access__user:hover,
+.entra-access__user.is-selected {
+    background: #edf4fb;
+}
+
+.entra-access__user strong,
+.entra-access__user small,
+.entra-access__role-row small {
+    display: block;
+}
+
+.entra-access__user small,
+.entra-access__role-row small {
+    margin-top: 0.2rem;
+    color: #65748a;
+    overflow-wrap: anywhere;
+}
+
+.entra-access__identity {
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #d9e0ea;
+}
+
+.entra-access__identity code {
+    display: block;
+    margin-top: 0.35rem;
+    color: #526175;
+    overflow-wrap: anywhere;
+}
+
+.entra-access__identity-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.entra-access__section {
+    padding: 1.35rem 0;
+    border-bottom: 1px solid #d9e0ea;
+}
+
+.entra-access__section h3 {
+    font-size: 1rem;
+}
+
+.entra-access__section h4 {
+    font-size: 0.9rem;
+}
+
+.entra-access__section-heading {
+    margin-bottom: 1rem;
+}
+
+.entra-access__form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.entra-access__wide-field {
+    grid-column: 1 / -1;
+}
+
+.entra-access__roles {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid #e1e6ed;
+}
+
+.entra-access__role-editor {
+    display: grid;
+    grid-template-columns: minmax(10rem, 0.8fr) minmax(12rem, 1.2fr) auto;
+    align-items: end;
+    gap: 0.75rem;
+    margin-top: 0.85rem;
+}
+
+.entra-access__role-row {
+    align-items: center;
+    padding: 0.7rem 0;
+    border-top: 1px solid #e1e6ed;
+}
+
+.entra-access__muted {
+    color: #65748a;
+}
+
+.entra-access__actions {
+    margin-top: 1.25rem;
+}
+
+.entra-access__overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: 1rem;
+    background: rgba(18, 27, 40, 0.58);
+}
+
+.entra-access__dialog {
+    width: min(34rem, 100%);
+    padding: 1.35rem;
+    border: 1px solid #c2ccd9;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 18px 44px rgba(18, 27, 40, 0.24);
+}
+
+.entra-access__summary {
+    margin: 1rem 0;
+    padding: 0.8rem;
+    background: #f5f7fa;
+}
+
+.entra-access__summary div {
+    display: grid;
+    grid-template-columns: 7rem minmax(0, 1fr);
+    gap: 0.75rem;
+    padding: 0.25rem 0;
+}
+
+.entra-access__summary dt {
+    color: #526175;
+    font-weight: 700;
+}
+
+.entra-access__summary dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.entra-access__dialog-actions {
+    justify-content: flex-end;
+    margin-top: 1.25rem;
+}
+
+@keyframes entra-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (max-width: 820px) {
+    .entra-access__workspace {
+        grid-template-columns: 1fr;
+    }
+
+    .entra-access__directory {
+        padding-right: 0;
+        border-right: 0;
+        border-bottom: 1px solid #d9e0ea;
+    }
+
+    .entra-access__detail {
+        padding-left: 0;
+    }
+}
+
+@media (max-width: 600px) {
+    .entra-access__header,
+    .entra-access__identity,
+    .entra-access__section-heading,
+    .entra-access__role-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .entra-access__identity-actions {
+        justify-content: space-between;
+    }
+
+    .entra-access__form-grid,
+    .entra-access__role-editor {
+        grid-template-columns: 1fr;
+    }
+
+    .entra-access__wide-field {
+        grid-column: auto;
+    }
+
+    .entra-access__authority {
+        align-self: flex-start;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .entra-access__spinner {
+        animation: none;
+    }
+}

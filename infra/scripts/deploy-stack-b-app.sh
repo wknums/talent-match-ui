@@ -6,7 +6,7 @@
 #   ./infra/scripts/deploy-stack-b-app.sh <env-file> [artifact-path]
 #
 # Examples:
-#   ./infra/scripts/deploy-stack-b-app.sh .env_qa_mcaps
+#   ./infra/scripts/deploy-stack-b-app.sh .env_qa
 #   ./infra/scripts/deploy-stack-b-app.sh .env_prod artifacts/stack-b.zip
 # =============================================================================
 set -euo pipefail

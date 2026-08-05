@@ -128,7 +128,7 @@ export function UploadApplicationsDialog({
         onClose()
         resetDialog()
       }, 500)
-    } catch (error) {
+    } catch {
       toast.error('Failed to upload applications')
       setUploadProgress(0)
     } finally {

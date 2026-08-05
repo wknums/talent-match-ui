@@ -1,0 +1,17 @@
+.tab-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid #e2e8f0;
+    min-width: 0;
+}
+
+.table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.table-scroll table {
+    min-width: 36rem;
+}

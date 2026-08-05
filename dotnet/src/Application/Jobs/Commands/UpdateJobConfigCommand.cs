@@ -1,4 +1,6 @@
 using MediatR;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -22,16 +24,26 @@ public record UpdateJobConfigCommand(
 public class UpdateJobConfigCommandHandler : IRequestHandler<UpdateJobConfigCommand, JobConfigVersion>
 {
     private readonly IJobRepository _jobRepository;
+    private readonly ICurrentUserService? _currentUser;
+    private readonly IOrganizationRepository? _organizationRepository;
 
-    public UpdateJobConfigCommandHandler(IJobRepository jobRepository)
+    public UpdateJobConfigCommandHandler(
+        IJobRepository jobRepository,
+        ICurrentUserService? currentUser = null,
+        IOrganizationRepository? organizationRepository = null)
     {
         _jobRepository = jobRepository;
+        _currentUser = currentUser;
+        _organizationRepository = organizationRepository;
     }
 
     public async Task<JobConfigVersion> Handle(UpdateJobConfigCommand request, CancellationToken cancellationToken)
     {
         var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
             ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
+
+        await JobAuthorization.EnsureCanMutateAsync(
+            job, _currentUser, _organizationRepository, cancellationToken);
 
         var versions = await _jobRepository.GetConfigVersionsAsync(request.JobId, cancellationToken);
         var nextVersion = versions.Count + 1;

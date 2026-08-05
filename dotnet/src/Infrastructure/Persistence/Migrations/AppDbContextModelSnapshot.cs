@@ -15,7 +15,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.3");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.AggregatedResult", b =>
                 {
@@ -435,10 +435,6 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<double>("LonglistThreshold")
                         .HasColumnType("REAL");
 
-                    b.Property<string>("MustHaveCriteriaJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("MustHavesJson")
                         .IsRequired()
                         .HasColumnType("TEXT")
@@ -568,6 +564,9 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DefaultDepartmentMembershipId")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime>("EffectiveAt")
                         .HasColumnType("TEXT");
 
@@ -602,9 +601,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("[Status] = 'active'");
 
+                    b.HasIndex("DefaultDepartmentMembershipId", "UserId", "OrganizationId");
+
                     b.ToTable("OrganizationMemberships", t =>
                         {
-                            t.HasCheckConstraint("CK_OrganizationMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)");
+                            t.HasCheckConstraint("CK_OrganizationMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)");
                         });
                 });
 
@@ -796,8 +797,9 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasFilter("[Status] = 'active' AND [RoleGroupMappingId] IS NOT NULL");
 
-                    b.HasIndex("TenantId", "UserObjectId", "Source", "Role", "OrganizationId", "DepartmentId")
-                        .IsUnique();
+                    b.HasIndex("TenantId", "UserObjectId", "Role", "OrganizationId", "DepartmentId")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active' AND [Source] = 'delegated'");
 
                     b.ToTable("RoleAssignments", t =>
                         {
@@ -1117,6 +1119,12 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT")
                         .HasDefaultValue("simple");
 
+                    b.Property<int>("AuthorizationVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
@@ -1168,7 +1176,8 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Username")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("[AuthenticationProvider] = 'simple'");
 
                     b.HasIndex("EntraTenantId", "EntraObjectId")
                         .IsUnique()
@@ -1326,6 +1335,14 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("TalentMatch.Domain.Entities.DepartmentMembership", "DefaultDepartmentMembership")
+                        .WithMany("DefaultForOrganizationMemberships")
+                        .HasForeignKey("DefaultDepartmentMembershipId", "UserId", "OrganizationId")
+                        .HasPrincipalKey("Id", "UserId", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("DefaultDepartmentMembership");
+
                     b.Navigation("Organization");
 
                     b.Navigation("User");
@@ -1406,6 +1423,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TalentMatch.Domain.Entities.Department", b =>
                 {
                     b.Navigation("Memberships");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.DepartmentMembership", b =>
+                {
+                    b.Navigation("DefaultForOrganizationMemberships");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Job", b =>

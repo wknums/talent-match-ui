@@ -1,0 +1,490 @@
+@page "/organizations"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
+
+<PageTitle>Organization administration</PageTitle>
+
+<main class="organization-admin" aria-labelledby="organization-admin-title">
+    <header class="organization-admin__header">
+        <div>
+            <p class="organization-admin__eyebrow">Scoped administration</p>
+            <h1 id="organization-admin-title">Organizations</h1>
+            <p>Manage departments, explicit defaults, memberships, and delegated access within your authority.</p>
+        </div>
+        <button type="button" class="organization-admin__secondary" @onclick="LoadOrganizationsAsync" disabled="@isBusy">
+            Refresh
+        </button>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(notification))
+    {
+        <div class="organization-admin__notice organization-admin__notice--@notificationKind"
+             role="@(notificationKind == "error" ? "alert" : "status")">
+            @notification
+        </div>
+    }
+
+    @if (!AuthConfiguration.IsEntra)
+    {
+        <section class="organization-admin__state" role="alert">
+            Organization administration is available only in Microsoft Entra authentication mode.
+        </section>
+    }
+    else if (isLoading)
+    {
+        <section class="organization-admin__state" aria-live="polite">Loading authorized organizations...</section>
+    }
+    else
+    {
+        @if (isGlobalAdmin)
+        {
+            <section class="organization-admin__band" aria-labelledby="create-organization-title">
+                <div class="organization-admin__section-heading">
+                    <div>
+                        <h2 id="create-organization-title">Create organization</h2>
+                        <p>The first active department is created in the same transaction.</p>
+                    </div>
+                </div>
+                <div class="organization-admin__form-grid">
+                    <label>
+                        Organization name
+                        <input @bind="newOrganizationName" maxlength="200" />
+                    </label>
+                    <label>
+                        First department
+                        <input @bind="initialDepartmentName" maxlength="100" />
+                    </label>
+                    <button type="button" class="organization-admin__primary" @onclick="CreateOrganizationAsync" disabled="@isBusy">
+                        Create organization
+                    </button>
+                </div>
+            </section>
+        }
+
+        <div class="organization-admin__workspace">
+            <aside class="organization-admin__directory" aria-label="Authorized organizations">
+                <label for="organization-select">Organization</label>
+                <select id="organization-select" @bind="selectedOrganizationId" @bind:after="SelectOrganization">
+                    <option value="">Select an organization</option>
+                    @foreach (var organization in organizations)
+                    {
+                        <option value="@organization.Id">@organization.Name</option>
+                    }
+                </select>
+                @if (organizations.Count == 0)
+                {
+                    <p class="organization-admin__muted">No organizations are available in your scope.</p>
+                }
+                else
+                {
+                    @foreach (var organization in organizations)
+                    {
+                        <button type="button"
+                                class="organization-admin__organization @(organization.Id == selectedOrganizationId ? "is-selected" : null)"
+                                @onclick="() => SelectOrganization(organization.Id)">
+                            <strong>@organization.Name</strong>
+                            <span>@organization.Departments.Count(department => department.Status == "active") active departments</span>
+                        </button>
+                    }
+                }
+            </aside>
+
+            <section class="organization-admin__detail">
+                @if (SelectedOrganization is null)
+                {
+                    <div class="organization-admin__state">Select an organization to administer its departments and access.</div>
+                }
+                else
+                {
+                    <header class="organization-admin__organization-header">
+                        <div>
+                            <p class="organization-admin__eyebrow">Organization</p>
+                            <h2>@SelectedOrganization.Name</h2>
+                            <code>@SelectedOrganization.Id</code>
+                        </div>
+                        <span class="organization-admin__scope">@(isGlobalAdmin ? "Application Admin" : "Organization Admin")</span>
+                    </header>
+
+                    <section class="organization-admin__panel" aria-labelledby="departments-title">
+                        <div class="organization-admin__section-heading">
+                            <div>
+                                <h3 id="departments-title">Departments</h3>
+                                <p>Departments stay in their original organization. Referenced or last-active departments cannot retire.</p>
+                            </div>
+                        </div>
+                        <div class="organization-admin__department-list">
+                            @foreach (var department in SelectedOrganization.Departments.OrderBy(item => item.Name))
+                            {
+                                <div class="organization-admin__department">
+                                    <div>
+                                        <strong>@department.Name</strong>
+                                        <span class="organization-admin__status organization-admin__status--@department.Status">@department.Status</span>
+                                        <small>@department.Id</small>
+                                    </div>
+                                    @if (department.Status == "active")
+                                    {
+                                        <label>
+                                            <span class="visually-hidden">New name for @department.Name</span>
+                                            <input value="@RenameValue(department)"
+                                                   @oninput="eventArgs => SetRenameValue(department.Id, eventArgs.Value?.ToString())"
+                                                   maxlength="100" />
+                                        </label>
+                                        <button type="button" class="organization-admin__secondary" @onclick="() => RenameDepartmentAsync(department)" disabled="@isBusy">Rename</button>
+                                        <button type="button" class="organization-admin__danger" @onclick="() => RetireDepartmentAsync(department)" disabled="@isBusy">Retire</button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                        <div class="organization-admin__inline-form">
+                            <label>
+                                New department
+                                <input @bind="newDepartmentName" maxlength="100" />
+                            </label>
+                            <button type="button" class="organization-admin__primary" @onclick="CreateDepartmentAsync" disabled="@isBusy">Add department</button>
+                        </div>
+                    </section>
+
+                    <section class="organization-admin__panel" aria-labelledby="membership-title">
+                        <div class="organization-admin__section-heading">
+                            <div>
+                                <h3 id="membership-title">Membership and default</h3>
+                                <p>The explicit default must remain one of the selected active department memberships.</p>
+                            </div>
+                        </div>
+                        <label>
+                            User object ID
+                            <input @bind="targetObjectId" placeholder="00000000-0000-0000-0000-000000000000" />
+                        </label>
+                        <fieldset>
+                            <legend>Active departments</legend>
+                            <div class="organization-admin__checks">
+                                @foreach (var department in ActiveDepartments)
+                                {
+                                    <label>
+                                        <input type="checkbox"
+                                               checked="@selectedDepartmentIds.Contains(department.Id)"
+                                               @onchange="eventArgs => ToggleDepartment(department.Id, eventArgs.Value is true)" />
+                                        <span>@department.Name</span>
+                                    </label>
+                                }
+                            </div>
+                        </fieldset>
+                        <label>
+                            Explicit default department
+                            <select @bind="defaultDepartmentId">
+                                <option value="">Select a default</option>
+                                @foreach (var department in ActiveDepartments.Where(item => selectedDepartmentIds.Contains(item.Id)))
+                                {
+                                    <option value="@department.Id">@department.Name</option>
+                                }
+                            </select>
+                        </label>
+                        <button type="button" class="organization-admin__primary" @onclick="SaveMembershipAsync" disabled="@isBusy">Save membership</button>
+                    </section>
+
+                    <section class="organization-admin__panel" aria-labelledby="roles-title">
+                        <div class="organization-admin__section-heading">
+                            <div>
+                                <h3 id="roles-title">Delegated roles</h3>
+                                <p>Role scope cannot exceed the actor or target membership scope.</p>
+                            </div>
+                            <button type="button" class="organization-admin__secondary" @onclick="LoadTargetAssignmentsAsync" disabled="@isBusy">Load assignments</button>
+                        </div>
+                        <div class="organization-admin__form-grid">
+                            <label>
+                                Role
+                                <select @bind="roleName" @bind:after="NormalizeRoleDepartment">
+                                    @if (isGlobalAdmin)
+                                    {
+                                        <option value="organization_admin">Organization Admin</option>
+                                    }
+                                    <option value="recruiter">Recruiter</option>
+                                    <option value="business_panel">Analytics Viewer</option>
+                                </select>
+                            </label>
+                            <label>
+                                Department scope
+                                <select @bind="roleDepartmentId" disabled="@(roleName == "organization_admin")">
+                                    <option value="">Organization-wide</option>
+                                    @foreach (var department in ActiveDepartments.Where(item => selectedDepartmentIds.Contains(item.Id)))
+                                    {
+                                        <option value="@department.Id">@department.Name</option>
+                                    }
+                                </select>
+                            </label>
+                            <button type="button" class="organization-admin__primary" @onclick="GrantRoleAsync" disabled="@isBusy">Grant role</button>
+                        </div>
+                        @if (targetAssignments.Count == 0)
+                        {
+                            <p class="organization-admin__muted">No delegated assignments loaded for this user and organization.</p>
+                        }
+                        else
+                        {
+                            <div class="organization-admin__assignment-list">
+                                @foreach (var assignment in targetAssignments)
+                                {
+                                    <div class="organization-admin__assignment">
+                                        <span>
+                                            <strong>@RoleLabel(assignment.Role)</strong>
+                                            <small>@(DepartmentName(assignment.DepartmentId) ?? "Organization-wide")</small>
+                                        </span>
+                                        <button type="button" class="organization-admin__danger" @onclick="() => RevokeRoleAsync(assignment)" disabled="@isBusy">Revoke</button>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </section>
+                }
+            </section>
+        </div>
+    }
+</main>
+
+@code {
+    private readonly List<OrganizationAdministrationOrganization> organizations = [];
+    private readonly Dictionary<string, string> renameValues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> selectedDepartmentIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<EntraAccessRoleAssignment> targetAssignments = [];
+    private bool isLoading = true;
+    private bool isBusy;
+    private bool isGlobalAdmin;
+    private string selectedOrganizationId = "";
+    private string newOrganizationName = "";
+    private string initialDepartmentName = "";
+    private string newDepartmentName = "";
+    private string targetObjectId = "";
+    private string defaultDepartmentId = "";
+    private string roleName = "recruiter";
+    private string roleDepartmentId = "";
+    private string? notification;
+    private string notificationKind = "success";
+
+    private OrganizationAdministrationOrganization? SelectedOrganization =>
+        organizations.FirstOrDefault(item => item.Id == selectedOrganizationId);
+    private IEnumerable<OrganizationAdministrationDepartment> ActiveDepartments =>
+        SelectedOrganization?.Departments.Where(item => item.Status == "active")
+        ?? Enumerable.Empty<OrganizationAdministrationDepartment>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthConfiguration.IsEntra)
+        {
+            isLoading = false;
+            return;
+        }
+
+        var currentUser = await Api.GetCurrentUserAsync();
+        isGlobalAdmin = string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
+        roleName = isGlobalAdmin ? "organization_admin" : "recruiter";
+        await LoadOrganizationsAsync();
+    }
+
+    private async Task LoadOrganizationsAsync()
+    {
+        isLoading = true;
+        try
+        {
+            organizations.Clear();
+            organizations.AddRange(await Api.ListOrganizationsAsync());
+            if (!organizations.Any(item => item.Id == selectedOrganizationId))
+                selectedOrganizationId = organizations.FirstOrDefault()?.Id ?? "";
+            SelectOrganization();
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "Organizations could not be loaded.");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void SelectOrganization(string organizationId)
+    {
+        selectedOrganizationId = organizationId;
+        SelectOrganization();
+    }
+
+    private void SelectOrganization()
+    {
+        selectedDepartmentIds.Clear();
+        defaultDepartmentId = "";
+        targetAssignments.Clear();
+        renameValues.Clear();
+        foreach (var department in ActiveDepartments)
+            renameValues[department.Id] = department.Name;
+    }
+
+    private async Task CreateOrganizationAsync() => await RunMutationAsync(async () =>
+    {
+        RequireText(newOrganizationName, "Enter an organization name.");
+        RequireText(initialDepartmentName, "Enter the first department name.");
+        var created = await Api.CreateOrganizationAsync(new(newOrganizationName.Trim(), initialDepartmentName.Trim()));
+        newOrganizationName = "";
+        initialDepartmentName = "";
+        selectedOrganizationId = created.Id;
+        await LoadOrganizationsAsync();
+        ShowSuccess("Organization and first department created.");
+    });
+
+    private async Task CreateDepartmentAsync() => await RunMutationAsync(async () =>
+    {
+        RequireSelection();
+        RequireText(newDepartmentName, "Enter a department name.");
+        await Api.CreateDepartmentAsync(selectedOrganizationId, new(newDepartmentName.Trim()));
+        newDepartmentName = "";
+        await LoadOrganizationsAsync();
+        ShowSuccess("Department created.");
+    });
+
+    private async Task RenameDepartmentAsync(OrganizationAdministrationDepartment department) => await RunMutationAsync(async () =>
+    {
+        var name = RenameValue(department).Trim();
+        RequireText(name, "Enter a department name.");
+        await Api.UpdateDepartmentAsync(selectedOrganizationId, department.Id, new(Name: name));
+        await LoadOrganizationsAsync();
+        ShowSuccess("Department renamed.");
+    });
+
+    private async Task RetireDepartmentAsync(OrganizationAdministrationDepartment department) => await RunMutationAsync(async () =>
+    {
+        await Api.UpdateDepartmentAsync(selectedOrganizationId, department.Id, new(Status: "retired"));
+        await LoadOrganizationsAsync();
+        ShowSuccess("Department retired.");
+    });
+
+    private async Task SaveMembershipAsync() => await RunMutationAsync(async () =>
+    {
+        RequireTarget();
+        if (selectedDepartmentIds.Count == 0 || !selectedDepartmentIds.Contains(defaultDepartmentId))
+            throw new InvalidOperationException("Select at least one department and choose a default from that selection.");
+        await Api.RegisterOrganizationMembershipAsync(
+            selectedOrganizationId,
+            new(targetObjectId.Trim(), selectedDepartmentIds.ToArray(), defaultDepartmentId));
+        await LoadTargetAssignmentsAsync();
+        ShowSuccess("Membership and explicit default saved.");
+    });
+
+    private async Task GrantRoleAsync() => await RunMutationAsync(async () =>
+    {
+        RequireTarget();
+        var departmentId = string.IsNullOrWhiteSpace(roleDepartmentId) ? null : roleDepartmentId;
+        if (roleName == "recruiter" && departmentId is null)
+            throw new InvalidOperationException("Recruiter access requires a selected department.");
+        await Api.GrantOrganizationRoleAsync(
+            selectedOrganizationId,
+            new(targetObjectId.Trim(), roleName, departmentId));
+        await LoadTargetAssignmentsAsync();
+        ShowSuccess("Delegated role granted.");
+    });
+
+    private async Task RevokeRoleAsync(EntraAccessRoleAssignment assignment) => await RunMutationAsync(async () =>
+    {
+        await Api.RevokeOrganizationRoleAsync(selectedOrganizationId, assignment.Id);
+        await LoadTargetAssignmentsAsync();
+        ShowSuccess("Delegated role revoked without changing unrelated assignments.");
+    });
+
+    private async Task LoadTargetAssignmentsAsync()
+    {
+        RequireTarget();
+        var target = await Api.GetEntraAccessUserAsync(targetObjectId.Trim());
+        targetAssignments.Clear();
+        targetAssignments.AddRange(target.Organizations
+            .Where(item => item.OrganizationId == selectedOrganizationId)
+            .SelectMany(item => item.RoleAssignments)
+            .Where(item => item.Source == "delegated" && item.Status == "active"));
+    }
+
+    private async Task RunMutationAsync(Func<Task> operation)
+    {
+        isBusy = true;
+        notification = null;
+        try
+        {
+            await operation();
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "The organization change could not be completed.");
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private void ToggleDepartment(string departmentId, bool selected)
+    {
+        if (selected)
+            selectedDepartmentIds.Add(departmentId);
+        else
+        {
+            selectedDepartmentIds.Remove(departmentId);
+            if (defaultDepartmentId == departmentId)
+                defaultDepartmentId = "";
+        }
+    }
+
+    private void NormalizeRoleDepartment()
+    {
+        if (roleName == "organization_admin")
+            roleDepartmentId = "";
+    }
+
+    private string RenameValue(OrganizationAdministrationDepartment department) =>
+        renameValues.TryGetValue(department.Id, out var value) ? value : department.Name;
+
+    private void SetRenameValue(string departmentId, string? value) =>
+        renameValues[departmentId] = value ?? "";
+
+    private string? DepartmentName(string? departmentId) =>
+        departmentId is null ? null : ActiveDepartments.FirstOrDefault(item => item.Id == departmentId)?.Name;
+
+    private static string RoleLabel(string role) => role switch
+    {
+        "organization_admin" => "Organization Admin",
+        "recruiter" => "Recruiter",
+        "business_panel" => "Analytics Viewer",
+        _ => role,
+    };
+
+    private void RequireSelection()
+    {
+        if (SelectedOrganization is null)
+            throw new InvalidOperationException("Select an organization first.");
+    }
+
+    private void RequireTarget()
+    {
+        RequireSelection();
+        RequireText(targetObjectId, "Enter the target user's Entra object ID.");
+    }
+
+    private static void RequireText(string value, string message)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException(message);
+    }
+
+    private void ShowSuccess(string message)
+    {
+        notification = message;
+        notificationKind = "success";
+    }
+
+    private void ShowError(Exception error, string fallback)
+    {
+        notificationKind = "error";
+        notification = error switch
+        {
+            ApiException apiError when !string.IsNullOrWhiteSpace(apiError.CorrelationId) =>
+                $"{apiError.Message} Correlation ID: {apiError.CorrelationId}",
+            ApiException apiError => apiError.Message,
+            InvalidOperationException => error.Message,
+            _ => fallback,
+        };
+    }
+}

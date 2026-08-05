@@ -8,7 +8,7 @@ Both APIs consume the same v2 access token for the shared TalentMatch API regist
 | --- | --- |
 | `ver` | Exactly `2.0` |
 | `iss` | Exact configured tenant issuer: `https://login.microsoftonline.com/{tenantId}/v2.0` |
-| `tid` | Exact tenant ID loaded from the selected environment profile |
+| `tid` | Exact tenant ID loaded from the active environment definition file |
 | `aud` | Exact shared API application/client ID |
 | `azp` | Stack A or Stack B SPA client ID allowlist |
 | `oid` | Valid UUID; immutable user key within `tid` |
@@ -22,6 +22,8 @@ Signature validation uses tenant-specific OpenID Connect metadata and cached JWK
 
 ## Assignment Rules
 
+After all token claims validate, an unknown configured-tenant identity may be idempotently recorded as a pending-access Entra profile before the API returns `403 assignment_missing`. This profile discovery grants no membership, default, role, or protected access. Entra Access Management mutates only profiles established by this validated sign-in path; administrator-supplied object IDs alone are not proof of tenant ownership.
+
 ### Group Source
 
 Authorization requires all of the following:
@@ -32,8 +34,9 @@ Authorization requires all of the following:
 4. For group assignments, each mapping role is present in the token roles.
 5. Token `groups` contains each considered mapping's immutable group object ID.
 6. The user has active organization membership for every scoped assignment and active department membership for every department-scoped assignment.
-7. The requested job or operation has a valid organization/department pair.
-8. At least one assignment applies to that exact scope. If several apply, the API uses the highest applicable role in the hierarchy: `admin` > `organization_admin` > `recruiter`/`business_panel` capabilities.
+7. Every active organization membership has one explicit default selected from its active department memberships. The default selects initial context and is never evaluated as authority.
+8. The requested job or operation has a valid organization/department pair.
+9. At least one assignment applies to that exact scope. If several apply, the API uses the highest applicable role in the hierarchy: `admin` > `organization_admin` > `recruiter`/`business_panel` capabilities.
 
 Assignments outside the requested organization or department are ignored, not combined into broader authority. A user may therefore be Organization Admin in one organization and Recruiter or Analytics Viewer in another.
 
@@ -53,6 +56,7 @@ Authorization requires the Admin token role, one active global bootstrap assignm
 - No active SQL assignment: `403 assignment_missing`.
 - Disabled mapping or revoked assignment: `403 assignment_revoked`.
 - Missing required organization or department membership: `403 membership_missing`.
+- Missing or invalid explicit default department: `403 membership_missing`; no partial authorization context is returned.
 - A job whose department does not belong to its organization: `403 invalid_job_scope` and no job data is returned.
 - Token older than 15 minutes: `401 token_stale`; clients silently acquire a fresh token and retry once.
 - Wrong issuer, tenant, audience, client, or delegated scope: `401` with the corresponding safe error code.

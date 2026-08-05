@@ -1,5 +1,12 @@
+:root {
+    --app-font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --app-font-mono: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+    /* Keep Bootstrap components on the same stack as the rest of the app. */
+    --bs-body-font-family: var(--app-font-family);
+}
+
 html, body {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-family: var(--app-font-family);
 }
 
 h1:focus {

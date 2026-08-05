@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type { Request, Response, NextFunction } from 'express'
 import type { AuthErrorCode, UserRole } from '../../src/types/index.js'
 import { getCurrentUser } from '../session.js'
@@ -6,9 +5,13 @@ import type { AuthorizationAuditAction, AuthorizationAuditDetails } from '../ser
 import { auditService } from '../services/audit.js'
 import {
   AuthorizationError,
-  getAuthorizationErrorMessage,
   type ServerAuthorizationContext,
 } from '../services/authorization.js'
+import {
+  ensureCorrelationId,
+  mapAuthorizationError,
+  sendAuthorizationError,
+} from '../services/authorization-errors.js'
 import { EntraTokenError, type NormalizedEntraClaims } from '../services/entra-token.js'
 
 export interface User {
@@ -87,14 +90,6 @@ function denialAction(code: AuthErrorCode): AuthorizationAuditAction {
   return 'auth.login.denied'
 }
 
-function correlationId(req: Request, res: Response): string {
-  const existing = res.getHeader('X-Correlation-ID')
-  if (typeof existing === 'string') return existing
-  const value = req.get('X-Correlation-ID') ?? randomUUID()
-  res.setHeader('X-Correlation-ID', value)
-  return value
-}
-
 export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
   const mode = options.mode ?? (process.env.APP_AUTH_MODE === 'entra' ? 'entra' : 'simple')
   const audit = options.audit ?? auditService
@@ -104,10 +99,10 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
       try {
         const user = getCurrentUser()
         if (!user) {
-          return res.status(401).json({
-            error: 'Unauthorized',
-            message: 'Authentication required',
-          })
+          return sendAuthorizationError(req, res, mapAuthorizationError(undefined, {
+            code: 'auth_required',
+            statusCode: 401,
+          }))
         }
         req.user = user
         next()
@@ -117,7 +112,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
       return
     }
 
-    const requestCorrelationId = correlationId(req, res)
+    const requestCorrelationId = ensureCorrelationId(req, res)
     let claims: NormalizedEntraClaims | undefined
     try {
       const authorization = req.get('Authorization')
@@ -141,26 +136,33 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions = {}) {
           result: 'denied',
           reasonCode: code,
         }, requestCorrelationId)
-        return res.status(401).json({
-          error: code,
-          message: getAuthorizationErrorMessage(code),
-          correlationId: requestCorrelationId,
-        })
+        return sendAuthorizationError(req, res, mapAuthorizationError(
+          { code, statusCode: 401 },
+          { code: 'invalid_token', statusCode: 401 },
+          { preserveMessage: false },
+        ))
       }
 
       const code = err.code
       const actor = claims?.objectId ?? 'unknown'
+      if (err instanceof AuthorizationError && err.pendingProfileCreated) {
+        await audit.appendAuthorizationEvent(actor, 'auth.profile.pending', actor, {
+          subjectObjectId: claims?.objectId,
+          tenantId: claims?.tenantId,
+          result: 'pending',
+        }, requestCorrelationId)
+      }
       await audit.appendAuthorizationEvent(actor, denialAction(code), actor, {
         subjectObjectId: claims?.objectId,
         tenantId: claims?.tenantId,
         result: 'denied',
         reasonCode: code,
       }, requestCorrelationId)
-      return res.status(err.statusCode).json({
-        error: code,
-        message: getAuthorizationErrorMessage(code),
-        correlationId: requestCorrelationId,
-      })
+      return sendAuthorizationError(req, res, mapAuthorizationError(
+        err,
+        { code: 'invalid_token', statusCode: err.statusCode },
+        { preserveMessage: false },
+      ))
     }
   }
 }

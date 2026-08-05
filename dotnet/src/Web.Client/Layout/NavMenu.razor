@@ -1,16 +1,14 @@
 ﻿@using TalentMatch.Web.Client.Services
 @inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
         <a class="navbar-brand" href="">TalentMatch</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
-            <span class="navbar-toggler-icon"></span>
-        </button>
     </div>
 </div>
 
-<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
+<div class="nav-scrollable">
     <nav class="nav flex-column">
         @if (currentUser != null)
         {
@@ -19,13 +17,24 @@
                     <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Dashboard
                 </NavLink>
             </div>
-            @if (currentUser.Role == "admin")
+            @if (CanManageUsers)
             {
                 <div class="nav-item px-3">
                     <NavLink class="nav-link" href="users">
-                        <span class="bi bi-plus-square-fill-nav-menu" aria-hidden="true"></span> Users
+                        <span class="bi bi-people-fill-nav-menu" aria-hidden="true"></span> @AdministrationLabel
                     </NavLink>
                 </div>
+                @if (AuthConfiguration.IsEntra)
+                {
+                    <div class="nav-item px-3">
+                        <NavLink class="nav-link" href="organizations">
+                            <span class="bi bi-diagram-3-fill-nav-menu" aria-hidden="true"></span> Organizations
+                        </NavLink>
+                    </div>
+                }
+            }
+            @if (IsGlobalAdmin)
+            {
                 <div class="nav-item px-3">
                     <NavLink class="nav-link" href="failure-queue">
                         <span class="bi bi-list-nested-nav-menu" aria-hidden="true"></span> Failure Queue
@@ -45,18 +54,16 @@
 </div>
 
 @code {
-    private bool collapseNavMenu = true;
     private UserInfo? currentUser;
 
-    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+    private bool IsGlobalAdmin => string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
+    private bool CanManageUsers => IsGlobalAdmin
+        || (AuthConfiguration.IsEntra
+            && string.Equals(currentUser?.Role, "organization_admin", StringComparison.OrdinalIgnoreCase));
+    private string AdministrationLabel => AuthConfiguration.IsEntra ? "Access management" : "Users";
 
     protected override async Task OnInitializedAsync()
     {
         currentUser = await Api.GetCurrentUserAsync();
-    }
-
-    private void ToggleNavMenu()
-    {
-        collapseNavMenu = !collapseNavMenu;
     }
 }

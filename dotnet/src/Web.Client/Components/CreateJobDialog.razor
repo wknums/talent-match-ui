@@ -3,6 +3,7 @@
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.JSInterop
 @inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
 @inject IJSRuntime JS
 
 @if (Visible)
@@ -116,15 +117,50 @@
         {
             <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["title"]</span>
         }
-        <input placeholder="Department" @bind="department" />
-        @if (validationErrors.ContainsKey("department"))
+        @if (UseScopeSelectors)
         {
-            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["department"]</span>
+            <label for="create-job-organisation" style="font-size: 0.85rem;">Organisation</label>
+            <select id="create-job-organisation" @bind="selectedOrganizationId" @bind:after="OnOrganizationSelected">
+                <option value="">Select an organisation</option>
+                @foreach (var org in scopeOrganizations)
+                {
+                    <option value="@org.Id">@org.Name</option>
+                }
+            </select>
+            @if (validationErrors.ContainsKey("organisation"))
+            {
+                <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["organisation"]</span>
+            }
+
+            <label for="create-job-department" style="font-size: 0.85rem;">Department</label>
+            <select id="create-job-department" @bind="selectedDepartmentId" @bind:after="OnDepartmentSelected">
+                <option value="">Select a department</option>
+                @foreach (var dept in SelectedOrganizationDepartments)
+                {
+                    <option value="@dept.Id">@dept.Name</option>
+                }
+            </select>
+            @if (validationErrors.ContainsKey("department"))
+            {
+                <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["department"]</span>
+            }
+            @if (!string.IsNullOrEmpty(scopeLoadError))
+            {
+                <span style="color: #dc2626; font-size: 0.85rem;">@scopeLoadError</span>
+            }
         }
-        <input placeholder="Organisation" @bind="organisation" />
-        @if (validationErrors.ContainsKey("organisation"))
+        else
         {
-            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["organisation"]</span>
+            <input placeholder="Department" @bind="department" />
+            @if (validationErrors.ContainsKey("department"))
+            {
+                <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["department"]</span>
+            }
+            <input placeholder="Organisation" @bind="organisation" />
+            @if (validationErrors.ContainsKey("organisation"))
+            {
+                <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["organisation"]</span>
+            }
         }
         <input type="date" @bind="postingDate" />
 
@@ -276,6 +312,90 @@
     private bool approveRubricOnSave;
     private Dictionary<string, string> validationErrors = new();
 
+    // Entra mode requires the job to carry real organization/department identifiers.
+    private IReadOnlyList<OrganizationAdministrationOrganization> scopeOrganizations = Array.Empty<OrganizationAdministrationOrganization>();
+    private string selectedOrganizationId = "";
+    private string selectedDepartmentId = "";
+    private string? scopeLoadError;
+    private bool scopeLoaded;
+
+    private bool UseScopeSelectors => AuthConfiguration.IsEntra && !IsEditMode;
+
+    private IReadOnlyList<OrganizationAdministrationDepartment> SelectedOrganizationDepartments
+        => scopeOrganizations.FirstOrDefault(o => o.Id == selectedOrganizationId)?.Departments
+            ?? (IReadOnlyList<OrganizationAdministrationDepartment>)Array.Empty<OrganizationAdministrationDepartment>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadScopeOrganizationsAsync();
+    }
+
+    private async Task LoadScopeOrganizationsAsync()
+    {
+        if (scopeLoaded || !UseScopeSelectors)
+            return;
+
+        scopeLoaded = true;
+        try
+        {
+            scopeOrganizations = (await Api.ListOrganizationsAsync())
+                .Where(o => string.Equals(o.Status, "active", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            scopeLoadError = scopeOrganizations.Count == 0
+                ? "No authorized organizations are available. Ask an administrator to grant access."
+                : null;
+        }
+        catch (ApiException ex)
+        {
+            scopeOrganizations = Array.Empty<OrganizationAdministrationOrganization>();
+            scopeLoadError = ex.Message;
+        }
+    }
+
+    private void OnOrganizationSelected()
+    {
+        organisation = scopeOrganizations.FirstOrDefault(o => o.Id == selectedOrganizationId)?.Name ?? "";
+        selectedDepartmentId = "";
+        department = "";
+        validationErrors.Remove("organisation");
+        validationErrors.Remove("department");
+    }
+
+    private void OnDepartmentSelected()
+    {
+        department = SelectedOrganizationDepartments.FirstOrDefault(d => d.Id == selectedDepartmentId)?.Name ?? "";
+        validationErrors.Remove("department");
+    }
+
+    // Best-effort mapping of AI-extracted free text onto the authorized scope selectors.
+    private void MatchExtractedScope()
+    {
+        if (!UseScopeSelectors)
+            return;
+
+        if (string.IsNullOrWhiteSpace(selectedOrganizationId) && !string.IsNullOrWhiteSpace(organisation))
+        {
+            var match = scopeOrganizations.FirstOrDefault(
+                o => string.Equals(o.Name, organisation, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                selectedOrganizationId = match.Id;
+                organisation = match.Name;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(selectedDepartmentId) && !string.IsNullOrWhiteSpace(department))
+        {
+            var match = SelectedOrganizationDepartments.FirstOrDefault(
+                d => string.Equals(d.Name, department, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                selectedDepartmentId = match.Id;
+                department = match.Name;
+            }
+        }
+    }
+
     protected override void OnParametersSet()
     {
         if (Visible && !_sizedToViewport)
@@ -400,6 +520,12 @@
         if (!IsEditMode && string.IsNullOrWhiteSpace(organisation))
             validationErrors["organisation"] = "Organisation is required";
 
+        if (UseScopeSelectors && string.IsNullOrWhiteSpace(selectedOrganizationId))
+            validationErrors["organisation"] = "Organisation is required";
+
+        if (UseScopeSelectors && string.IsNullOrWhiteSpace(selectedDepartmentId))
+            validationErrors["department"] = "Department is required";
+
         if (!rubricCategories.Any(c => !string.IsNullOrWhiteSpace(c.Name) && c.Weight > 0))
             validationErrors["rubric"] = "At least one rubric category with a name and weight is required";
 
@@ -461,6 +587,8 @@
                 if (!string.IsNullOrWhiteSpace(result.Department)) department = result.Department;
                 if (!string.IsNullOrWhiteSpace(result.Organisation)) organisation = result.Organisation;
                 if (!string.IsNullOrWhiteSpace(result.JobDescription)) jobDescription = result.JobDescription;
+
+                MatchExtractedScope();
 
                 if (result.MustHaves?.Any() == true)
                     mustHaveCriteria = result.MustHaves.Select(m => m.Criterion).ToList();
@@ -621,7 +749,9 @@
             {
                 var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
                     rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold,
-                    string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription));
+                    string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription,
+                    OrganizationId: string.IsNullOrWhiteSpace(selectedOrganizationId) ? null : selectedOrganizationId,
+                    DepartmentId: string.IsNullOrWhiteSpace(selectedDepartmentId) ? null : selectedDepartmentId));
                 success = result;
                 message = result ? "Job created successfully!" : "Failed to create job.";
                 if (result)
@@ -643,6 +773,8 @@
         title = "";
         department = "";
         organisation = "";
+        selectedOrganizationId = "";
+        selectedDepartmentId = "";
         jobDescription = "";
         postingDate = DateTime.Today;
         scoringRunCount = 3;

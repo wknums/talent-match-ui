@@ -404,7 +404,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
       onSuccess?.()
       onClose()
       resetForm()
-    } catch (error) {
+    } catch {
       toast.error(editingJob ? 'Failed to update job' : 'Failed to create job')
     } finally {
       setSubmitting(false)

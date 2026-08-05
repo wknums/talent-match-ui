@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { applicationRepo, jobRepo } from '../storage/repos/index.js'
-import type { ScoringRun, AggregatedResult } from '../../src/types/index.js'
+import type { AggregatedResult } from '../../src/types/index.js'
 
 /**
  * Fuzzy-match an LLM-derived category name to the closest rubric category name.
@@ -69,7 +69,6 @@ export async function runAggregation(
   // Compute sub-score averages (fuzzy-match LLM category names to rubric names)
   const finalSubScores: Record<string, number> = {}
   if (config?.rubric) {
-    const rubricNames = config.rubric.map(c => c.name)
     for (const cat of config.rubric) {
       const catScores = runs.map(r => {
         // Exact match first

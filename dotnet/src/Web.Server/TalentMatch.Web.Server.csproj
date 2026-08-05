@@ -25,6 +25,11 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <Content Include="..\..\..\server\storage\schema-pre-batch-upgrades.sql">
+      <Link>server\storage\schema-pre-batch-upgrades.sql</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Content Include="..\..\..\server\storage\schema-sqlite.sql">
       <Link>server\storage\schema-sqlite.sql</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

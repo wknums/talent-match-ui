@@ -71,4 +71,38 @@ describe('Entra API transport', () => {
     expect(acquireAccessToken).not.toHaveBeenCalled()
     expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).has('Authorization')).toBe(false)
   })
+
+  it('sends typed access-management filters and desired organization state', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      objectId: 'target', organizations: [], authorizationVersion: 1,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await realAPI.listEntraAccessUsers({ search: 'A B', status: 'pending', limit: 25 })
+    await realAPI.putEntraOrganizationAccess('target-id', 'organization-id', {
+      expectedVersion: 0,
+      profile: { username: 'target@example.com', fullName: 'Target', email: null },
+      membership: { status: 'active', departmentIds: ['department-id'], defaultDepartmentId: 'department-id' },
+      roleAssignments: [{ role: 'recruiter', departmentId: 'department-id' }],
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/access-management/users?search=A+B&status=pending&limit=25')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/access-management/users/target-id/organizations/organization-id')
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({ method: 'PUT' })
+  })
+
+  it('preserves canonical access-management conflict details', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: 'version_conflict',
+      message: 'Authorization state changed. Refresh and retry.',
+      correlationId: 'correlation-conflict',
+    }), { status: 409, headers: { 'Content-Type': 'application/json' } })))
+
+    await expect(realAPI.updateEntraAccessUser('target-id', { expectedVersion: 0, isActive: false }))
+      .rejects.toMatchObject({
+        status: 409,
+        errorCode: 'version_conflict',
+        correlationId: 'correlation-conflict',
+      })
+  })
 })

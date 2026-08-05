@@ -1,0 +1,242 @@
+.organization-admin {
+    --org-ink: #182229;
+    --org-muted: #5d6870;
+    --org-line: #ccd4d7;
+    --org-surface: #f7f9f8;
+    --org-accent: #006d5b;
+    --org-danger: #a0292f;
+    color: var(--org-ink);
+    margin: 0 auto;
+    max-width: 1440px;
+    padding: 2rem clamp(1rem, 3vw, 3rem) 4rem;
+}
+
+.organization-admin__header,
+.organization-admin__organization-header,
+.organization-admin__section-heading,
+.organization-admin__department,
+.organization-admin__assignment {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.organization-admin h1,
+.organization-admin h2,
+.organization-admin h3,
+.organization-admin p {
+    margin-top: 0;
+}
+
+.organization-admin__eyebrow {
+    color: var(--org-accent);
+    font-size: .75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.organization-admin__notice,
+.organization-admin__state {
+    border: 1px solid var(--org-line);
+    margin: 1rem 0;
+    padding: .9rem 1rem;
+}
+
+.organization-admin__notice--success {
+    border-color: #6cae9d;
+    background: #edf8f4;
+}
+
+.organization-admin__notice--error {
+    border-color: #d49a9d;
+    background: #fff2f2;
+}
+
+.organization-admin__band,
+.organization-admin__panel {
+    border-top: 1px solid var(--org-line);
+    padding: 1.4rem 0;
+}
+
+.organization-admin__workspace {
+    display: grid;
+    gap: 2rem;
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    margin-top: 1.5rem;
+}
+
+.organization-admin__directory {
+    border-right: 1px solid var(--org-line);
+    padding-right: 1.25rem;
+}
+
+.organization-admin__directory select,
+.organization-admin input,
+.organization-admin select {
+    border: 1px solid #919da2;
+    border-radius: 3px;
+    min-height: 2.5rem;
+    padding: .45rem .6rem;
+    width: 100%;
+}
+
+.organization-admin label,
+.organization-admin legend {
+    color: var(--org-muted);
+    display: grid;
+    font-size: .85rem;
+    font-weight: 600;
+    gap: .35rem;
+}
+
+.organization-admin__organization {
+    background: transparent;
+    border: 0;
+    border-left: 3px solid transparent;
+    color: var(--org-ink);
+    display: grid;
+    padding: .8rem;
+    text-align: left;
+    width: 100%;
+}
+
+.organization-admin__organization span,
+.organization-admin small,
+.organization-admin__muted {
+    color: var(--org-muted);
+    font-size: .78rem;
+}
+
+.organization-admin__organization.is-selected {
+    background: #e9f3f0;
+    border-left-color: var(--org-accent);
+}
+
+.organization-admin__scope,
+.organization-admin__status {
+    border: 1px solid var(--org-line);
+    border-radius: 999px;
+    font-size: .75rem;
+    padding: .3rem .55rem;
+}
+
+.organization-admin__status--active {
+    border-color: #6cae9d;
+    color: var(--org-accent);
+}
+
+.organization-admin__department-list,
+.organization-admin__assignment-list {
+    display: grid;
+    gap: .5rem;
+}
+
+.organization-admin__department,
+.organization-admin__assignment {
+    background: var(--org-surface);
+    border: 1px solid var(--org-line);
+    padding: .75rem;
+}
+
+.organization-admin__department > div,
+.organization-admin__assignment > span {
+    display: grid;
+    gap: .2rem;
+    min-width: 12rem;
+}
+
+.organization-admin__form-grid,
+.organization-admin__inline-form {
+    align-items: end;
+    display: grid;
+    gap: .9rem;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.organization-admin__inline-form {
+    grid-template-columns: minmax(220px, 1fr) auto;
+    margin-top: 1rem;
+}
+
+.organization-admin fieldset {
+    border: 0;
+    margin: 1rem 0;
+    padding: 0;
+}
+
+.organization-admin__checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .75rem;
+}
+
+.organization-admin__checks label {
+    align-items: center;
+    border: 1px solid var(--org-line);
+    display: flex;
+    padding: .55rem .7rem;
+}
+
+.organization-admin__checks input {
+    min-height: auto;
+    width: auto;
+}
+
+.organization-admin button {
+    border-radius: 3px;
+    cursor: pointer;
+    min-height: 2.5rem;
+    padding: .5rem .8rem;
+}
+
+.organization-admin__primary {
+    background: var(--org-accent);
+    border: 1px solid var(--org-accent);
+    color: white;
+}
+
+.organization-admin__secondary {
+    background: white;
+    border: 1px solid #76858b;
+    color: var(--org-ink);
+}
+
+.organization-admin__danger {
+    background: white;
+    border: 1px solid var(--org-danger);
+    color: var(--org-danger);
+}
+
+.organization-admin button:disabled {
+    cursor: not-allowed;
+    opacity: .55;
+}
+
+.organization-admin button:focus-visible,
+.organization-admin input:focus-visible,
+.organization-admin select:focus-visible {
+    outline: 3px solid #f0b429;
+    outline-offset: 2px;
+}
+
+@media (max-width: 860px) {
+    .organization-admin__workspace,
+    .organization-admin__form-grid,
+    .organization-admin__inline-form {
+        grid-template-columns: 1fr;
+    }
+
+    .organization-admin__directory {
+        border-bottom: 1px solid var(--org-line);
+        border-right: 0;
+        padding: 0 0 1rem;
+    }
+
+    .organization-admin__department,
+    .organization-admin__header,
+    .organization-admin__organization-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+}

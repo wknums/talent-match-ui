@@ -14,7 +14,7 @@
     {
         <!-- Creation controls -->
         <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-            <button @onclick="StartManualCreate" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">✏️ Write Manually</button>
+            <button @onclick="StartManualCreate" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">✏️ Write Manually</button>
             <button @onclick="StartFileImport" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">📄 Import File</button>
             <button @onclick="GenerateFromRubric" disabled="@isGenerating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;">
                 @(isGenerating ? "Generating..." : "⚡ Generate from Rubric")
@@ -32,9 +32,9 @@
         @if (showEditor)
         {
             <div style="margin-bottom: 1rem;">
-                <textarea @bind="editorText" rows="10" style="width: 100%; padding: 0.5rem; font-family: monospace;"></textarea>
+                <textarea @bind="editorText" rows="10" style="width: 100%; padding: 0.5rem; font-family: var(--app-font-mono);"></textarea>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                    <button @onclick="SavePrompt" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #38a169; color: white; border: none; border-radius: 4px;">
+                    <button @onclick="SavePrompt" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #276749; color: white; border: none; border-radius: 4px;">
                         @(isSaving ? "Saving..." : "Save Prompt")
                     </button>
                     <button @onclick="() => showEditor = false" style="padding: 0.5rem 1rem;">Cancel</button>
@@ -77,7 +77,7 @@
                             }
                             @if (prompt.Status == "inactive")
                             {
-                                <button @onclick="() => SetAsProduction(prompt)" style="padding: 2px 6px; font-size: 0.8rem; background: #38a169; color: white; border: none; border-radius: 4px;" title="Set as the active production prompt">🚀 Use for Production</button>
+                                <button @onclick="() => SetAsProduction(prompt)" style="padding: 2px 6px; font-size: 0.8rem; background: #276749; color: white; border: none; border-radius: 4px;" title="Set as the active production prompt">🚀 Use for Production</button>
                             }
                             @if (prompt.Status == "production-approved")
                             {
@@ -131,7 +131,16 @@
 
     private async Task LoadPrompts()
     {
-        prompts = await Api.GetPromptsAsync(JobId);
+        try
+        {
+            prompts = await Api.GetPromptsAsync(JobId);
+        }
+        catch (HttpRequestException ex)
+        {
+            // A failed refresh must not tear the component down: keep the list that is already on
+            // screen and explain why it is not current.
+            generationError = $"The prompt list could not be refreshed: {ex.Message}";
+        }
     }
 
     private void StartManualCreate()
@@ -191,20 +200,28 @@
     private async Task SavePrompt()
     {
         isSaving = true;
+        generationError = null;
         StateHasChanged();
         try
         {
-            if (editingPromptId != null)
+            var saved = editingPromptId != null
+                ? await Api.EditPromptAsync(JobId, editingPromptId, editorText)
+                : await Api.CreatePromptAsync(JobId, editorText, editorSource);
+
+            if (saved is null)
             {
-                await Api.EditPromptAsync(JobId, editingPromptId, editorText);
+                // Leave the editor open so a rejected save does not discard what the user wrote.
+                generationError = "The prompt could not be saved. Your text has been kept - please try again.";
+                return;
             }
-            else
-            {
-                await Api.CreatePromptAsync(JobId, editorText, editorSource);
-            }
+
             showEditor = false;
             await LoadPrompts();
             await OnPromptStatusChange.InvokeAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            generationError = $"The prompt could not be saved: {ex.Message}";
         }
         finally
         {

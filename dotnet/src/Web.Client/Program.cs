@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using Microsoft.Authentication.WebAssembly.Msal;
 using Microsoft.JSInterop;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using TalentMatch.Web.Client;
 using TalentMatch.Web.Client.Services;
@@ -54,6 +55,9 @@ else if (authConfiguration.IsEntra)
 
 builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("API"));
 builder.Services.AddScoped<ApiClient>();
+builder.Services.AddScoped<INavigationAuditClient>(sp => sp.GetRequiredService<ApiClient>());
+builder.Services.AddScoped<INavigationShellBrowser, NavigationShellBrowser>();
+builder.Services.AddScoped<NavigationShellState>();
 
 var host = builder.Build();
 await LogBuildStampAsync(host);
@@ -120,16 +124,40 @@ public class CookieHandler : DelegatingHandler
     }
 }
 
-public sealed class ApiAuthorizationMessageHandler : AuthorizationMessageHandler
+/// <summary>
+/// Attaches the Entra access token to API requests.
+/// </summary>
+/// <remarks>
+/// This deliberately does not derive from <see cref="AuthorizationMessageHandler"/>. That base class
+/// holds the token it last obtained in a private field and only asks for another one within five
+/// minutes of expiry. The API rejects tokens older than its authorization freshness window, which is
+/// far shorter than the token lifetime, so the privately held copy goes stale while the base class
+/// keeps re-attaching it — including on the retry that exists to recover the session. Asking the
+/// token provider on every request keeps MSAL as the single cache, so purging that cache takes
+/// effect. MSAL answers from its own cache, so this costs one interop call rather than a network
+/// round trip.
+/// </remarks>
+public sealed class ApiAuthorizationMessageHandler(
+    IAccessTokenProvider provider,
+    NavigationManager navigation,
+    PublicAuthConfiguration configuration) : DelegatingHandler
 {
-    public ApiAuthorizationMessageHandler(
-        IAccessTokenProvider provider,
-        NavigationManager navigation,
-        PublicAuthConfiguration configuration)
-        : base(provider, navigation)
+    private readonly Uri authorizedUrl = new(configuration.ApiAuthorizationUrl);
+    private readonly AccessTokenRequestOptions tokenOptions = new() { Scopes = [configuration.ApiScope!] };
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
     {
-        ConfigureHandler(
-            authorizedUrls: [configuration.ApiAuthorizationUrl],
-            scopes: [configuration.ApiScope!]);
+        if (request.RequestUri is not null && authorizedUrl.IsBaseOf(request.RequestUri))
+        {
+            var result = await provider.RequestAccessToken(tokenOptions);
+            if (!result.TryGetToken(out var token))
+                throw new AccessTokenNotAvailableException(navigation, result, tokenOptions.Scopes);
+
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+        }
+
+        return await base.SendAsync(request, cancellationToken);
     }
 }

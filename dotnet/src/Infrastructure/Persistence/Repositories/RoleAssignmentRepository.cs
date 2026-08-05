@@ -28,10 +28,14 @@ public class RoleAssignmentRepository(AppDbContext context) : IRoleAssignmentRep
         await context.SaveChangesAsync(ct);
     }
 
-    public async Task ActivateAsync(RoleAssignment assignment, CancellationToken ct = default)
+    public async Task<RoleAssignment> ActivateAsync(RoleAssignment assignment, CancellationToken ct = default)
     {
+        var existing = await FindEquivalentActiveAsync(assignment, ct);
+        if (existing is not null) return existing;
+
         context.RoleAssignments.Add(assignment);
         await context.SaveChangesAsync(ct);
+        return assignment;
     }
 
     public async Task RevokeAsync(string assignmentId, string updatedBy, CancellationToken ct = default)
@@ -44,4 +48,15 @@ public class RoleAssignmentRepository(AppDbContext context) : IRoleAssignmentRep
         assignment.UpdatedBy = updatedBy;
         await context.SaveChangesAsync(ct);
     }
+
+    private Task<RoleAssignment?> FindEquivalentActiveAsync(RoleAssignment assignment, CancellationToken ct)
+        => context.RoleAssignments.FirstOrDefaultAsync(existing =>
+            existing.TenantId == assignment.TenantId
+            && existing.UserObjectId == assignment.UserObjectId
+            && existing.Source == assignment.Source
+            && existing.Role == assignment.Role
+            && existing.OrganizationId == assignment.OrganizationId
+            && existing.DepartmentId == assignment.DepartmentId
+            && existing.RoleGroupMappingId == assignment.RoleGroupMappingId
+            && existing.Status == "active", ct);
 }

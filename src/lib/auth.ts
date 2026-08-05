@@ -7,7 +7,12 @@ export function authorizationContextToUser(context: AuthorizationContext): User 
   const role = context.globalRole
     ?? rolePriority.find((candidate) => context.authorizations.some((authorization) => authorization.role === candidate))
     ?? 'business_panel'
-  const department = context.memberships[0]?.departments[0]?.departmentName
+  const department = context.memberships
+    .map((membership) => membership.departments.find(
+      (candidate) => candidate.departmentId === membership.defaultDepartmentId,
+    ))
+    .find((candidate) => candidate !== undefined)
+    ?.departmentName
 
   return {
     userId: context.userId,
@@ -17,6 +22,7 @@ export function authorizationContextToUser(context: AuthorizationContext): User 
     entraTenantId: context.tenantId,
     entraObjectId: context.objectId,
     isActive: true,
+    authorizationVersion: context.authorizationVersion,
     department,
     fullName: context.fullName,
     email: context.email,

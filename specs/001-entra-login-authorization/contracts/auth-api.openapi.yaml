@@ -60,6 +60,47 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthError"
+  /api/navigation/audit:
+    post:
+      operationId: recordNavigationStateChange
+      summary: Record an authenticated navigation collapse or expansion before applying it
+      security:
+        - entraBearer:
+            - access_as_user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NavigationAuditRequest"
+      responses:
+        "201":
+          description: Immutable navigation audit outcome recorded; the client may now apply and persist the requested state.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NavigationAuditOutcome"
+        "400":
+          description: Action, correlation ID, or request timestamp is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthError"
+        "401":
+          description: No valid current user token was supplied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthError"
+        "503":
+          description: The audit outcome could not be persisted; the client must retain the prior navigation state and preference.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthError"
 components:
   securitySchemes:
     entraBearer:
@@ -88,6 +129,7 @@ components:
         - username
         - fullName
         - globalRole
+        - authorizationVersion
         - memberships
         - authorizations
         - tokenIssuedAt
@@ -116,6 +158,10 @@ components:
             - type: string
               const: admin
             - type: "null"
+        authorizationVersion:
+          type: integer
+          minimum: 0
+          description: Current optimistic version for Entra access-management mutations.
         memberships:
           type: array
           minItems: 1
@@ -145,6 +191,7 @@ components:
       required:
         - organizationId
         - organizationName
+        - defaultDepartmentId
         - departments
       properties:
         organizationId:
@@ -152,6 +199,10 @@ components:
           format: uuid
         organizationName:
           type: string
+        defaultDepartmentId:
+          type: string
+          format: uuid
+          description: Initial context preference selected from this membership's active departments; it grants no authority.
         departments:
           type: array
           minItems: 1
@@ -204,6 +255,49 @@ components:
             - group
             - delegated
             - bootstrap
+    NavigationAuditRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+        - correlationId
+        - requestedAt
+      properties:
+        action:
+          type: string
+          enum:
+            - collapse
+            - expand
+        correlationId:
+          type: string
+          format: uuid
+        requestedAt:
+          type: string
+          format: date-time
+    NavigationAuditOutcome:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+        - correlationId
+        - actorObjectId
+        - recordedAt
+      properties:
+        action:
+          type: string
+          enum:
+            - collapse
+            - expand
+        correlationId:
+          type: string
+          format: uuid
+        actorObjectId:
+          type: string
+          format: uuid
+          description: Derived from the validated token and never accepted from request data.
+        recordedAt:
+          type: string
+          format: date-time
     AuthError:
       type: object
       additionalProperties: false
@@ -229,6 +323,8 @@ components:
             - membership_missing
             - invalid_job_scope
             - identity_disabled
+            - invalid_navigation_action
+            - navigation_audit_unavailable
         message:
           type: string
           description: Safe user-facing next action without internal identity details.

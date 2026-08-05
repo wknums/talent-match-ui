@@ -60,7 +60,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
       ])
       setUsers(usersData)
       setResetRequests(requestsData.filter(r => r.status === 'pending'))
-    } catch (error) {
+    } catch {
       toast.error('Failed to load user data')
     }
   }
@@ -120,7 +120,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
       } else {
         toast.error('Failed to delete user')
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete user')
     }
   }
@@ -151,7 +151,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
       } else {
         toast.error('Failed to reset password')
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to reset password')
     }
   }
@@ -242,7 +242,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
         } else {
           toast.error('Failed to reset password')
         }
-      } catch (error) {
+      } catch {
         toast.error('Failed to reset password')
       }
     } else {
@@ -254,7 +254,7 @@ export function UserManagementDialog({ open, onClose, currentUserId }: UserManag
         } else {
           toast.error('Failed to reject request')
         }
-      } catch (error) {
+      } catch {
         toast.error('Failed to reject request')
       }
     }

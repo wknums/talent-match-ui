@@ -1,5 +1,6 @@
 import { getPool, sql } from '../db.js'
 import { T } from '../table-names.js'
+import type { StorageExecutor } from '../types.js'
 
 export interface StoredUser {
   userId: string
@@ -9,6 +10,7 @@ export interface StoredUser {
   entraTenantId?: string
   entraObjectId?: string
   isActive?: boolean
+  authorizationVersion?: number
   department?: string
   fullName: string
   email?: string
@@ -38,6 +40,7 @@ function rowToUser(r: any): StoredUser {
     entraTenantId: r.EntraTenantId ?? undefined,
     entraObjectId: r.EntraObjectId ?? undefined,
     isActive: r.IsActive === undefined ? true : r.IsActive === true || r.IsActive === 1,
+    authorizationVersion: Number(r.AuthorizationVersion ?? 0),
     department: r.Department || undefined,
     fullName: r.FullName,
     email: r.Email || undefined,
@@ -109,8 +112,9 @@ export const userRepo = {
       .input('entraTenantId', sql.NVarChar, user.entraTenantId ?? null)
       .input('entraObjectId', sql.NVarChar, user.entraObjectId ?? null)
       .input('isActive', sql.Bit, user.isActive === false ? 0 : 1)
-      .query(`INSERT INTO ${T('Users')} (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive)
-        VALUES (@id, @username, @role, @fullName, @email, @department, @passwordHash, @createdAt, @passwordResetRequired, @authenticationProvider, @entraTenantId, @entraObjectId, @isActive)`)
+      .input('authorizationVersion', sql.Int, user.authorizationVersion ?? 0)
+      .query(`INSERT INTO ${T('Users')} (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive, AuthorizationVersion)
+        VALUES (@id, @username, @role, @fullName, @email, @department, @passwordHash, @createdAt, @passwordResetRequired, @authenticationProvider, @entraTenantId, @entraObjectId, @isActive, @authorizationVersion)`)
   },
 
   async upsertEntraProfile(user: Required<Pick<StoredUser, 'userId' | 'username' | 'fullName' | 'createdAt'>> & Pick<StoredUser, 'email' | 'role' | 'entraTenantId' | 'entraObjectId'>): Promise<StoredUser> {
@@ -123,6 +127,15 @@ export const userRepo = {
     const created: StoredUser = { ...user, role: user.role ?? 'recruiter', authenticationProvider: 'entra', passwordHash: undefined, passwordResetRequired: false, isActive: true }
     await this.create(created)
     return created
+  },
+
+  async tryAdvanceAuthorizationVersion(userId: string, expectedVersion: number, executor?: StorageExecutor): Promise<boolean> {
+    const connection = executor ?? await getPool()
+    const result = await connection.request()
+      .input('id', sql.NVarChar, userId)
+      .input('expectedVersion', sql.Int, expectedVersion)
+      .query(`UPDATE ${T('Users')} SET AuthorizationVersion = AuthorizationVersion + 1 WHERE Id = @id AND AuthorizationVersion = @expectedVersion`)
+    return (result.rowsAffected?.[0] ?? 0) === 1
   },
 
   async update(userId: string, fields: Partial<Pick<StoredUser, 'fullName' | 'email' | 'role' | 'department' | 'passwordHash' | 'lastLogin' | 'passwordResetRequired' | 'isActive'>>): Promise<void> {

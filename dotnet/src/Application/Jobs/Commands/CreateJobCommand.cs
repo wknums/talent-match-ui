@@ -1,5 +1,6 @@
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -20,18 +21,25 @@ public record CreateJobCommand(
     double VarianceThreshold,
     string? JobDescription,
     string? RubricSource,
-    string? RawExtractionResponse
+    string? RawExtractionResponse,
+    string? OrganizationId = null,
+    string? DepartmentId = null
 ) : IRequest<Job>;
 
 public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
 {
     private readonly IJobRepository _jobRepository;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationRepository? _organizationRepository;
 
-    public CreateJobCommandHandler(IJobRepository jobRepository, ICurrentUserService currentUser)
+    public CreateJobCommandHandler(
+        IJobRepository jobRepository,
+        ICurrentUserService currentUser,
+        IOrganizationRepository? organizationRepository = null)
     {
         _jobRepository = jobRepository;
         _currentUser = currentUser;
+        _organizationRepository = organizationRepository;
     }
 
     public async Task<Job> Handle(CreateJobCommand request, CancellationToken cancellationToken)
@@ -42,11 +50,22 @@ public class CreateJobCommandHandler : IRequestHandler<CreateJobCommand, Job>
             Title = request.Title,
             Department = request.Department,
             Organisation = request.Organisation,
+            OrganizationId = request.OrganizationId,
+            DepartmentId = request.DepartmentId,
             PostingDate = request.PostingDate,
             Status = "active",
             JobDescription = request.JobDescription,
             CreatedBy = _currentUser.UserId ?? _currentUser.Username
         };
+
+        var authorizationState = await _currentUser.GetAuthorizationStateAsync(cancellationToken);
+        if (authorizationState is not null)
+        {
+            await JobAuthorization.EnsureValidScopeAsync(
+                job, authorizationState, _organizationRepository, cancellationToken);
+            if (!JobAuthorization.CanMutate(authorizationState, job))
+                throw new UnauthorizedAccessException("The current user cannot create jobs in this scope.");
+        }
 
         var configVersion = new JobConfigVersion
         {

@@ -11,8 +11,8 @@
     <div style="margin-bottom: 1rem;">
         <h4>@job.Title</h4>
         <p>@job.Organisation — @job.Department | Status: @job.Status</p>
-        <div style="display: flex; gap: 0.5rem;">
-            <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">Upload Applications</button>
+        <div class="action-row">
+            <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">Upload Applications</button>
             <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">Manage Prompts</button>
             <button @onclick="ProcessJob" disabled="@(isProcessRequestInFlight || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
                 @(isProcessRequestInFlight ? "Starting..." : (isProcessing ? "Processing..." : "Process Applications"))
@@ -27,7 +27,7 @@
             }
             @if (!hasProductionApprovedPrompt)
             {
-                <span style="color: #e53e3e; font-size: 0.85rem; align-self: center;">⚠️ Production-approved prompt required</span>
+                <span style="color: #c53030; font-size: 0.85rem; align-self: center;">⚠️ Production-approved prompt required</span>
             }
         </div>
     </div>
@@ -56,25 +56,26 @@
         </div>
     }
 
-    <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+    <div class="tab-row">
         <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F0") (@longlist.Count)</button>
         <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F0") (@shortlist.Count)</button>
         <button @onclick="@(() => activeTab = "excluded")" style="@TabStyle("excluded")">Excluded (@excluded.Count)</button>
     </div>
 
-    <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
+    <div class="filter-row">
         <input
             @bind="applicantSearch"
             @bind:event="oninput"
             placeholder="Search applicant name"
             aria-label="Search by applicant name"
-            style="padding: 0.45rem 0.6rem; min-width: 300px; border: 1px solid #cbd5e0; border-radius: 6px;" />
+            style="padding: 0.45rem 0.6rem; flex: 1 1 18rem; min-width: 0; border: 1px solid #cbd5e0; border-radius: 6px;" />
         @if (!string.IsNullOrWhiteSpace(applicantSearch))
         {
             <button @onclick="() => applicantSearch = string.Empty" style="padding: 0.4rem 0.75rem;">Clear</button>
         }
     </div>
 
+    <div class="table-scroll">
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ccc;">
@@ -114,6 +115,7 @@
             }
         </tbody>
     </table>
+    </div>
 }
 else
 {

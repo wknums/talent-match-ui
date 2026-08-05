@@ -1,12 +1,68 @@
 import { randomUUID } from 'node:crypto'
-import { Router } from 'express'
+import { Router, type Response } from 'express'
 import type { AuthenticatedRequest } from '../middleware/auth.js'
 import { jobRepo, applicationRepo, userRepo, dlqRepo } from '../storage/repos/index.js'
-import { requireRole } from '../middleware/rbac.js'
 import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
+import { mapAuthorizationError, sendAuthorizationError } from '../services/authorization-errors.js'
 import type { AggregatedResult, Job, JobConfigVersion } from '../../src/types/index.js'
+
+type JobAccess = 'read' | 'mutate'
+
+function hasScopedJobAccess(req: AuthenticatedRequest, job: Pick<Job, 'organizationId' | 'departmentId'>, access: JobAccess): boolean {
+  const context = req.authorizationContext
+  if (!context) return true
+  if (context.globalRole === 'admin') return true
+  if (!job.organizationId || !job.departmentId) return false
+
+  return context.authorizations.some((authorization) => {
+    if (access === 'mutate' && authorization.role === 'business_panel') return false
+    if (authorization.organizationId !== job.organizationId) return false
+    return authorization.departmentId === null || authorization.departmentId === job.departmentId
+  })
+}
+
+async function hasValidJobScope(job: Pick<Job, 'organizationId' | 'departmentId'>): Promise<boolean> {
+  return Boolean(
+    job.organizationId
+    && job.departmentId
+    && await jobRepo.isValidScope(job.organizationId, job.departmentId)
+  )
+}
+
+function sendInvalidJobScope(req: AuthenticatedRequest, res: Response, statusCode: 400 | 403) {
+  return sendAuthorizationError(req, res, mapAuthorizationError(undefined, {
+    code: 'invalid_job_scope',
+    statusCode,
+    message: 'Job organization and department must be a valid active pair.',
+  }))
+}
+
+function sendForbidden(req: AuthenticatedRequest, res: Response, message: string) {
+  return sendAuthorizationError(req, res, mapAuthorizationError(undefined, {
+    code: 'forbidden',
+    statusCode: 403,
+    message,
+  }))
+}
+
+async function enforceScopedJobAccess(
+  req: AuthenticatedRequest,
+  res: Response,
+  job: Pick<Job, 'organizationId' | 'departmentId'>,
+  access: JobAccess,
+): Promise<boolean> {
+  if (!await hasValidJobScope(job)) {
+    sendInvalidJobScope(req, res, 403)
+    return false
+  }
+  if (!hasScopedJobAccess(req, job, access)) {
+    sendForbidden(req, res, `Access denied to ${access} this job`)
+    return false
+  }
+  return true
+}
 
 // FR-065: Spec extraction and rubric extraction ALWAYS use AWR_SEQ_API_ENDPOINT regardless of scoring mode
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
@@ -169,10 +225,28 @@ export function createJobsRouter() {
   router.get('/', async (req: AuthenticatedRequest, res, next) => {
     try {
       let jobs: Job[]
-      if (req.user?.role === 'recruiter' && req.user.department) {
+      const context = req.authorizationContext
+      if (context?.globalRole === 'admin') {
+        jobs = await jobRepo.getAll()
+      } else if (context) {
+        const scopes = context.authorizations
+          .filter(authorization => authorization.organizationId)
+          .map(authorization => ({
+            organizationId: authorization.organizationId!,
+            departmentId: authorization.departmentId ?? undefined,
+          }))
+        const scopedJobs = await Promise.all(scopes.map(scope => jobRepo.getByScope(scope.organizationId, scope.departmentId)))
+        jobs = [...new Map(scopedJobs.flat().map(job => [job.jobId, job])).values()]
+      } else if (req.user?.role === 'recruiter' && req.user.department) {
         jobs = await jobRepo.getByDepartment(req.user.department)
       } else {
         jobs = await jobRepo.getAll()
+      }
+
+      if (context) {
+        const validatedJobs = await Promise.all(jobs.map(async job =>
+          await hasValidJobScope(job) && hasScopedJobAccess(req, job, 'read') ? job : undefined))
+        jobs = validatedJobs.filter((job): job is Job => job !== undefined)
       }
 
       const createdByNameLookup = await buildCreatedByNameLookup()
@@ -198,10 +272,16 @@ export function createJobsRouter() {
   // POST /api/jobs - create job
   router.post('/', async (req: AuthenticatedRequest, res, next) => {
     try {
-      const { title, department, organization, postingDate, rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, specDocumentId, rubricDocumentId, jobCode, jobDescription, rubricSource, rawExtractionResponse } = req.body
+      const { title, department, organization, organizationId, departmentId, postingDate, rubric, mustHaves, desiredCriteria, runsPerApplication, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold, specDocumentId, rubricDocumentId, jobCode, jobDescription, rubricSource, rawExtractionResponse } = req.body
 
       if (!title || !department) {
         return res.status(400).json({ error: 'Validation Error', message: 'title and department are required' })
+      }
+      if (!organizationId || !departmentId || !await jobRepo.isValidScope(organizationId, departmentId)) {
+        return sendInvalidJobScope(req, res, 400)
+      }
+      if (!hasScopedJobAccess(req, { organizationId, departmentId }, 'mutate')) {
+        return sendForbidden(req, res, 'Access denied to this job scope')
       }
 
       const jobId = randomUUID()
@@ -234,6 +314,8 @@ export function createJobsRouter() {
         title,
         department,
         organization: organization || '',
+        organizationId,
+        departmentId,
         postingDate: postingDate || new Date().toISOString(),
         createdBy: req.user?.userId || 'unknown',
         createdAt: new Date().toISOString(),
@@ -409,9 +491,11 @@ export function createJobsRouter() {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
 
+      if (!await enforceScopedJobAccess(req, res, job, 'read')) return
+
       // Department check for recruiters
-      if (req.user?.role === 'recruiter' && req.user.department && job.department !== req.user.department) {
-        return res.status(403).json({ error: 'Forbidden', message: 'Access denied to this job' })
+      if (!req.authorizationContext && req.user?.role === 'recruiter' && req.user.department && job.department !== req.user.department) {
+        return sendForbidden(req, res, 'Access denied to this job')
       }
 
       const stats = await jobRepo.getJobStats(jobId, job.currentVersion)
@@ -428,13 +512,17 @@ export function createJobsRouter() {
   })
 
   // DELETE /api/jobs/:jobId - delete job and cascade related data
-  router.delete('/:jobId', requireRole('admin'), async (req: AuthenticatedRequest, res, next) => {
+  router.delete('/:jobId', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
       const job = await jobRepo.getById(jobId)
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
+      if (!req.authorizationContext && req.user?.role !== 'admin') {
+        return sendForbidden(req, res, 'This action requires the admin role')
+      }
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
 
       const stats = await jobRepo.getJobStats(jobId, job.currentVersion)
       const deleted = await jobRepo.delete(jobId)
@@ -463,6 +551,8 @@ export function createJobsRouter() {
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
+
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
 
       const newVersion: JobConfigVersion = {
         versionId: randomUUID(),
@@ -505,6 +595,7 @@ export function createJobsRouter() {
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
 
       const currentVersion = job.currentVersion
       if (currentVersion.rubricApprovalStatus === status) {
@@ -541,6 +632,7 @@ export function createJobsRouter() {
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
 
       const allApps = await applicationRepo.getByJobId(jobId)
       // Only process production applications that are Queued
@@ -572,6 +664,7 @@ export function createJobsRouter() {
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
 
       const varianceThreshold = job.currentVersion.varianceThreshold ?? 15
       const longlistThreshold = job.currentVersion.longlistThreshold ?? 70
@@ -665,6 +758,7 @@ export function createJobsRouter() {
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
 
       // Reset failed apps to Queued and get their IDs
       const resetIds = await applicationRepo.bulkResetFailed(jobId)
@@ -695,6 +789,12 @@ export function createJobsRouter() {
   router.post('/:jobId/applications/:applicationId/rescore', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId, applicationId } = req.params
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
+
       const app = await applicationRepo.getById(applicationId)
       if (!app) {
         return res.status(404).json({ error: 'Not Found', message: 'Application not found' })
@@ -729,6 +829,7 @@ export function createJobsRouter() {
       if (!job) {
         return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
       }
+      if (!await enforceScopedJobAccess(req, res, job, 'mutate')) return
 
       const { scoringBatchRepo } = await import('../storage/repos/index.js')
       await scoringBatchRepo.requestCancelProgress(jobId)
@@ -749,6 +850,12 @@ export function createJobsRouter() {
   router.get('/:jobId/scoring/progress', async (req: AuthenticatedRequest, res, next) => {
     try {
       const { jobId } = req.params
+      const job = await jobRepo.getById(jobId)
+      if (!job) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      }
+      if (!await enforceScopedJobAccess(req, res, job, 'read')) return
+
       const { scoringBatchRepo } = await import('../storage/repos/index.js')
       const progress = await scoringBatchRepo.getProgress(jobId)
       res.json({ progress })

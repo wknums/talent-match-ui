@@ -42,7 +42,9 @@ public static class DependencyInjection
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IOrganizationRepository, OrganizationRepository>();
         services.AddScoped<IRoleAssignmentRepository, RoleAssignmentRepository>();
+        services.AddScoped<IEntraAccessManagementRepository, EntraAccessManagementRepository>();
         services.AddScoped<IProcessingEventRepository, ProcessingEventRepository>();
+        services.AddScoped<INavigationAuditRepository, NavigationAuditRepository>();
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
         services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();

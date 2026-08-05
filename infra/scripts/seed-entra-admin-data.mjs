@@ -41,12 +41,13 @@ SELECT
   CAST(CASE WHEN departmentMembership.Id IS NOT NULL THEN 1 ELSE 0 END AS bit) AS departmentMembershipReady,
   CAST(CASE WHEN roleAssignment.Id IS NOT NULL THEN 1 ELSE 0 END AS bit) AS roleAssignmentReady,
   bootstrapUser.Id AS userId,
+  bootstrapUser.AuthorizationVersion AS authorizationVersion,
   organization.Id AS organizationId,
   department.Id AS departmentId,
   roleAssignment.Id AS roleAssignmentId
 FROM (VALUES (1)) AS seed(value)
 OUTER APPLY (
-  SELECT TOP (1) Id
+  SELECT TOP (1) Id, AuthorizationVersion
   FROM [talentmatch].[Users]
   WHERE AuthenticationProvider = 'entra'
     AND EntraTenantId = @tenantId
@@ -67,19 +68,20 @@ OUTER APPLY (
 ) AS department
 OUTER APPLY (
   SELECT TOP (1) Id
-  FROM [talentmatch].[OrganizationMemberships]
-  WHERE UserId = bootstrapUser.Id
-    AND OrganizationId = organization.Id
-    AND Status = 'active'
-) AS organizationMembership
-OUTER APPLY (
-  SELECT TOP (1) Id
   FROM [talentmatch].[DepartmentMemberships]
   WHERE UserId = bootstrapUser.Id
     AND OrganizationId = organization.Id
     AND DepartmentId = department.Id
     AND Status = 'active'
 ) AS departmentMembership
+OUTER APPLY (
+  SELECT TOP (1) Id
+  FROM [talentmatch].[OrganizationMemberships]
+  WHERE UserId = bootstrapUser.Id
+    AND OrganizationId = organization.Id
+    AND DefaultDepartmentMembershipId = departmentMembership.Id
+    AND Status = 'active'
+) AS organizationMembership
 OUTER APPLY (
   SELECT TOP (1) Id
   FROM [talentmatch].[RoleAssignments]
@@ -90,6 +92,7 @@ OUTER APPLY (
     AND OrganizationId IS NULL
     AND DepartmentId IS NULL
     AND Status = 'active'
+    AND UserId = bootstrapUser.Id
 ) AS roleAssignment;
 `
 
@@ -105,6 +108,16 @@ BEGIN TRY
   DECLARE @organizationMembershipId nvarchar(36);
   DECLARE @departmentMembershipId nvarchar(36);
   DECLARE @roleAssignmentId nvarchar(36);
+  DECLARE @lockResult int;
+  DECLARE @lockResource nvarchar(255) = CONCAT('talentmatch:entra-bootstrap:', @tenantId);
+
+  EXEC @lockResult = sys.sp_getapplock
+    @Resource = @lockResource,
+    @LockMode = 'Exclusive',
+    @LockOwner = 'Transaction',
+    @LockTimeout = 60000;
+  IF @lockResult < 0
+    THROW 51002, 'Could not acquire the bootstrap authorization lock.', 1;
 
   SELECT @userId = Id
   FROM [talentmatch].[Users] WITH (UPDLOCK, HOLDLOCK)
@@ -166,29 +179,9 @@ BEGIN TRY
     SET @changed = 1;
   END;
 
-  SELECT TOP (1) @organizationMembershipId = Id
-  FROM [talentmatch].[OrganizationMemberships] WITH (UPDLOCK, HOLDLOCK)
-  WHERE UserId = @userId AND OrganizationId = @organizationId
-  ORDER BY CASE WHEN Status = 'active' THEN 0 ELSE 1 END, EffectiveAt DESC;
-
-  IF @organizationMembershipId IS NULL
-  BEGIN
-    SET @organizationMembershipId = @newOrganizationMembershipId;
-    INSERT INTO [talentmatch].[OrganizationMemberships] (Id, UserId, OrganizationId, Status, EffectiveAt, RevokedAt, UpdatedBy)
-    VALUES (@organizationMembershipId, @userId, @organizationId, 'active', SYSUTCDATETIME(), NULL, @objectId);
-    SET @changed = 1;
-  END
-  ELSE IF EXISTS (SELECT 1 FROM [talentmatch].[OrganizationMemberships] WHERE Id = @organizationMembershipId AND Status <> 'active')
-  BEGIN
-    UPDATE [talentmatch].[OrganizationMemberships]
-    SET Status = 'active', EffectiveAt = SYSUTCDATETIME(), RevokedAt = NULL, UpdatedBy = @objectId
-    WHERE Id = @organizationMembershipId;
-    SET @changed = 1;
-  END;
-
   SELECT TOP (1) @departmentMembershipId = Id
   FROM [talentmatch].[DepartmentMemberships] WITH (UPDLOCK, HOLDLOCK)
-  WHERE UserId = @userId AND DepartmentId = @departmentId
+  WHERE UserId = @userId AND OrganizationId = @organizationId AND DepartmentId = @departmentId
   ORDER BY CASE WHEN Status = 'active' THEN 0 ELSE 1 END, EffectiveAt DESC;
 
   IF @departmentMembershipId IS NULL
@@ -204,20 +197,60 @@ BEGIN TRY
   )
   BEGIN
     UPDATE [talentmatch].[DepartmentMemberships]
-    SET OrganizationId = @organizationId, Status = 'active', EffectiveAt = SYSUTCDATETIME(),
+    SET Status = 'active', EffectiveAt = SYSUTCDATETIME(),
       RevokedAt = NULL, UpdatedBy = @objectId
     WHERE Id = @departmentMembershipId;
     SET @changed = 1;
   END;
 
-  SELECT @roleAssignmentId = Id
+  SELECT TOP (1) @organizationMembershipId = Id
+  FROM [talentmatch].[OrganizationMemberships] WITH (UPDLOCK, HOLDLOCK)
+  WHERE UserId = @userId AND OrganizationId = @organizationId
+  ORDER BY CASE WHEN Status = 'active' THEN 0 ELSE 1 END, EffectiveAt DESC;
+
+  IF @organizationMembershipId IS NULL
+  BEGIN
+    SET @organizationMembershipId = @newOrganizationMembershipId;
+    INSERT INTO [talentmatch].[OrganizationMemberships] (
+      Id, UserId, OrganizationId, DefaultDepartmentMembershipId, Status, EffectiveAt, RevokedAt, UpdatedBy
+    ) VALUES (
+      @organizationMembershipId, @userId, @organizationId, @departmentMembershipId,
+      'active', SYSUTCDATETIME(), NULL, @objectId
+    );
+    SET @changed = 1;
+  END
+  ELSE IF EXISTS (
+    SELECT 1 FROM [talentmatch].[OrganizationMemberships]
+    WHERE Id = @organizationMembershipId
+      AND (Status <> 'active'
+        -- A membership predating the default column holds NULL, which "<>" alone cannot detect.
+        OR DefaultDepartmentMembershipId IS NULL
+        OR DefaultDepartmentMembershipId <> @departmentMembershipId)
+  )
+  BEGIN
+    UPDATE [talentmatch].[OrganizationMemberships]
+    SET DefaultDepartmentMembershipId = @departmentMembershipId,
+      Status = 'active', EffectiveAt = SYSUTCDATETIME(), RevokedAt = NULL, UpdatedBy = @objectId
+    WHERE Id = @organizationMembershipId;
+    SET @changed = 1;
+  END;
+
+  IF EXISTS (
+    SELECT 1 FROM [talentmatch].[RoleAssignments] WITH (UPDLOCK, HOLDLOCK)
+    WHERE TenantId = @tenantId AND Source = 'bootstrap' AND Status = 'active'
+      AND UserObjectId <> @objectId
+  )
+    THROW 51003, 'Another active bootstrap administrator already exists for this tenant.', 1;
+
+  SELECT TOP (1) @roleAssignmentId = Id
   FROM [talentmatch].[RoleAssignments] WITH (UPDLOCK, HOLDLOCK)
   WHERE TenantId = @tenantId
     AND UserObjectId = @objectId
     AND Source = 'bootstrap'
     AND Role = 'admin'
     AND OrganizationId IS NULL
-    AND DepartmentId IS NULL;
+    AND DepartmentId IS NULL
+  ORDER BY CASE WHEN Status = 'active' THEN 0 ELSE 1 END, EffectiveAt DESC;
 
   IF @roleAssignmentId IS NULL
   BEGIN
@@ -243,9 +276,43 @@ BEGIN TRY
     SET @changed = 1;
   END;
 
+  UPDATE [talentmatch].[RoleAssignments]
+  SET Status = 'revoked', RevokedAt = SYSUTCDATETIME(), UpdatedAt = SYSUTCDATETIME(), UpdatedBy = @objectId
+  WHERE TenantId = @tenantId AND UserObjectId = @objectId
+    AND Source = 'bootstrap' AND Status = 'active' AND Id <> @roleAssignmentId;
+  IF @@ROWCOUNT > 0 SET @changed = 1;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM [talentmatch].[OrganizationMemberships] organizationMembership
+    INNER JOIN [talentmatch].[DepartmentMemberships] departmentMembership
+      ON departmentMembership.Id = organizationMembership.DefaultDepartmentMembershipId
+      AND departmentMembership.UserId = organizationMembership.UserId
+      AND departmentMembership.OrganizationId = organizationMembership.OrganizationId
+    WHERE organizationMembership.Id = @organizationMembershipId
+      AND organizationMembership.Status = 'active'
+      AND departmentMembership.Id = @departmentMembershipId
+      AND departmentMembership.Status = 'active'
+  )
+    THROW 51004, 'The bootstrap organization default is invalid.', 1;
+
+  IF (SELECT COUNT(*) FROM [talentmatch].[RoleAssignments]
+      WHERE TenantId = @tenantId AND UserObjectId = @objectId
+        AND Source = 'bootstrap' AND Role = 'admin' AND Status = 'active'
+        AND OrganizationId IS NULL AND DepartmentId IS NULL AND UserId = @userId) <> 1
+    THROW 51005, 'The bootstrap administrator assignment did not converge.', 1;
+
+  IF @changed = 1
+  BEGIN
+    UPDATE [talentmatch].[Users]
+    SET AuthorizationVersion = AuthorizationVersion + 1
+    WHERE Id = @userId;
+  END;
+
   DECLARE @detailsJson nvarchar(max) = (
     SELECT @tenantId AS tenantId, @objectId AS objectId, @organizationId AS organizationId,
-      @departmentId AS departmentId, @roleAssignmentId AS roleAssignmentId
+      @departmentId AS departmentId, @departmentMembershipId AS defaultDepartmentMembershipId,
+      @roleAssignmentId AS roleAssignmentId
     FOR JSON PATH, WITHOUT_ARRAY_WRAPPER
   );
 
@@ -260,7 +327,9 @@ BEGIN TRY
   COMMIT TRANSACTION;
 
   SELECT @changed AS changed, @userId AS userId, @organizationId AS organizationId,
-    @departmentId AS departmentId, @roleAssignmentId AS roleAssignmentId;
+    @departmentId AS departmentId, @departmentMembershipId AS defaultDepartmentMembershipId,
+    @roleAssignmentId AS roleAssignmentId,
+    (SELECT AuthorizationVersion FROM [talentmatch].[Users] WHERE Id = @userId) AS authorizationVersion;
 END TRY
 BEGIN CATCH
   IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;

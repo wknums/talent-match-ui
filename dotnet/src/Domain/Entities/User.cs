@@ -14,6 +14,7 @@ public class User
     public string? PasswordHash { get; set; } = string.Empty;
     public bool PasswordResetRequired { get; set; }
     public bool IsActive { get; set; } = true;
+    public int AuthorizationVersion { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastLogin { get; set; }
 

@@ -26,7 +26,7 @@
 
             @if (!showUpload)
             {
-                <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
+                <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
                     📤 Upload Test Applications
                 </button>
                 <button @onclick="ReconcileRuns" disabled="@isReconciling" style="margin-left: 0.5rem; padding: 0.5rem 1rem; background: #2f855a; color: white; border: none; border-radius: 4px;">
@@ -62,7 +62,7 @@
                         <span>Test Run: @run.Id[..8]... | Apps: @GetAppCount(run.ApplicationIdsJson)</span>
                         <span style="@TestRunStatusStyle(run.Status)">@run.Status</span>
                     </div>
-                    <div style="font-size: 0.7rem; color: #a0aec0; margin-top: 0.25rem;">[DEBUG] raw status: '@run.Status'</div>
+                    <div style="font-size: 0.75rem; color: #a0aec0; margin-top: 0.25rem;">[DEBUG] raw status: '@run.Status'</div>
                     <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         @if (run.Status is "pending_review" or "approved" or "rejected" or "scoring_failed")
                         {
@@ -72,7 +72,7 @@
                         }
                         @if (run.Status == "pending_review")
                         {
-                            <button @onclick="() => ApproveTestRun(run.Id)" style="padding: 0.4rem 0.8rem; background: #38a169; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            <button @onclick="() => ApproveTestRun(run.Id)" style="padding: 0.4rem 0.8rem; background: #276749; color: white; border: none; border-radius: 4px; cursor: pointer;">
                                 ✅ Approve Test Run
                             </button>
                         }
@@ -96,7 +96,7 @@
         <!-- Results detail panel -->
         @if (selectedDetail != null)
         {
-            <div style="border: 2px solid #3182ce; border-radius: 8px; padding: 1rem; margin-top: 1rem; background: #f7fafc;">
+            <div style="border: 2px solid #2b6cb0; border-radius: 8px; padding: 1rem; margin-top: 1rem; background: #f7fafc;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                     <h6 style="margin: 0;">📊 Test Run Results</h6>
                     <button @onclick="CloseDetail" style="padding: 0.25rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">✕ Close</button>
@@ -169,7 +169,7 @@
                                                     <strong>Score: @run.TotalScore.ToString("F1")</strong>@(HasError(run.MustHaveEvaluationJson) ? " ⚠️" : "")
                                                     <button @onclick="() => ReparseRun(appDetail.Application.Id, run.Id)"
                                                             disabled="@reparsingRunIds.Contains(run.Id)"
-                                                            style="padding: 0.15rem 0.4rem; background: #2b6cb0; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.72rem;">
+                                                            style="padding: 0.15rem 0.4rem; background: #2b6cb0; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.75rem;">
                                                         @(reparsingRunIds.Contains(run.Id) ? "Re-parsing..." : "♻ Re-parse")
                                                     </button>
                                                 </span>
@@ -185,7 +185,7 @@
                                                     {
                                                         <details style="margin-top: 0.25rem;">
                                                             <summary style="cursor: pointer; font-size: 0.75rem; color: #822727;">Show raw LLM response</summary>
-                                                            <pre style="margin-top: 0.25rem; padding: 0.5rem; background: #1a202c; color: #e2e8f0; border-radius: 4px; font-size: 0.7rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">@rawResp</pre>
+                                                            <pre style="margin-top: 0.25rem; padding: 0.5rem; background: #1a202c; color: #e2e8f0; border-radius: 4px; font-size: 0.75rem; white-space: pre-wrap; max-height: 300px; overflow-y: auto;">@rawResp</pre>
                                                         </details>
                                                     }
                                                 </div>
@@ -202,7 +202,7 @@
                                             @if (categoryBreakdown.Any())
                                             {
                                                 <div style="margin: 0.35rem 0; padding: 0.4rem 0.55rem; background: #edf2f7; border-radius: 4px; border: 1px solid #cbd5e0;">
-                                                    <div style="font-weight: 600; font-size: 0.82rem; color: #2d3748; margin-bottom: 0.35rem;">Category Score Breakdown (scored JSON)</div>
+                                                    <div style="font-weight: 600; font-size: 0.8rem; color: #2d3748; margin-bottom: 0.35rem;">Category Score Breakdown (scored JSON)</div>
                                                     @foreach (var category in categoryBreakdown)
                                                     {
                                                         <div style="margin-bottom: 0.4rem; padding: 0.4rem 0.5rem; border: 1px solid #d2d6dc; border-radius: 4px; background: white;">
@@ -210,26 +210,26 @@
                                                                 <span style="font-weight: 600; color: #2d3748;">@category.Name</span>
                                                                 <div style="text-align: right;">
                                                                     <div style="font-weight: 700; color: #1a202c;">Score: @FormatPercent(category.ScorePercent)</div>
-                                                                    <div style="font-size: 0.74rem; color: #4a5568;">Weight: @FormatPercent(category.WeightPercent)</div>
+                                                                    <div style="font-size: 0.75rem; color: #4a5568;">Weight: @FormatPercent(category.WeightPercent)</div>
                                                                 </div>
                                                             </div>
 
                                                             @if (!category.ScorePercent.HasValue)
                                                             {
-                                                                <div style="margin-top: 0.2rem; color: #975a16; font-size: 0.74rem;">
+                                                                <div style="margin-top: 0.2rem; color: #975a16; font-size: 0.75rem;">
                                                                     Score % unavailable in this run's scoring JSON (raw value appears to be rubric weighting: @FormatCategoryScore(category.RawValue)).
                                                                 </div>
                                                             }
                                                             else if (category.WeightedContributionPoints.HasValue)
                                                             {
-                                                                <div style="margin-top: 0.2rem; color: #4a5568; font-size: 0.74rem;">
+                                                                <div style="margin-top: 0.2rem; color: #4a5568; font-size: 0.75rem;">
                                                                     Weighted contribution: @FormatCategoryScore(category.WeightedContributionPoints.Value) points.
                                                                 </div>
                                                             }
 
                                                             @if (!string.IsNullOrWhiteSpace(category.Description))
                                                             {
-                                                                <div style="margin-top: 0.1rem; color: #718096; font-size: 0.74rem;">@category.Description</div>
+                                                                <div style="margin-top: 0.1rem; color: #718096; font-size: 0.75rem;">@category.Description</div>
                                                             }
 
                                                             @if (category.Requirements.Any())
@@ -239,7 +239,7 @@
                                                                     {
                                                                         <li style="color: @(req.Found ? "#2f855a" : "#c53030"); margin-bottom: 0.2rem;">
                                                                             @(req.Found ? "✅" : "❌") <span style="color: #2d3748;">@req.Requirement</span>
-                                                                            <div style="color: @(req.Found ? "#4a5568" : "#c53030"); font-size: 0.74rem; margin-top: 0.08rem; font-style: italic;">
+                                                                            <div style="color: @(req.Found ? "#4a5568" : "#c53030"); font-size: 0.75rem; margin-top: 0.08rem; font-style: italic;">
                                                                                 @(req.Found ? req.Evidence : "None found")
                                                                             </div>
                                                                         </li>
@@ -259,7 +259,7 @@
                                                             }
                                                             else
                                                             {
-                                                                <div style="margin-top: 0.3rem; color: #c53030; font-size: 0.76rem;">
+                                                                <div style="margin-top: 0.3rem; color: #c53030; font-size: 0.75rem;">
                                                                     ❌ No evidence citations captured for this category.
                                                                 </div>
                                                             }
@@ -296,11 +296,11 @@
                                                     <span style="font-weight: 600; font-size: 0.8rem; color: #4a5568;">Eligibility: </span>
                                                     @if (inferredEligibilityPassed == true)
                                                     {
-                                                        <span style="color: #38a169;">✅ Passed</span>
+                                                        <span style="color: #276749;">✅ Passed</span>
                                                     }
                                                     else if (inferredEligibilityPassed == false)
                                                     {
-                                                        <span style="color: #e53e3e;">❌ Failed</span>
+                                                        <span style="color: #c53030;">❌ Failed</span>
                                                     }
                                                     else
                                                     {
@@ -312,7 +312,7 @@
                                                         <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
                                                             @foreach (var entry in mustHaveEntries)
                                                             {
-                                                                <li style="color: @(entry.Passed ? "#38a169" : "#e53e3e");">
+                                                                <li style="color: @(entry.Passed ? "#276749" : "#c53030");">
                                                                     @(entry.Passed ? "✅" : "❌") @entry.Criterion
                                                                     @if (!string.IsNullOrWhiteSpace(entry.Evidence))
                                                                     {
@@ -324,7 +324,7 @@
                                                     }
                                                     else if (mustHave?.MissingCriteria?.Any() == true)
                                                     {
-                                                        <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0; color: #e53e3e;">
+                                                        <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0; color: #c53030;">
                                                             @foreach (var m in mustHave.MissingCriteria)
                                                             {
                                                                 <li>❌ @m</li>
@@ -335,7 +335,7 @@
                                             }
                                             else if (HasError(run.MustHaveEvaluationJson))
                                             {
-                                                <div style="margin-top: 0.25rem; color: #e53e3e; font-size: 0.8rem;">
+                                                <div style="margin-top: 0.25rem; color: #c53030; font-size: 0.8rem;">
                                                     <span style="font-weight: 600;">Eligibility: </span>⚠️ @GetErrorMessage(run.MustHaveEvaluationJson)
                                                 </div>
                                             }
@@ -353,7 +353,7 @@
                                                     <ul style="margin: 0.15rem 0 0 1.25rem; padding: 0;">
                                                         @foreach (var item in desiredChecklist)
                                                         {
-                                                            <li style="color: @(item.Passed ? "#38a169" : "#e53e3e"); margin-bottom: 0.2rem;">
+                                                            <li style="color: @(item.Passed ? "#276749" : "#c53030"); margin-bottom: 0.2rem;">
                                                                 @(item.Passed ? "✅" : "❌") @item.Criterion
                                                                 @if (!string.IsNullOrWhiteSpace(item.Evidence))
                                                                 {
@@ -393,7 +393,7 @@
                                                         @foreach (var tip in tips)
                                                         {
                                                             var isGateFailureTip = gateFailed && IsTipGateFailureRelated(tip, gateFailedCriteria);
-                                                            <li style="color: @(isGateFailureTip ? "#e53e3e" : "#4a5568");">@tip</li>
+                                                            <li style="color: @(isGateFailureTip ? "#c53030" : "#4a5568");">@tip</li>
                                                         }
                                                     </ul>
                                                 </details>

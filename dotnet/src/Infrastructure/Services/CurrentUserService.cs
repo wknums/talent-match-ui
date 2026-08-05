@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using TalentMatch.Application.Authorization;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Interfaces;
 
@@ -8,6 +9,7 @@ namespace TalentMatch.Infrastructure.Services;
 
 public class CurrentUserService : ICurrentUserService
 {
+    private const string AuthorizationContextItemKey = "TalentMatch.AuthorizationContext";
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IUserRepository _userRepository;
     private readonly IOrganizationRepository _organizationRepository;
@@ -28,15 +30,43 @@ public class CurrentUserService : ICurrentUserService
         _configuration = configuration;
     }
 
-    public string? UserId =>
-        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+    private AuthorizationContextResponse? ResolvedContext =>
+        _httpContextAccessor.HttpContext?.Items[AuthorizationContextItemKey] as AuthorizationContextResponse;
+
+    private ScopedAuthorizationResponse? PrimaryAuthorization => ResolvedContext?.Authorizations
+        .OrderByDescending(authorization => authorization.Role switch
+        {
+            "admin" => 4,
+            "organization_admin" => 3,
+            "recruiter" => 2,
+            "business_panel" => 1,
+            _ => 0,
+        })
+        .FirstOrDefault();
+
+    public string? UserId => ResolvedContext?.UserId
+        ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.NameIdentifier)
         ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue("oid");
-    public string? Username =>
-        _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name)
+    public string? Username => ResolvedContext?.Username
+        ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name)
         ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue("preferred_username")
         ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue("name");
-    public string? Role => _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
-    public string? Department => _httpContextAccessor.HttpContext?.User?.FindFirstValue("department");
+    public string? Role => ResolvedContext?.GlobalRole
+        ?? PrimaryAuthorization?.Role
+        ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+    public string? Department
+    {
+        get
+        {
+            var departmentId = PrimaryAuthorization?.DepartmentId;
+            return departmentId is null
+                ? _httpContextAccessor.HttpContext?.User?.FindFirstValue("department")
+                : ResolvedContext?.Memberships
+                    .SelectMany(membership => membership.Departments)
+                    .FirstOrDefault(department => department.DepartmentId == departmentId)
+                    ?.DepartmentName;
+        }
+    }
     public bool IsAdmin => Role?.Equals("admin", StringComparison.OrdinalIgnoreCase) == true;
 
     public async Task<CurrentAuthorizationState?> GetAuthorizationStateAsync(CancellationToken cancellationToken = default)
@@ -67,6 +97,14 @@ public class CurrentUserService : ICurrentUserService
         var claims = new CurrentEntraClaims(
             tenantId,
             objectId,
+            principal.FindFirstValue("preferred_username") ?? objectId,
+            principal.FindFirstValue("name")
+                ?? principal.FindFirstValue("preferred_username")
+                ?? objectId,
+            principal.FindFirstValue(ClaimTypes.Email)
+                ?? principal.FindFirstValue("email")
+                ?? principal.FindFirstValue("preferred_username")
+                ?? string.Empty,
             DateTimeOffset.FromUnixTimeSeconds(issuedAtSeconds),
             roles,
             groups);

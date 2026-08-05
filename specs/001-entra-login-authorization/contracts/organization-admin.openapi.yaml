@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: TalentMatch Organization Administration API
-  version: 1.0.0
+  version: 1.1.0
   description: Equivalent organization-scoped administration contract for Stack A and Stack B.
 servers:
   - url: /
@@ -156,6 +156,156 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: Assignment does not exist in the requested organization.
+  /api/access-management/users:
+    get:
+      operationId: listEntraAccessUsers
+      summary: Search tenant-verified Entra profiles visible to the administrator
+      description: Application Admins see all profiles. Organization Admins see only profiles with access in organizations they administer.
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 200
+        - name: organizationId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - pending
+              - active
+              - disabled
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 25
+      responses:
+        "200":
+          description: One actor-filtered page of Entra access profiles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntraAccessUserPage"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/access-management/users/{objectId}:
+    get:
+      operationId: getEntraAccessUser
+      summary: Inspect one tenant-verified Entra access aggregate
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      responses:
+        "200":
+          description: Complete target state filtered to scopes the actor may inspect.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntraAccessUser"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No tenant-verified profile is visible to the actor.
+    patch:
+      operationId: updateEntraAccessUser
+      summary: Update presentation details or global application activation
+      description: Requires application-wide Admin. Immutable tenant/object identifiers cannot be changed.
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEntraAccessUserRequest"
+      responses:
+        "200":
+          description: Identity presentation or application activation was updated atomically and audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntraAccessUser"
+        "400":
+          $ref: "#/components/responses/InvalidScope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No tenant-verified profile exists for the configured tenant and object ID.
+        "409":
+          $ref: "#/components/responses/VersionConflict"
+  /api/access-management/users/{objectId}/organizations/{organizationId}:
+    put:
+      operationId: putEntraOrganizationAccess
+      summary: Onboard, reactivate, replace, or revoke one organization access aggregate
+      description: Converges membership, active departments, explicit default, and delegated roles in one transaction. Global Admin and unrelated organization scopes are preserved.
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/OrganizationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutOrganizationAccessRequest"
+      responses:
+        "200":
+          description: Desired access already existed or was converged atomically.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntraAccessUser"
+        "400":
+          $ref: "#/components/responses/InvalidScope"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The tenant-verified profile or organization does not exist.
+        "409":
+          $ref: "#/components/responses/VersionConflict"
+  /api/access-management/users/{objectId}/organizations/{organizationId}/role-assignments/{assignmentId}:
+    delete:
+      operationId: revokeEntraOrganizationRole
+      summary: Revoke one delegated role assignment without changing unrelated access
+      description: Global Admin, bootstrap, and group-sourced assignments cannot be revoked through this operation.
+      parameters:
+        - $ref: "#/components/parameters/ObjectId"
+        - $ref: "#/components/parameters/OrganizationId"
+        - name: assignmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: expectedVersion
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        "200":
+          description: Targeted delegated assignment was revoked and the updated aggregate is returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntraAccessUser"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: The assignment is not a visible delegated assignment in the requested organization.
+        "409":
+          $ref: "#/components/responses/VersionConflict"
 components:
   securitySchemes:
     entraBearer:
@@ -181,6 +331,14 @@ components:
       schema:
         type: string
         format: uuid
+    ObjectId:
+      name: objectId
+      in: path
+      required: true
+      description: Immutable Entra object ID for a profile previously verified by configured-tenant sign-in.
+      schema:
+        type: string
+        format: uuid
   responses:
     InvalidScope:
       description: Organization, department, membership, or role scope is invalid.
@@ -188,6 +346,8 @@ components:
       description: The actor has no administrative authority in the requested organization.
     Conflict:
       description: The change would create a duplicate or orphan active jobs, memberships, mappings, or assignments.
+    VersionConflict:
+      description: The expected authorization version is stale and the desired state does not already exist. Reload before confirming another change.
   schemas:
     CreateOrganizationRequest:
       type: object
@@ -234,6 +394,7 @@ components:
       required:
         - userObjectId
         - departmentIds
+        - defaultDepartmentId
       properties:
         userObjectId:
           type: string
@@ -245,6 +406,10 @@ components:
           items:
             type: string
             format: uuid
+        defaultDepartmentId:
+          type: string
+          format: uuid
+          description: Must be one of departmentIds and grants no additional authority.
     GrantRoleRequest:
       type: object
       additionalProperties: false
@@ -317,6 +482,7 @@ components:
         - userObjectId
         - organizationId
         - departmentIds
+        - defaultDepartmentId
       properties:
         userObjectId:
           type: string
@@ -330,6 +496,9 @@ components:
           items:
             type: string
             format: uuid
+        defaultDepartmentId:
+          type: string
+          format: uuid
     RoleAssignment:
       type: object
       required:
@@ -369,3 +538,216 @@ components:
           enum:
             - active
             - revoked
+    EntraAccessUserPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntraAccessUser"
+        nextCursor:
+          type:
+            - string
+            - "null"
+    EntraAccessUser:
+      type: object
+      additionalProperties: false
+      required:
+        - objectId
+        - username
+        - fullName
+        - isActive
+        - authorizationVersion
+        - organizations
+      properties:
+        objectId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        fullName:
+          type: string
+        email:
+          type:
+            - string
+            - "null"
+          format: email
+        isActive:
+          type: boolean
+        authorizationVersion:
+          type: integer
+          minimum: 0
+        organizations:
+          type: array
+          items:
+            $ref: "#/components/schemas/EntraOrganizationAccess"
+    EntraOrganizationAccess:
+      type: object
+      additionalProperties: false
+      required:
+        - organizationId
+        - status
+        - departmentIds
+        - defaultDepartmentId
+        - roleAssignments
+      properties:
+        organizationId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - active
+            - revoked
+        departmentIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        defaultDepartmentId:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: Required when status is active and must occur in departmentIds.
+        roleAssignments:
+          type: array
+          items:
+            $ref: "#/components/schemas/AccessRoleAssignment"
+    AccessRoleAssignment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - role
+        - organizationId
+        - departmentId
+        - source
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - organization_admin
+            - recruiter
+            - business_panel
+        organizationId:
+          type: string
+          format: uuid
+        departmentId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        source:
+          type: string
+          enum:
+            - group
+            - delegated
+        status:
+          type: string
+          enum:
+            - active
+            - revoked
+    EntraProfileInput:
+      type: object
+      additionalProperties: false
+      required:
+        - username
+        - fullName
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 100
+        fullName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        email:
+          type:
+            - string
+            - "null"
+          format: email
+          maxLength: 320
+    DesiredDelegatedRole:
+      type: object
+      additionalProperties: false
+      required:
+        - role
+      properties:
+        role:
+          type: string
+          enum:
+            - organization_admin
+            - recruiter
+            - business_panel
+        departmentId:
+          type:
+            - string
+            - "null"
+          format: uuid
+    PutOrganizationAccessRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedVersion
+        - profile
+        - membership
+        - roleAssignments
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 0
+        profile:
+          $ref: "#/components/schemas/EntraProfileInput"
+        membership:
+          type: object
+          additionalProperties: false
+          required:
+            - status
+            - departmentIds
+            - defaultDepartmentId
+          properties:
+            status:
+              type: string
+              enum:
+                - active
+                - revoked
+            departmentIds:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                format: uuid
+            defaultDepartmentId:
+              type:
+                - string
+                - "null"
+              format: uuid
+        roleAssignments:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/DesiredDelegatedRole"
+    UpdateEntraAccessUserRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - expectedVersion
+      minProperties: 2
+      properties:
+        expectedVersion:
+          type: integer
+          minimum: 0
+        profile:
+          $ref: "#/components/schemas/EntraProfileInput"
+        isActive:
+          type: boolean

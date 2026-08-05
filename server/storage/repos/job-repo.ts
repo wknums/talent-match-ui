@@ -188,7 +188,7 @@ export const jobRepo = {
 
   async create(job: Job): Promise<void> {
     const pool = await getPool()
-    if ((job.organizationId || job.departmentId) && (!job.organizationId || !job.departmentId || !await this.isValidScope(job.organizationId, job.departmentId))) {
+    if (!job.organizationId || !job.departmentId || !await this.isValidScope(job.organizationId, job.departmentId)) {
       throw new Error('Job organization and department must be a valid active pair.')
     }
     const txn = pool.transaction()

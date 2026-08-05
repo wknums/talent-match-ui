@@ -1,6 +1,5 @@
 import type {
   Job,
-  JobConfigVersion,
   Application,
   ScoringRun,
   AggregatedResult,
@@ -742,7 +741,7 @@ const mockAPI = {
     ]
   },
 
-  async retryDLQItem(itemId: string): Promise<void> {
+  async retryDLQItem(_itemId: string): Promise<void> {
     await delay(500)
   },
 
@@ -801,7 +800,7 @@ const mockAPI = {
     }
   },
 
-  async getAuditEvents(filters?: {
+  async getAuditEvents(_filters?: {
     entityType?: string
     entityId?: string
     startDate?: string
@@ -1006,7 +1005,7 @@ const mockAPI = {
     }
   },
 
-  async generatePrompt(jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
+  async generatePrompt(_jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
     await delay(2000)
     return {
       promptText: `You are evaluating a candidate for a position. Score each rubric category from 0-100 based on evidence from their documents. Provide specific citations and improvement recommendations.`,
@@ -1041,7 +1040,7 @@ const mockAPI = {
     }
   },
 
-  async getTestRuns(jobId: string, promptId: string): Promise<PromptTestRun[]> {
+  async getTestRuns(_jobId: string, _promptId: string): Promise<PromptTestRun[]> {
     await delay(300)
     return []
   },
@@ -1099,6 +1098,23 @@ export const api = createApiProxy()
 export const authApi = {
   getAuthorizationContext: () => realAPI.getAuthorizationContext(),
   logout: () => realAPI.logout(),
+}
+
+export const accessManagementApi = {
+  list: realAPI.listEntraAccessUsers,
+  get: realAPI.getEntraAccessUser,
+  updateUser: realAPI.updateEntraAccessUser,
+  putOrganizationAccess: realAPI.putEntraOrganizationAccess,
+  revokeRoleAssignment: realAPI.revokeEntraRoleAssignment,
+}
+
+export const organizationAdminApi = {
+  createOrganization: realAPI.createOrganization,
+  createDepartment: realAPI.createOrganizationDepartment,
+  updateDepartment: realAPI.updateOrganizationDepartment,
+  registerMembership: realAPI.registerOrganizationMembership,
+  grantRole: realAPI.grantOrganizationRole,
+  revokeRole: realAPI.revokeOrganizationRole,
 }
 
 export const configureApiAuthentication = configureAuthenticatedTransport

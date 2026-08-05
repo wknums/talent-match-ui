@@ -37,7 +37,7 @@ export function LoginForm({ authMode = appAuthMode, onLogin, onEntraLogin }: Log
       if (!success) {
         toast.error('Invalid username or password')
       }
-    } catch (error) {
+    } catch {
       toast.error('Login failed. Please try again.')
     } finally {
       setIsLoading(false)

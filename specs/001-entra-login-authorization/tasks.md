@@ -1,234 +1,238 @@
-# Tasks: Entra Login and Organization Authorization
+# Tasks: Entra Login, Access Management, and Stack B Workspace
 
 **Input**: Design documents from `/specs/001-entra-login-authorization/`
 **Prerequisites**: `plan.md`, `spec.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`
 
-**Tests**: Test tasks are included because the specification requires acceptance, negative, parity, idempotency, revocation, and performance verification. Write each story's tests first and confirm they fail before implementing that story.
+**Tests**: Test tasks are included because the specification requires negative, idempotency, concurrency, rollback, parity, accessibility, and responsive verification. Write each story's tests first and confirm they fail for the intended reason before implementing that story.
 
-**Organization**: Tasks are grouped by user story so each story can be implemented and tested as an independently reviewable increment.
+**Organization**: Tasks are grouped by the six user stories in `spec.md`. Existing Entra foundations are extended in place; no task reinstalls packages already declared in `package.json` or the .NET project files.
 
 ## Format: `[ID] [P?] [Story] Description`
 
-- **[P]**: Can run in parallel after its phase prerequisites because it changes different files and has no dependency on an incomplete task in that group.
+- **[P]**: Can run in parallel after phase prerequisites because it changes different files and does not depend on another incomplete task in the group.
 - **[Story]**: Maps the task to a user story in `spec.md`.
 - Every task names the exact file or directory it changes.
 
 ## Phase 1: Setup
 
-**Purpose**: Add dependencies, environment contracts, and tenant-bound Terraform composition needed by the feature.
+**Purpose**: Prepare test entry points and feature directories without changing runtime behavior.
 
-- [X] T001 [P] Add `@azure/msal-browser`, `@azure/msal-react`, `jose`, `@playwright/test`, and `@axe-core/playwright` dependencies with lockfile updates in package.json and package-lock.json
-- [X] T002 [P] Add `Microsoft.Authentication.WebAssembly.Msal` aligned with .NET 10 to dotnet/src/Web.Client/TalentMatch.Web.Client.csproj
-- [X] T003 [P] Document `APP_AUTH_MODE` and all non-secret Entra API, SPA, app-role, bootstrap organization, and bootstrap department variables in .env.example and .env_qa.example
-- [X] T004 Add the authoritative non-secret Entra values and Terraform-output placeholders without changing tenant/subscription ownership in .env_qa_mcaps
-- [X] T005 [P] Pin and configure the `azuread` provider to the declared tenant in infra/terraform/live/shared/versions.tf and infra/terraform/live/shared/providers.tf
-- [X] T006 Create the reuse-aware Entra application module for the protected API, two SPA clients, delegated scope, four stable app roles, and optional role groups in infra/terraform/modules/foundation/entra/main.tf, infra/terraform/modules/foundation/entra/variables.tf, and infra/terraform/modules/foundation/entra/outputs.tf
-- [X] T007 Compose the Entra module and expose its public IDs in infra/terraform/live/shared/main.tf, infra/terraform/live/shared/variables.tf, and infra/terraform/live/shared/outputs.tf
-- [X] T008 [P] Consume shared Entra outputs and set Stack A App Service authentication settings in infra/terraform/live/stack-a/variables.tf and infra/terraform/live/stack-a/main.tf
-- [X] T009 [P] Consume shared Entra outputs and set Stack B App Service authentication settings in infra/terraform/live/stack-b/variables.tf and infra/terraform/live/stack-b/main.tf
+- [X] T001 Create maintained Playwright configuration and execution scripts using the existing `@playwright/test` and `@axe-core/playwright` dependencies in playwright.config.ts and package.json
+- [X] T002 [P] Create Stack A access-management module entry files in server/routes/access-management.ts, server/services/entra-access-management.ts, and server/storage/repos/access-management-repo.ts
+- [X] T003 [P] Create Stack B access-management namespaces with initial contracts in dotnet/src/Application/AccessManagement/AccessManagementDtos.cs and dotnet/src/Domain/Interfaces/IEntraAccessManagementRepository.cs
+- [X] T004 [P] Add non-secret Entra access-management and Stack B navigation acceptance settings consistently to .env.example, .env_local.example, .env_qa.example, and .env_prod.example
 
 ---
 
-## Phase 2: Foundational Authorization Model
+## Phase 2: Foundational Shared Model
 
-**Purpose**: Establish the normalized shared schema, types, repositories, audit support, and Azure safety gate that block every user story.
+**Purpose**: Establish explicit defaults, optimistic versions, schema parity, and shared authorization-context behavior required by every story.
 
 **CRITICAL**: No user story implementation starts until this phase is complete.
 
-- [X] T010 Implement `validate_azure_context` with CRLF-safe exact tenant/subscription comparison and call it before discovery or mutation in infra/scripts/lib/common.sh and infra/scripts/deploy.sh
-- [X] T011 [P] Define authentication provider, application roles, organizations, departments, memberships, assignments, authorization context, and safe auth errors in src/types/index.ts
-- [X] T012 [P] Extend the four-role hierarchy and stable persisted values in dotnet/src/Domain/Enums/UserRole.cs
-- [X] T013 [P] Create organization and immutable-parent department entities in dotnet/src/Domain/Entities/Organization.cs and dotnet/src/Domain/Entities/Department.cs
-- [X] T014 [P] Create organization and department membership entities with active/revoked state in dotnet/src/Domain/Entities/OrganizationMembership.cs and dotnet/src/Domain/Entities/DepartmentMembership.cs
-- [X] T015 [P] Create role-group mapping, scoped role assignment, and assignment-source/status entities in dotnet/src/Domain/Entities/RoleGroupMapping.cs and dotnet/src/Domain/Entities/RoleAssignment.cs
-- [X] T016 [P] Extend Entra identity fields and simple-mode compatibility rules in dotnet/src/Domain/Entities/User.cs
-- [X] T017 [P] Add normalized organization and department foreign keys to jobs in dotnet/src/Domain/Entities/Job.cs
-- [X] T018 [P] Add guarded Azure SQL tables, indexes, constraints, user backfill, job-scope backfill, and composite organization/department foreign keys in server/storage/schema.sql
-- [X] T019 [P] Add equivalent SQLite tables, indexes, constraints, user backfill, and job-scope migration behavior in server/storage/schema-sqlite.sql
-- [X] T020 Register all new shared table identifiers in server/storage/table-names.ts
-- [X] T021 [P] Implement transactional organization, department, and membership persistence in server/storage/repos/organization-repo.ts
-- [X] T022 [P] Implement group mapping and scoped assignment activation/revocation queries in server/storage/repos/role-assignment-repo.ts
-- [X] T023 [P] Add immutable tenant/object identity lookup, Entra profile upsert, active-state, and last-login operations in server/storage/repos/user-repo.ts
-- [X] T024 [P] Replace free-text authorization filters with normalized organization/department job queries and pair validation in server/storage/repos/job-repo.ts
-- [X] T025 Create the minimal `StorageProvider` repository contract in server/storage/types.ts and expose the new repositories through server/storage/repos/index.ts and the active provider in server/storage/db.ts
-- [X] T026 [P] Define organization, membership, and scoped assignment repository contracts in dotnet/src/Domain/Interfaces/IOrganizationRepository.cs and dotnet/src/Domain/Interfaces/IRoleAssignmentRepository.cs
-- [X] T027 Extend Entra identity and active-user operations in dotnet/src/Domain/Interfaces/IUserRepository.cs
-- [X] T028 Map new entities, filtered indexes, composite keys, check constraints, and schema relationships in dotnet/src/Infrastructure/Persistence/AppDbContext.cs
-- [X] T029 Generate and review the `AddEntraOrganizationAuthorization` EF Core migration and model snapshot in dotnet/src/Infrastructure/Persistence/Migrations/
-- [X] T030 [P] Implement EF Core organization, department, and membership persistence in dotnet/src/Infrastructure/Persistence/Repositories/OrganizationRepository.cs
-- [X] T031 [P] Implement EF Core scoped assignment and group-mapping persistence in dotnet/src/Infrastructure/Persistence/Repositories/RoleAssignmentRepository.cs
-- [X] T032 Add Entra identity lookup and profile updates to dotnet/src/Infrastructure/Persistence/Repositories/UserRepository.cs
-- [X] T033 Extend the existing append-only audit stream with authorization event names and safe actor, subject, scope, result, and correlation details without token material in server/services/audit.ts, server/storage/repos/audit-repo.ts, dotnet/src/Domain/Entities/ProcessingEvent.cs, and dotnet/src/Domain/Interfaces/IProcessingEventRepository.cs
+- [X] T005 [P] Add failing Azure SQL schema tests for authorization version, composite default-department membership, active-default validation, and equivalent delegated-assignment uniqueness in tests/integration/authorization-schema.test.ts
+- [X] T006 [P] Add failing SQLite compatibility and migration tests for default backfill, ambiguous backfill rejection, table rebuild, and foreign-key enforcement in tests/integration/authorization-sqlite-migration.test.ts
+- [X] T007 [P] Add failing EF Core persistence tests for authorization version, same-user/same-organization default references, revoked history, and unique delegated assignments in dotnet/tests/Infrastructure.Tests/EntraAuthorizationPersistenceTests.cs
+- [X] T008 Extend shared access aggregate, default department, authorization version, request, result, canonical error, Stack B navigation-state, and navigation-audit types in src/types/index.ts and server/storage/types.ts before UI implementation
+- [X] T009 Add `AuthorizationVersion` and default-membership fields plus invariants to dotnet/src/Domain/Entities/User.cs, dotnet/src/Domain/Entities/OrganizationMembership.cs, and dotnet/src/Domain/Entities/DepartmentMembership.cs
+- [X] T010 Implement guarded Azure SQL columns, candidate keys, composite default foreign key, role-assignment uniqueness, and deterministic backfill checks in server/storage/schema.sql
+- [X] T011 Implement equivalent SQLite schema, indexes, active-default checks, and guarded table-rebuild migration in server/storage/schema-sqlite.sql and server/storage/db.ts
+- [X] T012 Map authorization version, default relationship, candidate key, delete behavior, and assignment uniqueness in dotnet/src/Infrastructure/Persistence/AppDbContext.cs
+- [X] T013 Generate and review the explicit-default and authorization-version EF migration and snapshot in dotnet/src/Infrastructure/Persistence/Migrations/
+- [X] T014 Extend organization repository contracts for explicit default selection and aggregate-safe membership transitions in dotnet/src/Domain/Interfaces/IOrganizationRepository.cs and server/storage/repos/organization-repo.ts
+- [X] T015 Extend user and role-assignment repositories for optimistic versions, idempotent equivalent assignments, and transaction participation, and register the access-management repository through `StorageProvider` and selected-provider construction in server/storage/repos/user-repo.ts, server/storage/repos/role-assignment-repo.ts, server/storage/types.ts, server/storage/db.ts, dotnet/src/Domain/Interfaces/IUserRepository.cs, and dotnet/src/Domain/Interfaces/IRoleAssignmentRepository.cs
+- [X] T016 Update Stack A authorization resolution to reject missing, foreign, retired, or revoked defaults without treating defaults as grants in server/services/authorization.ts
+- [X] T017 Update Stack B authorization resolution to return and validate explicit defaults and authorization version in dotnet/src/Application/Authorization/ResolveUserAuthorizationQuery.cs and dotnet/src/Infrastructure/Services/CurrentUserService.cs
+- [X] T018 Update authorization-context conversion to select explicit defaults instead of array order in src/lib/auth.ts and dotnet/src/Web.Client/Services/ApiClient.cs
+- [X] T019 Run focused schema and authorization-resolution tests from tests/integration/authorization-schema.test.ts, tests/integration/authorization-sqlite-migration.test.ts, dotnet/tests/Infrastructure.Tests/EntraAuthorizationPersistenceTests.cs, and dotnet/tests/Application.Tests/ResolveUserAuthorizationQueryTests.cs
 
-**Checkpoint**: Both storage providers and the .NET model enforce identical organization, department, membership, job-scope, assignment, and audit invariants.
+**Checkpoint**: Azure SQL, SQLite, Stack A, and Stack B share the same explicit-default, version, assignment, and fail-closed invariants.
 
 ---
 
 ## Phase 3: User Story 1 - Sign In with Entra (Priority: P1) - MVP
 
-**Goal**: Users from the configured tenant can authenticate in either stack, receive only SQL-backed scoped authorization, refresh stale tokens once, and see a safe access-denied state when unassigned.
+**Goal**: Configured-tenant users authenticate in either stack, unassigned users remain denied but become tenant-verified pending profiles, and assigned users enter their explicit default context.
 
-**Independent Test**: Enable Entra mode, authenticate one assigned and one unassigned configured-tenant identity, and verify that only the assigned identity receives `/api/auth/me` context and protected UI/API access.
+**Independent Test**: Enable Entra mode, sign in as assigned, unassigned, disabled, stale-token, and wrong-tenant identities, and verify only the assigned user receives protected access and the same explicit default in both stacks.
 
 ### Tests for User Story 1
 
-- [X] T034 [P] [US1] Add failing token-validation tests for signature, issuer, tenant, audience, `azp`, scope, lifetime, 15-minute age, roles, groups, and overage in tests/unit/entra-token.test.ts
-- [X] T035 [P] [US1] Add failing Stack A `/api/auth/me` and `/api/auth/logout` contract tests for assigned, unassigned, disabled, wrong-tenant, stale-token, and safe-error cases in tests/integration/entra-auth.test.ts
-- [X] T036 [P] [US1] Add failing React tests for sign-in, loading, silent refresh, access denied, logout, and no-password-fallback states in tests/unit/entra-auth-ui.test.tsx
-- [X] T037 [P] [US1] Add failing .NET authorization-resolution tests for bootstrap, group, delegated, missing-membership, stale-token, and cross-scope cases in dotnet/tests/Application.Tests/ResolveUserAuthorizationQueryTests.cs
-- [X] T038 [P] [US1] Add failing ASP.NET Core `/api/auth/me` and `/api/auth/logout` contract tests matching Stack A status/error/context behavior in dotnet/tests/Web.Tests/EntraAuthEndpointsTests.cs
+- [X] T020 [P] [US1] Add failing Stack A tests for pending-profile upsert after valid unassigned sign-in, immutable identity reuse, wrong-tenant rejection, and no protected data in tests/integration/entra-auth.test.ts
+- [X] T021 [P] [US1] Add failing Stack B tests for pending-profile upsert, explicit default context, disabled identity, stale token, and safe denial responses in dotnet/tests/Web.Tests/EntraAuthEndpointsTests.cs
+- [X] T022 [P] [US1] Add failing client tests proving explicit defaults drive initial context and never broaden authorization in tests/unit/entra-auth-ui.test.tsx and dotnet/tests/Web.Tests/ApiAuthorizationMessageHandlerTests.cs
 
 ### Implementation for User Story 1
 
-- [X] T039 [P] [US1] Implement cached OIDC/JWKS bearer validation and normalized Entra claims in server/services/entra-token.ts
-- [X] T040 [US1] Implement SQL-backed membership and per-resource role hierarchy resolution in server/services/authorization.ts
-- [X] T041 [US1] Switch Entra-mode request authentication to bearer validation and attach authorization context in server/middleware/auth.ts
-- [X] T042 [P] [US1] Define Express request claim/context augmentation in server/types.d.ts and isolate simple sessions from Entra context in server/session.ts
-- [X] T043 [US1] Implement the `auth-api.openapi.yaml` `/api/auth/me` and `/api/auth/logout` behavior while preserving explicit simple mode in server/routes/auth.ts
-- [X] T044 [US1] Record successful/denied sign-in, logout, stale token, missing assignment, disabled identity, and scope failures through server/services/audit.ts
-- [X] T045 [P] [US1] Configure the Stack A public client, tenant authority, API scope, redirect handling, and MSAL provider in src/lib/msal-config.ts and src/main.tsx
-- [X] T046 [US1] Implement Entra-aware sign-in, current-context, silent-refresh-once, and logout behavior in src/lib/auth.ts and src/hooks/useAuth.ts
-- [X] T047 [US1] Keep token attachment and one idempotent `token_stale` retry internal to src/lib/api-real.ts, and expose authenticated operations only through the public facade in src/lib/api.ts
-- [X] T048 [US1] Add protected-route, loading, identity-provider error, access-denied, and Entra logout UI while hiding password workflows in src/components/ProtectedRoute.tsx, src/components/LoginForm.tsx, src/components/UserMenu.tsx, and src/App.tsx
-- [X] T049 [P] [US1] Configure single-tenant JWT bearer validation, delegated scope, client allowlist, and authorization services in dotnet/src/Web.Server/Program.cs
-- [X] T050 [US1] Implement authorization-context resolution and extend current-user contracts in dotnet/src/Application/Authorization/ResolveUserAuthorizationQuery.cs and dotnet/src/Application/Common/Interfaces/ICurrentUserService.cs
-- [X] T051 [US1] Resolve persisted memberships and assignments from validated claims in dotnet/src/Infrastructure/Services/CurrentUserService.cs
-- [X] T052 [US1] Implement matching `/api/auth/me` and `/api/auth/logout` responses, safe error codes, and existing-stream audit emission through `IProcessingEventRepository` in dotnet/src/Web.Server/Endpoints/AuthEndpoints.cs
-- [X] T053 [US1] Configure Blazor MSAL authorization, token-aware API calls, authorized routing, loading/error states, and logout in dotnet/src/Web.Client/Program.cs, dotnet/src/Web.Client/App.razor, dotnet/src/Web.Client/Pages/Login.razor, dotnet/src/Web.Client/Services/ApiClient.cs, and dotnet/src/Web.Client/Components/UserMenu.razor
-- [X] T054 [US1] Disable password login/reset/change, default-admin initialization, and fallback behavior only when `APP_AUTH_MODE=entra` in server/routes/auth.ts, server/services/init-users.ts, and dotnet/src/Web.Server/Endpoints/AuthEndpoints.cs
+- [X] T023 [US1] Make validated configured-tenant sign-in idempotently create or refresh only a pending Entra profile before `assignment_missing` in server/services/authorization.ts and server/routes/auth.ts
+- [X] T024 [US1] Implement equivalent pending-profile discovery before denial in dotnet/src/Application/Authorization/ResolveUserAuthorizationQuery.cs and dotnet/src/Web.Server/Endpoints/AuthEndpoints.cs
+- [X] T025 [US1] Return `authorizationVersion` and each membership's `defaultDepartmentId` from Stack A `/api/auth/me` in server/routes/auth.ts
+- [X] T026 [US1] Return the equivalent authorization context from Stack B `/api/auth/me` in dotnet/src/Web.Server/Endpoints/AuthEndpoints.cs
+- [X] T027 [P] [US1] Update Stack A sign-in, access-denied, silent-refresh-once, and explicit-default client states in src/hooks/useAuth.ts, src/components/ProtectedRoute.tsx, and src/App.tsx
+- [X] T028 [P] [US1] Update Stack B sign-in, access-denied, silent-refresh-once, and explicit-default client states in dotnet/src/Web.Client/App.razor, dotnet/src/Web.Client/Pages/Login.razor, and dotnet/src/Web.Client/Services/ApiClient.cs
+- [X] T029 [US1] Emit correlated pending-profile, successful sign-in, denial, stale-token, disabled-identity, and logout events without token material in server/services/audit.ts and dotnet/src/Web.Server/Endpoints/AuthEndpoints.cs
+- [X] T030 [US1] Run the US1 suites in tests/unit/entra-token.test.ts, tests/unit/entra-auth-ui.test.tsx, tests/integration/entra-auth.test.ts, dotnet/tests/Application.Tests/ResolveUserAuthorizationQueryTests.cs, and dotnet/tests/Web.Tests/EntraAuthEndpointsTests.cs
 
-**Checkpoint**: User Story 1 passes independently with fixture-backed assignments and equivalent Stack A/Stack B authorization contexts.
+**Checkpoint**: User Story 1 is independently usable with fixture-backed assignments and default-deny pending profiles.
 
 ---
 
 ## Phase 4: User Story 2 - Bootstrap Database Owner as Admin (Priority: P1)
 
-**Goal**: An operator can safely and idempotently register the verified Azure SQL Entra administrator in an initial organization/department and grant exactly one global Admin assignment.
+**Goal**: An operator safely establishes exactly one bootstrap Admin with an initial organization, department membership, and explicit default.
 
-**Independent Test**: Run `check`, run `apply` twice plus concurrent attempts, and verify one organization, one department, both memberships, one direct Admin app-role assignment, one active SQL bootstrap assignment, and fail-closed wrong-context behavior.
+**Independent Test**: Run seed check/apply repeatedly and concurrently, verify one active bootstrap assignment and valid default, and prove wrong context or an invalid owner creates no authorization state.
 
 ### Tests for User Story 2
 
-- [ ] T055 [P] [US2] Add failing Bash-wrapper tests for exact tenant/subscription acceptance, CRLF output, wrong context, and no silent context switching in tests/integration/azure-context.test.ts
-- [ ] T056 [P] [US2] Add failing storage CLI tests for owner verification, transactional bootstrap membership, idempotency, non-interactive rejection, and audit outcomes in tests/unit/entra-admin-seed.test.ts
-- [ ] T057 [P] [US2] Add failing integration tests that run the bootstrap seed exactly 10 times with at least two concurrent attempts and assert one active assignment, Graph/SQL partial-failure denial, and rerun convergence in tests/integration/entra-admin-seed.test.ts
+- [X] T031 [P] [US2] Extend seed tests for explicit bootstrap default, authorization version, ten-run idempotency, concurrent convergence, and invalid-owner rollback in tests/unit/entra-admin-seed.test.mjs
+- [X] T032 [P] [US2] Add context-gate tests for exact tenant/subscription, Windows CRLF output, and no silent context switching in tests/integration/azure-context.test.ts
 
 ### Implementation for User Story 2
 
-- [ ] T058 [P] [US2] Implement non-secret Microsoft Graph app-role assignment lookup/upsert helpers with structured exit handling in infra/scripts/lib/entra-graph.sh
-- [ ] T059 [US2] Implement transactional `check` and `apply` storage operations for the Entra profile, initial organization/department, memberships, bootstrap assignment, and audit events in server/cli/seed-entra-admin.ts
-- [ ] T060 [US2] Implement owner/context validation, direct Admin app-role convergence, storage CLI invocation, and postcondition checks in infra/scripts/seed-entra-admin.sh
-- [ ] T061 [US2] Add an end-to-end bootstrap-admin authorization test proving database ownership and Azure RBAC alone do not grant access in tests/integration/entra-admin-access.test.ts
-- [ ] T062 [US2] Write the first-admin bootstrap runbook section covering prerequisites, `check|apply`, idempotency, partial-state recovery, and initial organization/department inputs in docs/ENTRA_AUTHORIZATION.md
+- [X] T033 [US2] Make the storage seed atomically converge the profile, organization, department, memberships, explicit default, bootstrap assignment, version, and audit event in infra/scripts/seed-entra-admin-data.mjs
+- [X] T034 [US2] Create the check/apply wrapper and add fail-closed owner type, tenant, SQL administrator, app-role, and postcondition checks in infra/scripts/seed-entra-admin.sh and infra/scripts/bootstrap-sql-entra-users.mjs
+- [X] T035 [US2] Add CRLF-safe exact tenant/subscription validation before all bootstrap discovery and mutation in infra/scripts/lib/common.sh and infra/scripts/deploy.sh
+- [X] T036 [US2] Document check/apply, explicit default, repeated/concurrent convergence, and partial-state recovery in specs/001-entra-login-authorization/contracts/operator-cli.md and docs/ENTRA_AUTHORIZATION.md
+- [X] T037 [US2] Run tests/unit/entra-admin-seed.test.mjs and tests/integration/azure-context.test.ts, then execute the non-changing bootstrap check from specs/001-entra-login-authorization/quickstart.md
 
-**Checkpoint**: The verified owner can sign in as global Admin after seeding, while every invalid or partial bootstrap state remains denied.
+**Checkpoint**: The verified owner can sign in as Admin; ownership, Azure RBAC, and partial bootstrap state alone grant nothing.
 
 ---
 
-## Phase 5: User Story 3 - Assign and Revoke Other User Roles (Priority: P2)
+## Phase 5: User Story 3 - Onboard and Manage Entra User Access (Priority: P1)
 
-**Goal**: Platform operators can map Entra groups, assign users to valid organization/department scopes, inspect state, and revoke one assignment without granting Azure or SQL privileges or disturbing unrelated scopes.
+**Goal**: Application Admins use mode-aware UI in both stacks to search, inspect, onboard, edit, disable, reactivate, and revoke Entra access atomically; simple mode retains local user management.
 
-**Independent Test**: Map and assign each supported scoped role to fresh tenant users, inspect both Entra and SQL state, reject invalid pairs, revoke a targeted assignment, and verify immediate scoped denial with unrelated assignments retained.
+**Independent Test**: In each stack, onboard one pending profile into one organization with two departments, one explicit default, and one scoped role; repeat and race the request, change and revoke access, verify rollback/conflict/audit behavior, then switch to simple mode and verify only local User Management remains.
 
 ### Tests for User Story 3
 
-- [ ] T063 [P] [US3] Add failing map-group tests for role scope rules, immutable IDs, P1/P2 group behavior, nested-group rejection, and app-role verification in tests/unit/entra-role-management.test.ts
-- [ ] T064 [P] [US3] Add failing assign/check/revoke tests for multi-organization membership, invalid department pairs, targeted revocation, shared-group retention, and partial-state exit codes in tests/integration/entra-role-management.test.ts
-- [ ] T065 [P] [US3] Add failing Stack A authorization tests for Recruiter and Analytics Viewer allowed/denied actions after assignment and revocation in tests/integration/scoped-role-access.test.ts
-- [ ] T066 [P] [US3] Add failing .NET tests for matching Recruiter and Analytics Viewer scope enforcement and immediate SQL revocation in dotnet/tests/Application.Tests/ScopedRoleAuthorizationTests.cs
+- [x] T038 [P] [US3] Add failing Stack A aggregate repository tests for serializable rollback, actor revalidation, default replacement, idempotent convergence, stale versions, unrelated-scope preservation, and audit atomicity in tests/integration/entra-access-management-repository.test.ts
+- [x] T039 [P] [US3] Add failing Stack A contract tests for all five access-management operations, pagination, authority boundaries, safe errors, and six repeated/concurrent onboarding attempts in tests/integration/entra-access-management.test.ts, and operator group map/assign/check/revoke convergence tests in tests/unit/entra-role-management.test.mjs
+- [x] T040 [P] [US3] Add failing React tests for mode switching, search, inspect, onboarding form, explicit default, confirmation, loading, empty, validation, conflict, success, failure notifications, disable/reactivate, and targeted revoke in tests/unit/entra-access-management-ui.test.tsx
+- [x] T041 [P] [US3] Add failing .NET aggregate repository tests for transactions, version conflicts, same-user default integrity, idempotency, unrelated scopes, and success/failure audit outcomes in dotnet/tests/Infrastructure.Tests/EntraAccessManagementRepositoryTests.cs
+- [x] T042 [P] [US3] Add failing .NET application tests for Admin and Organization Admin list/detail/onboard/update/disable/reactivate/revoke authority in dotnet/tests/Application.Tests/EntraAccessManagementTests.cs
+- [x] T043 [P] [US3] Add failing ASP.NET Core contract and bUnit tests for access-management endpoints, mode isolation, confirmation states, safe errors, and visible asynchronous failure notifications in dotnet/tests/Web.Tests/EntraAccessManagementEndpointsTests.cs and dotnet/tests/Web.Tests/EntraAccessManagementTests.cs
 
 ### Implementation for User Story 3
 
-- [ ] T067 [US3] Implement mapping validation plus transactional assign, check, and targeted revoke storage commands in server/cli/manage-entra-role.ts
-- [ ] T068 [US3] Implement the operator CLI contract, context gate, Graph group/app-role operations, SQL-first revocation, structured output, and exit codes in infra/scripts/manage-entra-role.sh
-- [ ] T069 [US3] Emit assignment, membership, mapping, revocation, partial-state, actor, subject, and correlation audit details through server/services/audit.ts
-- [ ] T070 [US3] Write the platform-operator role lifecycle section covering managed groups, multi-organization examples, least privilege, verification, conflict recovery, and rollback in docs/ENTRA_AUTHORIZATION.md
-- [ ] T071 [US3] Add a documented operator acceptance script that runs map, assign, check, scoped-access, revoke, and recovery checks in infra/scripts/verify-entra-role-management.sh
+- [x] T044 [P] [US3] Implement exact-context operator group map/assign/check/revoke commands with Graph-to-SQL convergence, explicit defaults, targeted revocation, structured exit codes, and non-secret output in infra/scripts/manage-entra-role.sh and infra/scripts/manage-entra-role-data.mjs
+- [x] T045 [P] [US3] Define Stack B commands, queries, DTOs, and validators in dotnet/src/Application/AccessManagement/AccessManagementDtos.cs, dotnet/src/Application/AccessManagement/AccessManagementCommands.cs, and dotnet/src/Application/AccessManagement/AccessManagementValidators.cs
+- [x] T046 [US3] Implement Stack A actor-filtered search/detail and serializable aggregate mutation with deterministic locking in server/storage/repos/access-management-repo.ts
+- [x] T047 [US3] Implement Stack A Admin/Organization Admin authority, desired-state validation, optimistic conflict handling, idempotency, and correlated aggregate audits in server/services/entra-access-management.ts
+- [x] T048 [US3] Implement and mode-gate all access-management OpenAPI operations in server/routes/access-management.ts and server/index.ts
+- [x] T049 [US3] Disable registration of local password user-management routes in Entra mode while preserving simple mode in server/routes/users.ts and server/index.ts
+- [x] T050 [P] [US3] Add typed Stack A list/detail/put/patch/revoke transport to src/lib/api-real.ts and expose it through src/lib/api.ts
+- [x] T051 [US3] Build the Stack A Entra access-management workflow, confirmation dialog, and visible asynchronous error notifications in src/components/EntraAccessManagementDialog.tsx
+- [x] T052 [US3] Route Stack A's administration entry to Entra Access Management in Entra mode and local User Management in simple mode in src/components/UserMenu.tsx and src/App.tsx
+- [x] T053 [US3] Implement the Stack B aggregate repository with serializable transaction, actor re-read, version update, idempotent assignment convergence, and transaction-aware success audit in dotnet/src/Infrastructure/Persistence/Repositories/EntraAccessManagementRepository.cs
+- [x] T054 [US3] Implement Stack B access-management handlers and failure audit behavior in dotnet/src/Application/AccessManagement/AccessManagementHandlers.cs
+- [x] T055 [US3] Implement and mode-gate the five access-management endpoint operations in dotnet/src/Web.Server/Endpoints/AccessManagementEndpoints.cs and dotnet/src/Web.Server/Program.cs
+- [x] T056 [US3] Disable local password user endpoints in Entra mode while preserving simple mode in dotnet/src/Web.Server/Endpoints/UsersEndpoints.cs and dotnet/src/Web.Server/Program.cs
+- [x] T057 [P] [US3] Add typed Stack B list/detail/put/patch/revoke methods and conflict mapping in dotnet/src/Web.Client/Services/ApiClient.cs
+- [x] T058 [US3] Build Stack B search, inspect, onboarding, confirmation, lifecycle, targeted-revoke, and visible asynchronous error-notification states in dotnet/src/Web.Client/Components/EntraAccessManagement.razor and dotnet/src/Web.Client/Components/EntraAccessManagement.razor.css
+- [x] T059 [US3] Add a mode-aware `/users` administration page that renders Entra Access Management or existing local User Management in simple mode in dotnet/src/Web.Client/Pages/UserAdministration.razor and dotnet/src/Web.Client/Layout/NavMenu.razor
+- [ ] T060 [US3] Run all US3 repository, service, endpoint, operator CLI, React, and bUnit tests and execute quickstart sections 7-9 and 13 from specs/001-entra-login-authorization/quickstart.md
 
-**Checkpoint**: Operator-managed roles are repeatable, least-privileged, auditable, and scoped independently for every organization/department.
+**Checkpoint**: Both stacks provide equivalent, atomic Entra access lifecycle management and preserve simple-mode user administration.
 
 ---
 
 ## Phase 6: User Story 4 - Administer an Organization (Priority: P2)
 
-**Goal**: Organization Admins can manage departments, memberships, and delegated roles only inside assigned organizations, and every job is bound to a valid organization-owned department.
+**Goal**: Organization Admins manage departments and delegated roles only inside assigned organizations, while job and default-department integrity remain intact.
 
-**Independent Test**: Give a user Organization Admin in one of two organizations; verify department and role management succeeds only there, cross-organization/global changes are denied, and invalid job pairs or orphaning changes are rejected.
+**Independent Test**: Assign Organization Admin in one of two organizations; create/rename/retire departments and manage user access only there, while cross-organization/global escalation and invalid job/default transitions fail and audit.
 
 ### Tests for User Story 4
 
-- [ ] T072 [P] [US4] Add failing domain tests for first-department creation, immutable department parent, last-department retirement, and membership invariants in dotnet/tests/Domain.Tests/OrganizationTests.cs
-- [ ] T073 [P] [US4] Add failing domain tests for delegated assignment scope, hierarchy, multi-scope coexistence, and targeted revocation in dotnet/tests/Domain.Tests/RoleAssignmentTests.cs
-- [ ] T074 [P] [US4] Add failing Stack A contract tests for every operation and denial in `organization-admin.openapi.yaml` in tests/integration/organization-admin.test.ts
-- [ ] T075 [P] [US4] Add failing ASP.NET Core contract tests for matching organization, department, membership, grant, and revoke responses in dotnet/tests/Web.Tests/OrganizationEndpointsTests.cs
-- [ ] T076 [P] [US4] Add failing Stack A job tests for required scope IDs, mismatched pairs, cross-scope reads/mutations, and legacy backfill failures in tests/integration/job-authorization.test.ts
-- [ ] T077 [P] [US4] Add failing .NET job tests for the same organization/department pair and role hierarchy rules in dotnet/tests/Application.Tests/JobAuthorizationTests.cs
-- [ ] T078 [P] [US4] Add failing React tests for organization selection, department management, member registration, delegated grants, targeted revoke, loading, rollback, and safe errors in tests/unit/organization-admin-ui.test.tsx
-- [ ] T079 [P] [US4] Add failing cross-organization and global-Admin escalation audit tests in dotnet/tests/Web.Tests/OrganizationAdminAuthorizationTests.cs
+- [X] T061 [P] [US4] Add failing domain tests for first/last department, immutable parent, default replacement before retirement, membership integrity, and delegated-role scope in dotnet/tests/Domain.Tests/OrganizationTests.cs and dotnet/tests/Domain.Tests/RoleAssignmentTests.cs
+- [X] T062 [P] [US4] Add failing Stack A organization contract tests for department lifecycle, scoped membership/default changes, delegated grants, targeted revocation, and escalation denial in tests/integration/organization-admin.test.ts
+- [X] T063 [P] [US4] Add failing Stack B organization endpoint tests matching Stack A status, scope, integrity, and audit outcomes in dotnet/tests/Web.Tests/OrganizationEndpointsTests.cs
+- [X] T064 [P] [US4] Add failing cross-stack job tests for required organization/department pairs and scope-specific read/mutation authorization in tests/integration/job-authorization.test.ts and dotnet/tests/Application.Tests/JobAuthorizationTests.cs
 
 ### Implementation for User Story 4
 
-- [ ] T080 [US4] Implement transactional organization, department, membership, delegated-role, orphan-prevention, and actor-scope rules in server/services/organization-admin.ts
-- [ ] T081 [US4] Implement every `organization-admin.openapi.yaml` operation and safe 400/403/404/409 mapping in server/routes/organizations.ts
-- [ ] T082 [US4] Register organization routes and enforce global/organization-scoped middleware in server/index.ts and server/middleware/rbac.ts
-- [ ] T083 [US4] Add typed organization administration transport in src/lib/api-real.ts and expose it only through the public facade in src/lib/api.ts
-- [ ] T084 [US4] Build organization selector, department controls, membership editor, delegated role controls, targeted revoke, loading/error states, and optimistic rollback in src/components/OrganizationAdmin.tsx and src/App.tsx
-- [ ] T085 [US4] Enforce normalized organization/department creation, update, list, and mutation scope in server/routes/jobs.ts and server/storage/repos/job-repo.ts
-- [ ] T086 [P] [US4] Implement organization, department, membership, grant, revoke, and hierarchy commands/queries in dotnet/src/Application/Organizations/ and dotnet/src/Application/Authorization/
-- [ ] T087 [US4] Implement `organization-admin.openapi.yaml` endpoints and policy checks in dotnet/src/Web.Server/Endpoints/OrganizationEndpoints.cs and register them in dotnet/src/Web.Server/Program.cs
-- [ ] T088 [US4] Add typed organization administration methods to dotnet/src/Web.Client/Services/ApiClient.cs
-- [ ] T089 [US4] Build organization selection and administration UI with loading, safe errors, and rollback in dotnet/src/Web.Client/Components/OrganizationSelector.razor and dotnet/src/Web.Client/Pages/OrganizationAdmin.razor
-- [ ] T090 [US4] Validate organization/department pairs and actor scope when creating or updating jobs in dotnet/src/Application/Jobs/Commands/CreateJobCommand.cs and related job update handlers
-- [ ] T091 [US4] Apply scoped list/read/mutation authorization to dotnet/src/Web.Server/Endpoints/JobsEndpoints.cs and surface active scope in dotnet/src/Web.Client/Pages/Dashboard.razor
-- [ ] T092 [US4] Record organization, department, membership, delegated grant/revoke, invalid job scope, and denied escalation events in server/services/audit.ts and dotnet/src/Application/Organizations/
+- [X] T065 [US4] Implement department lifecycle, default replacement, membership integrity, delegated-role limits, and actor-scope rules in server/services/organization-admin.ts
+- [X] T066 [US4] Implement organization administration operations and canonical 400/403/404/409 responses in server/routes/organizations.ts and server/index.ts
+- [X] T067 [P] [US4] Add Stack A organization administration transport and UI controls in src/lib/api-real.ts, src/lib/api.ts, and src/components/OrganizationAdmin.tsx
+- [X] T068 [US4] Enforce normalized organization/department pairs and scoped reads/mutations in server/routes/jobs.ts and server/storage/repos/job-repo.ts
+- [X] T069 [P] [US4] Implement Stack B organization commands, queries, validators, and repository methods in dotnet/src/Application/Organizations/ and dotnet/src/Infrastructure/Persistence/Repositories/OrganizationRepository.cs
+- [X] T070 [US4] Implement Stack B organization endpoints and policy checks in dotnet/src/Web.Server/Endpoints/OrganizationEndpoints.cs and dotnet/src/Web.Server/Program.cs
+- [X] T071 [P] [US4] Build Stack B organization administration transport and UI in dotnet/src/Web.Client/Services/ApiClient.cs and dotnet/src/Web.Client/Pages/OrganizationAdmin.razor
+- [X] T072 [US4] Enforce job scope and Organization Admin authority in dotnet/src/Application/Jobs/ and dotnet/src/Web.Server/Endpoints/JobsEndpoints.cs
+- [X] T073 [US4] Emit organization, department, membership, default replacement, delegated role, invalid job scope, and denied escalation audits in server/services/audit.ts and dotnet/src/Application/Organizations/
+- [ ] T074 [US4] Run the US4 domain, contract, endpoint, and job-authorization tests and execute the Organization Admin acceptance flow in specs/001-entra-login-authorization/quickstart.md
 
-**Checkpoint**: Organization Admin authority cannot escape its organization, and no active job, membership, mapping, or assignment can reference an invalid department scope.
+**Checkpoint**: Organization Admin authority never escapes its organization and no change leaves invalid jobs, memberships, defaults, or role scopes.
 
 ---
 
 ## Phase 7: User Story 5 - Consistent Authorization Across Both Stacks (Priority: P2)
 
-**Goal**: Stack A and Stack B return identical authorization contexts, safe error codes, role/scope outcomes, session freshness behavior, and explicit simple-mode isolation.
+**Goal**: Both stacks produce identical auth, access-management, simple-mode, scope, revocation, and error outcomes from the shared model.
 
-**Independent Test**: Execute one shared matrix of valid, unassigned, disabled, stale, wrong-tenant, multi-organization, revoked, and invalid-job identities against both stacks and compare status, error, role, memberships, authorizations, and scope.
+**Independent Test**: Run one matrix of assigned, pending, disabled, stale, wrong-tenant, multi-organization, invalid-default, revoked, conflict, and simple-mode cases against both APIs and compare all public fields and status/error codes.
 
 ### Tests for User Story 5
 
-- [ ] T093 [P] [US5] Define the shared parity matrix for all roles, assignment sources, memberships, negative cases, and expected error/status values in tests/fixtures/authorization-parity-cases.json
-- [ ] T094 [US5] Execute the shared matrix against Stack A auth, job, and organization endpoints in tests/integration/authorization-parity.test.ts
-- [ ] T095 [US5] Execute the same shared matrix against Stack B auth, job, and organization endpoints in dotnet/tests/Web.Tests/AuthorizationParityTests.cs
-- [ ] T096 [P] [US5] Add simple-mode regression tests proving existing local login remains isolated and Entra data is never a fallback in tests/unit/auth.test.ts
-- [ ] T097 [P] [US5] Add matching .NET simple-mode isolation tests in dotnet/tests/Web.Tests/SimpleAuthModeTests.cs
-- [ ] T098 [P] [US5] Add Stack A stale-token refresh-once and interaction-required tests in tests/unit/entra-token-refresh.test.ts
-- [X] T099 [P] [US5] Add Blazor stale-token refresh-once and interaction-required tests in dotnet/tests/Web.Tests/EntraTokenRefreshTests.cs
+- [X] T075 [P] [US5] Extend the shared parity fixture with explicit defaults, authorization versions, pending profiles, access-management operations, and mode-specific results in tests/fixtures/authorization-parity-cases.json
+- [X] T076 [P] [US5] Add Stack A parity execution for auth, access management, organization administration, jobs, revocation, and simple-mode isolation in tests/integration/authorization-parity.test.ts
+- [X] T077 [P] [US5] Add Stack B parity execution against the same fixture in dotnet/tests/Web.Tests/AuthorizationParityTests.cs
+- [X] T078 [P] [US5] Add Stack A and Stack B simple-mode regression coverage in tests/unit/auth.test.ts and dotnet/tests/Web.Tests/SimpleAuthModeTests.cs
 
 ### Implementation for User Story 5
 
-- [ ] T100 [P] [US5] Centralize canonical authorization error codes and response mapping for Stack A in server/services/authorization-errors.ts
-- [ ] T101 [P] [US5] Centralize the same canonical authorization error codes and response mapping for Stack B in dotnet/src/Application/Authorization/AuthorizationErrorCodes.cs
-- [ ] T102 [US5] Add a parity runner that starts or targets both APIs, executes the shared matrix, and reports field-level differences in tests/integration/run-auth-parity.ts and package.json
+- [X] T079 [P] [US5] Centralize canonical Stack A authorization and access-management error mapping in server/services/authorization-errors.ts
+- [X] T080 [P] [US5] Centralize matching Stack B authorization and access-management error mapping in dotnet/src/Application/Authorization/AuthorizationErrorCodes.cs
+- [X] T081 [US5] Add a parity runner and report command in tests/integration/run-auth-parity.ts and package.json
+- [X] T082 [US5] Run the shared parity matrix and resolve every field-level difference in tests/integration/authorization-parity.test.ts and dotnet/tests/Web.Tests/AuthorizationParityTests.cs
 
-**Checkpoint**: Every shared matrix case produces the same allow/deny semantics and public contract in both stacks.
+**Checkpoint**: Every matrix case has the same allow/deny semantics, mode behavior, and public contract in both stacks.
 
 ---
 
-## Phase 8: Polish and Cross-Cutting Concerns
+## Phase 8: User Story 6 - Expand the Stack B Workspace (Priority: P2)
 
-**Purpose**: Complete operator guidance, integration mapping, security review, performance evidence, and full validation.
+**Goal**: Every authenticated Stack B shell route has accessible desktop collapse and compact overlay navigation that preserves route/input state and gives released width to dense content.
 
-- [ ] T103 [P] Write the shared tenant setup, role hierarchy, membership model, Organization Admin delegation, and troubleshooting sections, then assemble and cross-link the bootstrap and operator lifecycle sections in docs/ENTRA_AUTHORIZATION.md
-- [ ] T104 [P] Update production Entra mode versus local simple mode behavior and remove obsolete password-first guidance in AUTHENTICATION.md
-- [ ] T105 [P] Add Stack A/Stack B auth and organization endpoint parity mappings to INTEGRATION.md
-- [ ] T106 [P] Add a release-mode authorization benchmark for each API against QA Azure SQL using a 60-second warm-up, 20,000 requests, 25 concurrent clients, 10,000 users, 100 organizations, 1,000 departments, 100,000 assignments, and a 20-assignment identity, asserting less than 100-ms server-side p95 in tests/integration/authorization-performance.test.ts
-- [ ] T107 Document the completed threat/security review for secretless SPAs, exact issuer/audience/client validation, no runtime Graph, no token logging, fail-closed scope, and least privilege in docs/ENTRA_AUTHORIZATION_SECURITY_REVIEW.md
-- [ ] T108 [P] Add Playwright/axe desktop and mobile tests for WCAG 4.5:1 contrast, keyboard access, loading/error states, optimistic rollback, responsive layout, and pagination or virtualization in tests/e2e/entra-authorization-accessibility.spec.ts and playwright.config.ts
-- [ ] T109 [P] Add EF Core repository and migration tests for identity uniqueness, organization/department ownership, membership integrity, scoped assignments, filtered indexes, revocation history, and audit persistence in dotnet/tests/Infrastructure.Tests/EntraAuthorizationPersistenceTests.cs
-- [ ] T110 [P] Add shared-schema parity tests that execute equivalent authorization fixtures and constraint failures against SQLite and Azure SQL definitions in dotnet/tests/Infrastructure.Tests/AuthorizationSchemaParityTests.cs
-- [ ] T111 Run `terraform fmt -check`, `terraform validate`, and an exact-context non-changing shared plan for infra/terraform/modules/foundation/entra/ and infra/terraform/live/shared/
-- [ ] T112 Run `npm run lint`, `npm run build`, `npm run build:server`, `npm test`, and the Playwright accessibility suite using package.json
-- [ ] T113 Run all .NET tests and release builds through dotnet/TalentMatch.slnx
-- [ ] T114 Execute every acceptance and recovery step in specs/001-entra-login-authorization/quickstart.md and record results in specs/001-entra-login-authorization/checklists/implementation-validation.md
+**Independent Test**: Traverse every shell route at the six quickstart viewports and 200% zoom, collapse/expand with pointer and keyboard, cross routes and reload, retain unsaved input, and verify panel/table reflow with no unauthorized links or serious axe findings.
+
+### Tests for User Story 6
+
+- [X] T083 [P] [US6] Add failing unit tests for audited desktop preference changes, audit-failure rollback and notification, transient compact state, breakpoint transitions, route changes, and disposal in dotnet/tests/Web.Tests/NavigationShellStateTests.cs
+- [X] T084 [P] [US6] Add failing endpoint and bUnit tests for server-derived actor identity, matching correlation IDs, exactly-one immutable audit outcomes, safe 400/401/503 errors, audit-failure notification, toggle/focus semantics, authorized links, body preservation, backdrop, and Escape handling in dotnet/tests/Web.Tests/NavigationAuditEndpointsTests.cs and dotnet/tests/Web.Tests/MainLayoutTests.cs
+- [X] T085 [P] [US6] Add failing Playwright/axe route-inventory tests for all quickstart viewports, 200% zoom, session reload, deep links, unsaved input, width release, horizontal overflow, and the constitution's minimum 4.5:1 colour contrast in tests/e2e/stack-b-navigation.spec.ts
+
+### Implementation for User Story 6
+
+- [X] T086 [P] [US6] Implement scoped desktop/compact navigation state plus typed navigation-audit client contracts that retain prior state on audit failure in dotnet/src/Web.Client/Services/NavigationShellState.cs and dotnet/src/Web.Client/Services/ApiClient.cs
+- [X] T087 [P] [US6] Implement maintained browser APIs for `sessionStorage`, `matchMedia`, Escape, and breakpoint notifications in dotnet/src/Web.Client/wwwroot/js/navigationShell.js
+- [X] T088 [US6] Implement the navigation-audit command, immutable persistence adapter, and API endpoint, then register the endpoint, navigation shell state, and JS module lifecycle in dotnet/src/Application/Navigation/, dotnet/src/Infrastructure/Persistence/Repositories/NavigationAuditRepository.cs, dotnet/src/Web.Server/Endpoints/NavigationAuditEndpoints.cs, dotnet/src/Web.Server/Program.cs, dotnet/src/Web.Client/Program.cs, and dotnet/src/Web.Client/Layout/MainLayout.razor
+- [X] T089 [US6] Move the single accessible toggle outside the sidebar, apply collapse or expansion only after audit success, retain prior state with a visible error notification on audit failure, keep `@Body` mounted, and implement compact backdrop/focus behavior in dotnet/src/Web.Client/Layout/MainLayout.razor and dotnet/src/Web.Client/Layout/NavMenu.razor
+- [X] T090 [US6] Implement desktop zero-width grid state, compact off-canvas overlay, stable control sizing, visible focus, and reduced-motion behavior in dotnet/src/Web.Client/Layout/MainLayout.razor.css and dotnet/src/Web.Client/Layout/NavMenu.razor.css
+- [X] T091 [P] [US6] Convert Application Detail to one/two/three-column container-responsive layout in dotnet/src/Web.Client/Pages/ApplicationDetail.razor and dotnet/src/Web.Client/Pages/ApplicationDetail.razor.css
+- [X] T092 [P] [US6] Convert Manual Review to one/two/three-column container-responsive layout while preserving form state in dotnet/src/Web.Client/Pages/ManualReview.razor and dotnet/src/Web.Client/Pages/ManualReview.razor.css
+- [X] T093 [US6] Add local overflow and wrapping classes for dense tables/actions in dotnet/src/Web.Client/Pages/JobDetail.razor, dotnet/src/Web.Client/Pages/Analytics.razor, dotnet/src/Web.Client/Pages/FailureQueue.razor, and dotnet/src/Web.Client/Components/UserManagement.razor
+- [ ] T094 [US6] Run navigation state, bUnit, and Playwright suites and execute quickstart section 12 from specs/001-entra-login-authorization/quickstart.md
+
+**Checkpoint**: Every authenticated Stack B shell route exposes one consistent, accessible, state-preserving navigation control at supported desktop and compact sizes.
+
+---
+
+## Phase 9: Polish and Cross-Cutting Concerns
+
+**Purpose**: Complete operator guidance, security evidence, and release validation across all stories.
+
+- [X] T095 [P] Update Entra mode, simple mode, pending-profile, access-management, explicit-default, and revocation guidance in AUTHENTICATION.md
+- [X] T096 [P] Update cross-stack auth, access-management, organization, and canonical error mappings in INTEGRATION.md
+- [X] T097 [P] Complete least-privilege operator guidance for bootstrap, group assignment, in-app delegation, conflicts, rollback, and wrong-context recovery in docs/ENTRA_AUTHORIZATION.md
+- [X] T098 [P] Document threat review results for secretless SPAs, claim validation, no runtime Graph, transaction/audit boundaries, optimistic concurrency, and navigation authorization neutrality in SECURITY.md
+- [X] T099 Extend create/reuse, stable role/scope ID, no-SPA-secret, redirect URI, bootstrap assignment, and shared-root wiring coverage in tests/unit/entra-terraform.test.ts, then run `terraform fmt -check`, `terraform validate`, and an exact-context non-changing plan for infra/terraform/modules/foundation/entra/ and infra/terraform/live/shared/
+- [X] T100 Run `npm run lint`, `npm run build`, `npm run build:server`, `npm test`, and the Playwright suites defined in package.json and playwright.config.ts
+- [X] T101 Run all .NET tests and release builds through dotnet/TalentMatch.slnx
+- [ ] T102 Execute every acceptance and recovery step in specs/001-entra-login-authorization/quickstart.md and record results in specs/001-entra-login-authorization/checklists/implementation-validation.md
 
 ---
 
@@ -237,52 +241,53 @@
 ### Phase Dependencies
 
 - **Phase 1 - Setup**: No dependencies; starts immediately.
-- **Phase 2 - Foundational**: Depends on Setup and blocks all user stories.
-- **Phase 3 - US1**: Starts after Foundational and provides the authentication/runtime authorization surface.
-- **Phase 4 - US2**: Implementation starts after Foundational; full sign-in acceptance uses US1.
-- **Phase 5 - US3**: Implementation starts after Foundational; production operator acceptance uses the bootstrap Admin from US2 and protected APIs from US1.
-- **Phase 6 - US4**: Domain/application work starts after Foundational; endpoint/UI acceptance depends on US1 and an Organization Admin assignment supplied by US2 or US3 fixtures.
-- **Phase 7 - US5**: Depends on US1-US4 because it verifies completed cross-stack parity.
-- **Phase 8 - Polish**: Depends on every story included in the release.
+- **Phase 2 - Foundational**: Depends on Setup and blocks all user-story implementation.
+- **Phase 3 - US1**: Starts after Foundational and establishes tenant-verified pending profiles and runtime authorization.
+- **Phase 4 - US2**: Starts after Foundational; its final sign-in acceptance uses US1.
+- **Phase 5 - US3**: Depends on US1 pending-profile discovery and the Foundational aggregate model; fixture-based repository work can begin while US2 is underway.
+- **Phase 6 - US4**: Domain and service work starts after Foundational; UI acceptance uses an Organization Admin created through US2/US3 fixtures.
+- **Phase 7 - US5**: Depends on US1-US4 because it certifies completed cross-stack behavior.
+- **Phase 8 - US6**: Depends only on Setup and Foundational and may run in parallel with US1-US5.
+- **Phase 9 - Polish**: Depends on every story selected for release.
 
 ### User Story Dependency Graph
 
 ```mermaid
 flowchart LR
-    Setup[Phase 1 Setup] --> Foundation[Phase 2 Foundation]
+    Setup[Setup] --> Foundation[Shared Foundation]
     Foundation --> US1[US1 Entra Sign In]
     Foundation --> US2[US2 Bootstrap Admin]
-    Foundation --> US3[US3 Operator Roles]
-    Foundation --> US4Core[US4 Domain and Services]
-    US1 --> US2Acceptance[US2 Sign-In Acceptance]
-    US1 --> US3Acceptance[US3 Protected Access Acceptance]
-    US2 --> US3Acceptance
-    US1 --> US4Acceptance[US4 Endpoint and UI Acceptance]
-    US2 --> US4Acceptance
+    Foundation --> US4Core[US4 Organization Core]
+    Foundation --> US6[US6 Stack B Navigation]
+    US1 --> US3[US3 Entra Access Management]
+    US2 --> US3Acceptance[US3 Operational Acceptance]
+    US3 --> US4Acceptance[US4 Delegated Admin Acceptance]
     US4Core --> US4Acceptance
     US1 --> US5[US5 Cross-Stack Parity]
     US2 --> US5
     US3 --> US5
     US4Acceptance --> US5
-    US5 --> Polish[Phase 8 Polish]
+    US5 --> Polish[Polish and Release Validation]
+    US6 --> Polish
 ```
 
 ### Within Each User Story
 
-1. Add tests and confirm they fail for the intended reason.
-2. Implement domain/storage behavior before services.
-3. Implement services before endpoints and UI.
-4. Add audit behavior with the state-changing operation.
-5. Run the story's focused tests and independent acceptance check before starting dependent work.
+1. Add the story's tests and confirm they fail for the expected missing behavior.
+2. Implement models/repositories before application services.
+3. Implement services before endpoints and clients.
+4. Implement UI after typed transport is stable.
+5. Add audit behavior in the same mutation slice.
+6. Run focused tests and the independent acceptance check before dependent work.
 
 ### Parallel Opportunities
 
-- Node, .NET, environment, and Terraform setup tasks marked `[P]` can proceed concurrently.
-- Type/entity/schema tasks T011-T019 can proceed concurrently from the approved data model.
-- Stack A repositories T021-T024 can proceed concurrently; .NET repositories T030-T031 can proceed concurrently after entity/DbContext work.
-- Test tasks within each story can be authored concurrently in separate files.
-- After Foundational, US2 operator tooling and US4 domain/application work can proceed alongside US1, while their end-to-end acceptance waits for authentication.
-- Stack A and Stack B implementations within a story can proceed concurrently when their shared contract and schema dependencies are complete.
+- Setup tasks T002-T004 can proceed concurrently.
+- Foundational test tasks T005-T007 can proceed concurrently before implementation.
+- Stack A and Stack B work within US1, US3, US4, and US5 can proceed concurrently after shared contracts are stable.
+- US2 tooling, US4 domain work, and all US6 navigation work can proceed in parallel after Foundational.
+- Each story's `[P]` test tasks target separate test files and can be authored concurrently.
+- Responsive page tasks T091 and T092 can proceed concurrently after shell state behavior is stable.
 
 ---
 
@@ -291,44 +296,51 @@ flowchart LR
 ### User Story 1
 
 ```text
-Task T034: Stack A token-validation tests in tests/unit/entra-token.test.ts
-Task T036: React auth-state tests in tests/unit/entra-auth-ui.test.tsx
-Task T037: .NET authorization-resolution tests in dotnet/tests/Application.Tests/ResolveUserAuthorizationQueryTests.cs
-Task T038: ASP.NET auth endpoint tests in dotnet/tests/Web.Tests/EntraAuthEndpointsTests.cs
+Task T020: Stack A pending-profile and denial tests in tests/integration/entra-auth.test.ts
+Task T021: Stack B auth endpoint tests in dotnet/tests/Web.Tests/EntraAuthEndpointsTests.cs
+Task T022: Explicit-default client tests in Stack A and Stack B test files
 ```
 
 ### User Story 2
 
 ```text
-Task T055: Azure-context wrapper tests in tests/integration/azure-context.test.ts
-Task T056: Bootstrap storage CLI tests in tests/unit/entra-admin-seed.test.ts
-Task T057: Bootstrap convergence tests in tests/integration/entra-admin-seed.test.ts
+Task T031: Seed convergence tests in tests/unit/entra-admin-seed.test.mjs
+Task T032: Azure context-gate tests in tests/integration/azure-context.test.ts
 ```
 
 ### User Story 3
 
 ```text
-Task T063: Group mapping tests in tests/unit/entra-role-management.test.ts
-Task T064: Operator lifecycle tests in tests/integration/entra-role-management.test.ts
-Task T066: .NET scoped-role tests in dotnet/tests/Application.Tests/ScopedRoleAuthorizationTests.cs
+Task T038: Stack A aggregate repository tests
+Task T040: React access-management UI tests
+Task T041: Stack B aggregate repository tests
+Task T043: ASP.NET Core endpoint and bUnit tests
 ```
 
 ### User Story 4
 
 ```text
-Task T072: Organization invariant tests in dotnet/tests/Domain.Tests/OrganizationTests.cs
-Task T074: Stack A organization contract tests in tests/integration/organization-admin.test.ts
-Task T075: Stack B organization contract tests in dotnet/tests/Web.Tests/OrganizationEndpointsTests.cs
-Task T078: React organization administration tests in tests/unit/organization-admin-ui.test.tsx
+Task T061: .NET organization and role domain tests
+Task T062: Stack A organization contract tests
+Task T063: Stack B organization endpoint tests
+Task T064: Cross-stack job-scope tests
 ```
 
 ### User Story 5
 
 ```text
-Task T096: Stack A simple-mode isolation tests in tests/unit/auth.test.ts
-Task T097: Stack B simple-mode isolation tests in dotnet/tests/Web.Tests/SimpleAuthModeTests.cs
-Task T098: Stack A token-refresh tests in tests/unit/entra-token-refresh.test.ts
-Task T099: Stack B token-refresh tests in dotnet/tests/Web.Tests/EntraTokenRefreshTests.cs
+Task T075: Shared parity fixture
+Task T076: Stack A parity execution
+Task T077: Stack B parity execution
+Task T078: Simple-mode regression tests
+```
+
+### User Story 6
+
+```text
+Task T083: Navigation state unit tests
+Task T084: MainLayout bUnit tests
+Task T085: Playwright route-inventory and accessibility tests
 ```
 
 ---
@@ -339,37 +351,33 @@ Task T099: Stack B token-refresh tests in dotnet/tests/Web.Tests/EntraTokenRefre
 
 1. Complete Setup and Foundational phases.
 2. Complete US1 with fixture-backed assignments.
-3. Stop and validate tenant-bound sign-in, default denial, token freshness, and equivalent auth context in both stacks.
-4. This is the smallest technical MVP; add US2 before deploying an independently operable environment.
-
-### Deployment-Ready First Increment
-
-1. Complete Setup, Foundational, US1, and US2.
-2. Validate the bootstrap owner can sign in and that ownership/RBAC without application assignment remains denied.
-3. Deploy only after the exact-context policy read and non-changing Terraform plan succeed for `.env_qa_mcaps`.
+3. Stop and validate tenant-bound sign-in, pending-profile default denial, explicit default context, token freshness, and equivalent auth responses.
+4. This is the smallest independently testable MVP; add US2 and US3 before treating the environment as operationally self-service.
 
 ### Incremental Delivery
 
-1. US1: Tenant-bound authentication and default-deny authorization.
-2. US2: Idempotent first Admin and initial organization/department.
-3. US3: Repeatable operator-managed role lifecycle.
-4. US4: Delegated Organization Admin and normalized job scope.
-5. US5: Cross-stack parity certification.
-6. Polish: Documentation, security review, performance evidence, and full quickstart validation.
+1. **US1**: Tenant-bound sign-in and default-deny pending profiles.
+2. **US2**: Idempotent first Admin with a valid explicit default.
+3. **US3**: In-app Entra onboarding and lifecycle management in both stacks.
+4. **US4**: Delegated organization administration and job-scope integrity.
+5. **US5**: Cross-stack parity certification.
+6. **US6**: May ship independently after Foundation as the Stack B workspace enhancement.
+7. **Polish**: Documentation, security, infrastructure, and full acceptance evidence.
 
 ### Parallel Team Strategy
 
 1. Complete Setup and Foundational together.
-2. Assign Stack A and Stack B authentication work in US1 to separate developers using the same contracts.
-3. In parallel, assign US2 Bash/CLI work and US4 Domain/Application work to separate developers.
-4. Begin endpoint/UI work only after focused domain/service tests pass.
+2. Assign US1 Stack A and Stack B work to separate developers using the shared contract.
+3. In parallel, assign US2 operator tooling, US4 domain work, and US6 navigation to separate developers.
+4. Begin US3 endpoint/UI work after pending-profile and aggregate repository tests pass.
 5. Reserve US5 for integration after US1-US4 are independently green.
 
 ## Notes
 
-- `[P]` tasks change separate files but still wait for their phase prerequisites.
-- Story labels provide requirement traceability to `spec.md`.
-- Group-based assignment requires Microsoft Entra ID P1/P2; delegated application assignments do not.
+- `[P]` tasks still wait for their phase prerequisites.
+- Every user-story task carries its `[USn]` label for traceability.
+- No task adds a deprecated package; use maintained dependencies already declared by the repository.
 - No task may silently switch Azure tenant/subscription or add browser secrets.
 - No runtime request path may query or mutate Microsoft Graph.
+- Global Admin assignment remains outside organization-scoped access-management operations.
 - Commit after each task or coherent test/implementation pair.

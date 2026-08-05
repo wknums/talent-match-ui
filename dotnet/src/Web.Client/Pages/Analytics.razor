@@ -4,7 +4,7 @@
 @inject NavigationManager Navigation
 
 <div style="margin-bottom: 1rem;">
-    <a href="/" style="color: #3182ce; text-decoration: none; font-size: 0.9rem;">← Back to Dashboard</a>
+    <a href="/" style="color: #2b6cb0; text-decoration: none; font-size: 0.9rem;">← Back to Dashboard</a>
 </div>
 
 <h3>Recruiter Analytics</h3>
@@ -46,13 +46,13 @@ else
     </div>
 
     @* Tab Navigation *@
-    <div style="display: flex; gap: 0; margin-bottom: 1rem; border-bottom: 2px solid #e2e8f0;">
+    <div class="tab-row">
         <button @onclick="() => activeTab = Tab.ByRecruiter"
-                style="padding: 0.5rem 1rem; border: none; cursor: pointer; font-weight: @(activeTab == Tab.ByRecruiter ? "bold" : "normal"); border-bottom: 2px solid @(activeTab == Tab.ByRecruiter ? "#3182ce" : "transparent"); background: none; color: @(activeTab == Tab.ByRecruiter ? "#3182ce" : "#555");">
+                style="padding: 0.5rem 1rem; border: none; cursor: pointer; font-weight: @(activeTab == Tab.ByRecruiter ? "bold" : "normal"); border-bottom: 2px solid @(activeTab == Tab.ByRecruiter ? "#2b6cb0" : "transparent"); background: none; color: @(activeTab == Tab.ByRecruiter ? "#2b6cb0" : "#555");">
             By Recruiter
         </button>
         <button @onclick="SwitchToDepartmentTab"
-                style="padding: 0.5rem 1rem; border: none; cursor: pointer; font-weight: @(activeTab == Tab.ByDepartment ? "bold" : "normal"); border-bottom: 2px solid @(activeTab == Tab.ByDepartment ? "#3182ce" : "transparent"); background: none; color: @(activeTab == Tab.ByDepartment ? "#3182ce" : "#555");">
+                style="padding: 0.5rem 1rem; border: none; cursor: pointer; font-weight: @(activeTab == Tab.ByDepartment ? "bold" : "normal"); border-bottom: 2px solid @(activeTab == Tab.ByDepartment ? "#2b6cb0" : "transparent"); background: none; color: @(activeTab == Tab.ByDepartment ? "#2b6cb0" : "#555");">
             By Department
         </button>
     </div>
@@ -72,6 +72,7 @@ else
 
         @if (filteredRecruiters.Any())
         {
+            <div class="table-scroll">
             <table style="width: 100%; border-collapse: collapse;">
                 <thead>
                     <tr style="background: #f7fafc; text-align: left;">
@@ -99,6 +100,7 @@ else
                     }
                 </tbody>
             </table>
+            </div>
         }
         else
         {
@@ -121,6 +123,7 @@ else
                     </div>
                     @if (dept.Recruiters.Any())
                     {
+                        <div class="table-scroll">
                         <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
                             <thead>
                                 <tr style="background: #f7fafc; text-align: left;">
@@ -146,6 +149,7 @@ else
                                 }
                             </tbody>
                         </table>
+                        </div>
                     }
                     else
                     {

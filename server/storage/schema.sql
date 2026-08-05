@@ -25,14 +25,22 @@ CREATE TABLE [talentmatch].Users (
     EntraTenantId   NVARCHAR(36)    NULL,
     EntraObjectId   NVARCHAR(36)    NULL,
     IsActive        BIT             NOT NULL DEFAULT 1,
+    AuthorizationVersion INT        NOT NULL DEFAULT 0,
     CONSTRAINT CK_Users_IdentityProvider CHECK (
         (AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL)
         OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0)
     )
 );
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_Username')
-    CREATE UNIQUE INDEX UX_Users_Username ON [talentmatch].Users (Username);
+IF EXISTS (
+    SELECT * FROM sys.indexes
+    WHERE object_id = OBJECT_ID('[talentmatch].Users')
+      AND name = 'UX_Users_Username'
+      AND (has_filter = 0 OR filter_definition NOT LIKE '%AuthenticationProvider%simple%')
+)
+    DROP INDEX UX_Users_Username ON [talentmatch].Users;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE object_id = OBJECT_ID('[talentmatch].Users') AND name = 'UX_Users_Username')
+    CREATE UNIQUE INDEX UX_Users_Username ON [talentmatch].Users (Username) WHERE AuthenticationProvider = 'simple';
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_EntraIdentity')
     CREATE UNIQUE INDEX UX_Users_EntraIdentity ON [talentmatch].Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
 
@@ -394,11 +402,12 @@ CREATE TABLE [talentmatch].OrganizationMemberships (
     Id NVARCHAR(36) NOT NULL PRIMARY KEY,
     UserId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Users(Id),
     OrganizationId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Organizations(Id),
+    DefaultDepartmentMembershipId NVARCHAR(36) NULL,
     Status NVARCHAR(20) NOT NULL DEFAULT 'active',
     EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     RevokedAt DATETIME2 NULL,
     UpdatedBy NVARCHAR(100) NOT NULL,
-    CONSTRAINT CK_OrganizationMemberships_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+    CONSTRAINT CK_OrganizationMemberships_Status CHECK ((Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
 );
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_OrganizationMemberships_ActiveUserOrganization')
     CREATE UNIQUE INDEX UX_OrganizationMemberships_ActiveUserOrganization ON [talentmatch].OrganizationMemberships (UserId, OrganizationId) WHERE Status = 'active';
@@ -413,11 +422,17 @@ CREATE TABLE [talentmatch].DepartmentMemberships (
     EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     RevokedAt DATETIME2 NULL,
     UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT UQ_DepartmentMemberships_Id_User_Organization UNIQUE (Id, UserId, OrganizationId),
     CONSTRAINT FK_DepartmentMemberships_Department FOREIGN KEY (DepartmentId, OrganizationId) REFERENCES [talentmatch].Departments(Id, OrganizationId),
     CONSTRAINT CK_DepartmentMemberships_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
 );
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_DepartmentMemberships_ActiveUserDepartment')
     CREATE UNIQUE INDEX UX_DepartmentMemberships_ActiveUserDepartment ON [talentmatch].DepartmentMemberships (UserId, DepartmentId) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.foreign_keys WHERE name = 'FK_OrganizationMemberships_DefaultDepartmentMembership')
+    ALTER TABLE [talentmatch].OrganizationMemberships ADD CONSTRAINT FK_OrganizationMemberships_DefaultDepartmentMembership
+        FOREIGN KEY (DefaultDepartmentMembershipId, UserId, OrganizationId)
+        REFERENCES [talentmatch].DepartmentMemberships (Id, UserId, OrganizationId);
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'RoleGroupMappings' AND schema_id = SCHEMA_ID('talentmatch'))
 CREATE TABLE [talentmatch].RoleGroupMappings (
@@ -456,6 +471,6 @@ CREATE TABLE [talentmatch].RoleAssignments (
 );
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveGroup')
     CREATE UNIQUE INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_Idempotency')
-    CREATE UNIQUE INDEX UX_RoleAssignments_Idempotency ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Source, Role, OrganizationId, DepartmentId);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveDelegated')
+    CREATE UNIQUE INDEX UX_RoleAssignments_ActiveDelegated ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
 

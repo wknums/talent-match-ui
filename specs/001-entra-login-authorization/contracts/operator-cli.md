@@ -38,7 +38,7 @@ Every command accepts an environment profile as its first argument, loads it wit
 
 1. Perform every `check` identity and context validation.
 2. Ensure exactly one direct Admin app-role assignment on the API enterprise application using the Microsoft Graph `appRoleAssignedTo` endpoint.
-3. Invoke the storage CLI to upsert the initial organization and department, Entra user profile, organization membership, department membership, and one active bootstrap assignment in a transaction.
+3. Invoke the storage CLI to upsert the initial organization and department, Entra user profile, organization membership, department membership, explicit default department, and one active bootstrap assignment in a transaction.
 4. Append `auth.seed.applied`; repeated converged runs append `auth.seed.checked` without duplicating organization, department, membership, or assignment rows.
 5. Re-read Graph and SQL state and fail unless both are converged.
 
@@ -58,7 +58,8 @@ Graph success followed by SQL failure remains fail-closed because the API requir
 
 ./infra/scripts/manage-entra-role.sh <env-file> assign \
   --user-object-id <uuid> \
-  --mapping-id <uuid>
+  --mapping-id <uuid> \
+  --default-department-id <uuid>
 
 ./infra/scripts/manage-entra-role.sh <env-file> revoke \
   --user-object-id <uuid> \
@@ -78,7 +79,7 @@ Graph success followed by SQL failure remains fail-closed because the API requir
 
 1. Validate context and require an enabled tenant member user.
 2. Load the enabled SQL mapping and verify its tenant, security group, app role, and required scope.
-3. Idempotently activate the required organization membership and, when scoped, department membership.
+3. Validate `--default-department-id` as an active department in the mapping's organization, then idempotently activate the required organization membership, department memberships, and explicit default in one SQL transaction.
 4. Permit unrelated active assignments in other valid scopes; reject only an invalid duplicate or irreconcilable assignment for the same mapping/scope.
 5. Ensure direct membership in the app-specific security group.
 6. Confirm the group is assigned to the expected API app role.
@@ -95,7 +96,7 @@ Graph success followed by SQL failure remains fail-closed because the API requir
 
 ### Check Behavior
 
-Report immutable user identity, all active organization/department memberships, all active SQL assignments and mapped scopes, current direct group memberships, and enterprise-application app-role assignments without changing state.
+Report immutable user identity, all active organization/department memberships and explicit defaults, all active SQL assignments and mapped scopes, current direct group memberships, and enterprise-application app-role assignments without changing state.
 
 Organization Admins manage departments, memberships, and delegated organization-scoped roles through the application contract, not this Azure operator CLI. Those actions require no Azure RBAC, SQL permission, directory role, or runtime Microsoft Graph permission.
 

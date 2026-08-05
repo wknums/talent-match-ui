@@ -33,7 +33,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
   const [dlqItem, setDlqItem] = useState<DLQItem | null>(null)
   const [retrying, setRetrying] = useState(false)
   const [rescoring, setRescoring] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [, setLoading] = useState(false)
 
   useEffect(() => {
     if (applicationId && open) {

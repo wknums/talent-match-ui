@@ -1,4 +1,6 @@
+using MediatR;
 using Microsoft.EntityFrameworkCore;
+using TalentMatch.Application.Stats.Queries;
 using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure.Persistence;
 
@@ -10,22 +12,8 @@ public static class StatsEndpoints
     {
         var group = app.MapGroup("/api").WithTags("Stats").RequireAuthorization();
 
-        group.MapGet("/stats", async (AppDbContext db) =>
-        {
-            var stats = new
-            {
-                Queued = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Queued"),
-                Extracting = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Extracting"),
-                Scoring = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Scoring"),
-                Aggregating = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Aggregating"),
-                Completed = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Completed"),
-                NeedsManualReview = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "NeedsManualReview"),
-                Failed = await db.Applications.CountAsync(a => a.TestRunId == null && a.Status == "Failed"),
-                TotalJobs = await db.Jobs.CountAsync(),
-                TotalApplications = await db.Applications.CountAsync(a => a.TestRunId == null)
-            };
-            return Results.Ok(stats);
-        });
+        group.MapGet("/stats", async (ISender mediator) =>
+            Results.Ok(await mediator.Send(new GetSystemStatsQuery())));
 
         group.MapGet("/audit", async (string? entityType, string? eventType, DateTime? startDate, DateTime? endDate,
             int? page, int? pageSize, IProcessingEventRepository repo) =>

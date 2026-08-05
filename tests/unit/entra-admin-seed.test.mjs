@@ -9,7 +9,7 @@ import {
   validateBootstrapConfiguration,
 } from '../../infra/scripts/seed-entra-admin-data.mjs'
 
-const environmentFile = resolve(process.env.TALENTMATCH_ENV_FILE ?? '.env_qa_mcaps')
+const environmentFile = resolve(process.env.TALENTMATCH_ENV_FILE ?? '.env_qa')
 if (existsSync(environmentFile)) loadEnvFile(environmentFile)
 
 const configuration = {
@@ -23,8 +23,13 @@ const configuration = {
 }
 
 function assertConfigurationIsParameterized(sql) {
+  // Interpolated configuration would surface as a quoted SQL literal. Matching on the bare value
+  // instead would flag any short name that happens to be a substring of the surrounding T-SQL.
+  const literals = [...sql.matchAll(/'((?:[^']|'')*)'/g)].map(([, literal]) =>
+    literal.toLowerCase(),
+  )
   for (const value of Object.values(configuration).filter(Boolean)) {
-    assert.equal(sql.toLowerCase().includes(value.toLowerCase()), false)
+    assert.equal(literals.includes(value.toLowerCase()), false)
   }
 }
 
@@ -66,6 +71,46 @@ describe('Entra bootstrap admin data seed', () => {
     assert.match(sql, /IF @organizationId IS NULL/i)
     assert.match(sql, /IF @departmentId IS NULL/i)
     assertConfigurationIsParameterized(sql)
+  })
+
+  it('creates the department membership before assigning the explicit organization default', () => {
+    const sql = buildBootstrapSql('apply')
+    const departmentInsert = sql.indexOf('INSERT INTO [talentmatch].[DepartmentMemberships]')
+    const organizationInsert = sql.indexOf('INSERT INTO [talentmatch].[OrganizationMemberships]')
+
+    assert.notEqual(departmentInsert, -1)
+    assert.notEqual(organizationInsert, -1)
+    assert.ok(departmentInsert < organizationInsert)
+    assert.match(sql, /OrganizationMemberships[\s\S]*DefaultDepartmentMembershipId/i)
+    assert.match(sql, /SET[\s\S]*DefaultDepartmentMembershipId\s*=\s*@departmentMembershipId/i)
+  })
+
+  it('converges an existing membership whose default predates the column', () => {
+    const sql = buildBootstrapSql('apply')
+    const guard = sql.slice(
+      sql.indexOf('ELSE IF EXISTS', sql.indexOf('INSERT INTO [talentmatch].[OrganizationMemberships]')),
+    )
+
+    // "DefaultDepartmentMembershipId <> @departmentMembershipId" evaluates to UNKNOWN against NULL,
+    // so a NULL default would slip past the drift guard and fail the 51004 postcondition instead.
+    assert.match(guard.slice(0, guard.indexOf('BEGIN')), /DefaultDepartmentMembershipId IS NULL/i)
+  })
+
+  it('serializes concurrent applies and advances authorization version once per change', () => {
+    const sql = buildBootstrapSql('apply')
+
+    assert.match(sql, /sp_getapplock/i)
+    assert.match(sql, /@LockOwner\s*=\s*'Transaction'/i)
+    assert.match(sql, /AuthorizationVersion\s*=\s*AuthorizationVersion\s*\+\s*1/i)
+    assert.match(sql, /IF @changed = 1/i)
+  })
+
+  it('rolls back every bootstrap mutation when any postcondition fails', () => {
+    const sql = buildBootstrapSql('apply')
+
+    assert.match(sql, /THROW 510\d{2}/i)
+    assert.match(sql, /IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION/i)
+    assert.ok(sql.indexOf('COMMIT TRANSACTION') > sql.lastIndexOf('THROW 510'))
   })
 
   it('rejects unsupported execution modes', () => {

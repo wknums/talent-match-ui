@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -36,7 +36,7 @@ import { api } from '@/lib/api'
 import { deriveCandidateNameFromScoringRuns, parseCategoryScores, parseGate, parseGateEntries } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ScoringPrompt, PromptStatus, PromptTestRun, PromptTestRunDetail, Application } from '@/types'
+import type { ScoringPrompt, PromptStatus, PromptTestRun, PromptTestRunDetail } from '@/types'
 
 interface PromptManagementProps {
   jobId: string
@@ -116,7 +116,6 @@ function PromptTestWorkflow({
   const [files, setFiles] = useState<File[]>([])
   const [dragActive, setDragActive] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [approving, setApproving] = useState(false)
   const [approvingProduction, setApprovingProduction] = useState(false)
   const [rescoring, setRescoring] = useState(false)
   const [selectedTestRun, setSelectedTestRun] = useState<PromptTestRunDetail | null>(null)
@@ -750,7 +749,6 @@ function PromptTestWorkflow({
 export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChange, onStartManualReview }: PromptManagementProps) {
   const [prompts, setPrompts] = useState<ScoringPrompt[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedPrompt, setSelectedPrompt] = useState<ScoringPrompt | null>(null)
 
   // Editor state
   const [editorOpen, setEditorOpen] = useState(false)

@@ -24,7 +24,7 @@ export const isAzureSql: boolean = azureSqlSettings !== null
 // ---- mssql type-tag stubs used by repos in .input(name, TYPE, value) ------
 // When using SQLite the shim ignores them.
 // When using mssql, `sql` is replaced with the real mssql module in createMssqlPool().
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export let sql: any = {
   NVarChar: 'NVarChar',
   Int: 'Int',
@@ -35,9 +35,9 @@ export let sql: any = {
 }
 
 // ---- Shared pool variable --------------------------------------------------
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 let _pool: any = null
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 let _sqliteDb: any = null
 
 const azureSqlRetryConfig = {
@@ -47,7 +47,7 @@ const azureSqlRetryConfig = {
   maxDelayMs: Number(process.env.AZURE_SQL_WAKEUP_MAX_DELAY_MS ?? 15000),
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 export async function getPool(): Promise<any> {
   if (_pool) return _pool
   if (isAzureSql) {
@@ -59,12 +59,13 @@ export async function getPool(): Promise<any> {
 }
 
 export async function getStorageProvider(): Promise<import('./types.js').StorageProvider> {
-  const [{ userRepo }, { organizationRepo }, { roleAssignmentRepo }] = await Promise.all([
+  const [{ userRepo }, { organizationRepo }, { roleAssignmentRepo }, { accessManagementRepo }] = await Promise.all([
     import('./repos/user-repo.js'),
     import('./repos/organization-repo.js'),
     import('./repos/role-assignment-repo.js'),
+    import('./repos/access-management-repo.js'),
   ])
-  return { users: userRepo, organizations: organizationRepo, roleAssignments: roleAssignmentRepo }
+  return { users: userRepo, organizations: organizationRepo, roleAssignments: roleAssignmentRepo, accessManagement: accessManagementRepo }
 }
 
 // ===========================================================================
@@ -149,21 +150,21 @@ type MssqlConnectConfig = string | Record<string, unknown>
 function resolveMssqlConnect(mssqlModule: unknown): (config: MssqlConnectConfig) => Promise<unknown> {
   const candidates = [
     mssqlModule,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (mssqlModule as any)?.default,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     (mssqlModule as any)?.sql,
   ]
 
   for (const candidate of candidates) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     if (typeof (candidate as any)?.connect === 'function') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       return (config: MssqlConnectConfig) => (candidate as any).connect(config)
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     if (typeof (candidate as any)?.ConnectionPool === 'function') {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       return async (config: MssqlConnectConfig) => new (candidate as any).ConnectionPool(config).connect()
     }
   }
@@ -280,6 +281,7 @@ function createSqlitePool() {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
   _sqliteDb = db
+  let transactionTail = Promise.resolve()
 
   /** Build an mssql-compatible request builder. */
   function makeRequest(parentDb: any = db) {
@@ -315,22 +317,38 @@ function createSqlitePool() {
   return {
     request: () => makeRequest(db),
     transaction: () => {
-      // SQLite transactions use the same db handle; we fake begin/commit/rollback.
+      // better-sqlite3 exposes one synchronous connection, so transaction owners queue.
       let committed = false
+      let release: (() => void) | undefined
       return {
-        begin() {
-          db.prepare('BEGIN').run()
-          return Promise.resolve()
+        async begin() {
+          const previous = transactionTail
+          transactionTail = new Promise<void>(resolve => { release = resolve })
+          await previous
+          try {
+            db.prepare('BEGIN IMMEDIATE').run()
+          } catch (error) {
+            release?.()
+            throw error
+          }
         },
         request: () => makeRequest(db),
         commit() {
-          db.prepare('COMMIT').run()
-          committed = true
-          return Promise.resolve()
+          try {
+            db.prepare('COMMIT').run()
+            committed = true
+            return Promise.resolve()
+          } finally {
+            release?.()
+          }
         },
         rollback() {
-          if (!committed) db.prepare('ROLLBACK').run()
-          return Promise.resolve()
+          try {
+            if (!committed) db.prepare('ROLLBACK').run()
+            return Promise.resolve()
+          } finally {
+            release?.()
+          }
         },
       }
     },
@@ -362,10 +380,17 @@ function ensureSqliteEntraUsersSchema(db: any): void {
   ensureSqliteColumn(db, 'Users', 'EntraTenantId', 'TEXT NULL')
   ensureSqliteColumn(db, 'Users', 'EntraObjectId', 'TEXT NULL')
   ensureSqliteColumn(db, 'Users', 'IsActive', 'INTEGER NOT NULL DEFAULT 1')
+  ensureSqliteColumn(db, 'Users', 'AuthorizationVersion', 'INTEGER NOT NULL DEFAULT 0')
 
   const passwordHash = db.prepare('PRAGMA table_info(Users)').all()
     .find((column: { name: string }) => column.name === 'PasswordHash') as { notnull: number } | undefined
-  if (!passwordHash?.notnull) return
+  if (!passwordHash?.notnull) {
+    db.exec(`
+      DROP INDEX IF EXISTS UX_Users_Username;
+      CREATE UNIQUE INDEX UX_Users_Username ON Users (Username) WHERE AuthenticationProvider = 'simple';
+    `)
+    return
+  }
 
   db.exec(`
     PRAGMA foreign_keys = OFF;
@@ -385,16 +410,102 @@ function ensureSqliteEntraUsersSchema(db: any): void {
       EntraTenantId TEXT NULL,
       EntraObjectId TEXT NULL,
       IsActive INTEGER NOT NULL DEFAULT 1,
+      AuthorizationVersion INTEGER NOT NULL DEFAULT 0,
       CHECK ((AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0))
     );
-    INSERT INTO Users_EntraUpgrade (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, LastLogin, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive)
-    SELECT Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, LastLogin, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive FROM Users;
+    INSERT INTO Users_EntraUpgrade (Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, LastLogin, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive, AuthorizationVersion)
+    SELECT Id, Username, Role, FullName, Email, Department, PasswordHash, CreatedAt, LastLogin, PasswordResetRequired, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive, AuthorizationVersion FROM Users;
     DROP TABLE Users;
     ALTER TABLE Users_EntraUpgrade RENAME TO Users;
-    CREATE UNIQUE INDEX UX_Users_Username ON Users (Username);
+    CREATE UNIQUE INDEX UX_Users_Username ON Users (Username) WHERE AuthenticationProvider = 'simple';
     CREATE UNIQUE INDEX UX_Users_EntraIdentity ON Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
     COMMIT;
     PRAGMA foreign_keys = ON;
+  `)
+}
+
+function ensureSqliteAuthorizationAggregateSchema(db: any): void {
+  ensureSqliteColumn(db, 'Users', 'AuthorizationVersion', 'INTEGER NOT NULL DEFAULT 0')
+  if (!sqliteTableExists(db, 'OrganizationMemberships') || !sqliteTableExists(db, 'DepartmentMemberships')) return
+
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS UQ_DepartmentMemberships_Id_User_Organization
+    ON DepartmentMemberships (Id, UserId, OrganizationId)`)
+
+  const hasDefault = sqliteTableHasColumn(db, 'OrganizationMemberships', 'DefaultDepartmentMembershipId')
+  if (!hasDefault) {
+    const ambiguous = db.prepare(`
+      SELECT om.Id
+      FROM OrganizationMemberships om
+      LEFT JOIN DepartmentMemberships dm
+        ON dm.UserId = om.UserId
+       AND dm.OrganizationId = om.OrganizationId
+       AND dm.Status = 'active'
+      LEFT JOIN Departments d
+        ON d.Id = dm.DepartmentId
+       AND d.OrganizationId = dm.OrganizationId
+       AND d.Status = 'active'
+      WHERE om.Status = 'active'
+      GROUP BY om.Id
+      HAVING COUNT(*) <> 1 OR MAX(d.Id) IS NULL
+      LIMIT 1
+    `).get()
+    if (ambiguous) {
+      throw new Error('Every active organization membership requires an explicit default department; select one for memberships with zero or multiple candidates.')
+    }
+
+    db.pragma('foreign_keys = OFF')
+    try {
+      db.exec(`
+        BEGIN;
+        CREATE TABLE DepartmentMemberships_ExplicitDefaultUpgrade (
+          Id TEXT NOT NULL PRIMARY KEY,
+          UserId TEXT NOT NULL REFERENCES Users(Id),
+          OrganizationId TEXT NOT NULL REFERENCES Organizations(Id),
+          DefaultDepartmentMembershipId TEXT NULL,
+          Status TEXT NOT NULL DEFAULT 'active',
+          EffectiveAt TEXT NOT NULL DEFAULT (datetime('now')),
+          RevokedAt TEXT NULL,
+          UpdatedBy TEXT NOT NULL,
+          FOREIGN KEY (DefaultDepartmentMembershipId, UserId, OrganizationId)
+            REFERENCES DepartmentMemberships(Id, UserId, OrganizationId)
+            DEFERRABLE INITIALLY DEFERRED,
+          CHECK ((Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL)
+            OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+        );
+        INSERT INTO DepartmentMemberships_ExplicitDefaultUpgrade (
+          Id, UserId, OrganizationId, DefaultDepartmentMembershipId, Status, EffectiveAt, RevokedAt, UpdatedBy
+        )
+        SELECT om.Id, om.UserId, om.OrganizationId,
+          CASE WHEN om.Status = 'active' THEN (
+            SELECT MIN(dm.Id)
+            FROM DepartmentMemberships dm
+            INNER JOIN Departments d ON d.Id = dm.DepartmentId AND d.OrganizationId = dm.OrganizationId
+            WHERE dm.UserId = om.UserId
+              AND dm.OrganizationId = om.OrganizationId
+              AND dm.Status = 'active'
+              AND d.Status = 'active'
+          ) ELSE NULL END,
+          om.Status, om.EffectiveAt, om.RevokedAt, om.UpdatedBy
+        FROM OrganizationMemberships om;
+        DROP TABLE OrganizationMemberships;
+        ALTER TABLE DepartmentMemberships_ExplicitDefaultUpgrade RENAME TO OrganizationMemberships;
+        CREATE UNIQUE INDEX UX_OrganizationMemberships_ActiveUserOrganization
+          ON OrganizationMemberships (UserId, OrganizationId) WHERE Status = 'active';
+        COMMIT;
+      `)
+    } catch (error) {
+      if (db.inTransaction) db.exec('ROLLBACK')
+      throw error
+    } finally {
+      db.pragma('foreign_keys = ON')
+    }
+  }
+
+  db.exec(`
+    DROP INDEX IF EXISTS UX_RoleAssignments_Idempotency;
+    CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveDelegated
+      ON RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId)
+      WHERE Status = 'active' AND Source = 'delegated';
   `)
 }
 
@@ -494,6 +605,18 @@ export async function initializeDatabase(): Promise<void> {
     // Run the T-SQL schema with IF NOT EXISTS guards
     const schemaPath = resolve(import.meta.dirname, 'schema.sql')
     const schemaSql = readFileSync(schemaPath, 'utf-8')
+
+    // Must precede the batch loop; see the header of the upgrades file for why.
+    const preBatchPath = resolve(import.meta.dirname, 'schema-pre-batch-upgrades.sql')
+    const preBatchSql = readFileSync(preBatchPath, 'utf-8')
+    const preBatchUpgrades = preBatchSql
+      .split(/\r?\n\s*GO\s*(?:\r?\n|$)/)
+      .map(b => b.trim())
+      .filter(b => b.length > 0 && !b.split('\n').every(line => line.trim().startsWith('--')))
+    for (const upgrade of preBatchUpgrades) {
+      await pool.request().query(upgrade)
+    }
+
     const batches = schemaSql
       .split(/\n(?=IF NOT EXISTS|CREATE (?:UNIQUE )?INDEX)/)
       .map(b => b.trim())
@@ -530,6 +653,8 @@ IF COL_LENGTH('talentmatch.Users', 'EntraObjectId') IS NULL
   ALTER TABLE [talentmatch].Users ADD EntraObjectId NVARCHAR(36) NULL;
 IF COL_LENGTH('talentmatch.Users', 'IsActive') IS NULL
   ALTER TABLE [talentmatch].Users ADD IsActive BIT NOT NULL CONSTRAINT DF_Users_IsActive DEFAULT 1;
+IF COL_LENGTH('talentmatch.Users', 'AuthorizationVersion') IS NULL
+  ALTER TABLE [talentmatch].Users ADD AuthorizationVersion INT NOT NULL CONSTRAINT DF_Users_AuthorizationVersion DEFAULT 0;
 ALTER TABLE [talentmatch].Users ALTER COLUMN PasswordHash NVARCHAR(128) NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_EntraIdentity' AND object_id = OBJECT_ID('talentmatch.Users'))
   CREATE UNIQUE INDEX UX_Users_EntraIdentity ON [talentmatch].Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
@@ -540,6 +665,52 @@ IF COL_LENGTH('talentmatch.Jobs', 'DepartmentId') IS NULL
   ALTER TABLE [talentmatch].Jobs ADD DepartmentId NVARCHAR(36) NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Organization_Department' AND object_id = OBJECT_ID('talentmatch.Jobs'))
   CREATE INDEX IX_Jobs_Organization_Department ON [talentmatch].Jobs (OrganizationId, DepartmentId);
+`)
+
+    await pool.request().query(`
+IF COL_LENGTH('talentmatch.OrganizationMemberships', 'DefaultDepartmentMembershipId') IS NULL
+  ALTER TABLE [talentmatch].OrganizationMemberships ADD DefaultDepartmentMembershipId NVARCHAR(36) NULL;
+
+IF NOT EXISTS (
+  SELECT 1 FROM sys.key_constraints
+  WHERE name = 'UQ_DepartmentMemberships_Id_User_Organization'
+    AND parent_object_id = OBJECT_ID('talentmatch.DepartmentMemberships')
+)
+  ALTER TABLE [talentmatch].DepartmentMemberships ADD CONSTRAINT UQ_DepartmentMemberships_Id_User_Organization UNIQUE (Id, UserId, OrganizationId);
+
+UPDATE om
+SET DefaultDepartmentMembershipId = candidate.Id
+FROM [talentmatch].OrganizationMemberships om
+CROSS APPLY (
+  SELECT MIN(dm.Id) AS Id, COUNT(*) AS CandidateCount
+  FROM [talentmatch].DepartmentMemberships dm
+  INNER JOIN [talentmatch].Departments d ON d.Id = dm.DepartmentId AND d.OrganizationId = dm.OrganizationId
+  WHERE dm.UserId = om.UserId
+    AND dm.OrganizationId = om.OrganizationId
+    AND dm.Status = 'active'
+    AND d.Status = 'active'
+) candidate
+WHERE om.Status = 'active'
+  AND om.DefaultDepartmentMembershipId IS NULL
+  AND candidate.CandidateCount = 1;
+
+IF EXISTS (
+  SELECT 1
+  FROM [talentmatch].OrganizationMemberships om
+  WHERE om.Status = 'active' AND om.DefaultDepartmentMembershipId IS NULL
+)
+  THROW 51000, 'Every active organization membership requires an explicit default department; select one for memberships with zero or multiple candidates.', 1;
+
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_OrganizationMemberships_DefaultDepartmentMembership')
+  ALTER TABLE [talentmatch].OrganizationMemberships ADD CONSTRAINT FK_OrganizationMemberships_DefaultDepartmentMembership
+    FOREIGN KEY (DefaultDepartmentMembershipId, UserId, OrganizationId)
+    REFERENCES [talentmatch].DepartmentMemberships (Id, UserId, OrganizationId);
+
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_RoleAssignments_Idempotency' AND object_id = OBJECT_ID('talentmatch.RoleAssignments'))
+  DROP INDEX UX_RoleAssignments_Idempotency ON [talentmatch].RoleAssignments;
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveDelegated' AND object_id = OBJECT_ID('talentmatch.RoleAssignments'))
+  CREATE UNIQUE INDEX UX_RoleAssignments_ActiveDelegated ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId)
+    WHERE Status = 'active' AND Source = 'delegated';
 `)
   } else {
     // SQLite — run the DDL using the underlying db handle directly
@@ -552,9 +723,11 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Organization_Depa
       )`)
       ensureSqliteCompatibilitySchema(_sqliteDb)
       _sqliteDb.exec(schemaSql)
+      ensureSqliteAuthorizationAggregateSchema(_sqliteDb)
     } else {
       _sqliteDb.exec(schemaSql)
       ensureSqliteCompatibilitySchema(_sqliteDb)
+      ensureSqliteAuthorizationAggregateSchema(_sqliteDb)
     }
   }
 

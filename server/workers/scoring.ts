@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { applicationRepo, jobRepo, promptRepo } from '../storage/repos/index.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
-import type { ScoringRun, ApplicationDocument, ScoringPrompt, AggregatedResult } from '../../src/types/index.js'
+import type { ScoringRun } from '../../src/types/index.js'
 
 const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
 
@@ -1019,28 +1019,24 @@ export async function runScoring(
     throw new Error('Unexpected retry loop exit')
   }
 
-  try {
-    console.log(`[Scoring] Starting ${runCount} run(s) for app ${applicationId}${batchId ? ` (batchId=${batchId})` : ''}`)
-    const first = await callWithRetry(1)
+  console.log(`[Scoring] Starting ${runCount} run(s) for app ${applicationId}${batchId ? ` (batchId=${batchId})` : ''}`)
+  const first = await callWithRetry(1)
 
-    if (first.multiResult) {
-      console.log(`[Scoring] Engine returned multi-run response with ${first.multiResult.runs.length} runs`)
-      return first.multiResult
-    }
-
-    const allRuns: ScoringRun[] = [first.run!]
-    for (let i = 2; i <= runCount; i++) {
-      console.log(`[Scoring] Batch run ${i}/${runCount} (batchId=${batchId})...`)
-      const result = await callWithRetry(i)
-      if (result.multiResult) {
-        return { runs: [...allRuns, ...result.multiResult.runs], aggregated: result.multiResult.aggregated }
-      }
-      allRuns.push(result.run!)
-    }
-
-    console.log(`[Scoring] Completed ${allRuns.length} run(s) for app ${applicationId}`)
-    return { runs: allRuns }
-  } catch (error) {
-    throw error
+  if (first.multiResult) {
+    console.log(`[Scoring] Engine returned multi-run response with ${first.multiResult.runs.length} runs`)
+    return first.multiResult
   }
+
+  const allRuns: ScoringRun[] = [first.run!]
+  for (let i = 2; i <= runCount; i++) {
+    console.log(`[Scoring] Batch run ${i}/${runCount} (batchId=${batchId})...`)
+    const result = await callWithRetry(i)
+    if (result.multiResult) {
+      return { runs: [...allRuns, ...result.multiResult.runs], aggregated: result.multiResult.aggregated }
+    }
+    allRuns.push(result.run!)
+  }
+
+  console.log(`[Scoring] Completed ${allRuns.length} run(s) for app ${applicationId}`)
+  return { runs: allRuns }
 }

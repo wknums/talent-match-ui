@@ -1,16 +1,83 @@
 ﻿@inherits LayoutComponentBase
-<div class="page">
-    <div class="sidebar">
+@implements IDisposable
+@using Microsoft.AspNetCore.Components.Routing
+@using TalentMatch.Web.Client.Services
+@inject NavigationShellState ShellState
+@inject NavigationManager Navigation
+
+<div class="page @ShellStateClass">
+    <div class="sidebar" id="@ShellState.RegionElementId" inert="@(!ShellState.NavigationVisible)">
         <NavMenu />
     </div>
 
     <main>
         <div class="top-row px-4">
+            <button type="button"
+                    class="navigation-toggle"
+                    data-testid="navigation-toggle"
+                    aria-label="@ShellState.ToggleLabel"
+                    aria-expanded="@(ShellState.NavigationVisible ? "true" : "false")"
+                    aria-controls="@ShellState.RegionElementId"
+                    @onclick="ToggleAsync">
+                <span class="navigation-toggle-icon" aria-hidden="true"></span>
+            </button>
             <UserMenu />
         </div>
+
+        @if (ShellState.Notification is { } notification)
+        {
+            <div class="navigation-notification" role="alert">
+                <span>@notification.Message</span>
+                @if (notification.IsRetryable)
+                {
+                    <button type="button"
+                            class="navigation-notification-retry"
+                            data-action="retry-navigation"
+                            @onclick="ToggleAsync">
+                        Retry
+                    </button>
+                }
+            </div>
+        }
 
         <article class="content px-4">
             @Body
         </article>
     </main>
+
+    @if (ShellState.IsCompact && ShellState.CompactOverlayOpen)
+    {
+        <div class="navigation-backdrop"
+             data-testid="navigation-backdrop"
+             aria-hidden="true"
+             @onclick="CloseOverlay"></div>
+    }
 </div>
+
+@code {
+    private string ShellStateClass => ShellState.IsCompact
+        ? (ShellState.CompactOverlayOpen ? "navigation-overlay-open" : "navigation-overlay-closed")
+        : (ShellState.DesktopCollapsed ? "navigation-collapsed" : "navigation-expanded");
+
+    protected override async Task OnInitializedAsync()
+    {
+        ShellState.Changed += OnShellStateChanged;
+        Navigation.LocationChanged += OnLocationChanged;
+        await ShellState.InitializeAsync();
+    }
+
+    private Task ToggleAsync() => ShellState.ToggleAsync();
+
+    private void CloseOverlay() => ShellState.CloseCompactOverlay();
+
+    private void OnShellStateChanged() => InvokeAsync(StateHasChanged);
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args)
+        => ShellState.OnRouteChanged();
+
+    public void Dispose()
+    {
+        ShellState.Changed -= OnShellStateChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}

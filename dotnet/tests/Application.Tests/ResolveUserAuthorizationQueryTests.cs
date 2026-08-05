@@ -3,6 +3,7 @@ using Moq;
 using TalentMatch.Application.Authorization;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
+using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.Tests;
 
@@ -12,6 +13,7 @@ public class ResolveUserAuthorizationQueryTests
     private const string ObjectId = "22222222-2222-2222-2222-222222222222";
     private const string OrganizationId = "33333333-3333-3333-3333-333333333333";
     private const string DepartmentId = "44444444-4444-4444-4444-444444444444";
+    private const string DepartmentMembershipId = "77777777-7777-7777-7777-777777777777";
     private const string GroupId = "55555555-5555-5555-5555-555555555555";
     private const string MappingId = "66666666-6666-6666-6666-666666666666";
 
@@ -27,6 +29,9 @@ public class ResolveUserAuthorizationQueryTests
 
         result.IsSuccess.Should().BeTrue();
         result.Context!.GlobalRole.Should().Be("admin");
+        result.Context.AuthorizationVersion.Should().Be(7);
+        result.Context.Memberships.Should().ContainSingle(membership =>
+            membership.DefaultDepartmentId == DepartmentId);
         result.Context.Authorizations.Should().ContainSingle(a =>
             a.Role == "admin" && a.AssignmentSource == "bootstrap");
     }
@@ -124,13 +129,49 @@ public class ResolveUserAuthorizationQueryTests
         result.Error!.Code.Should().Be("membership_missing");
     }
 
+    [Fact]
+    public async Task MissingExplicitDefault_IsDenied()
+    {
+        var organizationMembership = CreateOrganizationMembership();
+        organizationMembership.DefaultDepartmentMembershipId = null;
+        var state = CreateState(
+            assignments: [CreateAssignment("recruiter", "delegated")],
+            organizationMemberships: [organizationMembership]);
+
+        var result = await ResolveAsync(state);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("membership_missing");
+    }
+
+    [Fact]
+    public async Task ForeignOrRevokedExplicitDefault_IsDenied()
+    {
+        var organizationMembership = CreateOrganizationMembership();
+        organizationMembership.DefaultDepartmentMembershipId = "88888888-8888-8888-8888-888888888888";
+        var state = CreateState(
+            assignments: [CreateAssignment("recruiter", "delegated")],
+            organizationMemberships: [organizationMembership]);
+
+        var result = await ResolveAsync(state);
+
+        result.IsSuccess.Should().BeFalse();
+        result.Error!.Code.Should().Be("membership_missing");
+    }
+
     private static async Task<AuthorizationResolutionResult> ResolveAsync(CurrentAuthorizationState state)
     {
         var currentUser = new Mock<ICurrentUserService>();
         currentUser
             .Setup(service => service.GetAuthorizationStateAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(state);
-        var handler = new ResolveUserAuthorizationQueryHandler(currentUser.Object);
+        var users = new Mock<IUserRepository>();
+        users
+            .Setup(repository => repository.UpsertEntraProfileAsync(
+                It.IsAny<User>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((User user, CancellationToken _) => user);
+        var handler = new ResolveUserAuthorizationQueryHandler(currentUser.Object, users.Object);
 
         return await handler.Handle(new ResolveUserAuthorizationQuery(), CancellationToken.None);
     }
@@ -148,6 +189,9 @@ public class ResolveUserAuthorizationQueryTests
             new CurrentEntraClaims(
                 TenantId,
                 ObjectId,
+                "ada@example.com",
+                "Ada Lovelace",
+                "ada@example.com",
                 tokenIssuedAt ?? DateTimeOffset.UtcNow.AddMinutes(-1),
                 roles ?? new HashSet<string>(),
                 groups ?? new HashSet<string>()),
@@ -162,6 +206,7 @@ public class ResolveUserAuthorizationQueryTests
                 Email = "ada@example.com",
                 PasswordHash = null,
                 IsActive = true,
+                AuthorizationVersion = 7,
             },
             organizationMemberships ?? [CreateOrganizationMembership()],
             departmentMemberships ?? [CreateDepartmentMembership()],
@@ -189,6 +234,7 @@ public class ResolveUserAuthorizationQueryTests
         {
             UserId = ObjectId,
             OrganizationId = OrganizationId,
+            DefaultDepartmentMembershipId = DepartmentMembershipId,
             Status = "active",
             Organization = new Organization
             {
@@ -200,6 +246,7 @@ public class ResolveUserAuthorizationQueryTests
     private static DepartmentMembership CreateDepartmentMembership()
         => new()
         {
+            Id = DepartmentMembershipId,
             UserId = ObjectId,
             OrganizationId = OrganizationId,
             DepartmentId = DepartmentId,
