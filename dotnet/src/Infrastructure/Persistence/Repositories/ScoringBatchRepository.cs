@@ -135,6 +135,22 @@ public class ScoringBatchRepository : IScoringBatchRepository
             error, nextPollAt, now, batchId);
     }
 
+    public async Task ScheduleResubmissionAsync(
+        string batchId,
+        string error,
+        DateTime nextPollAt,
+        CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        await _db.Database.ExecuteSqlRawAsync(
+            $@"UPDATE {Batches}
+              SET Status = 'pending', Attempt = Attempt + 1, LastError = {{0}},
+                  PollUrl = NULL, NextPollAt = {{1}},
+                  LeaseOwner = NULL, LeasedUntil = NULL, UpdatedAt = {{2}}
+              WHERE BatchId = {{3}}",
+            error, nextPollAt, now, batchId);
+    }
+
     public async Task<int> RequestCancelByJobAsync(string jobId, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;

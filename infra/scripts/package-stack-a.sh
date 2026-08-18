@@ -2,6 +2,7 @@
 # =============================================================================
 # package-stack-a.sh — Build and package Stack A for App Service deployment
 # =============================================================================
+# Usage: ./infra/scripts/package-stack-a.sh [env-file]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,17 +15,59 @@ print_banner "Packaging Stack A (Node.js/Express)"
 
 cd "$REPO_ROOT"
 
+ENV_FILE="${1:-}"
+if [[ -n "$ENV_FILE" ]]; then
+	load_env_file "$ENV_FILE"
+fi
+
+export VITE_APP_AUTH_MODE="${VITE_APP_AUTH_MODE:-${APP_AUTH_MODE:-simple}}"
+if [[ "$VITE_APP_AUTH_MODE" == "entra" ]]; then
+	export VITE_ENTRA_TENANT_ID="${VITE_ENTRA_TENANT_ID:-${AZURE_TENANT_ID:-}}"
+	export VITE_ENTRA_STACK_A_CLIENT_ID="${VITE_ENTRA_STACK_A_CLIENT_ID:-${ENTRA_STACK_A_CLIENT_ID:-}}"
+	export VITE_ENTRA_API_APP_CLIENT_ID="${VITE_ENTRA_API_APP_CLIENT_ID:-${ENTRA_API_APP_CLIENT_ID:-}}"
+	export VITE_ENTRA_API_SCOPE="${VITE_ENTRA_API_SCOPE:-${ENTRA_API_SCOPE:-access_as_user}}"
+	validate_required \
+		"VITE_ENTRA_TENANT_ID" \
+		"VITE_ENTRA_STACK_A_CLIENT_ID" \
+		"VITE_ENTRA_API_APP_CLIENT_ID" \
+		"VITE_ENTRA_API_SCOPE"
+elif [[ "$VITE_APP_AUTH_MODE" != "simple" ]]; then
+	log_fatal "VITE_APP_AUTH_MODE must be simple or entra"
+fi
+
+log_info "Building client with authentication mode: $VITE_APP_AUTH_MODE"
+
 # ---------------------------------------------------------------------------
-# Step 1: Install dependencies
+# Step 1: Prepare dependencies
 # ---------------------------------------------------------------------------
-log_info "Installing Node.js dependencies..."
-npm ci
+INSTALL_MODE="${STACK_A_INSTALL_MODE:-auto}"
+case "$INSTALL_MODE" in
+	auto)
+		if [[ -f node_modules/.package-lock.json \
+			&& node_modules/.package-lock.json -nt package-lock.json \
+			&& node_modules/.package-lock.json -nt package.json \
+			&& -x node_modules/.bin/vite \
+			&& -x node_modules/.bin/tsc ]]; then
+			log_info "Reusing node_modules validated by npm's current hidden lockfile (set STACK_A_INSTALL_MODE=clean for npm ci)"
+		else
+			log_info "node_modules is missing or stale; installing dependencies with npm ci..."
+			npm ci
+		fi
+		;;
+	clean)
+		log_info "Installing dependencies with npm ci (clean mode)..."
+		npm ci
+		;;
+	*)
+		log_fatal "STACK_A_INSTALL_MODE must be auto or clean"
+		;;
+esac
 
 # ---------------------------------------------------------------------------
 # Step 2: Build client
 # ---------------------------------------------------------------------------
 log_info "Building client application..."
-npm run build
+npm run build:client
 
 # ---------------------------------------------------------------------------
 # Step 3: Build server
@@ -61,7 +104,8 @@ cat > "$ARTIFACT_DIR/dist/build-info.json" <<EOF
 {
 	"version": "$BUILD_VERSION",
 	"createdAtUtc": "$BUILD_CREATED_AT_UTC",
-	"source": "package-stack-a.sh"
+	"source": "package-stack-a.sh",
+	"authMode": "$VITE_APP_AUTH_MODE"
 }
 EOF
 

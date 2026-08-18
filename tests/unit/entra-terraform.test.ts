@@ -15,6 +15,8 @@ const moduleOutputs = readTf(MODULE_DIR, 'outputs.tf');
 const liveMain = readTf(LIVE_DIR, 'main.tf');
 const liveOutputs = readTf(LIVE_DIR, 'outputs.tf');
 const liveVariables = readTf(LIVE_DIR, 'variables.tf');
+const stackAMain = readTf('infra/terraform/live/stack-a', 'main.tf');
+const stackAVariables = readTf('infra/terraform/live/stack-a', 'variables.tf');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -424,5 +426,14 @@ describe('Entra Terraform shared-root wiring', () => {
 
   it('exposes no client secret from the shared root', () => {
     expect(liveOutputs).not.toMatch(/client_secret|password/i);
+  });
+});
+
+describe('Stack A Entra runtime wiring', () => {
+  it('passes the bootstrap administrator object ID to App Service', () => {
+    expect(variableBlock(stackAVariables, 'entra_bootstrap_admin_object_id')).toBeDefined();
+    expect(stackAMain).toMatch(
+      /ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID\s*=\s*var\.entra_bootstrap_admin_object_id/,
+    );
   });
 });

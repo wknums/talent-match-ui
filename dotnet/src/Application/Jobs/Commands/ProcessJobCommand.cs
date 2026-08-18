@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Common.Services;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
@@ -176,10 +177,10 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
                     appId, request.JobId);
                 errors.Add($"Application {appId}: {ex.Message}");
 
+                using var errScope = _scopeFactory.CreateScope();
+                var errRepo = errScope.ServiceProvider.GetRequiredService<IApplicationRepository>();
                 try
                 {
-                    using var errScope = _scopeFactory.CreateScope();
-                    var errRepo = errScope.ServiceProvider.GetRequiredService<IApplicationRepository>();
                     var failedApp = await errRepo.GetByIdAsync(appId, ct);
                     if (failedApp != null)
                     {
@@ -187,16 +188,45 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
                         failedApp.LastError = ex.Message;
                         await errRepo.UpdateAsync(failedApp, ct);
                     }
-
-                    var dlqRepo = errScope.ServiceProvider.GetRequiredService<IFailureQueueRepository>();
-                    await dlqRepo.AddAsync(new FailureQueueItem
-                    {
-                        EntityType = "Application",
-                        EntityId = appId,
-                        FailureReason = ex.Message,
-                    }, ct);
                 }
-                catch { /* best effort */ }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception statusEx)
+                {
+                    _logger.LogError(statusEx,
+                        "Failed to mark application {AppId} as ScoringFailed.", appId);
+                    errors.Add($"Application {appId}: could not persist failed status: {statusEx.Message}");
+                }
+
+                try
+                {
+                    var dlqRepo = errScope.ServiceProvider.GetRequiredService<IFailureQueueRepository>();
+                    var queuedEntityIds = await dlqRepo.GetEntityIdsAsync(ct);
+                    if (!queuedEntityIds.Contains(appId))
+                    {
+                        await dlqRepo.AddAsync(new FailureQueueItem
+                        {
+                            EntityType = "Application",
+                            EntityId = appId,
+                            FailureReason = ex.Message,
+                            RetryCount = ex is ScoringRetriesExhaustedException exhausted
+                                ? exhausted.FailureCount
+                                : 0,
+                        }, ct);
+                    }
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception queueEx)
+                {
+                    _logger.LogError(queueEx,
+                        "Failed to add application {AppId} to the failure queue.", appId);
+                    errors.Add($"Application {appId}: could not persist failure queue item: {queueEx.Message}");
+                }
             }
         });
 

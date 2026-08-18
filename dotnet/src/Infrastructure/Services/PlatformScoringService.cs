@@ -139,7 +139,10 @@ public class PlatformScoringService : IPlatformScoringService
         {
             Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"),
         };
-        req.Headers.Add("Idempotency-Key", batch.Id);
+        var idempotencyKey = batch.SubmissionId is null
+            ? batch.Id
+            : $"{batch.Id}-retry-{batch.Attempt}";
+        req.Headers.Add("Idempotency-Key", idempotencyKey);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(SubmitTimeoutS));
@@ -263,22 +266,11 @@ public class PlatformScoringService : IPlatformScoringService
                           ?? (errEl.TryGetProperty("code", out var c) ? c.GetString() : null)
                           ?? msg;
                 }
-                await batchRepo.MarkFailedAsync(batch.Id, msg, ct);
-                await batchRepo.ApplyTransitionAsync(batch.JobId, "submitted", "failed", 0, ids.Count, ct);
-                foreach (var aId in ids)
-                {
-                    try
-                    {
-                        var a = await appRepo.GetByIdAsync(aId, ct);
-                        if (a != null) { a.Status = "ScoringFailed"; a.LastError = msg; await appRepo.UpdateAsync(a, ct); }
-                    }
-                    catch { /* best effort */ }
-                }
                 return new PlatformPollOutcome(PlatformPollStatus.Failed, Error: msg);
             }
 
-            // status == "completed"
-            await batchRepo.MarkCompletedAsync(batch.Id, json, ct);
+            if (status != "completed")
+                throw new InvalidDataException($"Platform returned unknown batch status '{status ?? "(null)"}'.");
 
             var job = await jobRepo.GetByIdAsync(batch.JobId, ct);
             var config = job?.ConfigVersions.FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
@@ -298,6 +290,9 @@ public class PlatformScoringService : IPlatformScoringService
                         cvsById[aIdEl.GetString()!] = cv;
                 }
             }
+            ValidateCompletedPayload(cvsById, ids, batch.RunCount);
+
+            await batchRepo.MarkCompletedAsync(batch.Id, json, ct);
 
             int completed = 0, failed = 0;
             foreach (var applicationId in ids)
@@ -391,6 +386,27 @@ public class PlatformScoringService : IPlatformScoringService
     {
         try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
         catch { return new(); }
+    }
+
+    private static void ValidateCompletedPayload(
+        IReadOnlyDictionary<string, JsonElement> cvsById,
+        IReadOnlyCollection<string> applicationIds,
+        int expectedRunCount)
+    {
+        foreach (var applicationId in applicationIds)
+        {
+            if (!cvsById.TryGetValue(applicationId, out var cv))
+                throw new InvalidDataException(
+                    $"Completed platform response omitted application {applicationId}.");
+
+            if (!cv.TryGetProperty("runs", out var runs) || runs.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException(
+                    $"Completed platform response has no runs array for application {applicationId}.");
+
+            if (runs.GetArrayLength() < expectedRunCount)
+                throw new InvalidDataException(
+                    $"Completed platform response returned {runs.GetArrayLength()} run(s) for application {applicationId}; expected {expectedRunCount}.");
+        }
     }
 
     private static string? ExtractCandidateName(JsonElement node)

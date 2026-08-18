@@ -15,6 +15,7 @@ type BuildStamp = {
   version?: string
   createdAtUtc?: string
   source?: string
+  authMode?: string
 }
 
 async function logBuildStamp() {
@@ -32,7 +33,7 @@ async function logBuildStamp() {
     }
 
     console.info(
-      `[TalentMatch Build] version=${stamp.version} createdAtUtc=${stamp.createdAtUtc}`,
+      `[TalentMatch Build] version=${stamp.version} createdAtUtc=${stamp.createdAtUtc} authMode=${stamp.authMode ?? 'unknown'}`,
     )
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

@@ -116,7 +116,7 @@ az account set --subscription "<subscription-id-or-name>"
 ./infra/scripts/deploy.sh .env_qa test apply stack-a
 
 # 2) Build/package Stack A artifact (artifacts/stack-a.zip)
-./infra/scripts/package-stack-a.sh
+./infra/scripts/package-stack-a.sh .env_qa
 
 # 3) Load resource group from profile and resolve deployed app name
 set -a
@@ -210,7 +210,7 @@ firewall rules so the operator can run that bootstrap.
 ./infra/scripts/deploy.sh .env_qa test apply both
 
 # 2) Build both deployable artifacts
-./infra/scripts/package-stack-a.sh
+./infra/scripts/package-stack-a.sh .env_qa
 ./infra/scripts/package-stack-b.sh
 
 # 3) Load resource group and resolve app names
@@ -266,6 +266,8 @@ Important notes:
 ## Stack A Packaging and On-Host Build Behavior
 
 `infra/scripts/package-stack-a.sh` now creates a lean zip artifact that excludes `node_modules` to speed packaging and reduce local zip CPU/file-count overhead.
+
+For repeated local packages, the script reuses `node_modules` when npm's hidden lockfile is newer than both manifests and required build tools are present. Set `STACK_A_INSTALL_MODE=clean` to force a reproducible `npm ci`; CI uses clean mode explicitly. Packaging runs Vite directly because the client TypeScript project is `noEmit`; use `npm run build` separately when you want its TypeScript validation pass.
 
 Deployment implications:
 - App Service must build on deploy (Oryx) so production dependencies are restored on-host.

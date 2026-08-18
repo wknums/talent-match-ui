@@ -229,6 +229,7 @@ jobs:
     needs: resolve-targets
     if: needs.resolve-targets.outputs.package_stack_a == 'true'
     runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-targets.outputs.gh_environment }}
 
     steps:
       - name: Checkout
@@ -241,6 +242,13 @@ jobs:
           cache: 'npm'
 
       - name: Package Stack A
+        env:
+          STACK_A_INSTALL_MODE: clean
+          APP_AUTH_MODE: ${{ vars.APP_AUTH_MODE || 'entra' }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ENTRA_STACK_A_CLIENT_ID: ${{ vars.ENTRA_STACK_A_CLIENT_ID }}
+          ENTRA_API_APP_CLIENT_ID: ${{ vars.ENTRA_API_APP_CLIENT_ID }}
+          ENTRA_API_SCOPE: ${{ vars.ENTRA_API_SCOPE || 'access_as_user' }}
         run: |
           chmod +x infra/scripts/package-stack-a.sh infra/scripts/lib/common.sh
           bash infra/scripts/package-stack-a.sh

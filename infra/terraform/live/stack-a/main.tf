@@ -29,6 +29,7 @@ locals {
       ENTRA_ORGANIZATION_ADMIN_APP_ROLE_ID  = var.entra_app_role_ids["organization_admin"]
       ENTRA_RECRUITER_APP_ROLE_ID           = var.entra_app_role_ids["recruiter"]
       ENTRA_BUSINESS_PANEL_APP_ROLE_ID      = var.entra_app_role_ids["business_panel"]
+      ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID       = var.entra_bootstrap_admin_object_id
       AWR_AUTH_MODE                         = var.awr_auth_mode
       AWR_AAD_AUDIENCE                      = var.awr_aad_audience
       AWR_MAX_PARALLEL                      = tostring(var.awr_max_parallel)

@@ -119,6 +119,12 @@ variable "entra_app_role_ids" {
   }
 }
 
+variable "entra_bootstrap_admin_object_id" {
+  description = "First administrator Entra user object ID"
+  type        = string
+  default     = ""
+}
+
 variable "use_key_vault_secret_refs" {
   description = "When true, app settings use Key Vault references for runtime secrets"
   type        = bool

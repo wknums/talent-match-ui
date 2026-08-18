@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Common.Services;
 using TalentMatch.Application.Jobs.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
@@ -67,10 +68,21 @@ public class PlatformScoringReconciler : BackgroundService
             var batch = await repo.GetByIdAsync(candidate.Id, ct);
             if (batch is null) continue;
             try { await HandleOneAsync(batch, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Reconciler HandleOne crashed for batch {BatchId}", batch.Id);
-                await repo.IncrementAttemptAsync(batch.Id, ex.Message, NextBackoff(batch.Attempt + 1), ct);
+                var requiresResubmission = batch.Status == "submitted"
+                    && ex is JsonException or InvalidDataException;
+                await HandleRetryableFailureAsync(
+                    batch,
+                    ex.Message,
+                    NextBackoff(batch.Attempt + 1),
+                    resubmit: requiresResubmission,
+                    ct);
             }
         }
     }
@@ -100,8 +112,12 @@ public class PlatformScoringReconciler : BackgroundService
                     // submit handler already persisted state
                     return;
                 case PlatformSubmitStatus.Transient:
-                    await repo.IncrementAttemptAsync(batch.Id, outcome.Error ?? "transient",
-                        NextBackoff(batch.Attempt + 1, outcome.RetryAfterMs), ct);
+                    await HandleRetryableFailureAsync(
+                        batch,
+                        outcome.Error ?? "Transient platform submission failure.",
+                        NextBackoff(batch.Attempt + 1, outcome.RetryAfterMs),
+                        resubmit: false,
+                        ct);
                     return;
                 case PlatformSubmitStatus.PermanentFailure:
                 default:
@@ -116,12 +132,23 @@ public class PlatformScoringReconciler : BackgroundService
             switch (outcome.Status)
             {
                 case PlatformPollStatus.StillRunning:
-                    await repo.SetNextPollAtAsync(batch.Id,
-                        DateTime.UtcNow.AddMilliseconds(outcome.RetryAfterMs ?? 10000), ct);
+                    var nextPollAt = DateTime.UtcNow.AddMilliseconds(outcome.RetryAfterMs ?? 10000);
+                    if (string.IsNullOrWhiteSpace(outcome.Error))
+                        await repo.SetNextPollAtAsync(batch.Id, nextPollAt, ct);
+                    else
+                        await HandleRetryableFailureAsync(
+                            batch, outcome.Error, nextPollAt, resubmit: false, ct);
                     return;
                 case PlatformPollStatus.Completed:
-                case PlatformPollStatus.Failed:
                 case PlatformPollStatus.Cancelled:
+                    return;
+                case PlatformPollStatus.Failed:
+                    await HandleRetryableFailureAsync(
+                        batch,
+                        outcome.Error ?? "Platform scoring failed.",
+                        NextBackoff(batch.Attempt + 1),
+                        resubmit: true,
+                        ct);
                     return;
             }
         }
@@ -137,7 +164,46 @@ public class PlatformScoringReconciler : BackgroundService
         return DateTime.UtcNow.AddMilliseconds(ms);
     }
 
+    private async Task HandleRetryableFailureAsync(
+        ScoringBatch batch,
+        string error,
+        DateTime nextAttemptAt,
+        bool resubmit,
+        CancellationToken ct)
+    {
+        var failureCount = batch.Attempt + 1;
+        if (!ScoringRetryPolicy.CanRetry(failureCount))
+        {
+            await HandleTerminalFailureAsync(batch, error, failureCount, ct);
+            return;
+        }
+
+        using var scope = _scopeFactory.CreateScope();
+        var repo = scope.ServiceProvider.GetRequiredService<IScoringBatchRepository>();
+        if (resubmit)
+        {
+            await repo.ScheduleResubmissionAsync(batch.Id, error, nextAttemptAt, ct);
+            await repo.ApplyTransitionAsync(batch.JobId, "submitted", "pending", 0, 0, ct);
+        }
+        else
+        {
+            await repo.IncrementAttemptAsync(batch.Id, error, nextAttemptAt, ct);
+        }
+
+        _logger.LogWarning(
+            "Scoring batch {BatchId} failed attempt {FailureCount}; retrying automatically.",
+            batch.Id,
+            failureCount);
+    }
+
     private async Task HandleSubmitPermanentFailureAsync(ScoringBatch batch, string error, CancellationToken ct)
+        => await HandleTerminalFailureAsync(batch, error, batch.Attempt + 1, ct);
+
+    private async Task HandleTerminalFailureAsync(
+        ScoringBatch batch,
+        string error,
+        int failureCount,
+        CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
         var repo = scope.ServiceProvider.GetRequiredService<IScoringBatchRepository>();
@@ -146,8 +212,7 @@ public class PlatformScoringReconciler : BackgroundService
 
         var ids = DeserializeIds(batch.ApplicationIdsJson);
 
-        await repo.MarkFailedAsync(batch.Id, error, ct);
-        await repo.ApplyTransitionAsync(batch.JobId, "pending", "failed", 0, ids.Count, ct);
+        var queuedEntityIds = await dlqRepo.GetEntityIdsAsync(ct);
 
         foreach (var applicationId in ids)
         {
@@ -160,13 +225,10 @@ public class PlatformScoringReconciler : BackgroundService
                     app.LastError = error;
                     await appRepo.UpdateAsync(app, ct);
                 }
-
-                await dlqRepo.AddAsync(new FailureQueueItem
-                {
-                    EntityType = "Application",
-                    EntityId = applicationId,
-                    FailureReason = error,
-                }, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -174,7 +236,21 @@ public class PlatformScoringReconciler : BackgroundService
                     "Reconciler failed to mark application {ApplicationId} as ScoringFailed for permanently failed batch {BatchId}.",
                     applicationId, batch.Id);
             }
+
+            if (!queuedEntityIds.Add(applicationId))
+                continue;
+
+            await dlqRepo.AddAsync(new FailureQueueItem
+            {
+                EntityType = "Application",
+                EntityId = applicationId,
+                FailureReason = error,
+                RetryCount = failureCount,
+            }, ct);
         }
+
+        await repo.MarkFailedAsync(batch.Id, error, ct);
+        await repo.ApplyTransitionAsync(batch.JobId, batch.Status, "failed", 0, ids.Count, ct);
     }
 
     private static List<string> DeserializeIds(string json)
