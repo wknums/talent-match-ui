@@ -456,6 +456,10 @@ export const realAPI = {
   },
 
   // Organization administration
+  async listOrganizations(): Promise<OrganizationAdminOrganization[]> {
+    return fetchJSON(`${API_BASE}/organizations`)
+  },
+
   async createOrganization(request: CreateOrganizationAdminRequest): Promise<OrganizationAdminOrganization> {
     return fetchJSON(`${API_BASE}/organizations`, {
       method: 'POST',

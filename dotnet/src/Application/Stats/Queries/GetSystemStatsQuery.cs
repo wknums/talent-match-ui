@@ -67,6 +67,7 @@ public class GetSystemStatsQueryHandler : IRequestHandler<GetSystemStatsQuery, S
         }
 
         int Count(string status) => statusCounts.GetValueOrDefault(status);
+        var failed = Count("Failed") + Count("ScoringFailed") + Count("ExtractionFailed");
 
         return new SystemStatsDto(
             Count("Queued"),
@@ -75,7 +76,7 @@ public class GetSystemStatsQueryHandler : IRequestHandler<GetSystemStatsQuery, S
             Count("Aggregating"),
             Count("Completed"),
             Count("NeedsManualReview"),
-            Count("Failed"),
+            failed,
             jobs.Count,
             totalApplications);
     }

@@ -38,6 +38,12 @@ function sendError(req: AuthenticatedRequest, res: Response, error: unknown): vo
 export function createOrganizationsRouter(service: OrganizationAdminService) {
   const router = Router()
 
+  router.get('/', async (req: AuthenticatedRequest, res) => {
+    try {
+      res.json(await service.listOrganizations(actorFromRequest(req, res)))
+    } catch (error) { sendError(req, res, error) }
+  })
+
   router.post('/', async (req: AuthenticatedRequest, res) => {
     try {
       res.status(201).json(await service.createOrganization(actorFromRequest(req, res), req.body))

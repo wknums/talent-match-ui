@@ -1,6 +1,7 @@
-import { applicationRepo, jobRepo, userRepo } from '../storage/repos/index.js'
+import { applicationRepo, jobRepo, organizationRepo, roleAssignmentRepo, userRepo } from '../storage/repos/index.js'
 import type { StoredUser } from '../storage/repos/user-repo.js'
 import type { DepartmentAnalytics, Job, RecruiterAnalytics } from '../../src/types/index.js'
+import type { ServerAuthorizationContext } from './authorization.js'
 
 function normalizeKey(value?: string | null): string {
   return value?.trim().toLowerCase() ?? ''
@@ -58,7 +59,9 @@ function resolveRecruiterIdForJob(
   return undefined
 }
 
-export async function computeRecruiterAnalytics(): Promise<RecruiterAnalytics[]> {
+export async function computeRecruiterAnalytics(context?: ServerAuthorizationContext): Promise<RecruiterAnalytics[]> {
+  if (context) return computeEntraRecruiterAnalytics(context)
+
   const users = getAnalyticsUsers(await userRepo.getAll())
   const jobs = await jobRepo.getAll()
 
@@ -161,4 +164,86 @@ export function computeDepartmentAnalytics(recruiterData: RecruiterAnalytics[]):
     activeJobs: recruiters.reduce((sum, recruiter) => sum + recruiter.activeJobs, 0),
     recruiters,
   }))
+}
+
+async function computeEntraRecruiterAnalytics(context: ServerAuthorizationContext): Promise<RecruiterAnalytics[]> {
+  const allAssignments = await roleAssignmentRepo.getActiveByRole(context.tenantId, 'recruiter')
+  const visibleAssignments = context.globalRole === 'admin'
+    ? allAssignments
+    : allAssignments.filter((assignment) => assignment.userId === context.userId)
+  const assignments = [...new Map(visibleAssignments.map((assignment) => [
+    `${assignment.userId}:${assignment.organizationId}:${assignment.departmentId}`,
+    assignment,
+  ])).values()]
+  const users = await userRepo.getAll()
+  const usersById = new Map(users.filter((user) => user.isActive !== false).map((user) => [user.userId, user]))
+  const jobs = await jobRepo.getAll()
+  const results: RecruiterAnalytics[] = []
+
+  for (const assignment of assignments) {
+    if (!assignment.organizationId || !assignment.departmentId) continue
+
+    const user = usersById.get(assignment.userId)
+    if (!user) continue
+
+    const assignedDepartment = await organizationRepo.getDepartment(assignment.organizationId, assignment.departmentId)
+    if (!assignedDepartment || assignedDepartment.status !== 'active') continue
+
+    const scopedJobs = jobs.filter((job) => (
+      (job.createdBy === assignment.userId || normalizeKey(job.createdBy) === normalizeKey(user.username))
+      && job.organizationId === assignment.organizationId
+      && job.departmentId === assignment.departmentId
+    ))
+    results.push(await calculateRecruiterAnalytics(user, assignedDepartment.name, scopedJobs))
+  }
+
+  return results
+}
+
+async function calculateRecruiterAnalytics(
+  user: StoredUser,
+  department: string,
+  jobs: Job[],
+): Promise<RecruiterAnalytics> {
+  let applicationsInQueue = 0
+  let manualReviewsPerformed = 0
+  let shortlistRecommendations = 0
+  let activeJobs = 0
+  let totalProcessingTime = 0
+  let completedCount = 0
+
+  for (const job of jobs) {
+    if (job.status === 'Active' || job.status === 'Processing') activeJobs++
+
+    const applications = await applicationRepo.getByJobId(job.jobId)
+    for (const application of applications) {
+      if (application.testRunId) continue
+      if (application.status === 'Queued') applicationsInQueue++
+      if (application.status === 'NeedsManualReview' || application.flagged === true) manualReviewsPerformed++
+      if (application.finalDecision === 'Eligible') shortlistRecommendations++
+
+      const result = await applicationRepo.getAggregatedResult(application.applicationId)
+      if (result?.createdAt && application.createdAt) {
+        const start = new Date(application.createdAt).getTime()
+        const end = new Date(result.createdAt).getTime()
+        if (!isNaN(start) && !isNaN(end) && end > start) {
+          totalProcessingTime += (end - start) / (1000 * 60 * 60)
+          completedCount++
+        }
+      }
+    }
+  }
+
+  return {
+    recruiterId: user.userId,
+    recruiterName: user.fullName,
+    department,
+    applicationsInQueue,
+    manualReviewsPerformed,
+    shortlistRecommendations,
+    averageProcessingTime: completedCount > 0
+      ? Math.round((totalProcessingTime / completedCount) * 100) / 100
+      : undefined,
+    activeJobs,
+  }
 }

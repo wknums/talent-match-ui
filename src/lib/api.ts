@@ -1109,6 +1109,7 @@ export const accessManagementApi = {
 }
 
 export const organizationAdminApi = {
+  listOrganizations: realAPI.listOrganizations,
   createOrganization: realAPI.createOrganization,
   createDepartment: realAPI.createOrganizationDepartment,
   updateDepartment: realAPI.updateOrganizationDepartment,

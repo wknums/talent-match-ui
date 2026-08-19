@@ -3,7 +3,11 @@ using TalentMatch.Domain.Entities;
 
 namespace TalentMatch.Application.Analytics.Queries;
 
-public record GetDepartmentAnalyticsQuery(string CallerRole, string? CallerDepartment) : IRequest<List<DepartmentAnalytics>>;
+public record GetDepartmentAnalyticsQuery(
+    string CallerRole,
+    string? CallerDepartment,
+    string? CallerUserId = null,
+    string? TenantId = null) : IRequest<List<DepartmentAnalytics>>;
 
 public class GetDepartmentAnalyticsQueryHandler : IRequestHandler<GetDepartmentAnalyticsQuery, List<DepartmentAnalytics>>
 {
@@ -17,7 +21,11 @@ public class GetDepartmentAnalyticsQueryHandler : IRequestHandler<GetDepartmentA
     public async Task<List<DepartmentAnalytics>> Handle(GetDepartmentAnalyticsQuery request, CancellationToken cancellationToken)
     {
         var recruiters = await _mediator.Send(
-            new GetRecruiterAnalyticsQuery(request.CallerRole, request.CallerDepartment),
+            new GetRecruiterAnalyticsQuery(
+                request.CallerRole,
+                request.CallerDepartment,
+                request.CallerUserId,
+                request.TenantId),
             cancellationToken);
 
         var grouped = recruiters

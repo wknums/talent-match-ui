@@ -101,6 +101,51 @@ async function advanceAuthorizationVersion(executor: StorageExecutor, userId: st
 }
 
 export const organizationRepo = {
+  async listOrganizations(actor: OrganizationAdminActor): Promise<OrganizationAdminOrganization[]> {
+    const pool = await getPool()
+    const authority = await readOrganizationAuthority(pool, actor)
+    if (!authority.globalAdmin && authority.organizationAdminIds.length === 0) {
+      throw new OrganizationAdminError('forbidden', 'The actor does not have organization administration authority.', 403)
+    }
+    const request = pool.request()
+    const predicates = ["o.Status = 'active'"]
+    if (!authority.globalAdmin) {
+      const scope = authority.organizationAdminIds.map((id, index) => {
+        request.input(`scope${index}`, sql.NVarChar, id)
+        return `@scope${index}`
+      })
+      predicates.push(`o.Id IN (${scope.join(', ')})`)
+    }
+    const result = await request.query(`SELECT o.Id AS OrganizationId, o.Name AS OrganizationName, o.Status AS OrganizationStatus,
+        d.Id AS DepartmentId, d.Name AS DepartmentName, d.Status AS DepartmentStatus
+      FROM ${T('Organizations')} o
+      LEFT JOIN ${T('Departments')} d ON d.OrganizationId = o.Id
+      WHERE ${predicates.join(' AND ')}
+      ORDER BY o.Name, d.Name`)
+    const organizations = new Map<string, OrganizationAdminOrganization>()
+    for (const row of result.recordset) {
+      let organization = organizations.get(row.OrganizationId)
+      if (!organization) {
+        organization = {
+          id: row.OrganizationId,
+          name: row.OrganizationName,
+          status: row.OrganizationStatus,
+          departments: [],
+        }
+        organizations.set(row.OrganizationId, organization)
+      }
+      if (row.DepartmentId) {
+        organization.departments.push({
+          id: row.DepartmentId,
+          organizationId: row.OrganizationId,
+          name: row.DepartmentName,
+          status: row.DepartmentStatus,
+        })
+      }
+    }
+    return [...organizations.values()]
+  },
+
   async createOrganization(
     actor: OrganizationAdminActor,
     request: CreateOrganizationRequest,
@@ -372,6 +417,22 @@ export const organizationRepo = {
       .query(`SELECT * FROM ${T('Organizations')} WHERE Id = @id`)
     const row = result.recordset[0]
     return row && { organizationId: row.Id, name: row.Name, status: row.Status, createdAt: asIso(row.CreatedAt), updatedAt: asIso(row.UpdatedAt), updatedBy: row.UpdatedBy }
+  },
+
+  async getDepartment(organizationId: string, departmentId: string): Promise<Department | undefined> {
+    const pool = await getPool()
+    const result = await pool.request().input('organizationId', sql.NVarChar, organizationId).input('departmentId', sql.NVarChar, departmentId)
+      .query(`SELECT * FROM ${T('Departments')} WHERE Id = @departmentId AND OrganizationId = @organizationId`)
+    const row = result.recordset[0]
+    return row && {
+      departmentId: row.Id,
+      organizationId: row.OrganizationId,
+      name: row.Name,
+      status: row.Status,
+      createdAt: asIso(row.CreatedAt),
+      updatedAt: asIso(row.UpdatedAt),
+      updatedBy: row.UpdatedBy,
+    }
   },
 
   async getAuthorizationMemberships(userId: string): Promise<AuthorizationMembership[]> {

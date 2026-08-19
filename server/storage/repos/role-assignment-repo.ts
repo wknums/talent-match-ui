@@ -48,6 +48,13 @@ export const roleAssignmentRepo = {
     return result.recordset.map(rowToAssignment)
   },
 
+  async getActiveByRole(tenantId: string, role: RoleAssignment['role']): Promise<RoleAssignment[]> {
+    const pool = await getPool()
+    const result = await pool.request().input('tenantId', sql.NVarChar, tenantId).input('role', sql.NVarChar, role)
+      .query(`SELECT * FROM ${T('RoleAssignments')} WHERE TenantId = @tenantId AND Role = @role AND Status = 'active' ORDER BY UserId, OrganizationId, DepartmentId`)
+    return result.recordset.map(rowToAssignment)
+  },
+
   async getEnabledGroupMappings(tenantId: string, groupObjectIds: string[]): Promise<RoleGroupMapping[]> {
     if (groupObjectIds.length === 0) return []
     const pool = await getPool()

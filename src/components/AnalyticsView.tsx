@@ -5,19 +5,22 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { api } from '@/lib/api'
 import type { RecruiterAnalytics, DepartmentAnalytics } from '@/types'
-import { Users, Clipboard, CheckCircle, Briefcase, TrendUp, Clock } from '@phosphor-icons/react'
+import { Users, Clipboard, CheckCircle, Briefcase, TrendUp, Clock, WarningCircle } from '@phosphor-icons/react'
 
 export function AnalyticsView() {
   const [loading, setLoading] = useState(true)
   const [recruiterData, setRecruiterData] = useState<RecruiterAnalytics[]>([])
   const [departmentData, setDepartmentData] = useState<DepartmentAnalytics[]>([])
   const [selectedDepartment, setSelectedDepartment] = useState<string>('all')
+  const [loadError, setLoadError] = useState<string>()
 
   useEffect(() => {
     async function loadAnalytics() {
       setLoading(true)
+      setLoadError(undefined)
       try {
         const [recruiters, departments] = await Promise.all([
           api.getRecruiterAnalytics(),
@@ -27,6 +30,7 @@ export function AnalyticsView() {
         setDepartmentData(departments)
       } catch (error) {
         console.error('Failed to load analytics:', error)
+        setLoadError(error instanceof Error ? error.message : 'Recruiter analytics could not be loaded.')
       } finally {
         setLoading(false)
       }
@@ -67,6 +71,13 @@ export function AnalyticsView() {
           Track performance metrics across departments and recruiters
         </p>
       </div>
+
+      {loadError && (
+        <Alert variant="destructive">
+          <WarningCircle aria-hidden="true" />
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>

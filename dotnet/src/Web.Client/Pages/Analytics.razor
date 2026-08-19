@@ -25,6 +25,13 @@
 }
 else
 {
+    @if (!string.IsNullOrWhiteSpace(loadError))
+    {
+        <div role="alert" style="border: 1px solid #b42318; background: #fff4f2; color: #7a271a; padding: 0.75rem 1rem; margin-bottom: 1rem;">
+            @loadError
+        </div>
+    }
+
     @* Summary Stat Cards *@
     <div style="display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap;">
         <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 160px;">
@@ -169,6 +176,7 @@ else
     private enum Tab { ByRecruiter, ByDepartment }
 
     private bool isLoading = true;
+    private string? loadError;
     private Tab activeTab = Tab.ByRecruiter;
     private string selectedDepartment = "";
     private List<RecruiterAnalyticsDto> recruiterData = new();
@@ -192,9 +200,12 @@ else
             recruiterData = await Api.GetRecruiterAnalyticsAsync();
             departments = recruiterData.Select(r => r.Department).Distinct().OrderBy(d => d).ToList();
         }
-        catch
+        catch (Exception error)
         {
             recruiterData = new();
+            loadError = error is ApiException apiError
+                ? apiError.Message
+                : "Recruiter analytics could not be loaded.";
         }
         finally
         {
@@ -211,9 +222,12 @@ else
             {
                 departmentData = await Api.GetDepartmentAnalyticsAsync();
             }
-            catch
+            catch (Exception error)
             {
                 departmentData = new();
+                loadError = error is ApiException apiError
+                    ? apiError.Message
+                    : "Department analytics could not be loaded.";
             }
         }
     }

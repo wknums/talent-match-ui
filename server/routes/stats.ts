@@ -20,9 +20,9 @@ export function createStatsRouter() {
   // GET /api/stats/recruiters - per-recruiter analytics (admin/recruiter only)
   router.get('/recruiters', requireRole('admin', 'recruiter'), async (req: AuthenticatedRequest, res, next) => {
     try {
-      const allRecruiters = await computeRecruiterAnalytics()
+      const allRecruiters = await computeRecruiterAnalytics(req.authorizationContext)
 
-      const scoped = req.user!.role === 'admin'
+      const scoped = req.authorizationContext || req.user!.role === 'admin'
         ? allRecruiters
         : allRecruiters.filter(r => r.department === req.user!.department)
 
@@ -35,9 +35,9 @@ export function createStatsRouter() {
   // GET /api/stats/departments - per-department analytics (admin/recruiter only)
   router.get('/departments', requireRole('admin', 'recruiter'), async (req: AuthenticatedRequest, res, next) => {
     try {
-      const allRecruiters = await computeRecruiterAnalytics()
+      const allRecruiters = await computeRecruiterAnalytics(req.authorizationContext)
 
-      const scoped = req.user!.role === 'admin'
+      const scoped = req.authorizationContext || req.user!.role === 'admin'
         ? allRecruiters
         : allRecruiters.filter(r => r.department === req.user!.department)
 

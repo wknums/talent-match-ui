@@ -20,12 +20,13 @@ import { Button } from '@/components/ui/button'
 import { DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { accessManagementApi, TalentMatchApiError } from '@/lib/api'
+import { accessManagementApi, organizationAdminApi, TalentMatchApiError } from '@/lib/api'
 import type {
   DesiredDelegatedRole,
   EntraAccessRoleAssignment,
   EntraAccessUser,
   MembershipStatus,
+  OrganizationAdminOrganization,
 } from '@/types'
 
 interface EntraAccessManagementDialogProps {
@@ -36,12 +37,9 @@ interface EntraAccessManagementDialogProps {
 
 type PendingAction =
   | { kind: 'organization' }
+  | { kind: 'profile' }
   | { kind: 'identity'; activate: boolean }
   | { kind: 'revoke'; organizationId: string; assignment: EntraAccessRoleAssignment }
-
-function splitDepartmentIds(value: string): string[] {
-  return [...new Set(value.split(',').map(item => item.trim()).filter(Boolean))]
-}
 
 export function EntraAccessManagementDialog({
   open,
@@ -51,6 +49,7 @@ export function EntraAccessManagementDialog({
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'active' | 'disabled'>('all')
   const [users, setUsers] = useState<EntraAccessUser[]>([])
+  const [organizations, setOrganizations] = useState<OrganizationAdminOrganization[]>([])
   const [selected, setSelected] = useState<EntraAccessUser | null>(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -59,12 +58,16 @@ export function EntraAccessManagementDialog({
 
   const [organizationId, setOrganizationId] = useState('')
   const [membershipStatus, setMembershipStatus] = useState<MembershipStatus>('active')
-  const [departmentText, setDepartmentText] = useState('')
+  const [departmentIds, setDepartmentIds] = useState<string[]>([])
   const [defaultDepartmentId, setDefaultDepartmentId] = useState('')
   const [desiredRoles, setDesiredRoles] = useState<DesiredDelegatedRole[]>([])
   const [newRole, setNewRole] = useState<DesiredDelegatedRole>({ role: 'recruiter', departmentId: null })
+  const [profileUsername, setProfileUsername] = useState('')
+  const [profileFullName, setProfileFullName] = useState('')
+  const [profileEmail, setProfileEmail] = useState('')
 
-  const departmentIds = splitDepartmentIds(departmentText)
+  const selectedOrganization = organizations.find(item => item.id === organizationId)
+  const availableDepartments = selectedOrganization?.departments.filter(item => item.status === 'active') ?? []
 
   const loadUsers = async () => {
     setLoading(true)
@@ -87,8 +90,17 @@ export function EntraAccessManagementDialog({
     }
   }
 
+  const loadOrganizations = async () => {
+    try {
+      setOrganizations((await organizationAdminApi.listOrganizations())
+        .filter(item => item.status === 'active'))
+    } catch (error) {
+      showError(error, 'Organizations and departments could not be loaded.')
+    }
+  }
+
   useEffect(() => {
-    if (open) void loadUsers()
+    if (open) void Promise.all([loadUsers(), loadOrganizations()])
     // Opening is the lifecycle boundary; searches are submitted explicitly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -113,7 +125,7 @@ export function EntraAccessManagementDialog({
       ?? user.organizations[0]
     setOrganizationId(organization?.organizationId ?? '')
     setMembershipStatus(organization?.status ?? 'active')
-    setDepartmentText(organization?.departmentIds.join(', ') ?? '')
+    setDepartmentIds(organization?.departmentIds ?? [])
     setDefaultDepartmentId(organization?.defaultDepartmentId ?? '')
     setDesiredRoles(organization?.roleAssignments
       .filter(item => item.source === 'delegated')
@@ -127,6 +139,9 @@ export function EntraAccessManagementDialog({
     try {
       const user = await accessManagementApi.get(objectId)
       setSelected(user)
+      setProfileUsername(user.username)
+      setProfileFullName(user.fullName)
+      setProfileEmail(user.email ?? '')
       applyOrganization(user)
     } catch (error) {
       showError(error, 'The access profile could not be loaded.')
@@ -139,7 +154,26 @@ export function EntraAccessManagementDialog({
     setOrganizationId(value)
     if (!selected) return
     const organization = selected.organizations.find(item => item.organizationId === value)
-    if (organization) applyOrganization(selected, value)
+    if (organization) {
+      applyOrganization(selected, value)
+    } else {
+      setMembershipStatus('active')
+      setDepartmentIds([])
+      setDefaultDepartmentId('')
+      setDesiredRoles([])
+      setNewRole({ role: 'recruiter', departmentId: null })
+    }
+  }
+
+  const toggleDepartment = (departmentId: string, checked: boolean) => {
+    setDepartmentIds(current => checked
+      ? [...new Set([...current, departmentId])]
+      : current.filter(item => item !== departmentId))
+    if (!checked && defaultDepartmentId === departmentId) setDefaultDepartmentId('')
+    if (!checked) {
+      setDesiredRoles(current => current.filter(role => role.departmentId !== departmentId))
+      if (newRole.departmentId === departmentId) setNewRole(current => ({ ...current, departmentId: null }))
+    }
   }
 
   const reviewOrganization = () => {
@@ -188,9 +222,9 @@ export function EntraAccessManagementDialog({
         updated = await accessManagementApi.putOrganizationAccess(selected.objectId, organizationId.trim(), {
           expectedVersion: selected.authorizationVersion,
           profile: {
-            username: selected.username,
-            fullName: selected.fullName,
-            email: selected.email,
+            username: profileUsername.trim(),
+            fullName: profileFullName.trim(),
+            email: profileEmail.trim() || null,
           },
           membership: {
             status: membershipStatus,
@@ -198,6 +232,15 @@ export function EntraAccessManagementDialog({
             defaultDepartmentId: membershipStatus === 'active' ? defaultDepartmentId : null,
           },
           roleAssignments: membershipStatus === 'active' ? desiredRoles : [],
+        })
+      } else if (pendingAction.kind === 'profile') {
+        updated = await accessManagementApi.updateUser(selected.objectId, {
+          expectedVersion: selected.authorizationVersion,
+          profile: {
+            username: profileUsername.trim(),
+            fullName: profileFullName.trim(),
+            email: profileEmail.trim() || null,
+          },
         })
       } else if (pendingAction.kind === 'identity') {
         updated = await accessManagementApi.updateUser(selected.objectId, {
@@ -213,9 +256,12 @@ export function EntraAccessManagementDialog({
         )
       }
       setSelected(updated)
+      setProfileUsername(updated.username)
+      setProfileFullName(updated.fullName)
+      setProfileEmail(updated.email ?? '')
       setUsers(current => current.map(item => item.objectId === updated.objectId ? updated : item))
       applyOrganization(updated, organizationId)
-      setMessage({ kind: 'success', text: pendingAction.kind === 'revoke' ? 'Role access revoked.' : 'Access updated.' })
+      setMessage({ kind: 'success', text: pendingAction.kind === 'revoke' ? 'Role access revoked.' : 'Changes saved.' })
     } catch (error) {
       showError(error, 'The access change could not be completed.')
     } finally {
@@ -232,16 +278,22 @@ export function EntraAccessManagementDialog({
           : 'The identity will be denied even if assignments remain active.',
         action: 'Confirm identity change',
       }
-    : pendingAction?.kind === 'revoke'
+    : pendingAction?.kind === 'profile'
+      ? {
+          title: 'Save profile details?',
+          description: 'This changes display details only. The immutable Entra identity and access assignments are unchanged.',
+          action: 'Save profile details',
+        }
+      : pendingAction?.kind === 'revoke'
       ? {
           title: 'Revoke delegated role?',
           description: 'Only this delegated assignment will be revoked. Group and bootstrap assignments are preserved.',
           action: 'Confirm role revocation',
         }
       : {
-          title: 'Apply organization access?',
-          description: 'This replaces the desired memberships, explicit default, and delegated roles for this organization only.',
-          action: 'Confirm access change',
+          title: 'Review organization access',
+          description: 'Confirming saves the selected departments, explicit default, and displayed roles for this organization.',
+          action: 'Save organization access',
         }
 
   return (
@@ -355,15 +407,42 @@ export function EntraAccessManagementDialog({
                     </div>
                   </header>
 
+                  <div className="grid gap-4 border-b pb-5 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="entra-profile-full-name">Full name</Label>
+                      <Input id="entra-profile-full-name" value={profileFullName} onChange={event => setProfileFullName(event.target.value)} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="entra-profile-username">Username</Label>
+                      <Input id="entra-profile-username" value={profileUsername} onChange={event => setProfileUsername(event.target.value)} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="entra-profile-email">Email</Label>
+                      <Input id="entra-profile-email" type="email" value={profileEmail} onChange={event => setProfileEmail(event.target.value)} />
+                    </div>
+                    <div className="flex justify-end md:col-span-2">
+                      {globalAdmin && (
+                        <Button type="button" variant="outline" onClick={() => setPendingAction({ kind: 'profile' })} disabled={saving}>
+                          Save profile details
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="entra-organization-id">Organization ID</Label>
-                      <Input
+                      <Label htmlFor="entra-organization-id">Organization</Label>
+                      <select
                         id="entra-organization-id"
+                        className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                         value={organizationId}
                         onChange={event => changeOrganization(event.target.value)}
-                        placeholder="Organization object ID"
-                      />
+                      >
+                        <option value="">Select an organization</option>
+                        {organizations.map(organization => (
+                          <option key={organization.id} value={organization.id}>{organization.name}</option>
+                        ))}
+                      </select>
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="entra-membership-status">Membership state</Label>
@@ -387,29 +466,36 @@ export function EntraAccessManagementDialog({
                         disabled={membershipStatus === 'revoked'}
                       >
                         <option value="">Select explicit default</option>
-                        {departmentIds.map(departmentId => (
-                          <option key={departmentId} value={departmentId}>{departmentId}</option>
+                        {availableDepartments.filter(department => departmentIds.includes(department.id)).map(department => (
+                          <option key={department.id} value={department.id}>{department.name}</option>
                         ))}
                       </select>
                     </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="entra-department-ids">Department IDs</Label>
-                      <Input
-                        id="entra-department-ids"
-                        value={departmentText}
-                        onChange={event => setDepartmentText(event.target.value)}
-                        placeholder="Comma-separated active department IDs"
-                        disabled={membershipStatus === 'revoked'}
-                      />
-                    </div>
+                    <fieldset className="space-y-2 md:col-span-2" disabled={membershipStatus === 'revoked' || !organizationId}>
+                      <legend className="text-sm font-medium">Departments</legend>
+                      <p className="text-sm text-muted-foreground">Select every department this profile should belong to.</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {availableDepartments.map(department => (
+                          <label key={department.id} className="flex items-center gap-2 border px-3 py-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={departmentIds.includes(department.id)}
+                              onChange={event => toggleDepartment(department.id, event.target.checked)}
+                            />
+                            <span>{department.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
                   </div>
 
                   <div className="space-y-3 border-t pt-4">
                     <h3 className="text-sm font-semibold">Desired delegated roles</h3>
-                    {desiredRoles.length === 0 && <p className="text-sm text-muted-foreground">No delegated roles selected.</p>}
+                    <p className="text-sm text-muted-foreground">Choose the profile's role and scope, then select Add role. Every role shown below will be saved.</p>
+                    {desiredRoles.length === 0 && <p className="text-sm text-muted-foreground">No roles have been added yet.</p>}
                     {desiredRoles.map((role, index) => (
                       <div key={`${role.role}:${role.departmentId ?? ''}`} className="flex items-center justify-between gap-3 border-b pb-2 text-sm">
-                        <span>{role.role.replace('_', ' ')}{role.departmentId ? ` / ${role.departmentId}` : ''}</span>
+                        <span className="font-medium">{role.role.replace('_', ' ')}{role.departmentId ? ` / ${availableDepartments.find(item => item.id === role.departmentId)?.name ?? 'Selected department'}` : ' / Organization-wide'}</span>
                         <Button type="button" variant="ghost" size="sm" onClick={() => setDesiredRoles(current => current.filter((_, itemIndex) => itemIndex !== index))}>
                           Remove
                         </Button>
@@ -435,11 +521,11 @@ export function EntraAccessManagementDialog({
                           disabled={newRole.role === 'organization_admin'}
                         >
                           <option value="">Organization-wide</option>
-                          {departmentIds.map(departmentId => (
-                            <option key={departmentId} value={departmentId}>{departmentId}</option>
+                          {availableDepartments.filter(department => departmentIds.includes(department.id)).map(department => (
+                            <option key={department.id} value={department.id}>{department.name}</option>
                           ))}
                         </select>
-                        <Button type="button" variant="outline" onClick={addDesiredRole}>Add role</Button>
+                        <Button type="button" variant="outline" onClick={addDesiredRole}>Add {newRole.role.replace('_', ' ')} role</Button>
                       </div>
                     )}
                   </div>
@@ -461,9 +547,12 @@ export function EntraAccessManagementDialog({
                     ))) }
 
                   <div className="flex justify-end border-t pt-4">
-                    <Button type="button" onClick={reviewOrganization} disabled={saving}>
-                      Review organization access
-                    </Button>
+                    <div className="text-right">
+                      <p className="mb-2 text-sm text-muted-foreground">Review is required before saving so you can verify the complete access grant.</p>
+                      <Button type="button" onClick={reviewOrganization} disabled={saving}>
+                        Review and save access
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}

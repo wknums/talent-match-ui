@@ -8,9 +8,9 @@
 <main class="organization-admin" aria-labelledby="organization-admin-title">
     <header class="organization-admin__header">
         <div>
-            <p class="organization-admin__eyebrow">Scoped administration</p>
+            <p class="organization-admin__eyebrow">Organization administration</p>
             <h1 id="organization-admin-title">Organizations</h1>
-            <p>Manage departments, explicit defaults, memberships, and delegated access within your authority.</p>
+            <p>Manage departments and user access for the organizations you administer.</p>
         </div>
         <button type="button" class="organization-admin__secondary" @onclick="LoadOrganizationsAsync" disabled="@isBusy">
             Refresh
@@ -65,7 +65,7 @@
         <div class="organization-admin__workspace">
             <aside class="organization-admin__directory" aria-label="Authorized organizations">
                 <label for="organization-select">Organization</label>
-                <select id="organization-select" @bind="selectedOrganizationId" @bind:after="SelectOrganization">
+                <select id="organization-select" @bind="selectedOrganizationId" @bind:after="SelectOrganizationAsync">
                     <option value="">Select an organization</option>
                     @foreach (var organization in organizations)
                     {
@@ -82,7 +82,7 @@
                     {
                         <button type="button"
                                 class="organization-admin__organization @(organization.Id == selectedOrganizationId ? "is-selected" : null)"
-                                @onclick="() => SelectOrganization(organization.Id)">
+                                @onclick="() => SelectOrganizationAsync(organization.Id)">
                             <strong>@organization.Name</strong>
                             <span>@organization.Departments.Count(department => department.Status == "active") active departments</span>
                         </button>
@@ -145,18 +145,37 @@
                         </div>
                     </section>
 
+                    <section class="organization-admin__panel" aria-labelledby="member-title">
+                        <div class="organization-admin__section-heading">
+                            <div>
+                                <h3 id="member-title">Member</h3>
+                                <p>Choose a member, save their departments, then add or remove roles.</p>
+                            </div>
+                        </div>
+                        <label for="organization-member-select">
+                            User
+                            <select id="organization-member-select" @bind="targetObjectId" @bind:after="SelectTargetAsync">
+                                <option value="">Select a user</option>
+                                @foreach (var user in authorizedUsers.OrderBy(item => item.FullName))
+                                {
+                                    <option value="@user.ObjectId">@user.FullName — @user.Username</option>
+                                }
+                            </select>
+                        </label>
+                        @if (authorizedUsers.Count == 0)
+                        {
+                            <p class="organization-admin__muted">No active members are available. An Application Admin can onboard a user in Access Management.</p>
+                        }
+                    </section>
+
                     <section class="organization-admin__panel" aria-labelledby="membership-title">
                         <div class="organization-admin__section-heading">
                             <div>
-                                <h3 id="membership-title">Membership and default</h3>
-                                <p>The explicit default must remain one of the selected active department memberships.</p>
+                                <h3 id="membership-title">User departments</h3>
+                                <p>Select the departments this user belongs to, then choose their starting department.</p>
                             </div>
                         </div>
-                        <label>
-                            User object ID
-                            <input @bind="targetObjectId" placeholder="00000000-0000-0000-0000-000000000000" />
-                        </label>
-                        <fieldset>
+                        <fieldset disabled="@(targetObjectId.Length == 0)">
                             <legend>Active departments</legend>
                             <div class="organization-admin__checks">
                                 @foreach (var department in ActiveDepartments)
@@ -171,7 +190,7 @@
                             </div>
                         </fieldset>
                         <label>
-                            Explicit default department
+                            Starting department
                             <select @bind="defaultDepartmentId">
                                 <option value="">Select a default</option>
                                 @foreach (var department in ActiveDepartments.Where(item => selectedDepartmentIds.Contains(item.Id)))
@@ -180,21 +199,28 @@
                                 }
                             </select>
                         </label>
-                        <button type="button" class="organization-admin__primary" @onclick="SaveMembershipAsync" disabled="@isBusy">Save membership</button>
+                        <button type="button" class="organization-admin__primary" @onclick="SaveMembershipAsync" disabled="@(isBusy || targetObjectId.Length == 0)">Save departments</button>
                     </section>
 
                     <section class="organization-admin__panel" aria-labelledby="roles-title">
                         <div class="organization-admin__section-heading">
                             <div>
                                 <h3 id="roles-title">Delegated roles</h3>
-                                <p>Role scope cannot exceed the actor or target membership scope.</p>
+                                <p>These are TalentMatch permissions, not Entra or Azure roles. Recruiters work in one department; Analytics Viewers can cover the organization or one department.</p>
                             </div>
-                            <button type="button" class="organization-admin__secondary" @onclick="LoadTargetAssignmentsAsync" disabled="@isBusy">Load assignments</button>
                         </div>
-                        <div class="organization-admin__form-grid">
+                        <dl class="organization-admin__role-guide">
+                            <div><dt>Recruiter</dt><dd>Creates and manages jobs in a selected department.</dd></div>
+                            <div><dt>Analytics Viewer</dt><dd>Views analytics without changing jobs or access.</dd></div>
+                            @if (isGlobalAdmin)
+                            {
+                                <div><dt>Organization Admin</dt><dd>Manages departments and user access across this organization.</dd></div>
+                            }
+                        </dl>
+                        <div class="organization-admin__form-grid" aria-disabled="@(targetObjectId.Length == 0)">
                             <label>
                                 Role
-                                <select @bind="roleName" @bind:after="NormalizeRoleDepartment">
+                                <select @bind="roleName" @bind:after="NormalizeRoleDepartment" disabled="@(targetObjectId.Length == 0)">
                                     @if (isGlobalAdmin)
                                     {
                                         <option value="organization_admin">Organization Admin</option>
@@ -205,7 +231,7 @@
                             </label>
                             <label>
                                 Department scope
-                                <select @bind="roleDepartmentId" disabled="@(roleName == "organization_admin")">
+                                <select @bind="roleDepartmentId" disabled="@(targetObjectId.Length == 0 || roleName == "organization_admin")">
                                     <option value="">Organization-wide</option>
                                     @foreach (var department in ActiveDepartments.Where(item => selectedDepartmentIds.Contains(item.Id)))
                                     {
@@ -213,11 +239,11 @@
                                     }
                                 </select>
                             </label>
-                            <button type="button" class="organization-admin__primary" @onclick="GrantRoleAsync" disabled="@isBusy">Grant role</button>
+                            <button type="button" class="organization-admin__primary" @onclick="GrantRoleAsync" disabled="@(isBusy || targetObjectId.Length == 0)">Add role</button>
                         </div>
                         @if (targetAssignments.Count == 0)
                         {
-                            <p class="organization-admin__muted">No delegated assignments loaded for this user and organization.</p>
+                            <p class="organization-admin__muted">@(targetObjectId.Length == 0 ? "Select a user to view their roles." : "This user has no delegated roles in this organization.")</p>
                         }
                         else
                         {
@@ -246,6 +272,7 @@
     private readonly Dictionary<string, string> renameValues = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> selectedDepartmentIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<EntraAccessRoleAssignment> targetAssignments = [];
+    private readonly List<EntraAccessUser> authorizedUsers = [];
     private bool isLoading = true;
     private bool isBusy;
     private bool isGlobalAdmin;
@@ -289,7 +316,7 @@
             organizations.AddRange(await Api.ListOrganizationsAsync());
             if (!organizations.Any(item => item.Id == selectedOrganizationId))
                 selectedOrganizationId = organizations.FirstOrDefault()?.Id ?? "";
-            SelectOrganization();
+            await SelectOrganizationAsync();
         }
         catch (Exception error)
         {
@@ -301,20 +328,59 @@
         }
     }
 
-    private void SelectOrganization(string organizationId)
+    private async Task SelectOrganizationAsync(string organizationId)
     {
         selectedOrganizationId = organizationId;
-        SelectOrganization();
+        await SelectOrganizationAsync();
     }
 
-    private void SelectOrganization()
+    private async Task SelectOrganizationAsync()
+    {
+        selectedDepartmentIds.Clear();
+        defaultDepartmentId = "";
+        targetObjectId = "";
+        targetAssignments.Clear();
+        authorizedUsers.Clear();
+        renameValues.Clear();
+        foreach (var department in ActiveDepartments)
+            renameValues[department.Id] = department.Name;
+        if (SelectedOrganization is null)
+            return;
+
+        try
+        {
+            var page = await Api.ListEntraAccessUsersAsync(
+                organizationId: selectedOrganizationId,
+                status: "active",
+                limit: 100);
+            authorizedUsers.AddRange(page.Items);
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "Organization members could not be loaded.");
+        }
+    }
+
+    private async Task SelectTargetAsync()
     {
         selectedDepartmentIds.Clear();
         defaultDepartmentId = "";
         targetAssignments.Clear();
-        renameValues.Clear();
-        foreach (var department in ActiveDepartments)
-            renameValues[department.Id] = department.Name;
+        if (targetObjectId.Length == 0)
+            return;
+
+        await RunQueryAsync(async () =>
+        {
+            var target = await Api.GetEntraAccessUserAsync(targetObjectId);
+            var access = target.Organizations.FirstOrDefault(item => item.OrganizationId == selectedOrganizationId);
+            if (access is not null)
+            {
+                selectedDepartmentIds.UnionWith(access.DepartmentIds);
+                defaultDepartmentId = access.DefaultDepartmentId ?? "";
+                targetAssignments.AddRange(access.RoleAssignments
+                    .Where(item => item.Source == "delegated" && item.Status == "active"));
+            }
+        }, "User access could not be loaded.");
     }
 
     private async Task CreateOrganizationAsync() => await RunMutationAsync(async () =>
@@ -363,7 +429,7 @@
         await Api.RegisterOrganizationMembershipAsync(
             selectedOrganizationId,
             new(targetObjectId.Trim(), selectedDepartmentIds.ToArray(), defaultDepartmentId));
-        await LoadTargetAssignmentsAsync();
+        await LoadTargetAssignmentsCoreAsync();
         ShowSuccess("Membership and explicit default saved.");
     });
 
@@ -376,18 +442,18 @@
         await Api.GrantOrganizationRoleAsync(
             selectedOrganizationId,
             new(targetObjectId.Trim(), roleName, departmentId));
-        await LoadTargetAssignmentsAsync();
+        await LoadTargetAssignmentsCoreAsync();
         ShowSuccess("Delegated role granted.");
     });
 
     private async Task RevokeRoleAsync(EntraAccessRoleAssignment assignment) => await RunMutationAsync(async () =>
     {
         await Api.RevokeOrganizationRoleAsync(selectedOrganizationId, assignment.Id);
-        await LoadTargetAssignmentsAsync();
+        await LoadTargetAssignmentsCoreAsync();
         ShowSuccess("Delegated role revoked without changing unrelated assignments.");
     });
 
-    private async Task LoadTargetAssignmentsAsync()
+    private async Task LoadTargetAssignmentsCoreAsync()
     {
         RequireTarget();
         var target = await Api.GetEntraAccessUserAsync(targetObjectId.Trim());
@@ -409,6 +475,24 @@
         catch (Exception error)
         {
             ShowError(error, "The organization change could not be completed.");
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task RunQueryAsync(Func<Task> operation, string fallback)
+    {
+        isBusy = true;
+        notification = null;
+        try
+        {
+            await operation();
+        }
+        catch (Exception error)
+        {
+            ShowError(error, fallback);
         }
         finally
         {
@@ -460,7 +544,7 @@
     private void RequireTarget()
     {
         RequireSelection();
-        RequireText(targetObjectId, "Enter the target user's Entra object ID.");
+        RequireText(targetObjectId, "Select a user first.");
     }
 
     private static void RequireText(string value, string message)

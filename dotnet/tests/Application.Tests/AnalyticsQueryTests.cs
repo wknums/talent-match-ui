@@ -11,9 +11,56 @@ public class GetRecruiterAnalyticsQueryTests
     private readonly Mock<IUserRepository> _userRepoMock = new();
     private readonly Mock<IJobRepository> _jobRepoMock = new();
     private readonly Mock<IApplicationRepository> _appRepoMock = new();
+    private readonly Mock<IRoleAssignmentRepository> _roleRepoMock = new();
+    private readonly Mock<IOrganizationRepository> _organizationRepoMock = new();
 
     private GetRecruiterAnalyticsQueryHandler CreateHandler() =>
-        new(_userRepoMock.Object, _jobRepoMock.Object, _appRepoMock.Object);
+        new(_userRepoMock.Object, _jobRepoMock.Object, _appRepoMock.Object,
+            _roleRepoMock.Object, _organizationRepoMock.Object);
+
+    [Theory]
+    [InlineData("admin", null, 2)]
+    [InlineData("recruiter", "u1", 1)]
+    public async Task Handle_EntraUsesScopedRecruiterAssignments(
+        string callerRole,
+        string? callerUserId,
+        int expectedRows)
+    {
+        _userRepoMock.Setup(repository => repository.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new User { Id = "u1", Username = "alice", FullName = "Alice", AuthenticationProvider = "entra" },
+                new User { Id = "u2", Username = "bob", FullName = "Bob", AuthenticationProvider = "entra" },
+            ]);
+        _roleRepoMock.Setup(repository => repository.GetActiveByRoleAsync(
+                "tenant", "recruiter", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new RoleAssignment { UserId = "u1", TenantId = "tenant", Role = "recruiter", OrganizationId = "org", DepartmentId = "dept-a", Status = "active" },
+                new RoleAssignment { UserId = "u2", TenantId = "tenant", Role = "recruiter", OrganizationId = "org", DepartmentId = "dept-b", Status = "active" },
+            ]);
+        _organizationRepoMock.Setup(repository => repository.GetDepartmentAsync(
+                "org", "dept-a", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Department { Id = "dept-a", OrganizationId = "org", Name = "Sales", Status = "active" });
+        _organizationRepoMock.Setup(repository => repository.GetDepartmentAsync(
+                "org", "dept-b", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Department { Id = "dept-b", OrganizationId = "org", Name = "Finance", Status = "active" });
+        _jobRepoMock.Setup(repository => repository.GetAllAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new Job { Id = "job-a", CreatedBy = "u1", OrganizationId = "org", DepartmentId = "dept-a", Status = "active" },
+                new Job { Id = "job-b", CreatedBy = "u2", OrganizationId = "org", DepartmentId = "dept-b", Status = "active" },
+            ]);
+        _appRepoMock.Setup(repository => repository.GetByJobIdAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+
+        var result = await CreateHandler().Handle(
+            new GetRecruiterAnalyticsQuery(callerRole, null, callerUserId ?? "admin-id", "tenant"),
+            CancellationToken.None);
+
+        result.Should().HaveCount(expectedRows);
+        result.Should().OnlyContain(item => item.ActiveJobs == 1);
+        if (callerRole == "recruiter")
+            result.Should().ContainSingle(item => item.RecruiterId == "u1" && item.Department == "Sales");
+    }
 
     [Fact]
     public async Task Handle_AdminSees_AllRecruiters()
@@ -285,5 +332,26 @@ public class GetDepartmentAnalyticsQueryTests
         var result = await handler.Handle(new GetDepartmentAnalyticsQuery("admin", null), CancellationToken.None);
 
         result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Handle_ForwardsEntraCallerContext()
+    {
+        var mediatorMock = new Mock<MediatR.ISender>();
+        mediatorMock
+            .Setup(mediator => mediator.Send(
+                It.Is<GetRecruiterAnalyticsQuery>(query =>
+                    query.CallerRole == "recruiter"
+                    && query.CallerUserId == "user-1"
+                    && query.TenantId == "tenant-1"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        var handler = new GetDepartmentAnalyticsQueryHandler(mediatorMock.Object);
+
+        await handler.Handle(
+            new GetDepartmentAnalyticsQuery("recruiter", null, "user-1", "tenant-1"),
+            CancellationToken.None);
+
+        mediatorMock.VerifyAll();
     }
 }

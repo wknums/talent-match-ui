@@ -67,6 +67,7 @@ export interface GrantOrganizationRoleRequest {
 }
 
 export interface OrganizationAdminRepository {
+  listOrganizations(actor: OrganizationAdminActor): Promise<OrganizationAdminOrganization[]>
   createOrganization(actor: OrganizationAdminActor, request: CreateOrganizationRequest): Promise<OrganizationAdminOrganization>
   createDepartment(actor: OrganizationAdminActor, organizationId: string, request: CreateDepartmentRequest): Promise<OrganizationAdminDepartment>
   updateDepartment(actor: OrganizationAdminActor, organizationId: string, departmentId: string, request: UpdateDepartmentRequest): Promise<OrganizationAdminDepartment>
@@ -104,6 +105,13 @@ export class OrganizationAdminService {
     readonly repository: OrganizationAdminRepository,
     private readonly audit?: OrganizationAdminAudit,
   ) {}
+
+  async listOrganizations(actor: OrganizationAdminActor): Promise<OrganizationAdminOrganization[]> {
+    if (!actor.globalAdmin && actor.organizationAdminIds.length === 0) {
+      throw new OrganizationAdminError('forbidden', 'Organization administration authority is required.', 403)
+    }
+    return await this.repository.listOrganizations(actor)
+  }
 
   async createOrganization(actor: OrganizationAdminActor, request: CreateOrganizationRequest): Promise<OrganizationAdminOrganization> {
     return await this.execute(actor, 'organization.created', 'Organization', '', { name: request?.name }, async () => {

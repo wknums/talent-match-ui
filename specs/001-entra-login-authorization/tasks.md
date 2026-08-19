@@ -233,6 +233,11 @@
 - [X] T100 Run `npm run lint`, `npm run build`, `npm run build:server`, `npm test`, and the Playwright suites defined in package.json and playwright.config.ts
 - [X] T101 Run all .NET tests and release builds through dotnet/TalentMatch.slnx
 - [ ] T102 Execute every acceptance and recovery step in specs/001-entra-login-authorization/quickstart.md and record results in specs/001-entra-login-authorization/checklists/implementation-validation.md
+- [X] T103 [US3] Replace raw organization and department ID entry with authority-filtered named selectors, show staged role assignments, and clarify separate profile and reviewed access saves across Stack A and Stack B
+- [X] T104 [US4] Populate Stack B create-job organization and department selectors from the recruiter's effective named scopes without requiring organization-administration access
+- [X] T105 [US4] Replace Stack B organization administration raw target IDs with a named member selector and simplify delegated-role guidance
+- [X] T106 [US4] Resolve Stack B recruiter analytics from active Entra recruiter assignments and show API failures instead of false zero metrics
+- [X] T107 [US4] Apply scoped Entra recruiter analytics and visible API failure handling to Stack A
 
 ---
 

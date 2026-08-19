@@ -63,6 +63,12 @@ function actor(role: 'admin' | 'organization_admin' = 'organization_admin'): Org
 
 function repository(): OrganizationAdminRepository {
   return {
+    listOrganizations: vi.fn(async () => [{
+      id: organizationId,
+      name: 'Contoso',
+      status: 'active' as const,
+      departments: [engineeringDepartment, operationsDepartment],
+    }]),
     createOrganization: vi.fn(async () => ({
       id: organizationId,
       name: 'Contoso',
@@ -122,6 +128,22 @@ async function createServer(
 }
 
 describe('Stack A Organization Admin service contract', () => {
+  it('lists authorized organizations and departments with display names', async () => {
+    const server = await createServer()
+
+    const response = await server.request('/api/organizations')
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual([expect.objectContaining({
+      id: organizationId,
+      name: 'Contoso',
+      departments: expect.arrayContaining([
+        expect.objectContaining({ id: engineeringDepartmentId, name: 'Engineering' }),
+        expect.objectContaining({ id: operationsDepartmentId, name: 'Operations' }),
+      ]),
+    })])
+  })
+
   it('creates, renames, and retires departments only in the administered organization', async () => {
     const repo = repository()
     const service = new OrganizationAdminService(repo)

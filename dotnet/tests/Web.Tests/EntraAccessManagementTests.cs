@@ -39,6 +39,7 @@ public sealed class EntraAccessManagementTests : BunitContext
     {
         var handler = new AccessManagementHttpHandler();
         handler.Enqueue("GET", "/api/auth/me", HttpStatusCode.OK, EntraAuthorization("organization_admin"));
+        handler.Enqueue("GET", "/api/organizations", HttpStatusCode.OK, OrganizationList());
         handler.Enqueue("GET", "/api/access-management/users", HttpStatusCode.OK, UserPage());
         RegisterServices(handler, EntraConfiguration());
 
@@ -66,6 +67,7 @@ public sealed class EntraAccessManagementTests : BunitContext
     public async Task OrganizationAdmin_CanInspectButCannotSeeGlobalLifecycleOrPeerGrant()
     {
         var handler = new AccessManagementHttpHandler();
+        handler.Enqueue("GET", "/api/organizations", HttpStatusCode.OK, OrganizationList());
         handler.Enqueue("GET", "/api/access-management/users", HttpStatusCode.OK, UserPage());
         handler.Enqueue("GET", $"/api/access-management/users/{TargetObjectId}", HttpStatusCode.OK, AccessUser());
         RegisterServices(handler, EntraConfiguration());
@@ -83,9 +85,36 @@ public sealed class EntraAccessManagementTests : BunitContext
     }
 
     [Fact]
+    public async Task OrganizationAdministration_SelectsMemberByNameAndLoadsAccessAutomatically()
+    {
+        var handler = new AccessManagementHttpHandler();
+        handler.Enqueue("GET", "/api/auth/me", HttpStatusCode.OK, EntraAuthorization("admin"));
+        handler.Enqueue("GET", "/api/organizations", HttpStatusCode.OK, OrganizationList());
+        handler.Enqueue("GET", "/api/access-management/users", HttpStatusCode.OK,
+            UserPage(AccessUser(organizationId: OrganizationId, includeAssignment: true)));
+        handler.Enqueue("GET", $"/api/access-management/users/{TargetObjectId}", HttpStatusCode.OK,
+            AccessUser(organizationId: OrganizationId, includeAssignment: true));
+        RegisterServices(handler, EntraConfiguration());
+
+        var cut = Render<OrganizationAdmin>();
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Target User — target@example.com"));
+
+        await cut.InvokeAsync(() => cut.Find("#organization-member-select").Change(TargetObjectId));
+
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Recruiter"));
+        cut.Markup.Should().Contain("Creates and manages jobs in a selected department.");
+        cut.Markup.Should().Contain("TalentMatch permissions, not Entra or Azure roles.");
+        cut.Markup.Should().NotContain("Enter the target user's Entra object ID.");
+        cut.Markup.Should().NotContain("Load assignments");
+        handler.Requests.Should().ContainSingle(request =>
+            request.Path == $"/api/access-management/users/{TargetObjectId}");
+    }
+
+    [Fact]
     public async Task Onboarding_RequiresExplicitDefaultThenConfirmsDesiredState()
     {
         var handler = new AccessManagementHttpHandler();
+        handler.Enqueue("GET", "/api/organizations", HttpStatusCode.OK, OrganizationList());
         handler.Enqueue("GET", "/api/access-management/users", HttpStatusCode.OK, UserPage());
         handler.Enqueue("GET", $"/api/access-management/users/{TargetObjectId}", HttpStatusCode.OK, AccessUser());
         handler.Enqueue("PUT", $"/api/access-management/users/{TargetObjectId}/organizations/{OrganizationId}",
@@ -99,18 +128,24 @@ public sealed class EntraAccessManagementTests : BunitContext
         cut.WaitForElement("#entra-organization-id");
 
         await cut.InvokeAsync(() => cut.Find("#entra-organization-id").Change(OrganizationId));
-        await cut.InvokeAsync(() => cut.Find("#entra-department-ids").Change(DepartmentId));
+        cut.Markup.Should().Contain("Contoso Talent");
+        cut.Markup.Should().Contain("Recruitment Operations");
+        await cut.InvokeAsync(() => cut.Find(".entra-access__checks input[type='checkbox']").Change(true));
         await cut.InvokeAsync(() => cut.Find("button[data-action='review-access']").Click());
         cut.Find("[role='alert']").TextContent.Should().Contain("explicit default");
 
         await cut.InvokeAsync(() => cut.Find("#entra-default-department").Change(DepartmentId));
+        await cut.InvokeAsync(() => cut.Find("#entra-role-department").Change(DepartmentId));
+        await cut.InvokeAsync(() => cut.Find(".entra-access__role-editor button").Click());
+        cut.Markup.Should().Contain("Recruiter");
         await cut.InvokeAsync(() => cut.Find("button[data-action='review-access']").Click());
-        cut.Markup.Should().Contain("Confirm organization access");
+        cut.Markup.Should().Contain("Review organization access");
         await cut.InvokeAsync(() => cut.Find("button[data-action='confirm-access']").Click());
 
         cut.WaitForAssertion(() => cut.Find("[role='status']").TextContent.Should().Contain("Access updated"));
         var request = handler.Requests.Single(item => item.Method == "PUT");
         request.Body.Should().Contain($"\"defaultDepartmentId\":\"{DepartmentId}\"");
+        request.Body.Should().Contain("\"role\":\"recruiter\"");
         request.Body.Should().Contain("\"expectedVersion\":0");
     }
 
@@ -118,6 +153,7 @@ public sealed class EntraAccessManagementTests : BunitContext
     public async Task TargetedRevoke_ConfirmsAndDeletesOnlySelectedAssignment()
     {
         var handler = new AccessManagementHttpHandler();
+        handler.Enqueue("GET", "/api/organizations", HttpStatusCode.OK, OrganizationList());
         handler.Enqueue("GET", "/api/access-management/users", HttpStatusCode.OK,
             UserPage(AccessUser(organizationId: OrganizationId, includeAssignment: true)));
         handler.Enqueue("GET", $"/api/access-management/users/{TargetObjectId}", HttpStatusCode.OK,
@@ -146,6 +182,7 @@ public sealed class EntraAccessManagementTests : BunitContext
     public async Task Conflict_RemainsVisibleWithCorrelationId()
     {
         var handler = new AccessManagementHttpHandler();
+        handler.Enqueue("GET", "/api/organizations", HttpStatusCode.OK, OrganizationList());
         handler.Enqueue("GET", "/api/access-management/users", HttpStatusCode.OK, UserPage());
         handler.Enqueue("GET", $"/api/access-management/users/{TargetObjectId}", HttpStatusCode.OK, AccessUser());
         handler.Enqueue("PATCH", $"/api/access-management/users/{TargetObjectId}", HttpStatusCode.Conflict,
@@ -173,6 +210,7 @@ public sealed class EntraAccessManagementTests : BunitContext
     public void InitialLoadFailure_IsVisibleAndRetryable()
     {
         var handler = new AccessManagementHttpHandler();
+        handler.Enqueue("GET", "/api/organizations", HttpStatusCode.OK, OrganizationList());
         handler.Enqueue("GET", "/api/access-management/users", HttpStatusCode.ServiceUnavailable,
             """{"error":"service_unavailable","message":"Access service is unavailable.","correlationId":"correlation-503"}""");
         RegisterServices(handler, EntraConfiguration());
@@ -238,6 +276,26 @@ public sealed class EntraAccessManagementTests : BunitContext
 
     private static string UserPage(string? user = null) =>
         $"{{\"items\":[{user ?? AccessUser()}],\"nextCursor\":null}}";
+
+    private static string OrganizationList() => JsonSerializer.Serialize(new[]
+    {
+        new
+        {
+            id = OrganizationId,
+            name = "Contoso Talent",
+            status = "active",
+            departments = new[]
+            {
+                new
+                {
+                    id = DepartmentId,
+                    organizationId = OrganizationId,
+                    name = "Recruitment Operations",
+                    status = "active",
+                },
+            },
+        },
+    });
 
     private static string AccessUser(
         int version = 0,

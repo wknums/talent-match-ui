@@ -338,7 +338,7 @@
         scopeLoaded = true;
         try
         {
-            scopeOrganizations = (await Api.ListOrganizationsAsync())
+            scopeOrganizations = (await Api.ListJobScopeOrganizationsAsync())
                 .Where(o => string.Equals(o.Status, "active", StringComparison.OrdinalIgnoreCase))
                 .ToList();
             scopeLoadError = scopeOrganizations.Count == 0

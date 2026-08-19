@@ -182,6 +182,45 @@ public class ApiClient : INavigationAuditClient
         return new(user, 200, null, null, headerCorrelationId);
     }
 
+    public async Task<IReadOnlyList<OrganizationAdministrationOrganization>> ListJobScopeOrganizationsAsync()
+    {
+        var response = await _http.GetAsync("/api/auth/me");
+        var context = await ReadRequiredResponseAsync<AuthorizationContextResponse>(
+            response, "Failed to load authorized job scopes.");
+        var recruiterScopes = context.Authorizations
+            .Where(authorization =>
+                authorization.Role == "recruiter"
+                && authorization.OrganizationId is not null
+                && authorization.DepartmentId is not null)
+            .Select(authorization => (authorization.OrganizationId!, authorization.DepartmentId!))
+            .ToHashSet();
+        var organizations = context.Memberships
+            .Where(membership => recruiterScopes.Any(scope => scope.Item1 == membership.OrganizationId))
+            .Select(membership => new OrganizationAdministrationOrganization(
+                membership.OrganizationId,
+                membership.OrganizationName,
+                "active",
+                membership.Departments
+                    .Where(department => recruiterScopes.Contains((membership.OrganizationId, department.DepartmentId)))
+                    .Select(department => new OrganizationAdministrationDepartment(
+                        department.DepartmentId,
+                        membership.OrganizationId,
+                        department.DepartmentName,
+                        "active"))
+                    .ToArray()))
+            .ToDictionary(organization => organization.Id, StringComparer.OrdinalIgnoreCase);
+
+        var hasAdministrativeScope = context.GlobalRole == "admin"
+            || context.Authorizations.Any(authorization => authorization.Role == "organization_admin");
+        if (hasAdministrativeScope)
+        {
+            foreach (var organization in await ListOrganizationsAsync())
+                organizations[organization.Id] = organization;
+        }
+
+        return organizations.Values.OrderBy(organization => organization.Name).ToArray();
+    }
+
     public async Task<bool> ChangePasswordAsync(string currentPassword, string newPassword)
     {
         var response = await _http.PostAsJsonAsync("/api/auth/change-password", new { CurrentPassword = currentPassword, NewPassword = newPassword });
@@ -533,10 +572,18 @@ public class ApiClient : INavigationAuditClient
         => await _http.GetFromJsonAsync<SystemStatsDto>("/api/stats");
 
     public async Task<List<RecruiterAnalyticsDto>> GetRecruiterAnalyticsAsync()
-        => await _http.GetFromJsonAsync<List<RecruiterAnalyticsDto>>("/api/stats/recruiters") ?? new();
+    {
+        var response = await _http.GetAsync("/api/stats/recruiters");
+        return await ReadRequiredResponseAsync<List<RecruiterAnalyticsDto>>(
+            response, "Failed to load recruiter analytics.");
+    }
 
     public async Task<List<DepartmentAnalyticsDto>> GetDepartmentAnalyticsAsync()
-        => await _http.GetFromJsonAsync<List<DepartmentAnalyticsDto>>("/api/stats/departments") ?? new();
+    {
+        var response = await _http.GetAsync("/api/stats/departments");
+        return await ReadRequiredResponseAsync<List<DepartmentAnalyticsDto>>(
+            response, "Failed to load department analytics.");
+    }
 
     public async Task<List<DlqItemDto>> GetDlqItemsAsync()
         => await _http.GetFromJsonAsync<List<DlqItemDto>>("/api/dlq") ?? new();

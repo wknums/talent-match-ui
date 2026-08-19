@@ -1,6 +1,8 @@
 using System.Security.Claims;
 using MediatR;
 using TalentMatch.Application.Analytics.Queries;
+using TalentMatch.Application.Authorization;
+using TalentMatch.Web.Server.Middleware;
 
 namespace TalentMatch.Web.Server.Endpoints;
 
@@ -14,23 +16,41 @@ public static class AnalyticsEndpoints
 
         group.MapGet("/recruiters", async (HttpContext httpContext, ISender mediator) =>
         {
-            var role = httpContext.User.FindFirstValue(ClaimTypes.Role);
+            var context = httpContext.Items[EntraApplicationAuthorizationMiddleware.ContextItemKey]
+                as AuthorizationContextResponse;
+            var role = context?.GlobalRole
+                ?? (context?.Authorizations.Any(authorization => authorization.Role == "recruiter") == true
+                    ? "recruiter"
+                    : httpContext.User.FindFirstValue(ClaimTypes.Role));
             if (role != "admin" && role != "recruiter")
                 return Results.Forbid();
 
             var department = httpContext.User.FindFirstValue("department");
-            var result = await mediator.Send(new GetRecruiterAnalyticsQuery(role, department));
+            var result = await mediator.Send(new GetRecruiterAnalyticsQuery(
+                role,
+                department,
+                context?.UserId,
+                context?.TenantId));
             return Results.Ok(result);
         });
 
         group.MapGet("/departments", async (HttpContext httpContext, ISender mediator) =>
         {
-            var role = httpContext.User.FindFirstValue(ClaimTypes.Role);
+            var context = httpContext.Items[EntraApplicationAuthorizationMiddleware.ContextItemKey]
+                as AuthorizationContextResponse;
+            var role = context?.GlobalRole
+                ?? (context?.Authorizations.Any(authorization => authorization.Role == "recruiter") == true
+                    ? "recruiter"
+                    : httpContext.User.FindFirstValue(ClaimTypes.Role));
             if (role != "admin" && role != "recruiter")
                 return Results.Forbid();
 
             var department = httpContext.User.FindFirstValue("department");
-            var result = await mediator.Send(new GetDepartmentAnalyticsQuery(role, department));
+            var result = await mediator.Send(new GetDepartmentAnalyticsQuery(
+                role,
+                department,
+                context?.UserId,
+                context?.TenantId));
             return Results.Ok(result);
         });
     }

@@ -9,6 +9,15 @@ public class RoleAssignmentRepository(AppDbContext context) : IRoleAssignmentRep
     public async Task<IReadOnlyList<RoleAssignment>> GetActiveForIdentityAsync(string tenantId, string objectId, CancellationToken ct = default)
         => await context.RoleAssignments.Where(a => a.TenantId == tenantId && a.UserObjectId == objectId && a.Status == "active").AsNoTracking().ToListAsync(ct);
 
+    public async Task<IReadOnlyList<RoleAssignment>> GetActiveByRoleAsync(string tenantId, string role, CancellationToken ct = default)
+        => await context.RoleAssignments
+            .Where(assignment =>
+                assignment.TenantId == tenantId
+                && assignment.Role == role
+                && assignment.Status == "active")
+            .AsNoTracking()
+            .ToListAsync(ct);
+
     public async Task<IReadOnlyList<RoleGroupMapping>> GetEnabledMappingsAsync(string tenantId, IReadOnlyCollection<string> groupObjectIds, CancellationToken ct = default)
         => await context.RoleGroupMappings.Where(m => m.TenantId == tenantId && m.Enabled && groupObjectIds.Contains(m.GroupObjectId)).AsNoTracking().ToListAsync(ct);
 

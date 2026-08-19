@@ -112,7 +112,7 @@
                         </div>
                         @if (GlobalAdmin)
                         {
-                            <button type="button" class="entra-access__secondary" @onclick="ReviewProfileChange">Review profile change</button>
+                            <button type="button" class="entra-access__secondary" @onclick="ReviewProfileChange">Save profile details</button>
                         }
                     </div>
                     <div class="entra-access__form-grid">
@@ -141,8 +141,14 @@
 
                     <div class="entra-access__form-grid">
                         <div class="entra-access__wide-field">
-                            <label for="entra-organization-id">Organization ID</label>
-                            <input id="entra-organization-id" @bind="organizationId" @bind:after="LoadOrganizationState" />
+                            <label for="entra-organization-id">Organization</label>
+                            <select id="entra-organization-id" @bind="organizationId" @bind:after="LoadOrganizationState">
+                                <option value="">Select an organization</option>
+                                @foreach (var organization in organizations.Where(item => item.Status == "active"))
+                                {
+                                    <option value="@organization.Id">@organization.Name</option>
+                                }
+                            </select>
                         </div>
                         <div>
                             <label for="entra-membership-status">Membership state</label>
@@ -157,39 +163,47 @@
                                     @bind="defaultDepartmentId"
                                     disabled="@(membershipStatus == "revoked")">
                                 <option value="">Select explicit default</option>
-                                @foreach (var departmentId in DepartmentIds)
+                                @foreach (var department in SelectedDepartments)
                                 {
-                                    <option value="@departmentId">@departmentId</option>
+                                    <option value="@department.Id">@department.Name</option>
                                 }
                             </select>
                         </div>
-                        <div class="entra-access__wide-field">
-                            <label for="entra-department-ids">Active department IDs</label>
-                            <input id="entra-department-ids"
-                                   placeholder="Comma-separated department IDs"
-                                   @bind="departmentText"
-                                   disabled="@(membershipStatus == "revoked")" />
-                        </div>
+                        <fieldset class="entra-access__wide-field" disabled="@(membershipStatus == "revoked" || organizationId.Length == 0)">
+                            <legend>Departments</legend>
+                            <p class="entra-access__muted">Select every department this profile should belong to.</p>
+                            <div class="entra-access__checks">
+                                @foreach (var department in AvailableDepartments)
+                                {
+                                    <label>
+                                        <input type="checkbox"
+                                               checked="@selectedDepartmentIds.Contains(department.Id)"
+                                               @onchange="eventArgs => ToggleDepartment(department.Id, eventArgs.Value is true)" />
+                                        <span>@department.Name</span>
+                                    </label>
+                                }
+                            </div>
+                        </fieldset>
                     </div>
 
                     <div class="entra-access__roles">
                         <div class="entra-access__section-heading">
                             <div>
                                 <h4>Desired delegated roles</h4>
-                                <p>Group-sourced assignments remain read-only and are never replaced here.</p>
+                                <p>Choose the profile's role and scope, then select Add role. Every role shown below will be saved.</p>
                             </div>
                         </div>
 
                         @if (desiredRoles.Count == 0)
                         {
-                            <p class="entra-access__muted">No delegated roles selected.</p>
+                            <p class="entra-access__muted">No roles have been added yet.</p>
                         }
                         else
                         {
                             @foreach (var role in desiredRoles.ToArray())
                             {
                                 <div class="entra-access__role-row">
-                                    <span>@RoleLabel(role.Role) @(role.DepartmentId is null ? "" : $"/ {role.DepartmentId}")</span>
+                                    <span><strong>@RoleLabel(role.Role)</strong> / @DepartmentName(role.DepartmentId)</span>
                                     <button type="button" class="entra-access__link-button" @onclick="() => RemoveDesiredRole(role)">Remove</button>
                                 </div>
                             }
@@ -213,25 +227,28 @@
                                     <label for="entra-role-department">Role department</label>
                                     <select id="entra-role-department" @bind="newRoleDepartment" disabled="@(newRole == "organization_admin")">
                                         <option value="">Organization-wide</option>
-                                        @foreach (var departmentId in DepartmentIds)
+                                        @foreach (var department in SelectedDepartments)
                                         {
-                                            <option value="@departmentId">@departmentId</option>
+                                            <option value="@department.Id">@department.Name</option>
                                         }
                                     </select>
                                 </div>
-                                <button type="button" class="entra-access__secondary" @onclick="AddDesiredRole">Add role</button>
+                                <button type="button" class="entra-access__secondary" @onclick="AddDesiredRole">Add @RoleLabel(newRole) role</button>
                             </div>
                         }
                     </div>
 
                     <div class="entra-access__actions">
-                        <button type="button"
-                                data-action="review-access"
-                                class="entra-access__primary"
-                                disabled="@isSaving"
-                                @onclick="ReviewOrganizationAccess">
-                            Review organization access
-                        </button>
+                        <div>
+                            <p class="entra-access__muted">Review is required before saving so you can verify the complete access grant.</p>
+                            <button type="button"
+                                    data-action="review-access"
+                                    class="entra-access__primary"
+                                    disabled="@isSaving"
+                                    @onclick="ReviewOrganizationAccess">
+                                Review and save access
+                            </button>
+                        </div>
                     </div>
                 </section>
 
@@ -308,7 +325,9 @@
     [Parameter] public bool GlobalAdmin { get; set; }
 
     private readonly List<EntraAccessUser> users = [];
+    private readonly List<OrganizationAdministrationOrganization> organizations = [];
     private readonly List<EntraDesiredRole> desiredRoles = [];
+    private readonly HashSet<string> selectedDepartmentIds = new(StringComparer.OrdinalIgnoreCase);
     private EntraAccessUser? selected;
     private EntraAccessRoleAssignment? pendingRole;
     private bool isLoading = true;
@@ -325,17 +344,40 @@
     private string profileEmail = "";
     private string organizationId = "";
     private string membershipStatus = "active";
-    private string departmentText = "";
     private string defaultDepartmentId = "";
     private string newRole = "recruiter";
     private string newRoleDepartment = "";
 
-    private IReadOnlyList<string> DepartmentIds => departmentText
-        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToArray();
+    private OrganizationAdministrationOrganization? SelectedAvailableOrganization =>
+        organizations.FirstOrDefault(item => string.Equals(item.Id, organizationId, StringComparison.OrdinalIgnoreCase));
 
-    protected override Task OnInitializedAsync() => LoadUsersAsync();
+    private IReadOnlyList<OrganizationAdministrationDepartment> AvailableDepartments =>
+        SelectedAvailableOrganization?.Departments
+            .Where(item => item.Status == "active")
+            .OrderBy(item => item.Name)
+            .ToArray() ?? [];
+
+    private IReadOnlyList<OrganizationAdministrationDepartment> SelectedDepartments =>
+        AvailableDepartments.Where(item => selectedDepartmentIds.Contains(item.Id)).ToArray();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadOrganizationsAsync();
+        await LoadUsersAsync();
+    }
+
+    private async Task LoadOrganizationsAsync()
+    {
+        try
+        {
+            organizations.Clear();
+            organizations.AddRange(await Api.ListOrganizationsAsync());
+        }
+        catch (Exception error)
+        {
+            ShowError(error, "Organizations and departments could not be loaded.");
+        }
+    }
 
     private async Task LoadUsersAsync()
     {
@@ -398,7 +440,9 @@
         var organization = selected?.Organizations.FirstOrDefault(item =>
             string.Equals(item.OrganizationId, organizationId, StringComparison.OrdinalIgnoreCase));
         membershipStatus = organization?.Status ?? "active";
-        departmentText = organization is null ? "" : string.Join(", ", organization.DepartmentIds);
+        selectedDepartmentIds.Clear();
+        if (organization is not null)
+            selectedDepartmentIds.UnionWith(organization.DepartmentIds);
         defaultDepartmentId = organization?.DefaultDepartmentId ?? "";
         desiredRoles.Clear();
         if (organization is not null)
@@ -409,6 +453,21 @@
         }
         newRole = "recruiter";
         newRoleDepartment = defaultDepartmentId;
+    }
+
+    private void ToggleDepartment(string departmentId, bool selectedState)
+    {
+        if (selectedState)
+        {
+            selectedDepartmentIds.Add(departmentId);
+            return;
+        }
+        selectedDepartmentIds.Remove(departmentId);
+        if (defaultDepartmentId == departmentId)
+            defaultDepartmentId = "";
+        desiredRoles.RemoveAll(item => item.DepartmentId == departmentId);
+        if (newRoleDepartment == departmentId)
+            newRoleDepartment = "";
     }
 
     private void ReviewOrganizationAccess()
@@ -425,21 +484,21 @@
             return;
         }
         if (membershipStatus == "active"
-            && (DepartmentIds.Count == 0
+            && (selectedDepartmentIds.Count == 0
                 || defaultDepartmentId.Length == 0
-                || !DepartmentIds.Contains(defaultDepartmentId, StringComparer.OrdinalIgnoreCase)))
+                || !selectedDepartmentIds.Contains(defaultDepartmentId)))
         {
             ShowValidation("Active access requires an explicit default from the active departments.");
             return;
         }
         if (membershipStatus == "revoked"
-            && (DepartmentIds.Count > 0 || defaultDepartmentId.Length > 0 || desiredRoles.Count > 0))
+            && (selectedDepartmentIds.Count > 0 || defaultDepartmentId.Length > 0 || desiredRoles.Count > 0))
         {
             ShowValidation("Revoked access cannot retain departments, an explicit default, or delegated roles.");
             return;
         }
         if (desiredRoles.Any(item => item.DepartmentId is not null
-            && !DepartmentIds.Contains(item.DepartmentId, StringComparer.OrdinalIgnoreCase)))
+            && !selectedDepartmentIds.Contains(item.DepartmentId)))
         {
             ShowValidation("Every role department must be an active department membership.");
             return;
@@ -483,7 +542,7 @@
             ShowValidation("Recruiter access requires a department.");
             return;
         }
-        if (departmentId is not null && !DepartmentIds.Contains(departmentId, StringComparer.OrdinalIgnoreCase))
+        if (departmentId is not null && !selectedDepartmentIds.Contains(departmentId))
         {
             ShowValidation("The role department must be an active department membership.");
             return;
@@ -518,7 +577,7 @@
                         ProfileRequest(),
                         new EntraAccessMembership(
                             membershipStatus,
-                            membershipStatus == "active" ? DepartmentIds : [],
+                            membershipStatus == "active" ? selectedDepartmentIds.ToArray() : [],
                             membershipStatus == "active" ? defaultDepartmentId : null),
                         membershipStatus == "active" ? desiredRoles.ToArray() : []));
             }
@@ -627,8 +686,8 @@
     {
         "identity" => pendingIdentityActivation ? "Reactivate identity?" : "Disable identity?",
         "revoke" => "Revoke delegated role?",
-        "profile" => "Update profile presentation?",
-        _ => "Confirm organization access",
+        "profile" => "Save profile details?",
+        _ => "Review organization access",
     };
 
     private string ConfirmationDescription => confirmationKind switch
@@ -652,7 +711,11 @@
     {
         "identity" => "Confirm identity change",
         "revoke" => "Confirm role revocation",
-        "profile" => "Confirm profile change",
-        _ => "Confirm access change",
+        "profile" => "Save profile details",
+        _ => "Save organization access",
     };
+
+    private string DepartmentName(string? departmentId) => departmentId is null
+        ? "Organization-wide"
+        : AvailableDepartments.FirstOrDefault(item => item.Id == departmentId)?.Name ?? "Selected department";
 }
