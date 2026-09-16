@@ -13,7 +13,7 @@ export const appAuthMode: AuthenticationProvider = import.meta.env.VITE_APP_AUTH
 
 const tenantId = import.meta.env.VITE_ENTRA_TENANT_ID?.trim()
 const stackAClientId = import.meta.env.VITE_ENTRA_STACK_A_CLIENT_ID?.trim()
-const apiClientId = import.meta.env.VITE_ENTRA_API_APP_CLIENT_ID?.trim()
+const apiIdentifierUri = import.meta.env.VITE_ENTRA_API_IDENTIFIER_URI?.trim()
 const apiScopeName = import.meta.env.VITE_ENTRA_API_SCOPE?.trim() || 'access_as_user'
 
 function requireEntraValue(value: string | undefined, name: string): string {
@@ -24,7 +24,11 @@ function requireEntraValue(value: string | undefined, name: string): string {
 }
 
 export function getEntraApiScope(): string {
-  return `api://${requireEntraValue(apiClientId, 'VITE_ENTRA_API_APP_CLIENT_ID')}/${apiScopeName}`
+  const identifierUri = requireEntraValue(
+    apiIdentifierUri,
+    'VITE_ENTRA_API_IDENTIFIER_URI',
+  ).replace(/\/+$/, '')
+  return `${identifierUri}/${apiScopeName}`
 }
 
 export function getEntraLoginRequest(): RedirectRequest {
@@ -46,11 +50,4 @@ export function createMsalInstance(): PublicClientApplication {
   }
 
   return new PublicClientApplication(config)
-}
-
-export async function initializeMsal(instance: PublicClientApplication): Promise<void> {
-  await instance.initialize()
-  const redirectResult = await instance.handleRedirectPromise()
-  const account = redirectResult?.account ?? instance.getAllAccounts()[0] ?? null
-  instance.setActiveAccount(account)
 }

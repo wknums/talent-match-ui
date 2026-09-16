@@ -112,6 +112,38 @@ code {
     color: #c02d76;
 }
 
+.disclosure-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.disclosure-toggle-icon-only {
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+}
+
+.disclosure-chevron {
+    width: 0;
+    height: 0;
+    border-top: 0.35rem solid transparent;
+    border-bottom: 0.35rem solid transparent;
+    border-left: 0.5rem solid currentColor;
+    transition: transform 0.15s ease-in-out;
+}
+
+.disclosure-toggle[aria-expanded="true"] .disclosure-chevron {
+    transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .disclosure-chevron {
+        transition: none;
+    }
+}
+
 .form-floating > .form-control-plaintext::placeholder, .form-floating > .form-control::placeholder {
     color: var(--bs-secondary-color);
     text-align: end;

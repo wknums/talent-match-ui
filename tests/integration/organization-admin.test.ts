@@ -134,6 +134,7 @@ describe('Stack A Organization Admin service contract', () => {
     const response = await server.request('/api/organizations')
 
     expect(response.status).toBe(200)
+    expect(server.repo.listOrganizations).toHaveBeenCalledWith(actor())
     await expect(response.json()).resolves.toEqual([expect.objectContaining({
       id: organizationId,
       name: 'Contoso',
@@ -142,6 +143,21 @@ describe('Stack A Organization Admin service contract', () => {
         expect.objectContaining({ id: operationsDepartmentId, name: 'Operations' }),
       ]),
     })])
+  })
+
+  it('returns a correlated internal error instead of reporting unexpected list failures as conflicts', async () => {
+    const repo = repository()
+    vi.mocked(repo.listOrganizations).mockRejectedValue(new Error('database detail'))
+    const server = await createServer('organization_admin', repo)
+
+    const response = await server.request('/api/organizations')
+
+    expect(response.status).toBe(500)
+    await expect(response.json()).resolves.toEqual({
+      error: 'internal_error',
+      message: 'The organization operation could not be completed. Try again.',
+      correlationId,
+    })
   })
 
   it('creates, renames, and retires departments only in the administered organization', async () => {

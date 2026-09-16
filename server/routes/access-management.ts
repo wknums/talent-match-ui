@@ -28,8 +28,12 @@ function actorFromRequest(req: AuthenticatedRequest, res: Response): AccessManag
 }
 
 function sendError(req: AuthenticatedRequest, res: Response, error: unknown): void {
+  const correlationId = ensureCorrelationId(req, res)
+  if (!(error instanceof EntraAccessError)) {
+    console.error('[access-management] Unexpected request failure.', { correlationId, error })
+  }
   sendAuthorizationError(req, res, mapAuthorizationError(error, {
-    code: 'invalid_scope',
+    code: 'internal_error',
     statusCode: 500,
     message: 'The access-management operation could not be completed.',
   }))

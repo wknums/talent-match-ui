@@ -1,0 +1,41 @@
+{
+  "job_title": "Senior Data Platform Engineer",
+  "job_description": "Northwind Analytics is hiring a Senior Data Platform Engineer to build reliable, compliant, and observable data products for internal and external teams.",
+  "department": "Data Engineering",
+  "organization": "Northwind Analytics",
+  "requirements": [
+    {
+      "id": "req-001",
+      "text": "5+ years of backend or platform engineering experience",
+      "requirement_type": "experience",
+      "category_id": "cat-platform",
+      "source_text": "Must have 5+ years of backend or platform engineering experience and proven experience with distributed systems.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-013",
+      "text": "5+ years of backend or platform engineering experience",
+      "requirement_type": "experience",
+      "category_id": "cat-platform",
+      "source_text": "Must have 5+ years of backend or platform engineering experience.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": "req-001",
+      "needs_review": false
+    }
+  ],
+  "rubric": {
+    "has_rubric_in_doc": true,
+    "categories": [
+      {
+        "id": "cat-platform",
+        "name": "Technical Platform Skills",
+        "weight": 1.0,
+        "description": "Technical platform experience.",
+        "source": "doc"
+      }
+    ],
+    "weights_sum_to_1_0": true
+  }
+}

@@ -12,6 +12,11 @@
   DesiredCriteria,
   AggregationStrategy,
   RubricSource,
+  RubricEnvelope,
+  ExtractionInstructionVersion,
+  ExtractionInstructionVersionDetail,
+  ExtractionResult,
+  ExtractionFailure,
   ScoringPrompt,
   PromptTestRun,
 } from '@/types'
@@ -316,36 +321,40 @@ export const mockAPI = {
     }
   },
 
-  async extractJobSpec(_fileName: string, _content: string, _mimeType: string): Promise<any> {
+  async extractJobSpec(_fileName: string, _content: string, _mimeType: string): Promise<ExtractionResult> {
     await delay(800)
     return {
+      extractionId: `extract-${Date.now()}`,
+      instructionVersionId: 'instruction-v1',
+      protectedContractVersion: 'extraction-rubric-v1',
+      validationStatus: 'valid',
+      validationFindings: [],
       title: 'Senior Software Engineer',
       department: 'Engineering',
       organization: 'TechCorp Solutions',
       jobDescription: 'We are seeking a Senior Software Engineer to join our Engineering team.',
-      mustHaves: [
-        { criterion: 'Bachelor\'s degree in Computer Science', description: 'Educational requirement' },
-        { criterion: '5+ years of professional experience', description: 'Experience requirement' },
-      ],
-      desiredCriteria: [
-        { qualification: 'Experience with cloud platforms (AWS, Azure)', description: 'Cloud experience preferred' },
-        { qualification: 'Open-source contributions', description: 'Community involvement' },
-      ],
-      rubric: [],
+      rubric: {
+        schemaVersion: 'rubric-v2',
+        legacySourceVersionId: null,
+        categories: [
+          { id: 'cat-tech', name: 'Technical Skills', description: 'Programming languages, frameworks, tools', weight: 0.7, order: 0 },
+          { id: 'cat-collab', name: 'Communication', description: 'Written and verbal skills', weight: 0.3, order: 1 },
+        ],
+        items: [],
+      },
     }
   },
 
-  async extractRubric(_fileName: string, _content: string, _mimeType: string): Promise<any> {
+  async extractRubric(_fileName: string, _content: string, _mimeType: string): Promise<RubricEnvelope> {
     await delay(800)
     return {
-      title: 'Senior Software Engineer',
+      schemaVersion: 'rubric-v2',
+      legacySourceVersionId: null,
       categories: [
-        { name: 'Technical Skills', description: 'Programming languages, frameworks, tools', weight: 0.35 },
-        { name: 'Experience', description: 'Years and relevant projects', weight: 0.25 },
-        { name: 'Problem Solving', description: 'Analytical thinking', weight: 0.20 },
-        { name: 'Communication', description: 'Written and verbal skills', weight: 0.10 },
-        { name: 'Cultural Fit', description: 'Company values alignment', weight: 0.10 },
+        { id: 'cat-tech', name: 'Technical Skills', description: 'Programming languages, frameworks, tools', weight: 0.7, order: 0 },
+        { id: 'cat-collab', name: 'Communication', description: 'Written and verbal skills', weight: 0.3, order: 1 },
       ],
+      items: [],
     }
   },
 
@@ -365,7 +374,7 @@ export const mockAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: RubricCategory[]
+    rubric: RubricCategory[] | RubricEnvelope
     mustHaves: MustHave[]
     desiredCriteria?: DesiredCriteria[]
     jobDescription?: string
@@ -378,6 +387,8 @@ export const mockAPI = {
     jobCode?: string
     rubricSource?: RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
   }): Promise<Job> {
     await delay(500)
     const jobId = `job-${Date.now()}`
@@ -399,7 +410,8 @@ export const mockAPI = {
       currentVersion: {
         versionId: `v1-${Date.now()}`,
         jobId,
-        rubric: data.rubric,
+        rubric: Array.isArray(data.rubric) ? data.rubric : data.rubric.categories.map(category => ({ id: category.id, name: category.name, description: category.description || '', weight: category.weight })),
+        rubricEnvelope: Array.isArray(data.rubric) ? undefined : data.rubric,
         mustHaves: data.mustHaves,
         desiredCriteria: data.desiredCriteria || [],
         runsPerApplication: data.runsPerApplication,
@@ -410,6 +422,8 @@ export const mockAPI = {
         rubricApprovalStatus: rubricSource === 'manual' ? 'approved' : 'draft',
         rubricSource,
         rawExtractionResponse: data.rawExtractionResponse,
+        extractionId: data.extractionId,
+        extractionInstructionVersionId: data.extractionInstructionVersionId,
         createdAt: new Date().toISOString(),
       },
       stats: {
@@ -437,7 +451,7 @@ export const mockAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: RubricCategory[]
+    rubric: RubricCategory[] | RubricEnvelope
     mustHaves: MustHave[]
     desiredCriteria?: DesiredCriteria[]
     jobDescription?: string
@@ -450,6 +464,9 @@ export const mockAPI = {
     jobCode?: string
     rubricSource?: RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
+    expectedConfigVersionId?: string
   }): Promise<Job> {
     await delay(500)
     const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
@@ -473,7 +490,8 @@ export const mockAPI = {
       currentVersion: {
         versionId: `v${Date.now()}`,
         jobId,
-        rubric: data.rubric,
+        rubric: Array.isArray(data.rubric) ? data.rubric : data.rubric.categories.map(category => ({ id: category.id, name: category.name, description: category.description || '', weight: category.weight })),
+        rubricEnvelope: Array.isArray(data.rubric) ? undefined : data.rubric,
         mustHaves: data.mustHaves,
         desiredCriteria: data.desiredCriteria || [],
         runsPerApplication: data.runsPerApplication,
@@ -484,6 +502,8 @@ export const mockAPI = {
         rubricApprovalStatus: 'draft',
         rubricSource: data.rubricSource || 'manual',
         rawExtractionResponse: data.rawExtractionResponse,
+        extractionId: data.extractionId,
+        extractionInstructionVersionId: data.extractionInstructionVersionId,
         createdAt: new Date().toISOString(),
       },
     }
@@ -524,6 +544,76 @@ export const mockAPI = {
       rubricApprovalStatus: status,
       updatedAt: new Date().toISOString(),
     }
+  },
+
+  async previewLegacyRubricConversion(jobId: string, _expectedConfigVersionId: string): Promise<RubricEnvelope> {
+    const job = await this.getJob(jobId)
+    return job?.currentVersion.rubricEnvelope || await this.extractRubric('legacy.md', '', 'text/markdown')
+  },
+
+  async confirmLegacyRubricConversion(_jobId: string, _expectedConfigVersionId: string, reviewedRubric: RubricEnvelope): Promise<RubricEnvelope> {
+    return reviewedRubric
+  },
+
+  async listExtractionInstructions(): Promise<ExtractionInstructionVersion[]> {
+    return [{
+      id: 'instruction-v1',
+      versionNumber: 1,
+      instructionText: 'Extract every independently assessable requirement as its own item.',
+      protectedContractVersion: 'extraction-rubric-v1',
+      status: 'active',
+      validationStatus: 'valid',
+      validationFindings: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'system:seed',
+      validatedAt: new Date().toISOString(),
+      validatedBy: 'system:seed',
+      activatedAt: new Date().toISOString(),
+      activatedBy: 'system:seed',
+      concurrencyVersion: 1,
+    }]
+  },
+
+  async getExtractionInstruction(versionId: string): Promise<ExtractionInstructionVersionDetail> {
+    const version = (await this.listExtractionInstructions()).find(item => item.id === versionId) || (await this.listExtractionInstructions())[0]
+    return { ...version, protectedContract: { version: 'extraction-rubric-v1' } }
+  },
+
+  async createExtractionInstructionDraft(instructionText: string, changeNote?: string): Promise<ExtractionInstructionVersion> {
+    return {
+      id: `instruction-${Date.now()}`,
+      versionNumber: 2,
+      instructionText,
+      protectedContractVersion: 'extraction-rubric-v1',
+      status: 'draft',
+      validationStatus: 'unvalidated',
+      changeNote,
+      validationFindings: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'current.user@company.com',
+      concurrencyVersion: 1,
+    }
+  },
+
+  async validateExtractionInstruction(versionId: string): Promise<ExtractionResult | ExtractionFailure> {
+    return {
+      extractionId: `extract-${versionId}`,
+      instructionVersionId: versionId,
+      protectedContractVersion: 'extraction-rubric-v1',
+      validationStatus: 'valid',
+      validationFindings: [],
+      title: 'Senior Software Engineer',
+      department: 'Engineering',
+      organization: 'TechCorp Solutions',
+      jobDescription: 'We are seeking a Senior Software Engineer.',
+      rubric: await this.extractRubric('sample.md', '', 'text/markdown'),
+    }
+  },
+
+  async activateExtractionInstruction(versionId: string, expectedConcurrencyVersion: number): Promise<ExtractionInstructionVersion> {
+    const detail = await this.getExtractionInstruction(versionId)
+    const { protectedContract: _protectedContract, ...version } = detail
+    return { ...version, status: 'active', concurrencyVersion: expectedConcurrencyVersion + 1, activatedAt: new Date().toISOString(), activatedBy: 'current.user@company.com' }
   },
 
   async getApplications(jobId: string, filters?: {
@@ -681,7 +771,11 @@ export const mockAPI = {
     await delay(500)
   },
 
-  async uploadApplications(jobId: string, files: File[]): Promise<{ applicationIds: string[] }> {
+  async uploadApplications(
+    jobId: string,
+    files: File[],
+    _allowDuplicates = false,
+  ): Promise<{ applicationIds: string[]; warnings?: string[] }> {
     await delay(2000)
     return {
       applicationIds: files.map((_, i) => `app-${jobId}-new-${i + 1}`),

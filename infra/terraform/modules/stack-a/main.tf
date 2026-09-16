@@ -13,18 +13,18 @@ module "app_service" {
   service_plan_id     = var.app_service_plan_id
   identity_id         = var.identity_id
 
-  node_version      = "20-lts"
-  always_on         = var.environment != "dev"
-  app_command_line  = "node server/index.js"
+  node_version     = "22-lts"
+  always_on        = var.environment != "dev"
+  app_command_line = "node server/index.js"
 
   virtual_network_subnet_id = var.virtual_network_subnet_id
   allowed_ips               = var.allowed_ips
 
   app_settings = merge(
     {
-      "WEBSITE_NODE_DEFAULT_VERSION"   = "~20"
-      "SCM_DO_BUILD_DURING_DEPLOYMENT" = "true"
-      "ENABLE_ORYX_BUILD"              = "true"
+      "WEBSITE_NODE_DEFAULT_VERSION"   = "~22"
+      "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
+      "ENABLE_ORYX_BUILD"              = "false"
       "STORAGE_PROVIDER"               = "azuresql"
       "AZURE_SQL_AUTH_MODE"            = "entra"
       "AZURE_SQL_SERVER_FQDN"          = var.sql_server_fqdn

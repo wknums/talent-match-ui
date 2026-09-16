@@ -371,8 +371,10 @@ import_existing_resource_group() {
   local root_dir="${1:?Usage: import_existing_resource_group <root_dir>}"
   local resource_group="${RESOURCE_GROUP:?RESOURCE_GROUP is required}"
   local subscription="${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
+  local group_exists
 
-  [[ "$(az group exists --name "$resource_group" --output tsv)" == "true" ]] || return
+  group_exists="$(az group exists --name "$resource_group" --output tsv | tr -d '\r')"
+  [[ "$group_exists" == "true" ]] || return 0
 
   pushd "$root_dir" > /dev/null
   terraform init -input=false

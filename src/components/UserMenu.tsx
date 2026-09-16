@@ -17,6 +17,7 @@ interface UserMenuProps {
   onChangePassword?: () => void
   onRequestPasswordReset?: () => void
   onManageUsers?: () => void
+  onManageExtractionInstructions?: () => void
   onManageEntraAccess?: () => void
   onManageOrganization?: () => void
   onLogout: () => void
@@ -28,6 +29,7 @@ export function UserMenu({
   onChangePassword,
   onRequestPasswordReset,
   onManageUsers,
+  onManageExtractionInstructions,
   onManageEntraAccess,
   onManageOrganization,
   onLogout,
@@ -77,6 +79,12 @@ export function UserMenu({
               <Users size={16} className="mr-2" />
               Manage Users
             </DropdownMenuItem>
+            {onManageExtractionInstructions && (
+              <DropdownMenuItem onClick={onManageExtractionInstructions}>
+                <ShieldCheck size={16} className="mr-2" />
+                Extraction Instructions
+              </DropdownMenuItem>
+            )}
           </>
         )}
         {authMode === 'entra'

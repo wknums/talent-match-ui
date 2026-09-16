@@ -34,22 +34,26 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
     private readonly ICurrentUserService? _currentUser;
     private readonly IOrganizationRepository? _organizationRepository;
 
-    private static readonly string? SeqEndpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
-    private static readonly string? PlatformEndpoint = Environment.GetEnvironmentVariable("AWR_PLATFORM_API_ENDPOINT");
     private static readonly int MaxParallel = int.TryParse(Environment.GetEnvironmentVariable("AWR_MAX_PARALLEL"), out var p) && p > 0 ? p : 1;
-    private static readonly int PlatformBatchSize = int.TryParse(Environment.GetEnvironmentVariable("AWR_PLATFORM_BATCH_SIZE"), out var b) && b > 0 ? b : 2;
 
     public static string ResolveScoringMode()
     {
-        if (string.IsNullOrEmpty(PlatformEndpoint) || PlatformEndpoint == SeqEndpoint)
+        var seqEndpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
+        var platformEndpoint = Environment.GetEnvironmentVariable("AWR_PLATFORM_API_ENDPOINT");
+        if (string.IsNullOrEmpty(platformEndpoint) || platformEndpoint == seqEndpoint)
             return "sequential";
         return "platform";
     }
 
+    private static int ResolvePlatformBatchSize()
+        => int.TryParse(Environment.GetEnvironmentVariable("AWR_PLATFORM_BATCH_SIZE"), out var size) && size > 0
+            ? size
+            : 2;
+
     static ProcessJobCommandHandler()
     {
         var mode = ResolveScoringMode();
-        Console.WriteLine($"[Pipeline] Scoring mode resolved: {mode} (SEQ={SeqEndpoint ?? "(unset)"}, PLATFORM={PlatformEndpoint ?? "(unset)"})");
+        Console.WriteLine($"[Pipeline] Scoring mode resolved: {mode}");
     }
 
     public ProcessJobCommandHandler(
@@ -96,19 +100,32 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         if (ResolveScoringMode() == "platform")
         {
             var existingBatches = await _batchRepo.ListByJobAsync(request.JobId, ct);
-            var activeBatchCount = existingBatches.Count(b => b.Status is "pending" or "submitted");
-            if (activeBatchCount > 0)
+            var activeBatches = existingBatches
+                .Where(batch => batch.Status is "pending" or "submitting" or "submitted" or "cancelling")
+                .ToList();
+            var activeApplicationIds = activeBatches
+                .SelectMany(batch =>
+                    JsonSerializer.Deserialize<string[]>(batch.ApplicationIdsJson)
+                    ?? throw new InvalidDataException($"Scoring batch {batch.Id} has no application IDs."))
+                .ToHashSet(StringComparer.Ordinal);
+            var toEnqueueIds = toProcessIds
+                .Where(applicationId => !activeApplicationIds.Contains(applicationId))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (toEnqueueIds.Count == 0)
             {
-                var message = $"Job {request.JobId} already has {activeBatchCount} in-flight platform batch(es).";
-                _logger.LogWarning(message);
-                return new ProcessJobResult(0, toProcessIds.Count, new List<string> { message });
+                _logger.LogInformation(
+                    "Job {JobId}: all {Apps} processable application(s) are already assigned to active platform batches.",
+                    request.JobId,
+                    toProcessIds.Count);
+                return new ProcessJobResult(0, toProcessIds.Count, new List<string>());
             }
 
             using var pScope = _scopeFactory.CreateScope();
             var batchRepo = pScope.ServiceProvider.GetRequiredService<IScoringBatchRepository>();
             var appRepoP = pScope.ServiceProvider.GetRequiredService<IApplicationRepository>();
             var batches = 0;
-            foreach (var chunk in toProcessIds.Chunk(PlatformBatchSize))
+            foreach (var chunk in toEnqueueIds.Chunk(ResolvePlatformBatchSize()))
             {
                 var batch = new ScoringBatch
                 {
@@ -122,18 +139,19 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
                 batches++;
                 foreach (var aId in chunk)
                 {
-                    try
-                    {
-                        var a = await appRepoP.GetByIdAsync(aId, ct);
-                        if (a != null) { a.Status = "Scoring"; await appRepoP.UpdateAsync(a, ct); }
-                    }
-                    catch { /* best effort */ }
+                    var application = await appRepoP.GetByIdAsync(aId, ct)
+                        ?? throw new InvalidOperationException($"Application {aId} not found after platform batch creation.");
+                    application.Status = "Scoring";
+                    await appRepoP.UpdateAsync(application, ct);
                 }
             }
-            await batchRepo.InitProgressAsync(request.JobId, toProcessIds.Count, batches, ct);
+            if (activeBatches.Count == 0)
+                await batchRepo.InitProgressAsync(request.JobId, toEnqueueIds.Count, batches, ct);
+            else
+                await batchRepo.AddProgressAsync(request.JobId, toEnqueueIds.Count, batches, ct);
             _logger.LogInformation("Job {JobId}: enqueued {Batches} platform batch(es) for {Apps} application(s).",
-                request.JobId, batches, toProcessIds.Count);
-            return new ProcessJobResult(toProcessIds.Count, toProcessIds.Count, new List<string>());
+                request.JobId, batches, toEnqueueIds.Count);
+            return new ProcessJobResult(toEnqueueIds.Count, toProcessIds.Count, new List<string>());
         }
 
         int processed = 0;

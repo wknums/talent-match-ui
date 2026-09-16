@@ -254,11 +254,7 @@
             {
                 if (!string.IsNullOrEmpty(config.RubricJson))
                 {
-                    try
-                    {
-                        rubricCategories = JsonSerializer.Deserialize<List<RubricCategory>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
-                    }
-                    catch { }
+                    rubricCategories = ReadRubricCategories(config.RubricJson);
                 }
 
                 if (!string.IsNullOrEmpty(config.MustHavesJson))
@@ -724,6 +720,38 @@
         finally
         {
             isRetrying = false;
+        }
+    }
+
+    private static List<RubricCategory> ReadRubricCategories(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return new();
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<RubricEnvelopeDto>(rubricJson, options);
+            if (envelope is not null
+                && string.Equals(envelope.SchemaVersion, "rubric-v2", StringComparison.Ordinal))
+            {
+                return envelope.Categories
+                    .OrderBy(category => category.Order)
+                    .Select(category => new RubricCategory(category.Name, category.Weight, category.Description))
+                    .ToList();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<RubricCategory>>(rubricJson, options) ?? new();
+        }
+        catch (JsonException)
+        {
+            return new();
         }
     }
 

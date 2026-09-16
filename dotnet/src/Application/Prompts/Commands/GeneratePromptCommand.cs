@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Rubrics.Models;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -67,7 +68,7 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
         if (config == null)
             throw new InvalidOperationException("Job must have a rubric to generate a prompt");
 
-        var rubricCategories = JsonSerializer.Deserialize<List<RubricCategoryDto>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+        var rubricCategories = ReadRubricCategories(config.RubricJson);
 
         if (rubricCategories.Count == 0)
             throw new InvalidOperationException("Job must have an approved rubric to generate a prompt");
@@ -288,15 +289,52 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
 
         try
         {
-            var categories = JsonSerializer.Deserialize<List<RubricCategoryDto>>(
-                rubricJson,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
-            return categories.Count > 0;
+            return ReadRubricCategories(rubricJson).Count > 0;
         }
         catch
         {
             return false;
         }
+    }
+
+    private static List<RubricCategoryDto> ReadRubricCategories(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return [];
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rubricJson);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && TryGetPropertyIgnoreCase(doc.RootElement, "categories", out var categoriesElement)
+                && (!TryGetPropertyIgnoreCase(doc.RootElement, "schemaVersion", out var schemaVersion)
+                    || string.Equals(schemaVersion.GetString(), RubricSchemaVersions.RubricV2, StringComparison.OrdinalIgnoreCase)))
+            {
+                return JsonSerializer.Deserialize<List<RubricCategoryDto>>(categoriesElement.GetRawText(), options) ?? [];
+            }
+        }
+        catch
+        {
+        }
+
+        return JsonSerializer.Deserialize<List<RubricCategoryDto>>(rubricJson, options) ?? [];
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
     }
 
     // DTOs for deserializing JSON stored in JobConfigVersion

@@ -28,10 +28,14 @@ function actorFromRequest(req: AuthenticatedRequest, res: Response): Organizatio
 }
 
 function sendError(req: AuthenticatedRequest, res: Response, error: unknown): void {
+  const correlationId = ensureCorrelationId(req, res)
+  if (!(error instanceof OrganizationAdminError)) {
+    console.error('[organizations] Unexpected request failure.', { correlationId, error })
+  }
   sendAuthorizationError(req, res, mapAuthorizationError(error, {
-    code: 'version_conflict',
-    statusCode: 409,
-    message: 'The organization operation could not be completed.',
+    code: 'internal_error',
+    statusCode: 500,
+    message: 'The organization operation could not be completed. Try again.',
   }))
 }
 

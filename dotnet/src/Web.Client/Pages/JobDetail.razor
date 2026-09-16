@@ -1,5 +1,6 @@
 @page "/jobs/{JobId}"
 @using TalentMatch.Web.Client.Services
+@using System.Text.Json
 @implements IDisposable
 @inject ApiClient Api
 @inject NavigationManager Navigation
@@ -12,15 +13,24 @@
         <h4>@job.Title</h4>
         <p>@job.Organisation — @job.Department | Status: @job.Status</p>
         <div class="action-row">
-            <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">Upload Applications</button>
-            <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">Manage Prompts</button>
-            <button @onclick="ProcessJob" disabled="@(isProcessRequestInFlight || !hasProductionApprovedPrompt)" style="padding: 0.5rem 1rem;" title="@(!hasProductionApprovedPrompt ? "Requires a production-approved prompt (FR-032)" : "")">
-                @(isProcessRequestInFlight ? "Starting..." : (isProcessing ? "Processing..." : "Process Applications"))
+            <button @onclick="() => showUpload = true"
+                    disabled="@(!CanUploadApplications)"
+                    title="@UploadApplicationsTitle"
+                    style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
+                Upload Applications
+            </button>
+            <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">
+                @(showPrompts ? "Close Prompt Manager" : "Manage Prompts")
             </button>
             <button @onclick="ReAggregate" disabled="@isReAggregating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;" title="Recompute decisions from existing scoring runs (no API calls)">
                 @(isReAggregating ? "Re-aggregating..." : "🔄 Re-aggregate")
             </button>
-            <button @onclick="() => showEditDialog = true" aria-label="Edit job configuration" style="padding: 0.5rem 1rem; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer;">✏️ Edit Job</button>
+            <button @onclick="ToggleEditDialog" disabled="@isLoadingEditConfig" aria-label="Edit job configuration" style="padding: 0.5rem 1rem; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                @(isLoadingEditConfig ? "Loading..." : showEditDialog ? "Close Edit Job" : "Edit Job")
+            </button>
+            <button @onclick="() => showHelp = !showHelp" aria-expanded="@showHelp" style="padding: 0.5rem 1rem;">
+                @(showHelp ? "Close Help" : "Help")
+            </button>
             @if (isAdmin)
             {
                 <button @onclick="OpenDeleteDialog" style="padding: 0.5rem 1rem; background: #dc2626; color: white; border: none; border-radius: 4px;">Delete Job</button>
@@ -32,12 +42,11 @@
         </div>
     </div>
 
-    <div style="margin-bottom: 1.5rem;">
+    <section class="pipeline-section">
         <h5>Pipeline Status</h5>
         <PipelineVisualizer Applications="allApps" />
-    </div>
 
-    @if (processingErrors.Any())
+    @if (processingErrors.Any() && HasFailedApps)
     {
         <div style="background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 1rem; color: #991b1b;">
             <strong>Processing Errors (@processingErrors.Count):</strong>
@@ -56,6 +65,9 @@
         </div>
     }
 
+    <details class="job-collapsible pipeline-results">
+        <summary>Longlist, Shortlist and Excluded Applications (@allApps.Count)</summary>
+        <div class="job-collapsible-content">
     <div class="tab-row">
         <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F0") (@longlist.Count)</button>
         <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F0") (@shortlist.Count)</button>
@@ -116,6 +128,55 @@
         </tbody>
     </table>
     </div>
+        </div>
+    </details>
+    </section>
+
+    @if (showHelp)
+    {
+        <section class="job-help" aria-label="Job detail help">
+            <h5>How to use this job page</h5>
+            <ol>
+                <li><strong>Review and approve the rubric:</strong> open <em>Edit Job</em>, review every extracted requirement, organize items into the correct categories, set scoring thresholds, select rubric approval, and save.</li>
+                <li><strong>Complete prompt management:</strong> open <em>Manage Prompts</em>, generate or edit the scoring prompt, test it, and move it through approval until a production-approved prompt is available.</li>
+                <li><strong>Upload applications:</strong> this becomes available only after both the rubric and scoring prompt are approved. Uploaded applications start processing automatically.</li>
+                <li><strong>Monitor the pipeline:</strong> use Pipeline Status to track processing. Expand Longlist and Shortlist to review candidates against the configured thresholds.</li>
+                <li><strong>Investigate results:</strong> open an applicant to review scores and evidence. Use manual review where a result is excluded or requires human judgement.</li>
+            </ol>
+            <p>Extraction diagnostics and current rubric items are collapsed by default; expand them when you need provenance, validation findings, or the complete rubric.</p>
+        </section>
+    }
+
+    @if (rubricEnvelope is not null)
+    {
+        <details class="job-collapsible">
+            <summary>Current rubric items (@rubricEnvelope.Items.Count)</summary>
+            <div class="job-collapsible-content">
+                <RubricEditor Value="rubricEnvelope" />
+            </div>
+        </details>
+    }
+
+    @if (jobConfig?.Extraction is not null)
+    {
+        <details class="job-collapsible">
+            <summary>Extraction diagnostics</summary>
+            <div class="job-collapsible-content">
+                <div>Instruction version: @jobConfig.Extraction.InstructionVersionId</div>
+                <div>Completed: @jobConfig.Extraction.CompletedAt.ToString("u")</div>
+                <div>Source: @jobConfig.Extraction.SourceFileName (@jobConfig.Extraction.SourceMimeType)</div>
+                @if (jobConfig.Extraction.ValidationFindings.Count > 0)
+                {
+                    <ul>
+                        @foreach (var finding in jobConfig.Extraction.ValidationFindings)
+                        {
+                            <li>@finding.Code — @finding.Message</li>
+                        }
+                    </ul>
+                }
+            </div>
+        </details>
+    }
 }
 else
 {
@@ -124,20 +185,21 @@ else
 
 @if (showUpload)
 {
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="() => showUpload = false">
-        <div @onclick:stopPropagation>
-            <UploadApplications JobId="@JobId" OnUploaded="OnUploadCompleted" />
-        </div>
-    </div>
+    <FloatingPanel Title="Upload Applications" InitialWidth="760" InitialHeight="620" OnClose="() => showUpload = false">
+        <UploadApplications JobId="@JobId" OnUploaded="OnUploadCompleted" />
+    </FloatingPanel>
 }
 
 @if (showPrompts)
 {
-    <div style="margin-bottom: 1.5rem; padding: 1rem; border: 1px solid #ddd; border-radius: 8px; background: #fafafa;">
-        <PromptManagement JobId="@JobId" HasApprovedRubric="hasApprovedRubric" OnPromptStatusChange="OnPromptStatusChanged" />
+    <FloatingPanel Title="Prompt Management" InitialWidth="1000" InitialHeight="760" OnClose="() => showPrompts = false">
+        <PromptManagement JobId="@JobId"
+                          HasApprovedRubric="hasApprovedRubric"
+                          ProductionPromptId="@productionPromptId"
+                          OnPromptStatusChange="OnPromptStatusChanged" />
         <hr style="margin: 1rem 0;" />
         <PromptTestRunner JobId="@JobId" ActivePrompt="activePrompt" OnPromptStatusChange="OnPromptStatusChanged" />
-    </div>
+    </FloatingPanel>
 }
 
 @if (showDeleteDialog)
@@ -165,6 +227,13 @@ else
     </div>
 }
 
+@if (!string.IsNullOrEmpty(editError))
+{
+    <div style="padding: 0.5rem; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 4px; color: #991b1b; margin-bottom: 1rem;">
+        @editError
+    </div>
+}
+
 @code {
     [Parameter] public string JobId { get; set; } = "";
 
@@ -173,7 +242,7 @@ else
     private string activeTab = "longlist";
     private bool showUpload;
     private bool showPrompts;
-    private bool isProcessing;
+    private bool showHelp;
     private bool isProcessRequestInFlight;
     private List<string> processingErrors = new();
     private string sortField = "none";
@@ -183,16 +252,24 @@ else
     private bool isAdmin;
     private bool showDeleteDialog;
     private bool showEditDialog;
+    private bool isLoadingEditConfig;
     private string? deleteError;
+    private string? editError;
     private string applicantSearch = string.Empty;
     private ScoringPromptDto? activePrompt;
+    private string? productionPromptId;
     private JobConfigDto? jobConfig;
+    private RubricEnvelopeDto? rubricEnvelope;
     private System.Threading.Timer? _jobPollTimer;
     private System.Threading.Timer? _bgRefreshTimer;
     private bool _jobDisposed;
 
     private double EffectiveLonglistThreshold => jobConfig?.LonglistThreshold ?? 70;
     private double EffectiveShortlistThreshold => jobConfig?.ShortlistThreshold ?? 85;
+    private bool CanUploadApplications => hasApprovedRubric && hasProductionApprovedPrompt;
+    private string UploadApplicationsTitle => CanUploadApplications
+        ? "Upload candidate applications"
+        : "Available after the job rubric and scoring prompt are production-approved.";
 
     // Longlist is inclusive by threshold, so shortlist is naturally a subset
     // when shortlist threshold >= longlist threshold.
@@ -237,6 +314,22 @@ else
         ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;"
         : "padding: 0.5rem 1rem;";
 
+    private static RubricEnvelopeDto? TryParseRubricEnvelope(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return null;
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<RubricEnvelopeDto>(rubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return string.Equals(envelope?.SchemaVersion, "rubric-v2", StringComparison.Ordinal) ? envelope : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     protected override async Task OnInitializedAsync()
     {
         var currentUser = await Api.GetCurrentUserAsync();
@@ -250,7 +343,6 @@ else
         // Start fast polling if apps are actively being processed (Scoring/Extracting/Aggregating)
         if (HasActivelyProcessingApps)
         {
-            isProcessing = true;
             StartJobPolling();
         }
 
@@ -262,13 +354,16 @@ else
     {
         var config = await Api.GetJobConfigAsync(JobId);
         jobConfig = config;
+        rubricEnvelope = TryParseRubricEnvelope(config?.RubricJson);
         hasApprovedRubric =
             !string.IsNullOrWhiteSpace(config?.RubricJson) &&
             string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase);
 
         var prompts = await Api.GetPromptsAsync(JobId);
-        hasProductionApprovedPrompt = prompts.Any(p => p.Status == "production-approved");
-        activePrompt = prompts.FirstOrDefault(p => p.Status == "active" || p.Status == "production-approved");
+        var productionPrompt = prompts.FirstOrDefault(p => p.Status == "production-approved");
+        hasProductionApprovedPrompt = productionPrompt is not null;
+        productionPromptId = productionPrompt?.Id;
+        activePrompt = productionPrompt ?? prompts.FirstOrDefault(p => p.Status == "active");
     }
 
     private async Task OnPromptStatusChanged()
@@ -306,8 +401,7 @@ else
     private async Task OnUploadCompleted()
     {
         showUpload = false;
-        allApps = await Api.GetApplicationsAsync(JobId);
-        ApplySort();
+        await ProcessJob();
     }
 
     private async Task ProcessJob()
@@ -315,7 +409,6 @@ else
         if (isProcessRequestInFlight) return;
 
         isProcessRequestInFlight = true;
-        isProcessing = true;
         processingErrors.Clear();
         try
         {
@@ -334,6 +427,7 @@ else
 
         allApps = await Api.GetApplicationsAsync(JobId);
         ApplySort();
+        ReconcileProcessingErrors();
         StartJobPolling();
     }
 
@@ -358,11 +452,19 @@ else
         }
         allApps = await Api.GetApplicationsAsync(JobId);
         ApplySort();
+        ReconcileProcessingErrors();
         isReAggregating = false;
     }
 
     private bool HasPendingApps => allApps.Any(a => a.Status is "Queued" or "Extracting" or "Scoring" or "Aggregating");
     private bool HasActivelyProcessingApps => allApps.Any(a => a.Status is "Extracting" or "Scoring" or "Aggregating");
+    private bool HasFailedApps => allApps.Any(a => a.Status is "Failed" or "ScoringFailed" or "ExtractionFailed");
+
+    private void ReconcileProcessingErrors()
+    {
+        if (!HasFailedApps)
+            processingErrors.Clear();
+    }
 
     private void StartJobPolling()
     {
@@ -377,10 +479,10 @@ else
                 {
                     allApps = updated;
                     ApplySort();
+                    ReconcileProcessingErrors();
                     StateHasChanged();
                     if (!HasPendingApps)
                     {
-                        isProcessing = false;
                         StopJobPolling();
                     }
                 });
@@ -407,10 +509,10 @@ else
                 {
                     allApps = updated;
                     ApplySort();
+                    ReconcileProcessingErrors();
                     // If fast poll isn't running but there are now pending apps, start it
                     if (HasPendingApps && _jobPollTimer == null)
                     {
-                        isProcessing = true;
                         StartJobPolling();
                     }
                     StateHasChanged();
@@ -424,6 +526,58 @@ else
     {
         showDeleteDialog = true;
         deleteError = null;
+    }
+
+    private async Task OpenEditDialog()
+    {
+        if (isLoadingEditConfig)
+            return;
+
+        isLoadingEditConfig = true;
+        editError = null;
+        try
+        {
+            var latestJob = await Api.GetJobAsync(JobId);
+            var latestConfig = await Api.GetJobConfigAsync(JobId);
+            if (latestJob is null || latestConfig is null)
+            {
+                editError = "The latest job configuration could not be loaded. Please refresh and try again.";
+                return;
+            }
+
+            job = latestJob;
+            jobConfig = latestConfig;
+            rubricEnvelope = TryParseRubricEnvelope(latestConfig.RubricJson);
+            showEditDialog = true;
+        }
+
+        catch (ApiException ex)
+        {
+            editError = $"Failed to load the latest configuration: {ex.Message}";
+        }
+        catch (HttpRequestException ex)
+        {
+            editError = $"Failed to load the latest configuration: {ex.Message}";
+        }
+        catch (JsonException)
+        {
+            editError = "The latest configuration response was invalid. Please refresh and try again.";
+        }
+        finally
+        {
+            isLoadingEditConfig = false;
+        }
+    }
+
+    private async Task ToggleEditDialog()
+    {
+        if (showEditDialog)
+        {
+            showEditDialog = false;
+            return;
+        }
+
+        await OpenEditDialog();
     }
 
     private async Task ConfirmDelete()
@@ -463,3 +617,52 @@ else
         _bgRefreshTimer = null;
     }
 }
+
+<style>
+    .job-help {
+        margin-bottom: 1.25rem;
+        padding: 1rem 1.25rem;
+        border: 1px solid #93c5fd;
+        border-radius: 0.5rem;
+        background: #eff6ff;
+    }
+
+    .job-help h5 {
+        margin-top: 0;
+    }
+
+    .job-help li + li {
+        margin-top: 0.45rem;
+    }
+
+    .job-collapsible {
+        margin-bottom: 1rem;
+        border: 1px solid #cbd5e1;
+        border-radius: 0.5rem;
+        background: white;
+    }
+
+    .job-collapsible summary {
+        padding: 0.75rem 1rem;
+        font-weight: 600;
+        cursor: pointer;
+        background: #f8fafc;
+    }
+
+    .job-collapsible-content {
+        padding: 1rem;
+    }
+
+    .pipeline-section {
+        margin-bottom: 1.5rem;
+        padding: 1rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 0.65rem;
+        background: #f8fafc;
+    }
+
+    .pipeline-results {
+        margin-top: 1rem;
+        margin-bottom: 0;
+    }
+</style>

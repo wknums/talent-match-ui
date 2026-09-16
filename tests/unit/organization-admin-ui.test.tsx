@@ -10,6 +10,7 @@ vi.mock('@/lib/api', async importOriginal => {
   return {
     ...actual,
     organizationAdminApi: {
+      listOrganizations: vi.fn(),
       createOrganization: vi.fn(),
       createDepartment: vi.fn(),
       updateDepartment: vi.fn(),
@@ -23,6 +24,12 @@ vi.mock('@/lib/api', async importOriginal => {
 const organizationId = '40000000-0000-4000-8000-000000000001'
 const departmentId = '50000000-0000-4000-8000-000000000001'
 const objectId = '60000000-0000-4000-8000-000000000001'
+const organization = {
+  id: organizationId,
+  name: 'Contoso',
+  status: 'active' as const,
+  departments: [{ id: departmentId, organizationId, name: 'Engineering', status: 'active' as const }],
+}
 
 function activateTab(name: RegExp) {
   fireEvent.focus(screen.getByRole('tab', { name }))
@@ -33,6 +40,7 @@ describe('Organization Admin dialog', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(organizationAdminApi.listOrganizations).mockResolvedValue([organization])
     vi.mocked(organizationAdminApi.registerMembership).mockResolvedValue({
       userObjectId: objectId,
       organizationId,
@@ -42,17 +50,54 @@ describe('Organization Admin dialog', () => {
     vi.mocked(organizationAdminApi.revokeRole).mockResolvedValue()
   })
 
-  it('hides global organization creation from a scoped Organization Admin', () => {
+  it('loads authorized organizations into a named selector', async () => {
+    render(<OrganizationAdmin open onClose={vi.fn()} globalAdmin />)
+
+    expect(await screen.findByRole('option', { name: 'Contoso' })).toBeTruthy()
+    expect((screen.getByLabelText(/^organization$/i) as HTMLSelectElement).value).toBe(organizationId)
+    expect(organizationAdminApi.listOrganizations).toHaveBeenCalledOnce()
+  })
+
+  it('creates an organization by name and selects it', async () => {
+    const newOrganization = {
+      id: '40000000-0000-4000-8000-000000000002',
+      name: 'Fabrikam',
+      status: 'active' as const,
+      departments: [{
+        id: '50000000-0000-4000-8000-000000000002',
+        organizationId: '40000000-0000-4000-8000-000000000002',
+        name: 'People',
+        status: 'active' as const,
+      }],
+    }
+    vi.mocked(organizationAdminApi.createOrganization).mockResolvedValue(newOrganization)
+    render(<OrganizationAdmin open onClose={vi.fn()} globalAdmin />)
+    await screen.findByRole('option', { name: 'Contoso' })
+
+    fireEvent.change(screen.getByLabelText(/organization name/i), { target: { value: 'Fabrikam' } })
+    fireEvent.change(screen.getByLabelText(/initial department/i), { target: { value: 'People' } })
+    fireEvent.click(screen.getByRole('button', { name: /create organization/i }))
+
+    await waitFor(() => expect(organizationAdminApi.createOrganization).toHaveBeenCalledWith({
+      name: 'Fabrikam',
+      initialDepartmentName: 'People',
+    }))
+    expect(await screen.findByRole('option', { name: 'Fabrikam' })).toBeTruthy()
+    expect((screen.getByLabelText(/^organization$/i) as HTMLSelectElement).value).toBe(newOrganization.id)
+  })
+
+  it('hides global organization creation from a scoped Organization Admin', async () => {
     render(<OrganizationAdmin open onClose={vi.fn()} globalAdmin={false} />)
+    await screen.findByRole('option', { name: 'Contoso' })
 
     expect(screen.queryByRole('button', { name: /create organization/i })).toBeNull()
     activateTab(/delegated roles/i)
     expect(screen.queryByRole('option', { name: /organization admin/i })).toBeNull()
   })
 
-  it('requires an explicit default from the requested memberships', () => {
+  it('requires an explicit default from the requested memberships', async () => {
     render(<OrganizationAdmin open onClose={vi.fn()} globalAdmin />)
-    fireEvent.change(screen.getByLabelText(/organization id/i), { target: { value: organizationId } })
+    await screen.findByRole('option', { name: 'Contoso' })
     activateTab(/memberships/i)
     fireEvent.change(screen.getByLabelText(/user object id/i), { target: { value: objectId } })
     fireEvent.change(screen.getByLabelText(/active department ids/i), { target: { value: departmentId } })
@@ -64,7 +109,7 @@ describe('Organization Admin dialog', () => {
 
   it('applies a membership with its explicit default', async () => {
     render(<OrganizationAdmin open onClose={vi.fn()} globalAdmin />)
-    fireEvent.change(screen.getByLabelText(/organization id/i), { target: { value: organizationId } })
+    await screen.findByRole('option', { name: 'Contoso' })
     activateTab(/memberships/i)
     fireEvent.change(screen.getByLabelText(/user object id/i), { target: { value: objectId } })
     fireEvent.change(screen.getByLabelText(/active department ids/i), { target: { value: departmentId } })
@@ -83,7 +128,7 @@ describe('Organization Admin dialog', () => {
       new TalentMatchApiError('Assignment was not found.', 404, 'not_found', 'correlation-404'),
     )
     render(<OrganizationAdmin open onClose={vi.fn()} globalAdmin />)
-    fireEvent.change(screen.getByLabelText(/organization id/i), { target: { value: organizationId } })
+    await screen.findByRole('option', { name: 'Contoso' })
     activateTab(/delegated roles/i)
     fireEvent.change(screen.getByLabelText(/assignment id/i), { target: { value: '70000000-0000-4000-8000-000000000001' } })
     fireEvent.click(screen.getByRole('button', { name: /revoke targeted role/i }))

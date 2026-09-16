@@ -10,6 +10,38 @@ namespace TalentMatch.Infrastructure.Tests;
 public class ScoringBatchRepositoryTests
 {
     [Fact]
+    public async Task AddProgressAsync_PreservesExistingCountersAndAddsNewWork()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+
+        await using var context = new AppDbContext(options);
+        await context.Database.EnsureCreatedAsync();
+        context.ScoringJobProgress.Add(new ScoringJobProgress
+        {
+            JobId = "job-1",
+            TotalApps = 7,
+            BatchesSubmitted = 1,
+            AppsCompleted = 3,
+        });
+        await context.SaveChangesAsync();
+        var repository = new ScoringBatchRepository(context);
+
+        await repository.AddProgressAsync("job-1", 7, 1);
+
+        context.ChangeTracker.Clear();
+        var progress = await context.ScoringJobProgress.SingleAsync(x => x.JobId == "job-1");
+        progress.TotalApps.Should().Be(14);
+        progress.BatchesPending.Should().Be(1);
+        progress.BatchesSubmitted.Should().Be(1);
+        progress.AppsCompleted.Should().Be(3);
+    }
+
+    [Fact]
     public async Task ScheduleResubmissionAsync_PreservesPriorSubmissionAndIncrementsAttempt()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

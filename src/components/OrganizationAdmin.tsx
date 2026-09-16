@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Buildings, ShieldCheck, Warning } from '@phosphor-icons/react'
 import {
   DraggableDialogBody,
@@ -21,7 +21,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { organizationAdminApi, TalentMatchApiError } from '@/lib/api'
-import type { GrantOrganizationRoleRequest } from '@/types'
+import type { GrantOrganizationRoleRequest, OrganizationAdminOrganization } from '@/types'
 
 interface OrganizationAdminProps {
   open: boolean
@@ -39,8 +39,10 @@ function splitIds(value: string): string[] {
 
 export function OrganizationAdmin({ open, onClose, globalAdmin }: OrganizationAdminProps) {
   const [busy, setBusy] = useState(false)
+  const [loadingOrganizations, setLoadingOrganizations] = useState(false)
   const [message, setMessage] = useState<{ kind: 'error' | 'success'; text: string } | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
+  const [organizations, setOrganizations] = useState<OrganizationAdminOrganization[]>([])
   const [organizationId, setOrganizationId] = useState('')
 
   const [organizationName, setOrganizationName] = useState('')
@@ -58,6 +60,35 @@ export function OrganizationAdmin({ open, onClose, globalAdmin }: OrganizationAd
   const [assignmentId, setAssignmentId] = useState('')
 
   const departmentIds = splitIds(departmentIdsText)
+
+  useEffect(() => {
+    if (!open) return
+
+    let cancelled = false
+    setLoadingOrganizations(true)
+    setMessage(null)
+    organizationAdminApi.listOrganizations()
+      .then(result => {
+        if (cancelled) return
+        setOrganizations(result)
+        setOrganizationId(current => result.some(organization => organization.id === current)
+          ? current
+          : result[0]?.id ?? '')
+      })
+      .catch(error => {
+        if (cancelled) return
+        const detail = error instanceof Error ? error.message : 'Organizations could not be loaded.'
+        const correlation = error instanceof TalentMatchApiError && error.correlationId
+          ? ` Correlation ID: ${error.correlationId}`
+          : ''
+        setMessage({ kind: 'error', text: `${detail}${correlation}` })
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOrganizations(false)
+      })
+
+    return () => { cancelled = true }
+  }, [open])
 
   const showError = (error: unknown, fallback: string) => {
     const detail = error instanceof Error ? error.message : fallback
@@ -85,8 +116,12 @@ export function OrganizationAdmin({ open, onClose, globalAdmin }: OrganizationAd
       name: organizationName,
       initialDepartmentName,
     })
+    setOrganizations(current => [...current.filter(organization => organization.id !== result.id), result]
+      .sort((left, right) => left.name.localeCompare(right.name)))
     setOrganizationId(result.id)
     setDepartmentId(result.departments[0]?.id ?? '')
+    setOrganizationName('')
+    setInitialDepartmentName('')
   }, 'Organization and initial department created.')
 
   const createDepartment = () => void execute(async () => {
@@ -167,13 +202,22 @@ export function OrganizationAdmin({ open, onClose, globalAdmin }: OrganizationAd
           )}
 
           <div className="mb-5 space-y-2">
-            <Label htmlFor="organization-admin-id">Organization ID</Label>
-            <Input
-              id="organization-admin-id"
+            <Label htmlFor="organization-admin-organization">Organization</Label>
+            <select
+              id="organization-admin-organization"
+              className="h-9 w-full rounded-md border bg-background px-3 text-sm"
               value={organizationId}
               onChange={event => setOrganizationId(event.target.value)}
-              placeholder="Organization object ID"
-            />
+              disabled={loadingOrganizations}
+            >
+              <option value="">{loadingOrganizations ? 'Loading organizations...' : 'Select an organization'}</option>
+              {organizations.map(organization => (
+                <option key={organization.id} value={organization.id}>{organization.name}</option>
+              ))}
+            </select>
+            {!loadingOrganizations && organizations.length === 0 && (
+              <p className="text-sm text-muted-foreground">No organizations are available in your scope.</p>
+            )}
           </div>
 
           <Tabs defaultValue="departments">

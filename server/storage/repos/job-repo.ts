@@ -1,10 +1,15 @@
 import { getPool, isAzureSql, sql } from '../db.js'
 import { T } from '../table-names.js'
 import type { Job, JobConfigVersion, JobStats } from '../../../src/types/index.js'
+import { parseRubricEnvelope, projectLegacyRubric } from '../../services/rubric-conversion.js'
 
 function parseJson<T>(val: string | null | undefined, fallback: T): T {
   if (!val) return fallback
   try { return JSON.parse(val) } catch { return fallback }
+}
+
+function serializeRubricPayload(version: Pick<JobConfigVersion, 'rubric' | 'rubricEnvelope'>): string {
+  return JSON.stringify(version.rubricEnvelope ?? version.rubric)
 }
 
 function normalizeRubricCategories(raw: unknown): JobConfigVersion['rubric'] {
@@ -56,7 +61,8 @@ function normalizeDesiredCriteria(raw: unknown): JobConfigVersion['desiredCriter
 }
 
 function rowToConfigVersion(r: any): JobConfigVersion {
-  const rubric = normalizeRubricCategories(parseJson(r.RubricJson, []))
+  const rubricEnvelope = parseRubricEnvelope(r.RubricJson)
+  const rubric = rubricEnvelope ? projectLegacyRubric(rubricEnvelope) : normalizeRubricCategories(parseJson(r.RubricJson, []))
   const mustHaves = normalizeMustHaves(parseJson(r.MustHavesJson, []))
   const desiredCriteria = normalizeDesiredCriteria(parseJson(r.DesiredCriteriaJson, []))
 
@@ -64,6 +70,7 @@ function rowToConfigVersion(r: any): JobConfigVersion {
     versionId: r.Id,
     jobId: r.JobId,
     rubric,
+    rubricEnvelope,
     mustHaves,
     desiredCriteria,
     runsPerApplication: r.RunsPerApplication ?? r.ScoringRunCount ?? 3,
@@ -74,6 +81,8 @@ function rowToConfigVersion(r: any): JobConfigVersion {
     rubricApprovalStatus: r.RubricApprovalStatus,
     rubricSource: r.RubricSource,
     rawExtractionResponse: r.RawExtractionResponse ?? undefined,
+    extractionId: r.ExtractionId ?? undefined,
+    extractionInstructionVersionId: r.ExtractionInstructionVersionId ?? undefined,
     createdAt: r.CreatedAt?.toISOString?.() ?? r.CreatedAt,
   }
 }
@@ -201,7 +210,7 @@ export const jobRepo = {
         .input('id', sql.NVarChar, cv.versionId)
         .input('jobId', sql.NVarChar, job.jobId)
         .input('versionNumber', sql.Int, versionNumber)
-        .input('rubricJson', sql.NVarChar, JSON.stringify(cv.rubric))
+        .input('rubricJson', sql.NVarChar, serializeRubricPayload(cv))
         .input('mustHavesJson', sql.NVarChar, JSON.stringify(cv.mustHaves))
         .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(cv.desiredCriteria))
         .input('runsPerApplication', sql.Int, cv.runsPerApplication)
@@ -212,13 +221,15 @@ export const jobRepo = {
         .input('rubricApprovalStatus', sql.NVarChar, cv.rubricApprovalStatus)
         .input('rubricSource', sql.NVarChar, cv.rubricSource)
         .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
+        .input('extractionId', sql.NVarChar, cv.extractionId ?? null)
+        .input('extractionInstructionVersionId', sql.NVarChar, cv.extractionInstructionVersionId ?? null)
         .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
       if (isAzureSql) {
         await txn.request()
           .input('id', sql.NVarChar, cv.versionId)
           .input('jobId', sql.NVarChar, job.jobId)
           .input('versionNumber', sql.Int, versionNumber)
-          .input('rubricJson', sql.NVarChar, JSON.stringify(cv.rubric))
+          .input('rubricJson', sql.NVarChar, serializeRubricPayload(cv))
           .input('mustHavesJson', sql.NVarChar, JSON.stringify(cv.mustHaves))
           .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(cv.desiredCriteria))
           .input('runsPerApplication', sql.Int, cv.runsPerApplication)
@@ -229,21 +240,23 @@ export const jobRepo = {
           .input('rubricApprovalStatus', sql.NVarChar, cv.rubricApprovalStatus)
           .input('rubricSource', sql.NVarChar, cv.rubricSource)
           .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
+          .input('extractionId', sql.NVarChar, cv.extractionId ?? null)
+          .input('extractionInstructionVersionId', sql.NVarChar, cv.extractionInstructionVersionId ?? null)
           .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
           .query(`INSERT INTO ${T('JobConfigVersions')} (
             Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
             RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
-            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, ExtractionId, ExtractionInstructionVersionId, CreatedAt)
             VALUES (
             @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
             @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
-            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @extractionId, @extractionInstructionVersionId, @createdAt)`)
       } else {
         await txn.request()
           .input('id', sql.NVarChar, cv.versionId)
           .input('jobId', sql.NVarChar, job.jobId)
           .input('versionNumber', sql.Int, versionNumber)
-          .input('rubricJson', sql.NVarChar, JSON.stringify(cv.rubric))
+          .input('rubricJson', sql.NVarChar, serializeRubricPayload(cv))
           .input('mustHavesJson', sql.NVarChar, JSON.stringify(cv.mustHaves))
           .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(cv.desiredCriteria))
           .input('runsPerApplication', sql.Int, cv.runsPerApplication)
@@ -254,15 +267,17 @@ export const jobRepo = {
           .input('rubricApprovalStatus', sql.NVarChar, cv.rubricApprovalStatus)
           .input('rubricSource', sql.NVarChar, cv.rubricSource)
           .input('rawExtractionResponse', sql.NVarChar, cv.rawExtractionResponse ?? null)
+          .input('extractionId', sql.NVarChar, cv.extractionId ?? null)
+          .input('extractionInstructionVersionId', sql.NVarChar, cv.extractionInstructionVersionId ?? null)
           .input('createdAt', sql.DateTime2, new Date(cv.createdAt))
           .query(`INSERT INTO ${T('JobConfigVersions')} (
             Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
             ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
-            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, ExtractionId, ExtractionInstructionVersionId, CreatedAt)
             VALUES (
             @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
             @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
-            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @extractionId, @extractionInstructionVersionId, @createdAt)`)
       }
 
       // Insert job
@@ -304,7 +319,7 @@ export const jobRepo = {
         .input('id', sql.NVarChar, version.versionId)
         .input('jobId', sql.NVarChar, version.jobId)
         .input('versionNumber', sql.Int, versionNumber)
-        .input('rubricJson', sql.NVarChar, JSON.stringify(version.rubric))
+        .input('rubricJson', sql.NVarChar, serializeRubricPayload(version))
         .input('mustHavesJson', sql.NVarChar, JSON.stringify(version.mustHaves))
         .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(version.desiredCriteria))
         .input('runsPerApplication', sql.Int, version.runsPerApplication)
@@ -315,13 +330,15 @@ export const jobRepo = {
         .input('rubricApprovalStatus', sql.NVarChar, version.rubricApprovalStatus)
         .input('rubricSource', sql.NVarChar, version.rubricSource)
         .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
+        .input('extractionId', sql.NVarChar, version.extractionId ?? null)
+        .input('extractionInstructionVersionId', sql.NVarChar, version.extractionInstructionVersionId ?? null)
         .input('createdAt', sql.DateTime2, new Date(version.createdAt))
       if (isAzureSql) {
         await txn.request()
           .input('id', sql.NVarChar, version.versionId)
           .input('jobId', sql.NVarChar, version.jobId)
           .input('versionNumber', sql.Int, versionNumber)
-          .input('rubricJson', sql.NVarChar, JSON.stringify(version.rubric))
+          .input('rubricJson', sql.NVarChar, serializeRubricPayload(version))
           .input('mustHavesJson', sql.NVarChar, JSON.stringify(version.mustHaves))
           .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(version.desiredCriteria))
           .input('runsPerApplication', sql.Int, version.runsPerApplication)
@@ -332,21 +349,23 @@ export const jobRepo = {
           .input('rubricApprovalStatus', sql.NVarChar, version.rubricApprovalStatus)
           .input('rubricSource', sql.NVarChar, version.rubricSource)
           .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
+          .input('extractionId', sql.NVarChar, version.extractionId ?? null)
+          .input('extractionInstructionVersionId', sql.NVarChar, version.extractionInstructionVersionId ?? null)
           .input('createdAt', sql.DateTime2, new Date(version.createdAt))
           .query(`INSERT INTO ${T('JobConfigVersions')} (
             Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
             RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
-            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, ExtractionId, ExtractionInstructionVersionId, CreatedAt)
             VALUES (
             @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
             @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
-            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @extractionId, @extractionInstructionVersionId, @createdAt)`)
       } else {
         await txn.request()
           .input('id', sql.NVarChar, version.versionId)
           .input('jobId', sql.NVarChar, version.jobId)
           .input('versionNumber', sql.Int, versionNumber)
-          .input('rubricJson', sql.NVarChar, JSON.stringify(version.rubric))
+          .input('rubricJson', sql.NVarChar, serializeRubricPayload(version))
           .input('mustHavesJson', sql.NVarChar, JSON.stringify(version.mustHaves))
           .input('desiredCriteriaJson', sql.NVarChar, JSON.stringify(version.desiredCriteria))
           .input('runsPerApplication', sql.Int, version.runsPerApplication)
@@ -357,15 +376,17 @@ export const jobRepo = {
           .input('rubricApprovalStatus', sql.NVarChar, version.rubricApprovalStatus)
           .input('rubricSource', sql.NVarChar, version.rubricSource)
           .input('rawExtractionResponse', sql.NVarChar, version.rawExtractionResponse ?? null)
+          .input('extractionId', sql.NVarChar, version.extractionId ?? null)
+          .input('extractionInstructionVersionId', sql.NVarChar, version.extractionInstructionVersionId ?? null)
           .input('createdAt', sql.DateTime2, new Date(version.createdAt))
           .query(`INSERT INTO ${T('JobConfigVersions')} (
             Id, JobId, VersionNumber, RubricJson, MustHavesJson, DesiredCriteriaJson,
             ScoringRunCount, RunsPerApplication, AggregationStrategy, LonglistThreshold, ShortlistThreshold,
-            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, CreatedAt)
+            VarianceThreshold, RubricApprovalStatus, RubricSource, RawExtractionResponse, ExtractionId, ExtractionInstructionVersionId, CreatedAt)
             VALUES (
             @id, @jobId, @versionNumber, @rubricJson, @mustHavesJson, @desiredCriteriaJson,
             @runsPerApplication, @runsPerApplication, @aggregationStrategy, @longlistThreshold, @shortlistThreshold,
-            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @createdAt)`)
+            @varianceThreshold, @rubricApprovalStatus, @rubricSource, @rawExtractionResponse, @extractionId, @extractionInstructionVersionId, @createdAt)`)
       }
 
       await txn.request()

@@ -43,12 +43,21 @@ public class JobRepository : IJobRepository
 
     public async Task DeleteAsync(string id, CancellationToken ct = default)
     {
-        var job = await _context.Jobs.FindAsync(new object[] { id }, ct);
-        if (job != null)
+        await _context.ExecuteInTransactionAsync(async token =>
         {
+            await _context.JobSpecExtractions
+                .Where(extraction => extraction.JobId == id)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(extraction => extraction.JobId, (string?)null)
+                    .SetProperty(extraction => extraction.JobConfigVersionId, (string?)null), token);
+
+            var job = await _context.Jobs.FindAsync([id], token);
+            if (job is null)
+                return;
+
             _context.Jobs.Remove(job);
-            await _context.SaveChangesAsync(ct);
-        }
+            await _context.SaveChangesAsync(token);
+        }, ct);
     }
 
     public async Task AddConfigVersionAsync(JobConfigVersion version, CancellationToken ct = default)

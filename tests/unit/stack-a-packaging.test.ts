@@ -7,6 +7,10 @@ const packageScript = readFileSync(
   resolve('infra/scripts/package-stack-a.sh'),
   'utf8',
 )
+const commonScript = readFileSync(
+  resolve('infra/scripts/lib/common.sh'),
+  'utf8',
+)
 
 describe('Stack A packaging', () => {
   it('maps runtime Entra settings into Vite build settings', () => {
@@ -22,6 +26,9 @@ describe('Stack A packaging', () => {
     expect(packageScript).toMatch(
       /VITE_ENTRA_API_APP_CLIENT_ID="\$\{VITE_ENTRA_API_APP_CLIENT_ID:-\$\{ENTRA_API_APP_CLIENT_ID:-\}\}"/,
     )
+    expect(packageScript).toMatch(
+      /VITE_ENTRA_API_IDENTIFIER_URI="\$\{VITE_ENTRA_API_IDENTIFIER_URI:-\$\{ENTRA_API_IDENTIFIER_URI:-\}\}"/,
+    )
   })
 
   it('fails an Entra build when required public configuration is missing', () => {
@@ -29,6 +36,7 @@ describe('Stack A packaging', () => {
       'VITE_ENTRA_TENANT_ID',
       'VITE_ENTRA_STACK_A_CLIENT_ID',
       'VITE_ENTRA_API_APP_CLIENT_ID',
+      'VITE_ENTRA_API_IDENTIFIER_URI',
       'VITE_ENTRA_API_SCOPE',
     ]) {
       expect(packageScript).toContain(`\t\t"${name}"`)
@@ -46,8 +54,20 @@ describe('Stack A packaging', () => {
     expect(packageScript).toMatch(/clean\)[\s\S]*?npm ci/)
   })
 
+  it('supports Windows Node from a WSL packaging shell', () => {
+    expect(packageScript).toMatch(/command -v node[\s\S]*?command -v node\.exe/)
+    expect(packageScript).toContain('"$NODE_COMMAND" -e')
+  })
+
   it('builds the client with Vite without a no-output TypeScript scan', () => {
     expect(packageScript).toContain('npm run build:client')
     expect(packageScript).not.toContain('npm run build\n')
+  })
+
+  it('normalizes Azure CLI CRLF output before resource-group comparisons', () => {
+    expect(commonScript).toMatch(
+      /az group exists[\s\S]*?\| tr -d '\\r'/,
+    )
+    expect(commonScript).toContain('[[ "$group_exists" == "true" ]] || return 0')
   })
 })

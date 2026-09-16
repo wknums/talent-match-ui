@@ -3,6 +3,7 @@ using System.Text;
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Common.Services;
+using TalentMatch.Application.Rubrics.Models;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -532,13 +533,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         if (string.IsNullOrEmpty(rubricJson) || rubricJson == "[]")
             return;
 
-        List<RubricCategoryInfo>? rubric;
-        try
-        {
-            rubric = JsonSerializer.Deserialize<List<RubricCategoryInfo>>(rubricJson,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        }
-        catch { return; }
+        var rubric = ReadRubricCategories(rubricJson);
 
         if (rubric == null || rubric.Count == 0)
             return;
@@ -570,6 +565,35 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
 
         if (remapped.Count > 0)
             run.CategoryScoresJson = JsonSerializer.Serialize(remapped);
+    }
+
+    private static List<RubricCategoryInfo> ReadRubricCategories(string rubricJson)
+    {
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rubricJson);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("schemaVersion", out var schemaVersion)
+                && string.Equals(schemaVersion.GetString(), RubricSchemaVersions.RubricV2, StringComparison.Ordinal)
+                && doc.RootElement.TryGetProperty("categories", out var categoriesElement))
+            {
+                return JsonSerializer.Deserialize<List<RubricCategoryInfo>>(categoriesElement.GetRawText(), options) ?? [];
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<RubricCategoryInfo>>(rubricJson, options) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private static string? FindBestRubricMatch(string rubricName, List<string> llmKeys)

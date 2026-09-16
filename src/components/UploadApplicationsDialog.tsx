@@ -9,10 +9,14 @@ import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Checkbox } from '@/components/ui/checkbox'
 import { UploadSimple, File, CheckCircle, X } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+
+const ALLOWED_EXTENSIONS = ['.pdf', '.md', '.docx', '.txt', '.jpg', '.png']
+const MAX_FILE_SIZE = 15 * 1024 * 1024
 
 interface UploadApplicationsDialogProps {
   open: boolean
@@ -29,13 +33,11 @@ export function UploadApplicationsDialog({
   onClose,
   onSuccess,
 }: UploadApplicationsDialogProps) {
-  const ALLOWED_EXTENSIONS = ['.pdf', '.md', '.docx', '.txt', '.jpg', '.png']
-  const MAX_FILE_SIZE = 15 * 1024 * 1024
-
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [dragActive, setDragActive] = useState(false)
+  const [allowDuplicates, setAllowDuplicates] = useState(false)
 
   const validateFile = useCallback(
     (file: File): string | null => {
@@ -48,7 +50,7 @@ export function UploadApplicationsDialog({
       }
       return null
     },
-    [ALLOWED_EXTENSIONS]
+    []
   )
 
   const addFiles = useCallback(
@@ -117,12 +119,19 @@ export function UploadApplicationsDialog({
         setUploadProgress((prev) => Math.min(prev + 10, 90))
       }, 200)
 
-      await api.uploadApplications(jobId, files)
+      const result = await api.uploadApplications(jobId, files, allowDuplicates)
 
       clearInterval(progressInterval)
       setUploadProgress(100)
 
-      toast.success(`Successfully uploaded ${files.length} application(s)`)
+      const uploadedCount = result.applicationIds.length
+      const skippedCount = files.length - uploadedCount
+      if (uploadedCount > 0) {
+        toast.success(`Successfully uploaded ${uploadedCount} application(s)`)
+      }
+      if (skippedCount > 0) {
+        toast.warning(`${skippedCount} duplicate application(s) skipped`)
+      }
       setTimeout(() => {
         onSuccess?.()
         onClose()
@@ -140,6 +149,7 @@ export function UploadApplicationsDialog({
     setFiles([])
     setUploadProgress(0)
     setDragActive(false)
+    setAllowDuplicates(false)
   }
 
   const handleClose = () => {
@@ -241,6 +251,24 @@ export function UploadApplicationsDialog({
               </div>
             </div>
           )}
+
+          <label
+            htmlFor="allow-duplicate-applications"
+            className="flex cursor-pointer items-start gap-3 rounded-md border p-3"
+          >
+            <Checkbox
+              id="allow-duplicate-applications"
+              checked={allowDuplicates}
+              onCheckedChange={checked => setAllowDuplicates(checked === true)}
+              disabled={uploading}
+            />
+            <span>
+              <span className="block text-sm font-medium">Allow duplicate documents</span>
+              <span className="block text-xs text-muted-foreground">
+                Upload and score files even when their contents match an application already added to this job.
+              </span>
+            </span>
+          </label>
 
           {uploading && (
             <div className="space-y-2">

@@ -315,6 +315,85 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.ToTable("ExtractionArtifacts");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ExtractionInstructionVersion", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActivatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChangeNote")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstructionText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProtectedContractVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ValidatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationFindingsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active'");
+
+                    b.HasIndex("VersionNumber")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "VersionNumber");
+
+                    b.ToTable("ExtractionInstructionVersions", t =>
+                        {
+                            t.HasCheckConstraint("CK_ExtractionInstructionVersions_Status", "Status IN ('draft', 'active', 'retired')");
+
+                            t.HasCheckConstraint("CK_ExtractionInstructionVersions_ValidationStatus", "ValidationStatus IN ('unvalidated', 'valid', 'invalid')");
+                        });
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.FailureQueueItem", b =>
                 {
                     b.Property<string>("Id")
@@ -428,6 +507,14 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ExtractionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExtractionInstructionVersionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("JobId")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -476,6 +563,95 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("JobId");
 
                     b.ToTable("JobConfigVersions");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.JobSpecExtraction", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstructionVersionId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobConfigVersionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedResponseJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProtectedContractVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RawResponse")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFileName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceMimeType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationFindingsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobConfigVersionId");
+
+                    b.HasIndex("InstructionVersionId", "CreatedAt");
+
+                    b.HasIndex("JobId", "CreatedAt");
+
+                    b.ToTable("JobSpecExtractions", t =>
+                        {
+                            t.HasCheckConstraint("CK_JobSpecExtractions_Purpose", "Purpose IN ('job_creation', 'instruction_validation')");
+
+                            t.HasCheckConstraint("CK_JobSpecExtractions_ValidationStatus", "ValidationStatus IN ('valid', 'invalid')");
+                        });
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ManualReviewData", b =>
@@ -1306,6 +1482,24 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasForeignKey("JobId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.JobSpecExtraction", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.ExtractionInstructionVersion", "InstructionVersion")
+                        .WithMany()
+                        .HasForeignKey("InstructionVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("InstructionVersion");
 
                     b.Navigation("Job");
                 });

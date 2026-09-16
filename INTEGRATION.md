@@ -20,6 +20,66 @@ A production-grade frontend for an Azure-hosted AI-powered job application scori
 - **Variance Analysis**: Identify applications requiring manual review based on score variance
 - **Audit Trail**: Complete traceability of all decisions and processing events
 
+## Dynamic Rubric Editor / Extraction Instruction API
+
+The `001-dynamic-rubric-editor` feature introduces a protected extraction contract plus a versioned `rubric-v2` job-config payload shared by Stack A and Stack B.
+
+### New persisted concepts
+
+- `ExtractionInstructionVersions`: immutable instruction drafts / active versions with validation and activation metadata.
+- `JobSpecExtractions`: persisted extraction records containing the raw response, normalized response, validation findings, instruction version, source metadata, and correlation ID.
+- `rubric-v2`: `{ schemaVersion, legacySourceVersionId, categories[], items[] }` envelope stored in `JobConfigVersions.RubricJson`.
+- React review surfaces show extraction warnings plus `needs_review` items before a recruiter saves a generated rubric.
+
+### Stack A / Stack B equivalent endpoints
+
+| HTTP | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/admin/extraction-instructions` | List extraction instruction versions |
+| GET | `/api/admin/extraction-instructions/:versionId` | Get one version plus protected contract metadata |
+| POST | `/api/admin/extraction-instructions` | Create a draft instruction version |
+| POST | `/api/admin/extraction-instructions/:versionId/validate` | Run a validation extraction against a sample specification |
+| POST | `/api/admin/extraction-instructions/:versionId/activate` | Activate or roll back to a validated version |
+| POST | `/api/jobs/extract-spec` | Produce a validated itemized extraction result plus `rubric-v2` |
+| POST | `/api/jobs/extract-rubric` | Produce only the `rubric-v2` rubric envelope |
+| POST | `/api/jobs/:jobId/rubric/convert` | Preview or confirm conversion of a legacy rubric into `rubric-v2` |
+| PUT | `/api/jobs/:jobId/config` | Save a new config version, including `rubric-v2`, extraction IDs, and stale-write protection |
+
+### Extraction response contract
+
+Successful extraction responses now return:
+
+```json
+{
+  "extractionId": "uuid",
+  "instructionVersionId": "uuid",
+  "protectedContractVersion": "extraction-rubric-v1",
+  "validationStatus": "valid",
+  "validationFindings": [],
+  "title": "string | null",
+  "jobDescription": "string | null",
+  "department": "string | null",
+  "organization": "string | null",
+  "rubric": {
+    "schemaVersion": "rubric-v2",
+    "legacySourceVersionId": null,
+    "categories": [],
+    "items": []
+  }
+}
+```
+
+Invalid contract responses return `422` with the same `extractionId`, `instructionVersionId`, and `validationFindings`, but with `validationStatus: "invalid"`.
+
+Legacy conversion preview is explicit: recruiters can review the proposed `rubric-v2` envelope, but Stack A blocks the generic save action until the preview is either confirmed through `/api/jobs/:jobId/rubric/convert` or dismissed.
+
+### Security / audit rules
+
+- Only admins can create, validate, activate, or roll back extraction instructions.
+- Audit payloads record safe metadata only: IDs, version numbers, states, and finding codes — never full prompt bodies or raw source documents.
+- Stack A extraction-instruction, extraction, config-save, and legacy-conversion failures return typed public errors with `correlationId`; invalid responses use `validation_failed`, concurrent saves use `stale_version`, and historical conversions reject `already_converted`.
+- Error responses carry correlation-aware IDs from the hosting stack while internal logs retain the diagnostic detail.
+
 ## Technology Stack
 
 - **React 19** with TypeScript

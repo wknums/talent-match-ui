@@ -72,6 +72,7 @@ SECURITY.md
 
 # Local build/deploy artifacts
 artifacts/
+.azure/
 
 # One-off local SQL probe scripts (environment-specific)
 infra/scripts/sql/SQL4_prompt_gen.sql

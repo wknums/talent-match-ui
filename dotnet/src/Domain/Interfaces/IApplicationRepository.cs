@@ -6,6 +6,7 @@ public interface IApplicationRepository
 {
     Task<IReadOnlyList<Application>> GetByJobIdAsync(string jobId, CancellationToken cancellationToken = default);
     Task<Application?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
+    Task<ApplicationDocument?> FindDocumentByFingerprintAsync(string jobId, string fingerprint, CancellationToken cancellationToken = default);
     Task AddAsync(Application application, CancellationToken cancellationToken = default);
     Task UpdateAsync(Application application, CancellationToken cancellationToken = default);
     Task AddDocumentAsync(ApplicationDocument document, CancellationToken cancellationToken = default);

@@ -15,6 +15,7 @@ import { deriveCandidateNameFromScoringRuns, matchCategoryToRubric, parseCategor
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { DocumentViewer } from '@/components/DocumentViewer'
+import { RubricEditor } from '@/components/RubricEditor'
 import type { Application, ScoringRun, AggregatedResult, DLQItem, Job } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -379,6 +380,25 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
 
                   {hasOverviewData && (
                     <>
+                      {job?.currentVersion.extraction && (
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-lg">Extraction Diagnostics</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2 text-sm">
+                            <div>Instruction version: {job.currentVersion.extractionInstructionVersionId || job.currentVersion.extraction.instructionVersionId}</div>
+                            <div>Completed: {new Date(job.currentVersion.extraction.completedAt).toLocaleString()}</div>
+                            {job.currentVersion.extraction.validationFindings.length > 0 && (
+                              <ul className="list-disc pl-5 text-muted-foreground">
+                                {job.currentVersion.extraction.validationFindings.map((finding) => (
+                                  <li key={`${finding.code}-${finding.path}`}>{finding.code}: {finding.message}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </CardContent>
+                        </Card>
+                      )}
+
                       <Card>
                         <CardHeader>
                           <CardTitle className="text-lg flex items-center gap-2">
@@ -407,6 +427,11 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                           <CardTitle className="text-lg">Category Scores</CardTitle>
                         </CardHeader>
                         <CardContent>
+                          {job?.currentVersion.rubricEnvelope && (
+                            <div className="mb-4">
+                              <RubricEditor rubric={job.currentVersion.rubricEnvelope} />
+                            </div>
+                          )}
                           <div className="space-y-5">
                             {rubricOverviewEntries.map(({ category, description, weightLabel, score, scoreSource, evidence, tips }) => {
                               return (

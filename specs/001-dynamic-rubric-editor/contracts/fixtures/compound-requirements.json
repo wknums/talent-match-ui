@@ -1,0 +1,58 @@
+{
+  "job_title": "Senior Data Platform Engineer",
+  "job_description": "Northwind Analytics is hiring a Senior Data Platform Engineer to build reliable, compliant, and observable data products for internal and external teams.",
+  "department": "Data Engineering",
+  "organization": "Northwind Analytics",
+  "requirements": [
+    {
+      "id": "req-001",
+      "text": "Design and operate Azure data pipelines",
+      "requirement_type": "responsibility",
+      "category_id": "cat-delivery",
+      "source_text": "Design and operate Azure data pipelines, mentor junior engineers, and document production support procedures.",
+      "source_location": "Responsibilities",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-002",
+      "text": "Mentor junior engineers",
+      "requirement_type": "responsibility",
+      "category_id": "cat-leadership",
+      "source_text": "Design and operate Azure data pipelines, mentor junior engineers, and document production support procedures.",
+      "source_location": "Responsibilities",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-003",
+      "text": "Document production support procedures",
+      "requirement_type": "responsibility",
+      "category_id": "cat-delivery",
+      "source_text": "Design and operate Azure data pipelines, mentor junior engineers, and document production support procedures.",
+      "source_location": "Responsibilities",
+      "duplicate_of": null,
+      "needs_review": false
+    }
+  ],
+  "rubric": {
+    "has_rubric_in_doc": false,
+    "categories": [
+      {
+        "id": "cat-delivery",
+        "name": "Delivery and Quality",
+        "weight": 0.6,
+        "description": "Operational execution and documentation quality.",
+        "source": "generated"
+      },
+      {
+        "id": "cat-leadership",
+        "name": "Leadership and Growth",
+        "weight": 0.4,
+        "description": "Mentorship and people leadership.",
+        "source": "generated"
+      }
+    ],
+    "weights_sum_to_1_0": true
+  }
+}

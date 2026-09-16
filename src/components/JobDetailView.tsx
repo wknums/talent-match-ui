@@ -17,6 +17,7 @@ import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
 import { UploadRubricDialog } from '@/components/UploadRubricDialog'
 import { PromptManagement } from '@/components/PromptManagement'
+import { RubricEditor } from '@/components/RubricEditor'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText, Lightning, Play, SpinnerGap, ArrowClockwise, Trash } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
@@ -318,6 +319,37 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
         <Card className="border-yellow-300 bg-yellow-50">
           <CardContent className="py-3 text-sm text-yellow-900">
             {reaggregateMessage}
+          </CardContent>
+        </Card>
+      )}
+
+      {job.currentVersion.extraction && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Extraction Diagnostics</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div>Instruction version: {job.currentVersion.extractionInstructionVersionId || job.currentVersion.extraction.instructionVersionId}</div>
+            <div>Completed: {new Date(job.currentVersion.extraction.completedAt).toLocaleString()}</div>
+            <div>Source: {job.currentVersion.extraction.sourceFileName}</div>
+            {job.currentVersion.extraction.validationFindings.length > 0 && (
+              <ul className="list-disc pl-5 text-muted-foreground">
+                {job.currentVersion.extraction.validationFindings.map((finding) => (
+                  <li key={`${finding.code}-${finding.path}`}>{finding.code}: {finding.message}</li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {job.currentVersion.rubricEnvelope && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Itemized Rubric</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <RubricEditor rubric={job.currentVersion.rubricEnvelope} />
           </CardContent>
         </Card>
       )}

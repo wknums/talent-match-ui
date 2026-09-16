@@ -1,6 +1,10 @@
 import type {
   Job,
   JobConfigVersion,
+  ExtractionInstructionVersion,
+  ExtractionInstructionVersionDetail,
+  ExtractionResult,
+  RubricEnvelope,
   Application,
   ScoringRun,
   AggregatedResult,
@@ -532,14 +536,14 @@ export const realAPI = {
     await fetchVoid(`${API_BASE}/jobs/${jobId}`, { method: 'DELETE' })
   },
 
-  async extractJobSpec(fileName: string, content: string, mimeType: string): Promise<any> {
+  async extractJobSpec(fileName: string, content: string, mimeType: string): Promise<ExtractionResult> {
     return fetchJSON(`${API_BASE}/jobs/extract-spec`, {
       method: 'POST',
       body: JSON.stringify({ fileName, content, mimeType }),
     })
   },
 
-  async extractRubric(fileName: string, content: string, mimeType: string): Promise<any> {
+  async extractRubric(fileName: string, content: string, mimeType: string): Promise<RubricEnvelope> {
     return fetchJSON(`${API_BASE}/jobs/extract-rubric`, {
       method: 'POST',
       body: JSON.stringify({ fileName, content, mimeType }),
@@ -551,7 +555,7 @@ export const realAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: import('@/types').RubricCategory[]
+    rubric: import('@/types').RubricCategory[] | RubricEnvelope
     mustHaves: import('@/types').MustHave[]
     desiredCriteria?: import('@/types').DesiredCriteria[]
     jobDescription?: string
@@ -564,6 +568,8 @@ export const realAPI = {
     jobCode?: string
     rubricSource?: import('@/types').RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
   }): Promise<Job> {
     return fetchJSON(`${API_BASE}/jobs`, {
       method: 'POST',
@@ -576,7 +582,7 @@ export const realAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: import('@/types').RubricCategory[]
+    rubric: import('@/types').RubricCategory[] | RubricEnvelope
     mustHaves: import('@/types').MustHave[]
     desiredCriteria?: import('@/types').DesiredCriteria[]
     jobDescription?: string
@@ -589,6 +595,9 @@ export const realAPI = {
     jobCode?: string
     rubricSource?: import('@/types').RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
+    expectedConfigVersionId?: string
     rubricApprovalStatus?: import('@/types').RubricApprovalStatus
   }): Promise<Job> {
     // Update job config creates a new version
@@ -605,6 +614,49 @@ export const realAPI = {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/config`, {
       method: 'PUT',
       body: JSON.stringify(configData),
+    })
+  },
+
+  async previewLegacyRubricConversion(jobId: string, expectedConfigVersionId: string): Promise<RubricEnvelope> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/rubric/convert`, {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'preview', expectedConfigVersionId }),
+    })
+  },
+
+  async confirmLegacyRubricConversion(jobId: string, expectedConfigVersionId: string, reviewedRubric: RubricEnvelope): Promise<RubricEnvelope> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/rubric/convert`, {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'confirm', expectedConfigVersionId, reviewedRubric }),
+    })
+  },
+
+  async listExtractionInstructions(): Promise<ExtractionInstructionVersion[]> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions`)
+  },
+
+  async getExtractionInstruction(versionId: string): Promise<ExtractionInstructionVersionDetail> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions/${versionId}`)
+  },
+
+  async createExtractionInstructionDraft(instructionText: string, changeNote?: string): Promise<ExtractionInstructionVersion> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions`, {
+      method: 'POST',
+      body: JSON.stringify({ instructionText, changeNote }),
+    })
+  },
+
+  async validateExtractionInstruction(versionId: string, fileName: string, content: string, mimeType: string): Promise<ExtractionResult | import('@/types').ExtractionFailure> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions/${versionId}/validate`, {
+      method: 'POST',
+      body: JSON.stringify({ fileName, content, mimeType }),
+    })
+  },
+
+  async activateExtractionInstruction(versionId: string, expectedConcurrencyVersion: number): Promise<ExtractionInstructionVersion> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions/${versionId}/activate`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedConcurrencyVersion }),
     })
   },
 
@@ -656,7 +708,11 @@ export const realAPI = {
     }
   },
 
-  async uploadApplications(jobId: string, files: File[]): Promise<{ applicationIds: string[] }> {
+  async uploadApplications(
+    jobId: string,
+    files: File[],
+    allowDuplicates = false,
+  ): Promise<{ applicationIds: string[]; warnings?: string[] }> {
     // Convert files to base64 JSON payload for binary-safe transport
     const fileData = await Promise.all(files.map(async (file) => {
       const arrayBuffer = await file.arrayBuffer()
@@ -675,7 +731,7 @@ export const realAPI = {
 
     return fetchJSON(`${API_BASE}/jobs/${jobId}/applications/upload`, {
       method: 'POST',
-      body: JSON.stringify({ files: fileData }),
+      body: JSON.stringify({ files: fileData, allowDuplicates }),
     })
   },
 
@@ -707,8 +763,12 @@ export const realAPI = {
   },
 
   async getDocumentContent(applicationId: string, documentId: string): Promise<ArrayBuffer> {
-    const res = await fetch(`${API_BASE}/applications/${applicationId}/documents/${documentId}/content`)
-    if (!res.ok) throw new Error(`Failed to fetch document content: ${res.status}`)
+    const res = await fetchWithAuthentication(
+      `${API_BASE}/applications/${applicationId}/documents/${documentId}/content`,
+    )
+    if (!res.ok) {
+      throw await readApiError(res)
+    }
     return res.arrayBuffer()
   },
 

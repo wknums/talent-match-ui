@@ -107,11 +107,71 @@ CREATE TABLE [talentmatch].JobConfigVersions (
     RubricApprovalStatus    NVARCHAR(20)    NOT NULL DEFAULT 'draft',
     RubricSource            NVARCHAR(20)    NOT NULL DEFAULT 'manual',
     RawExtractionResponse   NVARCHAR(MAX)   NULL,
+    ExtractionId            NVARCHAR(36)    NULL,
+    ExtractionInstructionVersionId NVARCHAR(36) NULL,
     CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME()
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobConfigVersions_JobId')
     CREATE INDEX IX_JobConfigVersions_JobId ON [talentmatch].JobConfigVersions (JobId);
+
+-- 4B. EXTRACTION INSTRUCTION VERSIONS
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ExtractionInstructionVersions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ExtractionInstructionVersions (
+    Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
+    VersionNumber           INT             NOT NULL,
+    InstructionText         NVARCHAR(MAX)   NOT NULL,
+    ProtectedContractVersion NVARCHAR(50)   NOT NULL,
+    Status                  NVARCHAR(20)    NOT NULL DEFAULT 'draft',
+    ChangeNote              NVARCHAR(1000)  NULL,
+    ValidationStatus        NVARCHAR(20)    NOT NULL DEFAULT 'unvalidated',
+    ValidationFindingsJson  NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
+    ValidatedAt             DATETIME2       NULL,
+    ValidatedBy             NVARCHAR(100)   NULL,
+    CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy               NVARCHAR(100)   NOT NULL DEFAULT '',
+    ActivatedAt             DATETIME2       NULL,
+    ActivatedBy             NVARCHAR(100)   NULL,
+    ConcurrencyVersion      INT             NOT NULL DEFAULT 1,
+    CONSTRAINT CK_ExtractionInstructionVersions_Status CHECK (Status IN ('draft', 'active', 'retired')),
+    CONSTRAINT CK_ExtractionInstructionVersions_ValidationStatus CHECK (ValidationStatus IN ('unvalidated', 'valid', 'invalid'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_ExtractionInstructionVersions_VersionNumber')
+    CREATE UNIQUE INDEX UX_ExtractionInstructionVersions_VersionNumber ON [talentmatch].ExtractionInstructionVersions (VersionNumber);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_ExtractionInstructionVersions_Active')
+    CREATE UNIQUE INDEX UX_ExtractionInstructionVersions_Active ON [talentmatch].ExtractionInstructionVersions (Status) WHERE Status = 'active';
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ExtractionInstructionVersions_Status_VersionNumber')
+    CREATE INDEX IX_ExtractionInstructionVersions_Status_VersionNumber ON [talentmatch].ExtractionInstructionVersions (Status, VersionNumber DESC);
+
+-- 4C. JOB SPEC EXTRACTIONS
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobSpecExtractions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].JobSpecExtractions (
+    Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
+    Purpose                 NVARCHAR(40)    NOT NULL,
+    InstructionVersionId    NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].ExtractionInstructionVersions(Id) ON DELETE NO ACTION,
+    ProtectedContractVersion NVARCHAR(50)   NOT NULL,
+    SourceFileName          NVARCHAR(500)   NOT NULL,
+    SourceMimeType          NVARCHAR(200)   NOT NULL,
+    SourceSha256            NVARCHAR(64)    NOT NULL,
+    RawResponse             NVARCHAR(MAX)   NOT NULL,
+    NormalizedResponseJson  NVARCHAR(MAX)   NULL,
+    ValidationStatus        NVARCHAR(20)    NOT NULL,
+    ValidationFindingsJson  NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
+    JobId                   NVARCHAR(36)    NULL REFERENCES [talentmatch].Jobs(Id) ON DELETE NO ACTION,
+    JobConfigVersionId      NVARCHAR(36)    NULL,
+    CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy               NVARCHAR(100)   NOT NULL DEFAULT '',
+    CompletedAt             DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CorrelationId           NVARCHAR(36)    NOT NULL,
+    CONSTRAINT CK_JobSpecExtractions_Purpose CHECK (Purpose IN ('job_creation', 'instruction_validation')),
+    CONSTRAINT CK_JobSpecExtractions_ValidationStatus CHECK (ValidationStatus IN ('valid', 'invalid'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobSpecExtractions_InstructionVersionId_CreatedAt')
+    CREATE INDEX IX_JobSpecExtractions_InstructionVersionId_CreatedAt ON [talentmatch].JobSpecExtractions (InstructionVersionId, CreatedAt DESC);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobSpecExtractions_JobId_CreatedAt')
+    CREATE INDEX IX_JobSpecExtractions_JobId_CreatedAt ON [talentmatch].JobSpecExtractions (JobId, CreatedAt DESC);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobSpecExtractions_JobConfigVersionId')
+    CREATE INDEX IX_JobSpecExtractions_JobConfigVersionId ON [talentmatch].JobSpecExtractions (JobConfigVersionId);
 
 -- 5. APPLICATIONS
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Applications' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -473,4 +533,3 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_Active
     CREATE UNIQUE INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveDelegated')
     CREATE UNIQUE INDEX UX_RoleAssignments_ActiveDelegated ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
-

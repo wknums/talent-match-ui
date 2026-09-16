@@ -32,6 +32,27 @@ public class ApplicationRepository : IApplicationRepository
             .AsNoTracking()
             .FirstOrDefaultAsync(a => a.Id == id, ct);
 
+    public async Task<ApplicationDocument?> FindDocumentByFingerprintAsync(
+        string jobId,
+        string fingerprint,
+        CancellationToken ct = default)
+        => await _context.ApplicationDocuments
+            .AsNoTracking()
+            .Join(
+                _context.Applications,
+                document => document.ApplicationId,
+                application => application.Id,
+                (document, application) => new { document, application.JobId })
+            .Where(item => item.JobId == jobId && item.document.Fingerprint == fingerprint)
+            .Select(item => new ApplicationDocument
+            {
+                Id = item.document.Id,
+                ApplicationId = item.document.ApplicationId,
+                FileName = item.document.FileName,
+                Fingerprint = item.document.Fingerprint,
+            })
+            .FirstOrDefaultAsync(ct);
+
     public async Task AddAsync(TalentMatch.Domain.Entities.Application application, CancellationToken ct = default)
     {
         await _context.Applications.AddAsync(application, ct);

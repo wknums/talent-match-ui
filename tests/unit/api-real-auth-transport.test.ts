@@ -57,6 +57,48 @@ describe('Entra API transport', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('authenticates document content requests', async () => {
+    const acquireAccessToken = vi.fn().mockResolvedValue('document-token')
+    const content = new Uint8Array([37, 80, 68, 70])
+    const fetchMock = vi.fn().mockResolvedValue(new Response(content, {
+      status: 200,
+      headers: { 'Content-Type': 'application/pdf' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    configureAuthenticatedTransport({ authMode: 'entra', acquireAccessToken })
+
+    const result = await realAPI.getDocumentContent('application-1', 'document-1')
+
+    expect(Array.from(new Uint8Array(result))).toEqual(Array.from(content))
+    expect(acquireAccessToken).toHaveBeenCalledWith({ forceRefresh: false })
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/applications/application-1/documents/document-1/content',
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      }),
+    )
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('Authorization')).toBe('Bearer document-token')
+  })
+
+  it('sends the duplicate upload override in the application upload contract', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      applicationIds: ['application-1'],
+    }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const file = new File(['cv'], 'candidate.pdf', { type: 'application/pdf' })
+
+    await realAPI.uploadApplications('job-1', [file], true)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+      allowDuplicates: true,
+      files: [expect.objectContaining({ fileName: 'candidate.pdf' })],
+    })
+  })
+
   it('never attaches a token to an unconfigured cross-origin URL', async () => {
     const acquireAccessToken = vi.fn().mockResolvedValue('access-token')
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', {

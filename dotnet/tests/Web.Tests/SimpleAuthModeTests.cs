@@ -71,6 +71,23 @@ public sealed class SimpleAuthModeTests : IClassFixture<SimpleAuthModeTests.Simp
         response.StatusCode.Should().BeOneOf(HttpStatusCode.NotFound, HttpStatusCode.MethodNotAllowed);
     }
 
+    [Fact]
+    public void SimpleAuthenticationIsRejectedInProduction()
+    {
+        using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder =>
+            {
+                builder.UseEnvironment("Production");
+                builder.UseSetting("APP_AUTH_MODE", "simple");
+            });
+
+        Action createClient = () => factory.CreateClient();
+
+        createClient.Should()
+            .Throw<InvalidOperationException>()
+            .WithMessage("*APP_AUTH_MODE=simple is only supported in Development and Testing environments*");
+    }
+
     public sealed class SimpleFactory : WebApplicationFactory<Program>
     {
         private SqliteConnection? _connection;

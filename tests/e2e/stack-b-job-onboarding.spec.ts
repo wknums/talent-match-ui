@@ -124,6 +124,8 @@ test.describe('Admin creates an organization, department, and job from a specifi
       timeout: EXTRACTION_TIMEOUT_MS,
     })
     await expect(dialog.locator('text=❌')).toHaveCount(0)
+    await expect(dialog.getByText(/Instruction version:/i)).toBeVisible({ timeout: 30_000 })
+    await expect(dialog.getByText(/Itemized Rubric/i)).toBeVisible({ timeout: 30_000 })
 
     const titleInput = dialog.locator('input[placeholder="Job Title"]')
     if (!(await titleInput.inputValue())) {

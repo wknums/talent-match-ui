@@ -45,6 +45,15 @@ BEGIN
 END;
 GO
 
+IF OBJECT_ID('talentmatch.JobConfigVersions', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.JobConfigVersions', 'ExtractionId') IS NULL
+        ALTER TABLE [talentmatch].JobConfigVersions ADD ExtractionId NVARCHAR(36) NULL;
+    IF COL_LENGTH('talentmatch.JobConfigVersions', 'ExtractionInstructionVersionId') IS NULL
+        ALTER TABLE [talentmatch].JobConfigVersions ADD ExtractionInstructionVersionId NVARCHAR(36) NULL;
+END;
+GO
+
 IF OBJECT_ID('talentmatch.OrganizationMemberships', 'U') IS NOT NULL
    AND COL_LENGTH('talentmatch.OrganizationMemberships', 'DefaultDepartmentMembershipId') IS NULL
     ALTER TABLE [talentmatch].OrganizationMemberships

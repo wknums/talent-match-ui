@@ -9,6 +9,7 @@ import { ManualReviewView } from '@/components/ManualReviewView'
 import { LoginForm } from '@/components/LoginForm'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { UserMenu } from '@/components/UserMenu'
+import { ExtractionInstructionAdmin } from '@/components/ExtractionInstructionAdmin'
 import { ChangePasswordDialog } from '@/components/ChangePasswordDialog'
 import { UserManagementDialog } from '@/components/UserManagementDialog'
 import { EntraAccessManagementDialog } from '@/components/EntraAccessManagementDialog'
@@ -37,6 +38,7 @@ function App() {
   const [userManagementOpen, setUserManagementOpen] = useState(false)
   const [entraAccessManagementOpen, setEntraAccessManagementOpen] = useState(false)
   const [organizationAdminOpen, setOrganizationAdminOpen] = useState(false)
+  const [extractionInstructionAdminOpen, setExtractionInstructionAdminOpen] = useState(false)
 
   const handleLogin = async (username: string, password: string): Promise<boolean> => {
     const user = await signIn({ username, password })
@@ -175,6 +177,7 @@ function App() {
                 onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
                 onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
                 onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+                onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
                 onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
                 onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
                 onLogout={handleLogout}
@@ -206,6 +209,7 @@ function App() {
               onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
               onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
               onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
               onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
               onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
               onLogout={handleLogout}
@@ -224,6 +228,7 @@ function App() {
               onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
               onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
               onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
               onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
               onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
               onLogout={handleLogout}
@@ -251,6 +256,7 @@ function App() {
               onChangePassword={authMode === 'simple' ? () => setChangePasswordOpen(true) : undefined}
               onRequestPasswordReset={authMode === 'simple' ? handleRequestPasswordReset : undefined}
               onManageUsers={authMode === 'simple' && currentUser.role === 'admin' ? () => setUserManagementOpen(true) : undefined}
+              onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
               onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
               onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
               onLogout={handleLogout}
@@ -308,6 +314,13 @@ function App() {
         />
       )}
 
+      {currentUser.role === 'admin' && (
+        <ExtractionInstructionAdmin
+          open={extractionInstructionAdminOpen}
+          onClose={() => setExtractionInstructionAdminOpen(false)}
+        />
+      )}
+
       {authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') && (
         <EntraAccessManagementDialog
           open={entraAccessManagementOpen}
@@ -320,7 +333,6 @@ function App() {
         <OrganizationAdmin
           open={organizationAdminOpen}
           onClose={() => setOrganizationAdminOpen(false)}
-          globalAdmin={currentUser.role === 'admin'}
         />
       )}
 

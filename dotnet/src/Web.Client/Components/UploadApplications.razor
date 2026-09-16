@@ -44,6 +44,16 @@
         </button>
     }
 
+    <label style="display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 1rem; cursor: pointer;">
+        <input type="checkbox" @bind="allowDuplicates" disabled="@isUploading" />
+        <span>
+            <strong>Allow duplicate documents</strong>
+            <span style="display: block; color: #666; font-size: 0.8rem;">
+                Upload and score files even when their contents match an application already added to this job.
+            </span>
+        </span>
+    </label>
+
     @if (!string.IsNullOrEmpty(statusMessage))
     {
         <p style="color: @(uploadSuccess ? "green" : "red"); margin-top: 1rem;">@statusMessage</p>
@@ -59,6 +69,7 @@
     private bool isDragOver;
     private string? statusMessage;
     private bool uploadSuccess;
+    private bool allowDuplicates;
 
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".md", ".docx", ".txt", ".jpg", ".png" };
     private const long MaxFileSize = 15 * 1024 * 1024;
@@ -93,11 +104,17 @@
                 entry.File.ContentType is { Length: > 0 } ct ? ct : InferMimeType(entry.File.Name));
             content.Add(streamContent, "files", entry.File.Name);
         }
-        uploadSuccess = await Api.UploadApplicationsAsync(JobId, content);
+        var selectedFileCount = ValidFiles.Count();
+        var uploadedCount = await Api.UploadApplicationsAsync(JobId, content, allowDuplicates);
+        uploadSuccess = uploadedCount.HasValue;
         if (uploadSuccess)
         {
-            foreach (var entry in ValidFiles) entry.Uploaded = true;
-            statusMessage = $"{ValidFiles.Count()} files uploaded successfully.";
+            if (uploadedCount == selectedFileCount)
+                foreach (var entry in ValidFiles) entry.Uploaded = true;
+            var skippedCount = selectedFileCount - uploadedCount!.Value;
+            statusMessage = skippedCount == 0
+                ? $"{uploadedCount} files uploaded successfully."
+                : $"{uploadedCount} files uploaded; {skippedCount} duplicate files skipped.";
             await OnUploaded.InvokeAsync();
         }
         else

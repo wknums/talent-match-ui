@@ -118,25 +118,8 @@ az account set --subscription "<subscription-id-or-name>"
 # 2) Build/package Stack A artifact (artifacts/stack-a.zip)
 ./infra/scripts/package-stack-a.sh .env_qa
 
-# 3) Load resource group from profile and resolve deployed app name
-set -a
-source .env_qa
-set +a
-STACK_A_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-a output -raw app_name)"
-
-# 4) Ensure on-host build/install is enabled for zip deploy
-az webapp config appsettings set \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$STACK_A_APP_NAME" \
-  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true
-
-# 5) Deploy packaged zip to App Service
-az webapp deploy \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$STACK_A_APP_NAME" \
-  --src-path artifacts/stack-a.zip \
-  --type zip \
-  --async true
+# 3) Deploy the packaged zip to Stack A App Service
+./infra/scripts/deploy-stack-a-app.sh .env_qa artifacts/stack-a.zip
 ```
 
 ### Stack B: Full Deploy (Shared Infra + Stack B Infra + Package + Zip Deploy)
@@ -152,9 +135,12 @@ az webapp deploy \
 ./infra/scripts/deploy-stack-b-app.sh .env_qa artifacts/stack-b.zip
 ```
 
-The artifact deployment script verifies Kudu deployment history if Azure CLI
-loses its OneDeploy polling connection. It succeeds only when Kudu reports the
-latest deployment with success status `4`.
+Both artifact deployment scripts load the environment profile, validate the
+Azure context, resolve the app name from Terraform output, and verify Kudu
+deployment history if Azure CLI loses its OneDeploy polling connection. They
+succeed only when Kudu reports the latest deployment with success status `4`.
+The Stack A script also enables the required on-host Oryx build settings before
+deploying.
 
 Both deployment entry points require the environment profile as their first
 argument. They pass that path unchanged to `load_env_file`; no deployment script
@@ -213,33 +199,9 @@ firewall rules so the operator can run that bootstrap.
 ./infra/scripts/package-stack-a.sh .env_qa
 ./infra/scripts/package-stack-b.sh
 
-# 3) Load resource group and resolve app names
-set -a
-source .env_qa
-set +a
-STACK_A_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-a output -raw app_name)"
-STACK_B_APP_NAME="$(terraform -chdir=infra/terraform/live/stack-b output -raw app_name)"
-
-# 4) Ensure Stack A on-host build/install is enabled for zip deploy
-az webapp config appsettings set \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$STACK_A_APP_NAME" \
-  --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true
-
-# 5) Deploy both artifacts
-az webapp deploy \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$STACK_A_APP_NAME" \
-  --src-path artifacts/stack-a.zip \
-  --type zip \
-  --async true
-
-az webapp deploy \
-  --resource-group "$RESOURCE_GROUP" \
-  --name "$STACK_B_APP_NAME" \
-  --src-path artifacts/stack-b.zip \
-  --type zip \
-  --async true
+# 3) Deploy both packaged artifacts
+./infra/scripts/deploy-stack-a-app.sh .env_qa artifacts/stack-a.zip
+./infra/scripts/deploy-stack-b-app.sh .env_qa artifacts/stack-b.zip
 ```
 
 ### Plan-Only Flow (No Packaging/App Deploy)
@@ -265,14 +227,15 @@ Important notes:
 
 ## Stack A Packaging and On-Host Build Behavior
 
-`infra/scripts/package-stack-a.sh` now creates a lean zip artifact that excludes `node_modules` to speed packaging and reduce local zip CPU/file-count overhead.
+`infra/scripts/package-stack-a.sh` creates a self-contained zip artifact with the compiled client/server and only the production dependencies imported by the server.
 
 For repeated local packages, the script reuses `node_modules` when npm's hidden lockfile is newer than both manifests and required build tools are present. Set `STACK_A_INSTALL_MODE=clean` to force a reproducible `npm ci`; CI uses clean mode explicitly. Packaging runs Vite directly because the client TypeScript project is `noEmit`; use `npm run build` separately when you want its TypeScript validation pass.
 
 Deployment implications:
-- App Service must build on deploy (Oryx) so production dependencies are restored on-host.
-- Required app settings: `SCM_DO_BUILD_DURING_DEPLOYMENT=true` and `ENABLE_ORYX_BUILD=true`.
-- These are now managed by Terraform in `infra/terraform/modules/stack-a/main.tf`.
+- App Service does not run Oryx during deployment; dependency restore is completed while packaging.
+- Required app settings: `SCM_DO_BUILD_DURING_DEPLOYMENT=false` and `ENABLE_ORYX_BUILD=false`.
+- These are configured by Terraform in `infra/terraform/modules/stack-a/main.tf`
+  and reapplied by `deploy-stack-a-app.sh` before each artifact deployment.
 
 Operational expectations:
 - Local packaging is significantly faster.
@@ -530,4 +493,6 @@ The deploy script validates before any Terraform execution:
 | `infra/scripts/resolve-targets.sh` | Workflow target resolution |
 | `infra/scripts/package-stack-a.sh` | Build and package Stack A |
 | `infra/scripts/package-stack-b.sh` | Publish and package Stack B |
+| `infra/scripts/deploy-stack-a-app.sh` | Deploy the packaged Stack A artifact |
+| `infra/scripts/deploy-stack-b-app.sh` | Deploy the packaged Stack B artifact |
 | `infra/scripts/lib/common.sh` | Shared Bash helpers |

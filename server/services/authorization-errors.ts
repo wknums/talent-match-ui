@@ -7,6 +7,7 @@ export type CanonicalAuthorizationErrorCode = AuthErrorCode
   | 'forbidden'
   | 'not_found'
   | 'version_conflict'
+  | 'internal_error'
 
 export interface CanonicalAuthorizationError {
   code: CanonicalAuthorizationErrorCode
@@ -41,6 +42,7 @@ const errorDefaults: Record<CanonicalAuthorizationErrorCode, Omit<CanonicalAutho
   forbidden: { statusCode: 403, message: 'Access is forbidden.' },
   not_found: { statusCode: 404, message: 'The requested resource was not found.' },
   version_conflict: { statusCode: 409, message: 'Authorization state changed. Refresh and retry.' },
+  internal_error: { statusCode: 500, message: 'The operation could not be completed. Try again.' },
 }
 
 const canonicalCodes = new Set<CanonicalAuthorizationErrorCode>(

@@ -2,6 +2,8 @@ import type { organizationRepo } from './repos/organization-repo.js'
 import type { roleAssignmentRepo } from './repos/role-assignment-repo.js'
 import type { userRepo } from './repos/user-repo.js'
 import type { accessManagementRepo } from './repos/access-management-repo.js'
+import type { extractionInstructionRepo } from './repos/extraction-instruction-repo.js'
+import type { jobSpecExtractionRepo } from './repos/job-spec-extraction-repo.js'
 import type {
   CanonicalApiError,
   EntraAccessUser,
@@ -61,4 +63,6 @@ export interface StorageProvider {
   organizations: typeof organizationRepo
   roleAssignments: typeof roleAssignmentRepo
   accessManagement: typeof accessManagementRepo
+  extractionInstructions: typeof extractionInstructionRepo
+  jobSpecExtractions: typeof jobSpecExtractionRepo
 }

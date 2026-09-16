@@ -12,6 +12,7 @@ using Microsoft.Identity.Web;
 using Microsoft.IdentityModel.Tokens;
 using TalentMatch.Application;
 using TalentMatch.Application.Authorization;
+using TalentMatch.Application.JobExtraction.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure;
@@ -29,6 +30,15 @@ builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.Co
 
 var appAuthMode = builder.Configuration["APP_AUTH_MODE"] ?? "simple";
 var useEntraAuthentication = string.Equals(appAuthMode, "entra", StringComparison.OrdinalIgnoreCase);
+
+if (!useEntraAuthentication
+    && !builder.Environment.IsDevelopment()
+    && !builder.Environment.IsEnvironment("Testing"))
+{
+    throw new InvalidOperationException(
+        "APP_AUTH_MODE=simple is only supported in Development and Testing environments. "
+        + "Configure APP_AUTH_MODE=entra for shared or production environments.");
+}
 
 if (useEntraAuthentication)
 {
@@ -233,6 +243,36 @@ static Task InitializeApplicationDataAsync(
         db.SaveChanges();
     }
 
+    if (!db.ExtractionInstructionVersions.Any())
+    {
+        var seededAt = DateTime.UtcNow;
+        db.ExtractionInstructionVersions.Add(new ExtractionInstructionVersion
+        {
+            VersionNumber = 1,
+            InstructionText = """
+                Extract the hiring organization's job specification into structured data.
+
+                Requirements:
+                - Identify every distinct, independently assessable requirement as its own requirement item.
+                - Split compound requirements into separate items without changing their meaning.
+                - Preserve genuine duplicates using duplicate_of instead of silently dropping them.
+                - Retain ambiguous assignments by keeping the item and marking needs_review=true.
+                - Preserve source wording for every requirement and enough metadata to trace it.
+                - Respect any rubric already present in the document; otherwise produce a thoughtful generated rubric with weights summing to 1.0.
+                """,
+            ProtectedContractVersion = JobSpecExtractionContractValidator.ProtectedContractVersion,
+            Status = "active",
+            ValidationStatus = "valid",
+            ValidationFindingsJson = "[]",
+            CreatedAt = seededAt,
+            CreatedBy = "system:seed",
+            ActivatedAt = seededAt,
+            ActivatedBy = "system:seed",
+            ConcurrencyVersion = 1,
+        });
+        db.SaveChanges();
+    }
+
     return Task.CompletedTask;
 }
 
@@ -334,6 +374,7 @@ static bool BaselineSharedSqliteSchemaIfNeeded(AppDbContext db)
         "20260312120000_AddRubricApprovalStatus",
         "20260313150938_AddRubricSourceToJobConfigVersion",
         "20260323182030_AddLastErrorToApplication",
+        "20260909184257_AddExtractionInstructionLifecycle",
     ];
 
     if (!db.Database.IsSqlite())
@@ -425,6 +466,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
             EnsureSqliteManualReviewHumanEditedColumn(connection);
             EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
             EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
+            EnsureSqliteExtractionLifecycleSchema(connection);
             return;
         }
 
@@ -439,6 +481,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         EnsureSqliteManualReviewHumanEditedColumn(connection);
         EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
         EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
+        EnsureSqliteExtractionLifecycleSchema(connection);
     }
     finally
     {
@@ -498,6 +541,84 @@ static void EnsureSqliteJobConfigVersionsScoringRunCountColumn(SqliteConnection 
     using var backfillCommand = connection.CreateCommand();
     backfillCommand.CommandText = "UPDATE JobConfigVersions SET ScoringRunCount = COALESCE(RunsPerApplication, 3);";
     backfillCommand.ExecuteNonQuery();
+}
+
+static void EnsureSqliteExtractionLifecycleSchema(SqliteConnection connection)
+{
+    using var alterExtractionId = connection.CreateCommand();
+    alterExtractionId.CommandText = "ALTER TABLE JobConfigVersions ADD COLUMN ExtractionId TEXT NULL;";
+    TryExecuteSchemaChange(alterExtractionId);
+
+    using var alterInstructionVersionId = connection.CreateCommand();
+    alterInstructionVersionId.CommandText = "ALTER TABLE JobConfigVersions ADD COLUMN ExtractionInstructionVersionId TEXT NULL;";
+    TryExecuteSchemaChange(alterInstructionVersionId);
+
+    using var createInstructionTable = connection.CreateCommand();
+    createInstructionTable.CommandText = """
+        CREATE TABLE IF NOT EXISTS ExtractionInstructionVersions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            VersionNumber INTEGER NOT NULL,
+            InstructionText TEXT NOT NULL,
+            ProtectedContractVersion TEXT NOT NULL,
+            Status TEXT NOT NULL DEFAULT 'draft',
+            ChangeNote TEXT NULL,
+            ValidationStatus TEXT NOT NULL DEFAULT 'unvalidated',
+            ValidationFindingsJson TEXT NOT NULL DEFAULT '[]',
+            ValidatedAt TEXT NULL,
+            ValidatedBy TEXT NULL,
+            CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CreatedBy TEXT NOT NULL DEFAULT '',
+            ActivatedAt TEXT NULL,
+            ActivatedBy TEXT NULL,
+            ConcurrencyVersion INTEGER NOT NULL DEFAULT 1,
+            CHECK (Status IN ('draft', 'active', 'retired')),
+            CHECK (ValidationStatus IN ('unvalidated', 'valid', 'invalid'))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_VersionNumber ON ExtractionInstructionVersions (VersionNumber);
+        CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_Active ON ExtractionInstructionVersions (Status) WHERE Status = 'active';
+        CREATE INDEX IF NOT EXISTS IX_ExtractionInstructionVersions_Status_VersionNumber ON ExtractionInstructionVersions (Status, VersionNumber DESC);
+        """;
+    createInstructionTable.ExecuteNonQuery();
+
+    using var createExtractionTable = connection.CreateCommand();
+    createExtractionTable.CommandText = """
+        CREATE TABLE IF NOT EXISTS JobSpecExtractions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            Purpose TEXT NOT NULL,
+            InstructionVersionId TEXT NOT NULL REFERENCES ExtractionInstructionVersions(Id) ON DELETE RESTRICT,
+            ProtectedContractVersion TEXT NOT NULL,
+            SourceFileName TEXT NOT NULL,
+            SourceMimeType TEXT NOT NULL,
+            SourceSha256 TEXT NOT NULL,
+            RawResponse TEXT NOT NULL,
+            NormalizedResponseJson TEXT NULL,
+            ValidationStatus TEXT NOT NULL,
+            ValidationFindingsJson TEXT NOT NULL DEFAULT '[]',
+            JobId TEXT NULL REFERENCES Jobs(Id) ON DELETE RESTRICT,
+            JobConfigVersionId TEXT NULL,
+            CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CreatedBy TEXT NOT NULL DEFAULT '',
+            CompletedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CorrelationId TEXT NOT NULL,
+            CHECK (Purpose IN ('job_creation', 'instruction_validation')),
+            CHECK (ValidationStatus IN ('valid', 'invalid'))
+        );
+        CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_InstructionVersionId_CreatedAt ON JobSpecExtractions (InstructionVersionId, CreatedAt DESC);
+        CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobId_CreatedAt ON JobSpecExtractions (JobId, CreatedAt DESC);
+        CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobConfigVersionId ON JobSpecExtractions (JobConfigVersionId);
+        """;
+    createExtractionTable.ExecuteNonQuery();
+}
+
+static void TryExecuteSchemaChange(SqliteCommand command)
+{
+    try
+    {
+        command.ExecuteNonQuery();
+    }
+    catch (SqliteException exception) when (exception.SqliteErrorCode == 1 && exception.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+    {
+    }
 }
 
 static void EnsureSqliteApplicationCandidateColumns(SqliteConnection connection)
@@ -770,6 +891,7 @@ if (useEntraAuthentication)
 else
     app.MapUsersEndpoints();
 app.MapJobsEndpoints();
+app.MapExtractionInstructionEndpoints();
 app.MapApplicationsEndpoints();
 app.MapStatsEndpoints();
 app.MapDlqEndpoints();

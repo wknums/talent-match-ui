@@ -80,9 +80,61 @@ CREATE TABLE IF NOT EXISTS JobConfigVersions (
     RubricApprovalStatus    TEXT    NOT NULL DEFAULT 'draft',
     RubricSource            TEXT    NOT NULL DEFAULT 'manual',
     RawExtractionResponse   TEXT    NULL,
+    ExtractionId            TEXT    NULL,
+    ExtractionInstructionVersionId TEXT NULL,
     CreatedAt               TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS IX_JobConfigVersions_JobId ON JobConfigVersions (JobId);
+
+-- 4B. EXTRACTION INSTRUCTION VERSIONS
+CREATE TABLE IF NOT EXISTS ExtractionInstructionVersions (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    VersionNumber           INTEGER NOT NULL,
+    InstructionText         TEXT    NOT NULL,
+    ProtectedContractVersion TEXT   NOT NULL,
+    Status                  TEXT    NOT NULL DEFAULT 'draft',
+    ChangeNote              TEXT    NULL,
+    ValidationStatus        TEXT    NOT NULL DEFAULT 'unvalidated',
+    ValidationFindingsJson  TEXT    NOT NULL DEFAULT '[]',
+    ValidatedAt             TEXT    NULL,
+    ValidatedBy             TEXT    NULL,
+    CreatedAt               TEXT    NOT NULL DEFAULT (datetime('now')),
+    CreatedBy               TEXT    NOT NULL DEFAULT '',
+    ActivatedAt             TEXT    NULL,
+    ActivatedBy             TEXT    NULL,
+    ConcurrencyVersion      INTEGER NOT NULL DEFAULT 1,
+    CHECK (Status IN ('draft', 'active', 'retired')),
+    CHECK (ValidationStatus IN ('unvalidated', 'valid', 'invalid'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_VersionNumber ON ExtractionInstructionVersions (VersionNumber);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_Active ON ExtractionInstructionVersions (Status) WHERE Status = 'active';
+CREATE INDEX IF NOT EXISTS IX_ExtractionInstructionVersions_Status_VersionNumber ON ExtractionInstructionVersions (Status, VersionNumber DESC);
+
+-- 4C. JOB SPEC EXTRACTIONS
+CREATE TABLE IF NOT EXISTS JobSpecExtractions (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    Purpose                 TEXT    NOT NULL,
+    InstructionVersionId    TEXT    NOT NULL REFERENCES ExtractionInstructionVersions(Id) ON DELETE RESTRICT,
+    ProtectedContractVersion TEXT   NOT NULL,
+    SourceFileName          TEXT    NOT NULL,
+    SourceMimeType          TEXT    NOT NULL,
+    SourceSha256            TEXT    NOT NULL,
+    RawResponse             TEXT    NOT NULL,
+    NormalizedResponseJson  TEXT    NULL,
+    ValidationStatus        TEXT    NOT NULL,
+    ValidationFindingsJson  TEXT    NOT NULL DEFAULT '[]',
+    JobId                   TEXT    NULL REFERENCES Jobs(Id) ON DELETE RESTRICT,
+    JobConfigVersionId      TEXT    NULL,
+    CreatedAt               TEXT    NOT NULL DEFAULT (datetime('now')),
+    CreatedBy               TEXT    NOT NULL DEFAULT '',
+    CompletedAt             TEXT    NOT NULL DEFAULT (datetime('now')),
+    CorrelationId           TEXT    NOT NULL,
+    CHECK (Purpose IN ('job_creation', 'instruction_validation')),
+    CHECK (ValidationStatus IN ('valid', 'invalid'))
+);
+CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_InstructionVersionId_CreatedAt ON JobSpecExtractions (InstructionVersionId, CreatedAt DESC);
+CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobId_CreatedAt ON JobSpecExtractions (JobId, CreatedAt DESC);
+CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobConfigVersionId ON JobSpecExtractions (JobConfigVersionId);
 
 -- 5. APPLICATIONS
 CREATE TABLE IF NOT EXISTS Applications (
@@ -387,4 +439,3 @@ CREATE TABLE IF NOT EXISTS RoleAssignments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveGroup ON RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveDelegated ON RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
-

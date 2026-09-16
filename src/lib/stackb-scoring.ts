@@ -1,4 +1,4 @@
-import type { AggregatedResult, EvidenceCitation, ManualReviewData, ManualReviewRubricEntry, ScoringRun } from '@/types'
+import type { AggregatedResult, EvidenceCitation, JobConfigVersion, ManualReviewData, ManualReviewRubricEntry, ScoringRun } from '@/types'
 
 export interface StackBCompatibleAggregatedResult {
   finalScore: number
@@ -50,6 +50,10 @@ function toPercentageScore(points: number | undefined, maxPoints: number): numbe
 
 export function normalizeCategoryName(name: string): string {
   return name.toLowerCase().replace(/[_\-()&/,;:]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export function getRubricCategoryNames(config: Pick<JobConfigVersion, 'rubric' | 'rubricEnvelope'>): string[] {
+  return config.rubricEnvelope?.categories.map(category => category.name) ?? config.rubric.map(category => category.name)
 }
 
 function normalizeCandidateName(rawName: string | null | undefined): string | null {

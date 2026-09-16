@@ -14,6 +14,8 @@ The solution keeps people in control of hiring decisions. AI-generated scores, e
 - **Multi-run scoring and aggregation**: Run configurable repeated assessments, compare variance, and aggregate results using median, mean, or weighted strategies to reduce reliance on a single model response.
 - **Recruiter review workflows**: Rank and filter longlisted, shortlisted, excluded, and manual-review candidates; inspect source documents and individual scoring runs; and capture human review decisions and notes.
 - **Prompt lifecycle management**: Generate, edit, rate, activate, test, approve, and promote job-specific prompts, including test-run comparison before a prompt is used for production scoring.
+- **Extraction-instruction lifecycle**: Administrators can draft, validate, activate, and roll back the default job-specification extraction instructions while the application keeps the structured output contract protected.
+- **Itemized rubric editing**: New and converted `rubric-v2` job configurations preserve ordered rubric categories plus individually traceable requirements that can be moved, reordered, and reviewed.
 - **Operational controls**: Monitor extraction, scoring, and aggregation progress; cancel processing; retry or rescore failures; reaggregate completed work; and manage dead-letter queue items.
 - **Recruiting analytics**: Explore recruiter and department-level throughput and outcome metrics with access scoped to the signed-in user.
 - **Organization-aware authorization**: Support global administrators, organization administrators, recruiters, and business-panel reviewers with organization and department boundaries.
@@ -60,7 +62,8 @@ This runs two processes concurrently:
 - **Backend API** on `http://localhost:3001`
 - **Vite frontend** on `http://localhost:5173`
 
-Open `http://localhost:5173` in your browser. Default login: `admin` / `adm1n99`
+Open `http://localhost:5173` in your browser. In Development, the default login is `admin` / `adm1n99`.
+The .NET server rejects simple authentication outside Development and Testing; shared and production environments must use Entra authentication.
 
 The default configuration uses simple authentication, SQLite, and mock API data. Set `API_MODE=real` and configure an AWReason endpoint to exercise the real extraction and scoring workflows.
 
@@ -88,6 +91,18 @@ The application delegates document extraction, prompt generation, and reasoning-
 | Platform | `AWR_PLATFORM_API_ENDPOINT` set to a different endpoint | Submits CV batches asynchronously and reconciles their status. The external platform owns queueing, fan-out, retries, and durable orchestration. |
 
 Prompt generation, extraction, and prompt test runs always use the sequential endpoint. Platform mode additionally requires Azure Blob Storage so the client and scoring platform can exchange documents using managed identity rather than shared access signatures.
+
+## Dynamic Rubric Editor
+
+Feature `001-dynamic-rubric-editor` adds a shared protected extraction contract, persisted extraction diagnostics, and a versioned `rubric-v2` envelope.
+
+- **Protected extraction contract**: both stacks append an application-owned output contract before calling AWReason and reject invalid responses instead of silently coercing them.
+- **Persisted provenance**: `ExtractionInstructionVersions` and `JobSpecExtractions` preserve the instruction version, findings, source metadata, and correlation IDs used during extraction.
+- **Legacy compatibility**: existing rubric arrays remain readable; users can preview and confirm conversion into `rubric-v2` without mutating historical versions, and Stack A blocks generic save while a legacy preview still needs confirmation.
+- **Reviewer safety**: generated rubric warnings and `needs_review` items stay visible during React editing so recruiters can reassign ambiguous requirements before approval.
+- **Dual-read scoring compatibility**: scoring, prompt generation, application detail, and manual review continue to operate on category weights while richer item-level traces remain available to reviewers.
+
+See [specs/001-dynamic-rubric-editor/quickstart.md](specs/001-dynamic-rubric-editor/quickstart.md) for the feature runbook and [INTEGRATION.md](INTEGRATION.md) for endpoint details.
 
 The platform integration contract is defined in [specs/008-platform-mode-shift/platform-contract.md](specs/008-platform-mode-shift/platform-contract.md).
 
@@ -173,7 +188,7 @@ Copy `.env.example` to `.env` and configure:
 | --- | --- | --- |
 | `PORT` | `3001` | Backend server port |
 | `API_MODE` | `mock` | Use `mock` data or the `real` application API |
-| `APP_AUTH_MODE` | `simple` | Use local credentials or `entra` authentication |
+| `APP_AUTH_MODE` | `simple` | Use local credentials in Development/Testing or `entra` authentication elsewhere |
 | `STORAGE_PROVIDER` | `local` | Set to `azuresql` to use Azure SQL in Stack A |
 | `DATABASE_PROVIDER` | `sqlite` | Stack B database provider: `sqlite` or `sqlserver` |
 | `SQLITE_DB_PATH` | `shared-data/talentmatch.db` | Optional shared local database path |
@@ -263,7 +278,7 @@ You can override that location for either stack with `SQLITE_DB_PATH`.
 
 Both stacks support two mutually exclusive modes:
 
-- `APP_AUTH_MODE=simple` provides local username/password authentication for demos and offline development.
+- `APP_AUTH_MODE=simple` provides local username/password authentication for demos, automated tests, and offline development. The .NET server rejects this mode outside Development and Testing.
 - `APP_AUTH_MODE=entra` uses single-tenant Microsoft Entra ID authorization-code flow with PKCE. API access is resolved from persisted application assignments and organization/department memberships rather than relying on token roles alone.
 
 Entra mode supports `admin`, `organization_admin`, `recruiter`, and `business_panel` roles. Authorization changes use optimistic concurrency, revocation is reflected through authorization-version changes, and mutations produce correlated audit events.

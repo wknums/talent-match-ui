@@ -448,6 +448,28 @@ public class ApiClient : INavigationAuditClient
         await EnsureSuccessOrThrowAsync(response, "Failed to update job configuration.");
     }
 
+    public async Task<RubricEnvelopeDto?> PreviewLegacyRubricConversionAsync(string jobId, string expectedConfigVersionId)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/rubric/convert", new
+        {
+            mode = "preview",
+            expectedConfigVersionId
+        });
+        await EnsureSuccessOrThrowAsync(response, "Failed to preview legacy rubric conversion.");
+        return await response.Content.ReadFromJsonAsync<RubricEnvelopeDto>();
+    }
+
+    public async Task ConfirmLegacyRubricConversionAsync(string jobId, string expectedConfigVersionId, RubricEnvelopeDto reviewedRubric)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/rubric/convert", new
+        {
+            mode = "confirm",
+            expectedConfigVersionId,
+            reviewedRubric
+        });
+        await EnsureSuccessOrThrowAsync(response, "Failed to convert the legacy rubric.");
+    }
+
     public async Task<ProcessJobResponse> ProcessJobAsync(string jobId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/process", null);
@@ -477,7 +499,7 @@ public class ApiClient : INavigationAuditClient
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<ExtractSpecResult?> ExtractJobSpecAsync(string fileName, string content, string mimeType)
+    public async Task<ExtractionResultDto?> ExtractJobSpecAsync(string fileName, string content, string mimeType)
     {
         var response = await _http.PostAsJsonAsync("/api/jobs/extract-spec", new { FileName = fileName, Content = content, MimeType = mimeType });
         if (!response.IsSuccessStatusCode)
@@ -485,10 +507,10 @@ public class ApiClient : INavigationAuditClient
             var errorBody = await response.Content.ReadAsStringAsync();
             throw new HttpRequestException($"Extraction failed ({(int)response.StatusCode}): {errorBody}");
         }
-        return await response.Content.ReadFromJsonAsync<ExtractSpecResult>();
+        return await response.Content.ReadFromJsonAsync<ExtractionResultDto>();
     }
 
-    public async Task<ExtractRubricResult?> ExtractRubricAsync(string fileName, string content, string mimeType)
+    public async Task<RubricEnvelopeDto?> ExtractRubricAsync(string fileName, string content, string mimeType)
     {
         var response = await _http.PostAsJsonAsync("/api/jobs/extract-rubric", new { FileName = fileName, Content = content, MimeType = mimeType });
         if (!response.IsSuccessStatusCode)
@@ -496,13 +518,40 @@ public class ApiClient : INavigationAuditClient
             var errorBody = await response.Content.ReadAsStringAsync();
             throw new HttpRequestException($"Rubric extraction failed ({(int)response.StatusCode}): {errorBody}");
         }
-        return await response.Content.ReadFromJsonAsync<ExtractRubricResult>();
+        return await response.Content.ReadFromJsonAsync<RubricEnvelopeDto>();
     }
 
     public async Task<JobConfigDto?> GetJobConfigAsync(string jobId)
     {
         try { return await _http.GetFromJsonAsync<JobConfigDto>($"/api/jobs/{jobId}/config"); }
         catch { return null; }
+    }
+
+    public async Task<List<ExtractionInstructionVersionDto>> GetExtractionInstructionsAsync()
+        => await _http.GetFromJsonAsync<List<ExtractionInstructionVersionDto>>("/api/admin/extraction-instructions", JsonOptions) ?? new();
+
+    public async Task<ExtractionInstructionVersionDetailDto?> GetExtractionInstructionAsync(string versionId)
+        => await _http.GetFromJsonAsync<ExtractionInstructionVersionDetailDto>($"/api/admin/extraction-instructions/{versionId}", JsonOptions);
+
+    public async Task<ExtractionInstructionVersionDto?> CreateExtractionInstructionDraftAsync(string instructionText, string? changeNote)
+    {
+        var response = await _http.PostAsJsonAsync("/api/admin/extraction-instructions", new { instructionText, changeNote });
+        await EnsureSuccessOrThrowAsync(response, "Failed to create extraction instruction draft.");
+        return await response.Content.ReadFromJsonAsync<ExtractionInstructionVersionDto>(JsonOptions);
+    }
+
+    public async Task<JsonElement?> ValidateExtractionInstructionAsync(string versionId, string fileName, string content, string mimeType)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/admin/extraction-instructions/{versionId}/validate", new { fileName, content, mimeType });
+        await EnsureSuccessOrThrowAsync(response, "Failed to validate extraction instruction.");
+        return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+    }
+
+    public async Task<ExtractionInstructionVersionDto?> ActivateExtractionInstructionAsync(string versionId, int expectedConcurrencyVersion)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/admin/extraction-instructions/{versionId}/activate", new { expectedConcurrencyVersion });
+        await EnsureSuccessOrThrowAsync(response, "Failed to activate extraction instruction.");
+        return await response.Content.ReadFromJsonAsync<ExtractionInstructionVersionDto>(JsonOptions);
     }
 
     // Applications
@@ -526,10 +575,19 @@ public class ApiClient : INavigationAuditClient
     public async Task<ApplicationDto?> GetApplicationAsync(string applicationId)
         => await _http.GetFromJsonAsync<ApplicationDto>($"/api/applications/{applicationId}");
 
-    public async Task<bool> UploadApplicationsAsync(string jobId, MultipartFormDataContent content)
+    public async Task<int?> UploadApplicationsAsync(
+        string jobId,
+        MultipartFormDataContent content,
+        bool allowDuplicates = false)
     {
-        var response = await _http.PostAsync($"/api/jobs/{jobId}/applications/upload", content);
-        return response.IsSuccessStatusCode;
+        var response = await _http.PostAsync(
+            $"/api/jobs/{jobId}/applications/upload?allowDuplicates={allowDuplicates.ToString().ToLowerInvariant()}",
+            content);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return result.ValueKind == JsonValueKind.Array ? result.GetArrayLength() : 0;
     }
 
     // Scoring
@@ -930,8 +988,8 @@ internal sealed record ApiErrorDetails(string Message, string? ErrorCode, string
 public record UserInfo(string Id, string Username, string Role, string Department, string FullName, string Email, DateTime? LastLogin = null);
 public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt);
 public record JobSummaryDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt, string CreatedByName, int TotalApplications, int CompletedApplications);
-public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription, string? OrganizationId = null, string? DepartmentId = null);
-public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null);
+public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? OrganizationId = null, string? DepartmentId = null);
+public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? ExpectedConfigVersionId = null, string? RubricApprovalStatus = null);
 public record ApplicationDto(string Id, string JobId, string CandidateRef, string? CandidateName, string? CandidateEmail, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
 public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default);
 public record ReparseScoringRunResultDto(ScoringRunDto ScoringRun, bool FallbackParsingActivated, bool EligibilityFallbackActivated, bool TotalScoreFallbackActivated, bool GateDetected, string EligibilityPath, string Source);
@@ -943,7 +1001,17 @@ public record SystemStatsDto(int Queued, int Extracting, int Scoring, int Aggreg
 public record DlqItemDto(string Id, string EntityType, string EntityId, string FailureReason, int RetryCount, DateTime CreatedAt);
 public record AuditEventDto(string Id, string Actor, string EventType, string EntityType, string EntityId, DateTime Timestamp, string CorrelationId);
 public record ResetRequestDto(string Id, string UserId, string Username, string Reason, string Status, DateTime CreatedAt);
-public record JobConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null, string? RubricSource = null);
+public record JobConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null, string? RubricSource = null, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? Id = null, int VersionNumber = 0, ExtractionSummaryDto? Extraction = null);
+public record ExtractionValidationFindingDto(string Code, string Severity, string Path, string Message);
+public record ExtractionSummaryDto(string Id, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string SourceFileName, string SourceMimeType, DateTime CompletedAt, string CorrelationId);
+public record ExtractionInstructionVersionDto(string Id, int VersionNumber, string InstructionText, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
+public record ExtractionInstructionVersionDetailDto(string Id, int VersionNumber, string InstructionText, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, JsonElement ProtectedContract, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
+public record RubricCategoryV2Dto(string Id, string Name, double Weight, string? Description, int Order);
+public record RubricItemDto(string Id, string CategoryId, string Text, string RequirementType, int Order, string? SourceText, string? SourceLocation, string? SourceRequirementId, string ReviewStatus, string CreatedFrom);
+public record RubricEnvelopeDto(string SchemaVersion, string? LegacySourceVersionId, List<RubricCategoryV2Dto> Categories, List<RubricItemDto> Items);
+public record JobSpecExtractionRecordDto(string Id, string Purpose, string InstructionVersionId, string ProtectedContractVersion, string SourceFileName, string SourceMimeType, string SourceSha256, string RawResponse, string? NormalizedResponseJson, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string? JobId, string? JobConfigVersionId, DateTime CreatedAt, string CreatedBy, DateTime CompletedAt, string CorrelationId);
+public record ExtractionResultDto(string ExtractionId, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string? Title, string? JobDescription, string? Department, string? Organization, RubricEnvelopeDto Rubric);
+public record ExtractionFailureDto(string ExtractionId, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings);
 public record ExtractSpecResult(string? Title, string? Department, string? Organisation, string? JobDescription, List<MustHaveItem>? MustHaves, List<DesiredCriterionItem>? DesiredCriteria, List<RubricCategoryItem>? Rubric);
 public record ExtractRubricResult(string? Title, List<RubricCategoryItem>? Categories);
 public record MustHaveItem(string Criterion, string? Description);

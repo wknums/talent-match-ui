@@ -11,6 +11,8 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<Job> Jobs => Set<Job>();
     public DbSet<JobConfigVersion> JobConfigVersions => Set<JobConfigVersion>();
+    public DbSet<ExtractionInstructionVersion> ExtractionInstructionVersions => Set<ExtractionInstructionVersion>();
+    public DbSet<JobSpecExtraction> JobSpecExtractions => Set<JobSpecExtraction>();
     public DbSet<TalentMatch.Domain.Entities.Application> Applications => Set<TalentMatch.Domain.Entities.Application>();
     public DbSet<ApplicationDocument> ApplicationDocuments => Set<ApplicationDocument>();
     public DbSet<DocumentBlob> DocumentBlobs => Set<DocumentBlob>();
@@ -168,6 +170,61 @@ public class AppDbContext : DbContext
             e.Ignore(x => x.MustHaveCriteriaJson);
             e.Property(x => x.MustHavesJson).HasColumnName("MustHavesJson");
             e.Property(x => x.RunsPerApplication).HasColumnName("RunsPerApplication");
+            e.Property(x => x.ExtractionId).HasMaxLength(36);
+            e.Property(x => x.ExtractionInstructionVersionId).HasMaxLength(36);
+        });
+
+        modelBuilder.Entity<ExtractionInstructionVersion>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.InstructionText).IsRequired();
+            e.Property(x => x.ProtectedContractVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.ValidationStatus).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ValidatedBy).HasMaxLength(100);
+            e.Property(x => x.ActivatedBy).HasMaxLength(100);
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.HasIndex(x => x.VersionNumber).IsUnique();
+            e.HasIndex(x => new { x.Status, x.VersionNumber });
+            e.HasIndex(x => x.Status)
+                .IsUnique()
+                .HasFilter("[Status] = 'active'");
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_ExtractionInstructionVersions_Status", "Status IN ('draft', 'active', 'retired')");
+                t.HasCheckConstraint("CK_ExtractionInstructionVersions_ValidationStatus", "ValidationStatus IN ('unvalidated', 'valid', 'invalid')");
+            });
+        });
+
+        modelBuilder.Entity<JobSpecExtraction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Purpose).HasMaxLength(40).IsRequired();
+            e.Property(x => x.InstructionVersionId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.ProtectedContractVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.SourceFileName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.SourceMimeType).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SourceSha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ValidationStatus).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(100).IsRequired();
+            e.Property(x => x.CorrelationId).HasMaxLength(36).IsRequired();
+            e.HasIndex(x => new { x.InstructionVersionId, x.CreatedAt });
+            e.HasIndex(x => new { x.JobId, x.CreatedAt });
+            e.HasIndex(x => x.JobConfigVersionId);
+            e.HasOne(x => x.InstructionVersion)
+                .WithMany()
+                .HasForeignKey(x => x.InstructionVersionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Job)
+                .WithMany()
+                .HasForeignKey(x => x.JobId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_JobSpecExtractions_Purpose", "Purpose IN ('job_creation', 'instruction_validation')");
+                t.HasCheckConstraint("CK_JobSpecExtractions_ValidationStatus", "ValidationStatus IN ('valid', 'invalid')");
+            });
         });
 
         // Application

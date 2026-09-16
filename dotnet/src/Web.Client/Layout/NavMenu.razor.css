@@ -66,6 +66,35 @@
     outline-offset: -3px;
 }
 
+.nav-group {
+    color: #d7d7d7;
+    font-size: 0.9rem;
+    padding-bottom: 0.5rem;
+}
+
+.nav-group-label {
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    min-height: 3rem;
+    padding: 0 1rem;
+}
+
+.nav-group-label:hover {
+    background-color: rgba(255,255,255,0.1);
+    color: white;
+}
+
+.nav-group-label:focus-visible {
+    outline: 3px solid #ffffff;
+    outline-offset: -3px;
+}
+
+.nav-subitem {
+    padding: 0 0 0 2rem;
+}
+
 .nav-scrollable {
     /* Allow the sidebar to scroll for tall menus at every width. */
     height: calc(100vh - 3.5rem);

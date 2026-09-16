@@ -1,0 +1,38 @@
+{
+  "job_title": "Senior Data Platform Engineer",
+  "job_description": "Northwind Analytics is hiring a Senior Data Platform Engineer to build reliable, compliant, and observable data products for internal and external teams.",
+  "department": "Data Engineering",
+  "organization": "Northwind Analytics",
+  "requirements": [
+    {
+      "id": "req-ambiguous-001",
+      "text": "Translate business requirements into maintainable scoring rubrics",
+      "requirement_type": "responsibility",
+      "category_id": "cat-needs-review",
+      "source_text": "Partner with recruiters and hiring managers to translate business requirements into maintainable scoring rubrics.",
+      "source_location": "Responsibilities",
+      "duplicate_of": null,
+      "needs_review": true
+    }
+  ],
+  "rubric": {
+    "has_rubric_in_doc": false,
+    "categories": [
+      {
+        "id": "cat-delivery",
+        "name": "Delivery and Quality",
+        "weight": 0.5,
+        "description": "Execution and quality of deliverables.",
+        "source": "generated"
+      },
+      {
+        "id": "cat-collaboration",
+        "name": "Collaboration and Communication",
+        "weight": 0.5,
+        "description": "Cross-functional collaboration and communication.",
+        "source": "generated"
+      }
+    ],
+    "weights_sum_to_1_0": true
+  }
+}

@@ -220,6 +220,80 @@ public class GeneratePromptCommandTests
         capturedUserPrompt.Should().Contain("candidate_name");
     }
 
+    [Fact]
+    public async Task Handle_RubricV2Config_UsesEnvelopeCategories()
+    {
+        var job = BuildJobWithApprovedConfig(
+            rubricJson: """
+            {
+              "schemaVersion": "rubric-v2",
+              "categories": [
+                { "id": "cat-1", "name": "Technical Skills", "weight": 0.7, "description": "Core technical match", "order": 0 },
+                { "id": "cat-2", "name": "Communication", "weight": 0.3, "description": "Clear communication", "order": 1 }
+              ],
+              "items": [
+                { "id": "item-1", "categoryId": "cat-1", "text": "Expert SQL experience", "requirementType": "must_have", "order": 0, "sourceText": "Expert SQL experience", "sourceLocation": null, "sourceRequirementId": "req-1", "reviewStatus": "confirmed", "createdFrom": "extracted" }
+              ]
+            }
+            """,
+            mustHavesJson: """
+            [
+              { "criterion": "Expert SQL experience", "description": "Expert SQL experience" }
+            ]
+            """,
+            desiredCriteriaJson: "[]");
+
+        ScoringPrompt? savedPrompt = null;
+        _jobRepoMock.Setup(r => r.GetByIdAsync("job-1", It.IsAny<CancellationToken>())).ReturnsAsync(job);
+        _promptRepoMock.Setup(r => r.GetByJobIdAsync("job-1", It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<ScoringPrompt>());
+        _promptRepoMock.Setup(r => r.AddAsync(It.IsAny<ScoringPrompt>(), It.IsAny<CancellationToken>()))
+            .Callback<ScoringPrompt, CancellationToken>((p, _) => savedPrompt = p)
+            .Returns(Task.CompletedTask);
+
+        var handler = new GeneratePromptCommandHandler(_promptRepoMock.Object, _jobRepoMock.Object, llmService: null);
+
+        await handler.Handle(new GeneratePromptCommand("job-1", "author-1"), CancellationToken.None);
+
+        using var templateDoc = JsonDocument.Parse(ExtractTemplateJson(savedPrompt!.PromptText));
+        templateDoc.RootElement.GetProperty("category_scores")
+            .EnumerateArray()
+            .Select(item => item.GetProperty("name").GetString())
+            .Should()
+            .Equal("Technical Skills", "Communication");
+    }
+
+    [Fact]
+    public async Task Handle_RubricV2Config_AcceptsPascalCaseEnvelopeProperties()
+    {
+        var job = BuildJobWithApprovedConfig(
+            rubricJson: """
+            {
+              "SchemaVersion": "rubric-v2",
+              "Categories": [
+                { "Id": "cat-1", "Name": "Leadership", "Weight": 1.0, "Description": "Leadership capability", "Order": 0 }
+              ],
+              "Items": []
+            }
+            """,
+            mustHavesJson: "[]",
+            desiredCriteriaJson: "[]");
+
+        ScoringPrompt? savedPrompt = null;
+        _jobRepoMock.Setup(r => r.GetByIdAsync("job-1", It.IsAny<CancellationToken>())).ReturnsAsync(job);
+        _promptRepoMock.Setup(r => r.GetByJobIdAsync("job-1", It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _promptRepoMock.Setup(r => r.AddAsync(It.IsAny<ScoringPrompt>(), It.IsAny<CancellationToken>()))
+            .Callback<ScoringPrompt, CancellationToken>((prompt, _) => savedPrompt = prompt)
+            .Returns(Task.CompletedTask);
+
+        var handler = new GeneratePromptCommandHandler(_promptRepoMock.Object, _jobRepoMock.Object);
+
+        await handler.Handle(new GeneratePromptCommand("job-1", "author-1"), CancellationToken.None);
+
+        using var templateDoc = JsonDocument.Parse(ExtractTemplateJson(savedPrompt!.PromptText));
+        templateDoc.RootElement.GetProperty("category_scores")[0].GetProperty("name").GetString()
+            .Should().Be("Leadership");
+    }
+
     private static Job BuildJobWithApprovedConfig(string rubricJson, string mustHavesJson, string desiredCriteriaJson)
     {
         return new Job

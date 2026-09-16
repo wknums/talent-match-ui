@@ -7,7 +7,10 @@ namespace TalentMatch.Application.Applications.Commands;
 
 public record UploadedFile(string FileName, string FileType, long FileSize, string ContentBase64, string Fingerprint);
 
-public record UploadApplicationsCommand(string JobId, List<UploadedFile> Files) : IRequest<List<Domain.Entities.Application>>;
+public record UploadApplicationsCommand(
+    string JobId,
+    List<UploadedFile> Files,
+    bool AllowDuplicates = false) : IRequest<List<Domain.Entities.Application>>;
 
 public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicationsCommand, List<Domain.Entities.Application>>
 {
@@ -27,11 +30,23 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
 
         var applications = new List<Domain.Entities.Application>();
         var createdApplicationIds = new List<string>();
+        var requestFingerprints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         try
         {
             foreach (var file in request.Files)
             {
+                if (!request.AllowDuplicates)
+                {
+                    var repeatedInRequest = !requestFingerprints.Add(file.Fingerprint);
+                    var existingDocument = repeatedInRequest
+                        ? null
+                        : await _applicationRepository.FindDocumentByFingerprintAsync(
+                            request.JobId, file.Fingerprint, cancellationToken);
+                    if (repeatedInRequest || existingDocument is not null)
+                        continue;
+                }
+
                 var app = new Domain.Entities.Application
                 {
                     JobId = request.JobId,

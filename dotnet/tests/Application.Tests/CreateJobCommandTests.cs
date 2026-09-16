@@ -16,17 +16,19 @@ public class CreateJobCommandTests
     public async Task Handle_ValidCommand_CreatesJobWithConfig()
     {
         Job? createdJob = null;
+        JobConfigVersion? createdConfig = null;
 
         _jobRepoMock.Setup(r => r.AddAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()))
             .Callback<Job, CancellationToken>((job, _) => createdJob = job)
             .Returns(Task.CompletedTask);
         _jobRepoMock.Setup(r => r.AddConfigVersionAsync(It.IsAny<JobConfigVersion>(), It.IsAny<CancellationToken>()))
+            .Callback<JobConfigVersion, CancellationToken>((config, _) => createdConfig = config)
             .Returns(Task.CompletedTask);
         _currentUserMock.SetupGet(c => c.UserId).Returns("user-123");
 
         var handler = new CreateJobCommandHandler(_jobRepoMock.Object, _currentUserMock.Object);
         var command = new CreateJobCommand("Software Engineer", "Engineering", "TechCo", DateTime.Today,
-            null, null, null, 3, "median", 70, 85, 15, null, null, null);
+            null, null, null, 3, "median", 70, 85, 15, null, null, null, "extract-001", "instruction-v1");
 
         var result = await handler.Handle(command, CancellationToken.None);
 
@@ -38,6 +40,9 @@ public class CreateJobCommandTests
         result.CreatedBy.Should().Be("user-123");
         createdJob.Should().NotBeNull();
         createdJob!.CreatedBy.Should().Be("user-123");
+        createdConfig.Should().NotBeNull();
+        createdConfig!.ExtractionId.Should().Be("extract-001");
+        createdConfig.ExtractionInstructionVersionId.Should().Be("instruction-v1");
         _jobRepoMock.Verify(r => r.AddAsync(It.IsAny<Job>(), It.IsAny<CancellationToken>()), Times.Once);
         _jobRepoMock.Verify(r => r.AddConfigVersionAsync(It.IsAny<JobConfigVersion>(), It.IsAny<CancellationToken>()), Times.Once);
     }

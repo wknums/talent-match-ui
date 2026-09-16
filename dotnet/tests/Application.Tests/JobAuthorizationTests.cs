@@ -41,6 +41,8 @@ public class JobAuthorizationTests
             15,
             null,
             null,
+            null,
+            null,
             null);
 
         var act = () => handler.Handle(command, CancellationToken.None);

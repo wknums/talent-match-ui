@@ -22,6 +22,8 @@ public class JobConfigVersion
     public string RubricApprovalStatus { get; set; } = "draft";
     public string RubricSource { get; set; } = "manual";
     public string? RawExtractionResponse { get; set; }
+    public string? ExtractionId { get; set; }
+    public string? ExtractionInstructionVersionId { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     
     [JsonIgnore]

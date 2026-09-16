@@ -32,6 +32,7 @@ public interface IScoringBatchRepository
 
     // Progress
     Task InitProgressAsync(string jobId, int totalApps, int batchesPending, CancellationToken ct = default);
+    Task AddProgressAsync(string jobId, int additionalApps, int additionalBatchesPending, CancellationToken ct = default);
     Task<ScoringJobProgress?> GetProgressAsync(string jobId, CancellationToken ct = default);
     Task RequestCancelProgressAsync(string jobId, CancellationToken ct = default);
     Task ApplyTransitionAsync(

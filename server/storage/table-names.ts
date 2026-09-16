@@ -35,3 +35,8 @@ export const AUTHORIZATION_TABLES = {
 export function T(tableName: string): string {
   return isAzureSql ? `[${SCHEMA_NAME}].[${tableName}]` : tableName
 }
+
+export function lockedTable(tableName: string, alias?: string): string {
+  const reference = `${T(tableName)}${alias ? ` ${alias}` : ''}`
+  return isAzureSql ? `${reference} WITH (UPDLOCK, HOLDLOCK)` : reference
+}

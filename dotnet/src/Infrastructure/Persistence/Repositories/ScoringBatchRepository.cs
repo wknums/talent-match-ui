@@ -192,6 +192,35 @@ public class ScoringBatchRepository : IScoringBatchRepository
         await _db.SaveChangesAsync(ct);
     }
 
+    public async Task AddProgressAsync(
+        string jobId,
+        int additionalApps,
+        int additionalBatchesPending,
+        CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var existing = await _db.ScoringJobProgress.FirstOrDefaultAsync(p => p.JobId == jobId, ct);
+        if (existing is null)
+        {
+            _db.ScoringJobProgress.Add(new ScoringJobProgress
+            {
+                JobId = jobId,
+                TotalApps = additionalApps,
+                BatchesPending = additionalBatchesPending,
+                StartedAt = now,
+                UpdatedAt = now,
+            });
+        }
+        else
+        {
+            existing.TotalApps += additionalApps;
+            existing.BatchesPending += additionalBatchesPending;
+            existing.UpdatedAt = now;
+        }
+
+        await _db.SaveChangesAsync(ct);
+    }
+
     public Task<ScoringJobProgress?> GetProgressAsync(string jobId, CancellationToken ct = default)
         => _db.ScoringJobProgress.AsNoTracking().FirstOrDefaultAsync(p => p.JobId == jobId, ct);
 

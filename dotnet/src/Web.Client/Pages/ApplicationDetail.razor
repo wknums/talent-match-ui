@@ -103,12 +103,35 @@
             }
             @if (config != null)
             {
+                @if (config.Extraction is not null)
+                {
+                    <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:0.75rem; margin-bottom:1rem; font-size:0.85rem;">
+                        <div><strong>Instruction version:</strong> @config.Extraction.InstructionVersionId</div>
+                        <div><strong>Extracted at:</strong> @config.Extraction.CompletedAt.ToString("u")</div>
+                        @if (config.Extraction.ValidationFindings.Count > 0)
+                        {
+                            <ul style="margin-top:0.4rem;">
+                                @foreach (var finding in config.Extraction.ValidationFindings)
+                                {
+                                    <li>@finding.Code — @finding.Message</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                }
                 <h6 style="margin-bottom: 0.25rem;">Thresholds</h6>
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem; font-size: 0.85rem;">
                     <div>Shortlist: <strong>@config.ShortlistThreshold</strong></div>
                     <div>Longlist: <strong>@config.LonglistThreshold</strong></div>
                     <div>Variance: <strong>@config.VarianceThreshold</strong></div>
                     <div>Runs: <strong>@config.ScoringRunCount</strong></div>
+                </div>
+            }
+            @if (rubricEnvelope is not null)
+            {
+                <div style="margin-top:1rem;">
+                    <h6 style="margin-bottom:0.5rem;">Itemized rubric source trace</h6>
+                    <RubricEditor Value="rubricEnvelope" />
                 </div>
             }
             @if (!rubricCategories.Any() && !mustHaveCriteria.Any() && config == null)
@@ -353,6 +376,7 @@ else
     private List<ScoringRunDto> scoringRuns = new();
     private AggregatedResultDto? aggregatedResult;
     private List<RubricCategoryItem> rubricCategories = new();
+    private RubricEnvelopeDto? rubricEnvelope;
     private List<string> mustHaveCriteria = new();
     private string runSortField = "index";
     private bool runSortAsc = true;
@@ -404,8 +428,8 @@ else
             {
                 if (!string.IsNullOrEmpty(config.RubricJson))
                 {
-                    try { rubricCategories = JsonSerializer.Deserialize<List<RubricCategoryItem>>(config.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new(); }
-                    catch { }
+                    rubricCategories = ReadRubricCategories(config.RubricJson);
+                    rubricEnvelope = TryParseRubricEnvelope(config.RubricJson);
                 }
                 if (!string.IsNullOrEmpty(config.MustHavesJson))
                 {
@@ -429,6 +453,54 @@ else
         if (string.IsNullOrWhiteSpace(json)) return null;
         try { return JsonSerializer.Deserialize<Dictionary<string, double>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
         catch { return null; }
+    }
+
+    private static List<RubricCategoryItem> ReadRubricCategories(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return new();
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<RubricEnvelopeDto>(rubricJson, options);
+            if (envelope is not null
+                && string.Equals(envelope.SchemaVersion, "rubric-v2", StringComparison.Ordinal))
+            {
+                return envelope.Categories
+                    .OrderBy(category => category.Order)
+                    .Select(category => new RubricCategoryItem(category.Name, category.Weight, category.Description))
+                    .ToList();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<RubricCategoryItem>>(rubricJson, options) ?? new();
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
+    }
+
+    private static RubricEnvelopeDto? TryParseRubricEnvelope(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return null;
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<RubricEnvelopeDto>(rubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return string.Equals(envelope?.SchemaVersion, "rubric-v2", StringComparison.Ordinal) ? envelope : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private List<EvidenceItem>? ParseEvidenceList(string? json)

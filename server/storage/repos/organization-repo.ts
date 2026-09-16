@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { getPool, isAzureSql, sql } from '../db.js'
-import { T } from '../table-names.js'
+import { lockedTable, T } from '../table-names.js'
 import type { Department, DepartmentMembership, Organization, OrganizationMembership } from '../../../src/types/index.js'
 import type { AuthorizationMembership } from '../../services/authorization.js'
 import {
@@ -25,11 +25,6 @@ interface StoredOrganizationAuthority {
   organizationAdminIds: string[]
 }
 
-function lockTable(tableName: string): string {
-  const table = T(tableName)
-  return isAzureSql ? `${table} WITH (UPDLOCK, HOLDLOCK)` : table
-}
-
 async function readOrganizationAuthority(
   executor: StorageExecutor,
   actor: OrganizationAdminActor,
@@ -37,7 +32,7 @@ async function readOrganizationAuthority(
   const user = await executor.request()
     .input('tenantId', sql.NVarChar, actor.tenantId)
     .input('objectId', sql.NVarChar, actor.objectId)
-    .query(`SELECT Id, IsActive FROM ${lockTable('Users')}
+    .query(`SELECT Id, IsActive FROM ${lockedTable('Users')}
       WHERE AuthenticationProvider = 'entra' AND EntraTenantId = @tenantId AND EntraObjectId = @objectId`)
   if (!user.recordset[0] || !(user.recordset[0].IsActive === true || user.recordset[0].IsActive === 1)) {
     throw new OrganizationAdminError('forbidden', 'The actor is not an active Entra identity.', 403)
@@ -46,7 +41,7 @@ async function readOrganizationAuthority(
     .input('tenantId', sql.NVarChar, actor.tenantId)
     .input('objectId', sql.NVarChar, actor.objectId)
     .input('userId', sql.NVarChar, user.recordset[0].Id)
-    .query(`SELECT ra.Role, ra.OrganizationId FROM ${lockTable('RoleAssignments')} ra
+    .query(`SELECT ra.Role, ra.OrganizationId FROM ${lockedTable('RoleAssignments', 'ra')}
       WHERE ra.TenantId = @tenantId AND ra.UserObjectId = @objectId AND ra.Status = 'active'
         AND (ra.Role = 'admin' OR (ra.Role = 'organization_admin' AND EXISTS (
           SELECT 1 FROM ${T('OrganizationMemberships')} om
@@ -84,7 +79,7 @@ async function readTargetUser(executor: StorageExecutor, actor: OrganizationAdmi
   const result = await executor.request()
     .input('tenantId', sql.NVarChar, actor.tenantId)
     .input('objectId', sql.NVarChar, objectId)
-    .query(`SELECT Id, EntraObjectId, IsActive FROM ${lockTable('Users')}
+    .query(`SELECT Id, EntraObjectId, IsActive FROM ${lockedTable('Users')}
       WHERE AuthenticationProvider = 'entra' AND EntraTenantId = @tenantId AND EntraObjectId = @objectId`)
   if (!result.recordset[0]) {
     throw new OrganizationAdminError('not_found', 'The tenant-verified Entra profile was not found.', 404)
@@ -103,14 +98,10 @@ async function advanceAuthorizationVersion(executor: StorageExecutor, userId: st
 export const organizationRepo = {
   async listOrganizations(actor: OrganizationAdminActor): Promise<OrganizationAdminOrganization[]> {
     const pool = await getPool()
-    const authority = await readOrganizationAuthority(pool, actor)
-    if (!authority.globalAdmin && authority.organizationAdminIds.length === 0) {
-      throw new OrganizationAdminError('forbidden', 'The actor does not have organization administration authority.', 403)
-    }
     const request = pool.request()
     const predicates = ["o.Status = 'active'"]
-    if (!authority.globalAdmin) {
-      const scope = authority.organizationAdminIds.map((id, index) => {
+    if (!actor.globalAdmin) {
+      const scope = actor.organizationAdminIds.map((id, index) => {
         request.input(`scope${index}`, sql.NVarChar, id)
         return `@scope${index}`
       })
@@ -185,7 +176,7 @@ export const organizationRepo = {
     return await organizationMutation(async transaction => {
       requireStoredAuthority(await readOrganizationAuthority(transaction, actor), organizationId)
       const organization = await transaction.request().input('organizationId', sql.NVarChar, organizationId)
-        .query(`SELECT Id FROM ${lockTable('Organizations')} WHERE Id = @organizationId AND Status = 'active'`)
+        .query(`SELECT Id FROM ${lockedTable('Organizations')} WHERE Id = @organizationId AND Status = 'active'`)
       if (!organization.recordset[0]) throw new OrganizationAdminError('not_found', 'The active organization was not found.', 404)
       const id = randomUUID()
       await transaction.request().input('id', sql.NVarChar, id).input('organizationId', sql.NVarChar, organizationId)
@@ -206,13 +197,13 @@ export const organizationRepo = {
       requireStoredAuthority(await readOrganizationAuthority(transaction, actor), organizationId)
       const department = await transaction.request().input('organizationId', sql.NVarChar, organizationId)
         .input('departmentId', sql.NVarChar, departmentId)
-        .query(`SELECT Id, Name, Status FROM ${lockTable('Departments')}
+        .query(`SELECT Id, Name, Status FROM ${lockedTable('Departments')}
           WHERE Id = @departmentId AND OrganizationId = @organizationId`)
       if (!department.recordset[0]) throw new OrganizationAdminError('not_found', 'The department was not found in this organization.', 404)
 
       if (request.status === 'retired' && department.recordset[0].Status !== 'retired') {
         const activeDepartments = await transaction.request().input('organizationId', sql.NVarChar, organizationId)
-          .query(`SELECT Id FROM ${lockTable('Departments')} WHERE OrganizationId = @organizationId AND Status = 'active'`)
+          .query(`SELECT Id FROM ${lockedTable('Departments')} WHERE OrganizationId = @organizationId AND Status = 'active'`)
         if (activeDepartments.recordset.length <= 1) {
           throw new OrganizationAdminError('conflict', 'An active organization must retain at least one active department.', 409)
         }
@@ -256,7 +247,7 @@ export const organizationRepo = {
       requireStoredAuthority(await readOrganizationAuthority(transaction, actor), organizationId)
       const target = await readTargetUser(transaction, actor, request.userObjectId)
       const organization = await transaction.request().input('organizationId', sql.NVarChar, organizationId)
-        .query(`SELECT Id FROM ${lockTable('Organizations')} WHERE Id = @organizationId AND Status = 'active'`)
+        .query(`SELECT Id FROM ${lockedTable('Organizations')} WHERE Id = @organizationId AND Status = 'active'`)
       if (!organization.recordset[0]) throw new OrganizationAdminError('not_found', 'The active organization was not found.', 404)
 
       const departmentRequest = transaction.request().input('organizationId', sql.NVarChar, organizationId)
@@ -264,7 +255,7 @@ export const organizationRepo = {
         departmentRequest.input(`department${index}`, sql.NVarChar, id)
         return `@department${index}`
       })
-      const departments = await departmentRequest.query(`SELECT Id FROM ${lockTable('Departments')}
+      const departments = await departmentRequest.query(`SELECT Id FROM ${lockedTable('Departments')}
         WHERE OrganizationId = @organizationId AND Status = 'active' AND Id IN (${placeholders.join(', ')})`)
       if (departments.recordset.length !== request.departmentIds.length) {
         throw new OrganizationAdminError('invalid_scope', 'Every department must be active in the selected organization.', 400)
@@ -272,7 +263,7 @@ export const organizationRepo = {
 
       const activeDepartments = await transaction.request().input('userId', sql.NVarChar, target.Id)
         .input('organizationId', sql.NVarChar, organizationId)
-        .query(`SELECT Id, DepartmentId FROM ${lockTable('DepartmentMemberships')}
+        .query(`SELECT Id, DepartmentId FROM ${lockedTable('DepartmentMemberships')}
           WHERE UserId = @userId AND OrganizationId = @organizationId AND Status = 'active'`)
       const desiredIds = new Set(request.departmentIds)
       const removedIds = activeDepartments.recordset
@@ -285,7 +276,7 @@ export const organizationRepo = {
           assignmentRequest.input(`removed${index}`, sql.NVarChar, id)
           return `@removed${index}`
         })
-        const assignments = await assignmentRequest.query(`SELECT Id FROM ${lockTable('RoleAssignments')}
+        const assignments = await assignmentRequest.query(`SELECT Id FROM ${lockedTable('RoleAssignments')}
           WHERE UserId = @userId AND OrganizationId = @organizationId AND Status = 'active'
             AND DepartmentId IN (${removedPlaceholders.join(', ')})`)
         if (assignments.recordset.length > 0) {
@@ -300,7 +291,7 @@ export const organizationRepo = {
         if (membershipIds.has(departmentId)) continue
         const existing = await transaction.request().input('userId', sql.NVarChar, target.Id)
           .input('organizationId', sql.NVarChar, organizationId).input('departmentId', sql.NVarChar, departmentId)
-          .query(`SELECT Id FROM ${lockTable('DepartmentMemberships')}
+          .query(`SELECT Id FROM ${lockedTable('DepartmentMemberships')}
             WHERE UserId = @userId AND OrganizationId = @organizationId AND DepartmentId = @departmentId`)
         const membershipId = existing.recordset[0]?.Id ?? randomUUID()
         if (existing.recordset[0]) {
@@ -321,7 +312,7 @@ export const organizationRepo = {
       if (!defaultMembershipId) throw new OrganizationAdminError('invalid_scope', 'The explicit default is not an active membership.', 400)
       const memberships = await transaction.request().input('userId', sql.NVarChar, target.Id)
         .input('organizationId', sql.NVarChar, organizationId)
-        .query(`SELECT Id FROM ${lockTable('OrganizationMemberships')}
+        .query(`SELECT Id FROM ${lockedTable('OrganizationMemberships')}
           WHERE UserId = @userId AND OrganizationId = @organizationId`)
       if (memberships.recordset[0]) {
         await transaction.request().input('id', sql.NVarChar, memberships.recordset[0].Id)
@@ -359,13 +350,13 @@ export const organizationRepo = {
       const target = await readTargetUser(transaction, actor, request.userObjectId)
       const membership = await transaction.request().input('userId', sql.NVarChar, target.Id)
         .input('organizationId', sql.NVarChar, organizationId)
-        .query(`SELECT Id FROM ${lockTable('OrganizationMemberships')}
+        .query(`SELECT Id FROM ${lockedTable('OrganizationMemberships')}
           WHERE UserId = @userId AND OrganizationId = @organizationId AND Status = 'active'`)
       if (!membership.recordset[0]) throw new OrganizationAdminError('conflict', 'Active organization membership is required.', 409)
       if (request.departmentId) {
         const department = await transaction.request().input('userId', sql.NVarChar, target.Id)
           .input('organizationId', sql.NVarChar, organizationId).input('departmentId', sql.NVarChar, request.departmentId)
-          .query(`SELECT dm.Id FROM ${lockTable('DepartmentMemberships')} dm
+          .query(`SELECT dm.Id FROM ${lockedTable('DepartmentMemberships', 'dm')}
             INNER JOIN ${T('Departments')} d ON d.Id = dm.DepartmentId AND d.OrganizationId = dm.OrganizationId AND d.Status = 'active'
             WHERE dm.UserId = @userId AND dm.OrganizationId = @organizationId
               AND dm.DepartmentId = @departmentId AND dm.Status = 'active'`)
@@ -374,7 +365,7 @@ export const organizationRepo = {
       const existing = await transaction.request().input('tenantId', sql.NVarChar, actor.tenantId)
         .input('objectId', sql.NVarChar, request.userObjectId).input('organizationId', sql.NVarChar, organizationId)
         .input('role', sql.NVarChar, request.role).input('departmentId', sql.NVarChar, request.departmentId)
-        .query(`SELECT Id FROM ${lockTable('RoleAssignments')}
+        .query(`SELECT Id FROM ${lockedTable('RoleAssignments')}
           WHERE TenantId = @tenantId AND UserObjectId = @objectId AND OrganizationId = @organizationId
             AND Role = @role AND Source = 'delegated' AND Status = 'active'
             AND ((DepartmentId = @departmentId) OR (DepartmentId IS NULL AND @departmentId IS NULL))`)
@@ -398,7 +389,7 @@ export const organizationRepo = {
       requireStoredAuthority(authority, organizationId)
       const assignment = await transaction.request().input('id', sql.NVarChar, assignmentId)
         .input('organizationId', sql.NVarChar, organizationId)
-        .query(`SELECT Id, UserId, Role FROM ${lockTable('RoleAssignments')}
+        .query(`SELECT Id, UserId, Role FROM ${lockedTable('RoleAssignments')}
           WHERE Id = @id AND OrganizationId = @organizationId AND Source = 'delegated' AND Status = 'active'`)
       if (!assignment.recordset[0]) throw new OrganizationAdminError('not_found', 'The delegated role assignment was not found.', 404)
       if (assignment.recordset[0].Role === 'organization_admin' && !authority.globalAdmin) {

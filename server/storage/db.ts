@@ -59,13 +59,22 @@ export async function getPool(): Promise<any> {
 }
 
 export async function getStorageProvider(): Promise<import('./types.js').StorageProvider> {
-  const [{ userRepo }, { organizationRepo }, { roleAssignmentRepo }, { accessManagementRepo }] = await Promise.all([
+  const [{ userRepo }, { organizationRepo }, { roleAssignmentRepo }, { accessManagementRepo }, { extractionInstructionRepo }, { jobSpecExtractionRepo }] = await Promise.all([
     import('./repos/user-repo.js'),
     import('./repos/organization-repo.js'),
     import('./repos/role-assignment-repo.js'),
     import('./repos/access-management-repo.js'),
+    import('./repos/extraction-instruction-repo.js'),
+    import('./repos/job-spec-extraction-repo.js'),
   ])
-  return { users: userRepo, organizations: organizationRepo, roleAssignments: roleAssignmentRepo, accessManagement: accessManagementRepo }
+  return {
+    users: userRepo,
+    organizations: organizationRepo,
+    roleAssignments: roleAssignmentRepo,
+    accessManagement: accessManagementRepo,
+    extractionInstructions: extractionInstructionRepo,
+    jobSpecExtractions: jobSpecExtractionRepo,
+  }
 }
 
 // ===========================================================================
@@ -733,4 +742,3 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_RoleAssignments_Active
 
   console.log(`[db] Schema migration complete (${isAzureSql ? 'Azure SQL' : 'SQLite'})`)
 }
-

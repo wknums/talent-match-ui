@@ -11,7 +11,7 @@ public static class ApplicationsEndpoints
     {
         var jobAppsGroup = app.MapGroup("/api/jobs/{jobId}/applications").WithTags("Applications").RequireAuthorization();
 
-        jobAppsGroup.MapPost("/upload", async (string jobId, HttpRequest request, ISender mediator) =>
+        jobAppsGroup.MapPost("/upload", async (string jobId, bool? allowDuplicates, HttpRequest request, ISender mediator) =>
         {
             var files = new List<UploadedFile>();
             var form = await request.ReadFormAsync();
@@ -23,7 +23,10 @@ public static class ApplicationsEndpoints
                 var fingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
                 files.Add(new UploadedFile(file.FileName, file.ContentType, file.Length, Convert.ToBase64String(bytes), fingerprint));
             }
-            var result = await mediator.Send(new UploadApplicationsCommand(jobId, files));
+            var result = await mediator.Send(new UploadApplicationsCommand(
+                jobId,
+                files,
+                AllowDuplicates: allowDuplicates == true));
             return Results.Ok(result);
         }).DisableAntiforgery();
 

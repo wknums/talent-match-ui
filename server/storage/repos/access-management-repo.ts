@@ -12,7 +12,7 @@ import {
   type EntraAccessSearchOptions,
 } from '../../services/entra-access-management.js'
 import { getPool, isAzureSql, sql } from '../db.js'
-import { T } from '../table-names.js'
+import { lockedTable, T } from '../table-names.js'
 import type { StorageExecutor } from '../types.js'
 
 export interface EntraAccessManagementRepository {
@@ -47,9 +47,11 @@ function asBoolean(value: unknown): boolean {
   return value === true || value === 1
 }
 
-function lockTable(tableName: string): string {
-  const table = T(tableName)
-  return isAzureSql ? `${table} WITH (UPDLOCK, HOLDLOCK)` : table
+function escapeLikePattern(value: string): string {
+  return value
+    .replace(/~/g, '~~')
+    .replace(/%/g, '~%')
+    .replace(/_/g, '~_')
 }
 
 async function appendAudit(
@@ -76,7 +78,7 @@ async function readAuthority(executor: StorageExecutor, actor: AccessManagementA
   const user = await executor.request()
     .input('tenantId', sql.NVarChar, actor.tenantId)
     .input('objectId', sql.NVarChar, actor.objectId)
-    .query(`SELECT Id, IsActive FROM ${lockTable('Users')}
+    .query(`SELECT Id, IsActive FROM ${lockedTable('Users')}
       WHERE AuthenticationProvider = 'entra' AND EntraTenantId = @tenantId AND EntraObjectId = @objectId`)
   if (!user.recordset[0] || !asBoolean(user.recordset[0].IsActive)) {
     throw new EntraAccessError('forbidden', 'The actor is not an active Entra identity.', 403)
@@ -87,7 +89,7 @@ async function readAuthority(executor: StorageExecutor, actor: AccessManagementA
     .input('objectId', sql.NVarChar, actor.objectId)
     .input('userId', sql.NVarChar, user.recordset[0].Id)
     .query(`SELECT ra.Role, ra.OrganizationId
-      FROM ${lockTable('RoleAssignments')} ra
+      FROM ${lockedTable('RoleAssignments', 'ra')}
       WHERE ra.TenantId = @tenantId AND ra.UserObjectId = @objectId AND ra.Status = 'active'
         AND (ra.Role = 'admin' OR (ra.Role = 'organization_admin' AND EXISTS (
           SELECT 1 FROM ${T('OrganizationMemberships')} om
@@ -127,7 +129,7 @@ async function readTarget(
   const result = await executor.request()
     .input('tenantId', sql.NVarChar, tenantId)
     .input('objectId', sql.NVarChar, objectId)
-    .query(`SELECT * FROM ${lockTable('Users')}
+    .query(`SELECT * FROM ${lockedTable('Users')}
       WHERE AuthenticationProvider = 'entra' AND EntraTenantId = @tenantId AND EntraObjectId = @objectId`)
   return result.recordset[0]
 }
@@ -280,18 +282,18 @@ async function convergeMembership(
 ): Promise<void> {
   const organization = await executor.request()
     .input('organizationId', sql.NVarChar, organizationId)
-    .query(`SELECT Id FROM ${lockTable('Organizations')} WHERE Id = @organizationId AND Status = 'active'`)
+    .query(`SELECT Id FROM ${lockedTable('Organizations')} WHERE Id = @organizationId AND Status = 'active'`)
   if (!organization.recordset[0]) throw new EntraAccessError('not_found', 'The organization was not found.', 404)
 
   const activeOrganization = await executor.request()
     .input('userId', sql.NVarChar, target.Id)
     .input('organizationId', sql.NVarChar, organizationId)
-    .query(`SELECT Id FROM ${lockTable('OrganizationMemberships')}
+    .query(`SELECT Id FROM ${lockedTable('OrganizationMemberships')}
       WHERE UserId = @userId AND OrganizationId = @organizationId AND Status = 'active'`)
   const activeDepartments = await executor.request()
     .input('userId', sql.NVarChar, target.Id)
     .input('organizationId', sql.NVarChar, organizationId)
-    .query(`SELECT Id, DepartmentId FROM ${lockTable('DepartmentMemberships')}
+    .query(`SELECT Id, DepartmentId FROM ${lockedTable('DepartmentMemberships')}
       WHERE UserId = @userId AND OrganizationId = @organizationId AND Status = 'active'`)
 
   if (request.membership.status === 'revoked') {
@@ -311,7 +313,7 @@ async function convergeMembership(
     departmentRequest.input(`department${index}`, sql.NVarChar, departmentId)
     return `@department${index}`
   })
-  const departments = await departmentRequest.query(`SELECT Id FROM ${lockTable('Departments')}
+  const departments = await departmentRequest.query(`SELECT Id FROM ${lockedTable('Departments')}
     WHERE OrganizationId = @organizationId AND Status = 'active' AND Id IN (${placeholders.join(', ')})`)
   if (departments.recordset.length !== request.membership.departmentIds.length) {
     throw new EntraAccessError('invalid_scope', 'Every department must be active in the selected organization.', 400)
@@ -361,7 +363,7 @@ async function convergeDelegatedRoles(
 ): Promise<void> {
   const existing = await executor.request().input('tenantId', sql.NVarChar, actor.tenantId)
     .input('objectId', sql.NVarChar, target.EntraObjectId).input('organizationId', sql.NVarChar, organizationId)
-    .query(`SELECT Id, Role, DepartmentId FROM ${lockTable('RoleAssignments')}
+    .query(`SELECT Id, Role, DepartmentId FROM ${lockedTable('RoleAssignments')}
       WHERE TenantId = @tenantId AND UserObjectId = @objectId AND OrganizationId = @organizationId
         AND Source = 'delegated' AND Status = 'active'`)
   const desired = request.membership.status === 'active' ? request.roleAssignments : []
@@ -397,8 +399,10 @@ const repository: EntraAccessManagementRepository = {
       .input('take', sql.Int, options.limit + 1)
     const predicates = ["u.AuthenticationProvider = 'entra'", 'u.EntraTenantId = @tenantId']
     if (options.search) {
-      request.input('search', sql.NVarChar, `%${options.search}%`)
-      predicates.push('(u.Username LIKE @search OR u.FullName LIKE @search OR u.Email LIKE @search)')
+      request.input('search', sql.NVarChar, `%${escapeLikePattern(options.search)}%`)
+      predicates.push(`(u.Username LIKE @search ESCAPE '~'
+        OR u.FullName LIKE @search ESCAPE '~'
+        OR u.Email LIKE @search ESCAPE '~')`)
     }
     if (options.cursor) { request.input('cursor', sql.NVarChar, options.cursor); predicates.push('u.Id > @cursor') }
     if (options.organizationId) {

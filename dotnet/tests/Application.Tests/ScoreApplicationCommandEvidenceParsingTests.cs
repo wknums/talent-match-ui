@@ -258,6 +258,32 @@ public class ScoreApplicationCommandEvidenceParsingTests
         entries.Should().OnlyContain(e => e.GetProperty("passed").GetBoolean());
     }
 
+    [Fact]
+    public void RemapToRubricStatic_ReadsRubricV2EnvelopeCategories()
+    {
+        var run = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            CategoryScoresJson = """{"Technical":85,"Communication":72}"""
+        };
+
+        var rubricJson = """
+            {
+              "schemaVersion": "rubric-v2",
+              "categories": [
+                { "id": "cat-1", "name": "Technical Skills", "weight": 0.7, "description": "Core technical match", "order": 0 },
+                { "id": "cat-2", "name": "Communication", "weight": 0.3, "description": "Clear communication", "order": 1 }
+              ],
+              "items": []
+            }
+            """;
+
+        ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubricJson);
+
+        var scores = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson, JsonOpts);
+        scores.Should().ContainKey("Technical Skills").WhoseValue.Should().Be(85);
+        scores.Should().ContainKey("Communication").WhoseValue.Should().Be(72);
+    }
+
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     private record CitationDto(string? Category, string? Snippet);

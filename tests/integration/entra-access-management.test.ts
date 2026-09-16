@@ -220,4 +220,33 @@ describe('Stack A Entra access-management HTTP contract', () => {
     expect(body.correlationId).toMatch(/^[0-9a-f-]{36}$/i)
     expect(response.headers.get('x-correlation-id')).toBe(body.correlationId)
   })
+
+  it('logs unexpected failures with the client-visible correlation ID', async () => {
+    const repo = repository()
+    vi.mocked(repo.list).mockRejectedValueOnce(new Error('database unavailable'))
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const server = await createServer(repo)
+
+    try {
+      const response = await server.request('/api/access-management/users?search=target&limit=25', {
+        headers: { 'X-Correlation-ID': 'access-management-test-correlation' },
+      })
+      const body = await response.json()
+
+      expect(response.status).toBe(500)
+      expect(body).toMatchObject({
+        error: 'internal_error',
+        correlationId: 'access-management-test-correlation',
+      })
+      expect(consoleError).toHaveBeenCalledWith(
+        '[access-management] Unexpected request failure.',
+        expect.objectContaining({
+          correlationId: 'access-management-test-correlation',
+          error: expect.any(Error),
+        }),
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
 })

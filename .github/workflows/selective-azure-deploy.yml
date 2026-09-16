@@ -248,6 +248,7 @@ jobs:
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ENTRA_STACK_A_CLIENT_ID: ${{ vars.ENTRA_STACK_A_CLIENT_ID }}
           ENTRA_API_APP_CLIENT_ID: ${{ vars.ENTRA_API_APP_CLIENT_ID }}
+          ENTRA_API_IDENTIFIER_URI: ${{ vars.ENTRA_API_IDENTIFIER_URI }}
           ENTRA_API_SCOPE: ${{ vars.ENTRA_API_SCOPE || 'access_as_user' }}
         run: |
           chmod +x infra/scripts/package-stack-a.sh infra/scripts/lib/common.sh

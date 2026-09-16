@@ -4,6 +4,116 @@ export type AggregationStrategy = 'median' | 'mean' | 'weighted'
 export type Decision = 'Eligible' | 'Excluded' | 'NeedsManualReview'
 export type RubricApprovalStatus = 'draft' | 'approved'
 export type RubricSource = 'manual' | 'extracted' | 'generated'
+export type ExtractionValidationSeverity = 'error' | 'warning'
+export type ExtractionInstructionStatus = 'draft' | 'active' | 'retired'
+export type ExtractionInstructionValidationStatus = 'unvalidated' | 'valid' | 'invalid'
+export type RequirementType = 'must_have' | 'desired' | 'experience' | 'responsibility' | 'other'
+export type RubricItemReviewStatus = 'confirmed' | 'needs_review'
+export type RubricItemCreatedFrom = 'extracted' | 'manual' | 'legacy_conversion'
+
+export interface ExtractionValidationFinding {
+  code: string
+  severity: ExtractionValidationSeverity
+  path: string
+  message: string
+}
+
+export interface ExtractionInstructionVersion {
+  id: string
+  versionNumber: number
+  instructionText: string
+  protectedContractVersion: string
+  status: ExtractionInstructionStatus
+  validationStatus: ExtractionInstructionValidationStatus
+  changeNote?: string | null
+  validationFindings: ExtractionValidationFinding[]
+  createdAt: string
+  createdBy: string
+  validatedAt?: string | null
+  validatedBy?: string | null
+  activatedAt?: string | null
+  activatedBy?: string | null
+  concurrencyVersion: number
+}
+
+export interface ExtractionInstructionVersionDetail extends ExtractionInstructionVersion {
+  protectedContract: Record<string, unknown>
+}
+
+export interface RubricCategoryV2 {
+  id: string
+  name: string
+  weight: number
+  description?: string | null
+  order: number
+}
+
+export interface RubricItem {
+  id: string
+  categoryId: string
+  text: string
+  requirementType: RequirementType
+  order: number
+  sourceText?: string | null
+  sourceLocation?: string | null
+  sourceRequirementId?: string | null
+  reviewStatus: RubricItemReviewStatus
+  createdFrom: RubricItemCreatedFrom
+}
+
+export interface RubricEnvelope {
+  schemaVersion: 'rubric-v2'
+  legacySourceVersionId?: string | null
+  categories: RubricCategoryV2[]
+  items: RubricItem[]
+}
+
+export interface LegacyRubricState {
+  isLegacy: boolean
+  canConvert: boolean
+  preview?: RubricEnvelope | null
+}
+
+export interface JobSpecExtractionRecord {
+  id: string
+  purpose: 'job_creation' | 'instruction_validation'
+  instructionVersionId: string
+  protectedContractVersion: string
+  sourceFileName: string
+  sourceMimeType: string
+  sourceSha256: string
+  rawResponse: string
+  normalizedResponseJson?: string | null
+  validationStatus: 'valid' | 'invalid'
+  validationFindings: ExtractionValidationFinding[]
+  jobId?: string | null
+  jobConfigVersionId?: string | null
+  createdAt: string
+  createdBy: string
+  completedAt: string
+  correlationId: string
+}
+
+export interface ExtractionResult {
+  extractionId: string
+  instructionVersionId: string
+  protectedContractVersion: string
+  validationStatus: 'valid'
+  validationFindings: ExtractionValidationFinding[]
+  title?: string | null
+  jobDescription?: string | null
+  department?: string | null
+  organization?: string | null
+  rubric: RubricEnvelope
+}
+
+export interface ExtractionFailure {
+  extractionId: string
+  instructionVersionId: string
+  protectedContractVersion: string
+  validationStatus: 'invalid'
+  validationFindings: ExtractionValidationFinding[]
+}
 
 export interface RubricCategory {
   id: string
@@ -28,6 +138,7 @@ export interface JobConfigVersion {
   versionId: string
   jobId: string
   rubric: RubricCategory[]
+  rubricEnvelope?: RubricEnvelope
   mustHaves: MustHave[]
   desiredCriteria: DesiredCriteria[]
   runsPerApplication: number
@@ -38,6 +149,10 @@ export interface JobConfigVersion {
   rubricApprovalStatus: RubricApprovalStatus
   rubricSource: RubricSource
   rawExtractionResponse?: string
+  extractionId?: string
+  extractionInstructionVersionId?: string
+  extraction?: JobSpecExtractionRecord
+  legacyRubricState?: LegacyRubricState
   createdAt: string
 }
 
@@ -421,7 +536,18 @@ export interface UpdateEntraAccessUserRequest {
 }
 
 export interface CanonicalApiError {
-  error: AuthErrorCode | 'invalid_scope' | 'forbidden' | 'not_found' | 'conflict' | 'version_conflict'
+  error:
+    | AuthErrorCode
+    | 'invalid_scope'
+    | 'forbidden'
+    | 'not_found'
+    | 'conflict'
+    | 'version_conflict'
+    | 'stale_version'
+    | 'validation_error'
+    | 'validation_failed'
+    | 'already_converted'
+    | 'internal_error'
   message: string
   correlationId: string
 }

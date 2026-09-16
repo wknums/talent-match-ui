@@ -202,6 +202,22 @@ describe('Stack A Entra access-management repository', () => {
     expect(secondPage.items[0].objectId).not.toBe(firstPage.items[0].objectId)
   })
 
+  it('treats SQL LIKE wildcard characters in search text as literals', async () => {
+    const decoyObjectId = '20000000-0000-4000-8000-000000000020'
+    const decoyUserId = '20000000-0000-4000-8000-000000000021'
+    await query(`
+      UPDATE Users
+      SET Username = 'literal_user@example.com', Email = 'literal_user@example.com'
+      WHERE Id = '${targetUserId}';
+      INSERT INTO Users (Id, Username, Role, FullName, Email, CreatedAt, AuthenticationProvider, EntraTenantId, EntraObjectId, IsActive, AuthorizationVersion)
+      VALUES ('${decoyUserId}', 'literalXuser@example.com', 'recruiter', 'Decoy User', 'literalXuser@example.com', datetime('now'), 'entra', '${tenantId}', '${decoyObjectId}', 1, 0);
+    `)
+
+    const page = await repository.list(actor(), { search: 'literal_user@example.com', limit: 50 })
+
+    expect(page.items.map(item => item.objectId)).toEqual([targetObjectId])
+  })
+
   it('scopes an unfiltered Organization Admin list to assigned organizations and pending profiles', async () => {
     const outsideObjectId = '20000000-0000-4000-8000-000000000010'
     const outsideUserId = '20000000-0000-4000-8000-000000000011'

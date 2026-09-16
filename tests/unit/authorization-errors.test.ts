@@ -16,6 +16,7 @@ describe('canonical Stack A authorization errors', () => {
     ['forbidden', 403],
     ['not_found', 404],
     ['version_conflict', 409],
+    ['internal_error', 500],
     ['invalid_job_scope', 403],
   ])('maps %s to a stable lowercase code', (code, statusCode) => {
     expect(mapAuthorizationError(

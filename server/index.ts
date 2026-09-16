@@ -1,13 +1,16 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import express from 'express'
 import { getStorageProvider, initializeDatabase, isAzureSql } from './storage/db.js'
+import { extractionInstructionRepo } from './storage/repos/extraction-instruction-repo.js'
 import { createLLMRouter } from './routes/llm.js'
 import { createAuthRouter } from './routes/auth.js'
 import { createAccessManagementRouter } from './routes/access-management.js'
 import { createOrganizationsRouter } from './routes/organizations.js'
 import { createUsersRouter } from './routes/users.js'
 import { createJobsRouter } from './routes/jobs.js'
+import { createExtractionInstructionsRouter } from './routes/extraction-instructions.js'
 import { createApplicationsRouter } from './routes/applications.js'
 import { createStatsRouter } from './routes/stats.js'
 import { createAuditRouter } from './routes/audit.js'
@@ -23,6 +26,7 @@ import { createAuthorizationResolver } from './services/authorization.js'
 import { EntraAccessManagementService } from './services/entra-access-management.js'
 import { OrganizationAdminService } from './services/organization-admin.js'
 import { createEntraTokenValidator } from './services/entra-token.js'
+import { PROTECTED_EXTRACTION_CONTRACT_VERSION } from './services/extraction-contract.js'
 
 // Load .env file
 const envPath = resolve(process.cwd(), '.env')
@@ -97,6 +101,37 @@ async function createAuthentication() {
 async function initializeAppState() {
   await initializeDatabase()
   await initializeUsers()
+  await initializeExtractionInstructions()
+}
+
+async function initializeExtractionInstructions() {
+  if (await extractionInstructionRepo.any()) return
+
+  const createdAt = new Date().toISOString()
+  await extractionInstructionRepo.create({
+    id: randomUUID(),
+    versionNumber: 1,
+    instructionText: [
+      "Extract the hiring organization's job specification into structured data.",
+      'Identify every distinct, independently assessable requirement as its own requirement item.',
+      'Split compound requirements into separate items without changing their meaning.',
+      'Preserve genuine duplicates using duplicate_of instead of silently dropping them.',
+      'Retain ambiguous assignments by keeping the item and marking needs_review=true.',
+      'Preserve source wording for every requirement and enough metadata to trace it.',
+      'Respect any rubric already present in the document; otherwise produce a thoughtful generated rubric with weights summing to 1.0.',
+    ].join('\n'),
+    protectedContractVersion: PROTECTED_EXTRACTION_CONTRACT_VERSION,
+    status: 'active',
+    validationStatus: 'valid',
+    validationFindings: [],
+    createdAt,
+    createdBy: 'system:seed',
+    validatedAt: createdAt,
+    validatedBy: 'system:seed',
+    activatedAt: createdAt,
+    activatedBy: 'system:seed',
+    concurrencyVersion: 1,
+  })
 }
 
 async function main() {
@@ -163,6 +198,7 @@ async function main() {
   }
   app.use('/api/jobs', authMiddleware, createJobsRouter())
   app.use('/api/jobs', authMiddleware, createPromptsRouter())
+  app.use('/api/admin/extraction-instructions', authMiddleware, createExtractionInstructionsRouter())
   app.use('/api', authMiddleware, applicationsRouter)
   app.use('/api/stats', authMiddleware, createStatsRouter())
   app.use('/api/audit', authMiddleware, createAuditRouter())

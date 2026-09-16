@@ -26,6 +26,23 @@
 
             @* Scrollable body *@
             <div class="dialog-body">
+            <section class="editor-section" style="@SectionStyle(EditorSection.JobDetails)">
+                <div class="editor-section-header">
+                    <button type="button"
+                            class="editor-section-toggle disclosure-toggle"
+                            aria-label="@SectionToggleLabel(EditorSection.JobDetails, "Job details and specification")"
+                            aria-expanded="@expandedSections.Contains(EditorSection.JobDetails)"
+                            @onclick="() => ToggleSection(EditorSection.JobDetails)">
+                        <span class="disclosure-chevron" aria-hidden="true"></span>
+                        <span>Job details and specification</span>
+                    </button>
+                    <div class="editor-section-move-controls" aria-label="Move job details section">
+                        <button type="button" @onclick="() => MoveSection(EditorSection.JobDetails, -1)" disabled="@IsFirstSection(EditorSection.JobDetails)">Up</button>
+                        <button type="button" @onclick="() => MoveSection(EditorSection.JobDetails, 1)" disabled="@IsLastSection(EditorSection.JobDetails)">Down</button>
+                    </div>
+                </div>
+                @if (expandedSections.Contains(EditorSection.JobDetails))
+                {
 
                 @* Tab selector — hidden in edit mode *@
                 @if (!IsEditMode)
@@ -169,56 +186,140 @@
             <textarea @bind="jobDescription" rows="4" placeholder="Describe the role and responsibilities..." style="width: 100%;"></textarea>
         </div>
         }
+    </div>
+               }
+           </section>
 
-        <h5 style="margin-top: 1rem;">Rubric Categories</h5>
-        @for (int i = 0; i < rubricCategories.Count; i++)
+            <section class="editor-section" style="@SectionStyle(EditorSection.Rubric)">
+                <div class="editor-section-header">
+                    <button type="button"
+                            class="editor-section-toggle disclosure-toggle"
+                            aria-label="@SectionToggleLabel(EditorSection.Rubric, "Rubric and requirements")"
+                            aria-expanded="@expandedSections.Contains(EditorSection.Rubric)"
+                            @onclick="() => ToggleSection(EditorSection.Rubric)">
+                        <span class="disclosure-chevron" aria-hidden="true"></span>
+                        <span>Rubric and requirements</span>
+                    </button>
+                    <div class="editor-section-move-controls" aria-label="Move rubric section">
+                        <button type="button" @onclick="() => MoveSection(EditorSection.Rubric, -1)" disabled="@IsFirstSection(EditorSection.Rubric)">Up</button>
+                        <button type="button" @onclick="() => MoveSection(EditorSection.Rubric, 1)" disabled="@IsLastSection(EditorSection.Rubric)">Down</button>
+                    </div>
+                </div>
+                @if (expandedSections.Contains(EditorSection.Rubric))
+                {
+        @if (rubricEnvelope is not null)
         {
-            var idx = i;
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-                <input placeholder="Category Name" value="@rubricCategories[idx].Name" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Name = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
-                <input type="number" placeholder="Weight" value="@rubricCategories[idx].Weight" @oninput="(e) => OnWeightInput(idx, e)" step="0.05" style="width: 80px;" />
-                <input placeholder="Description" value="@rubricCategories[idx].Description" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Description = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
-                <button @onclick="() => RemoveCategory(idx)" style="color: red;">✕</button>
+            <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 0.85rem 1rem; margin-top: 1rem;">
+                <div style="font-weight: 600; color: #1e3a8a;">Itemized Rubric Extraction</div>
+                <div style="font-size: 0.82rem; color: #334155; margin-top: 0.35rem;">
+                    Instruction version: @(string.IsNullOrWhiteSpace(extractionInstructionVersionId) ? "pending" : extractionInstructionVersionId)
+                </div>
+                @if (extractionCompletedAt is not null)
+                {
+                    <div style="font-size: 0.82rem; color: #334155; margin-top: 0.2rem;">
+                        Extracted at: @extractionCompletedAt.Value.ToString("u")
+                    </div>
+                }
+                @if (extractionValidationFindings.Count > 0)
+                {
+                    <ul style="margin-top:0.5rem;">
+                        @foreach (var finding in extractionValidationFindings)
+                        {
+                            <li>@finding.Code — @finding.Message</li>
+                        }
+                    </ul>
+                }
             </div>
+            <h5 style="margin-top: 1rem;">Rubric Items</h5>
+            <RubricEditor Value="rubricEnvelope" Editable="true" OnChange="HandleRubricEnvelopeChanged" />
+            @if (isLegacyRubric && IsEditMode)
+            {
+                <div style="display:flex; gap:0.5rem; margin-top:0.75rem;">
+                    <button type="button" @onclick="ConfirmLegacyConversion" disabled="@isSaving">Confirm conversion</button>
+                    <button type="button" @onclick="CancelLegacyPreview" disabled="@isSaving">Cancel preview</button>
+                </div>
+            }
         }
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-            <button @onclick="AddCategory" style="padding: 0.25rem 0.5rem;">+ Add Category</button>
-            <span style="font-size: 0.8rem; color: @(validationErrors.ContainsKey("rubricWeights") ? "#dc2626" : Math.Abs(WeightSum - 1.0) < 0.001 ? "green" : "red");">
-                Weight sum: @WeightSum.ToString("F2") @(Math.Abs(WeightSum - 1.0) < 0.001 ? "✓" : "(must equal 1.0)")
-            </span>
-        </div>
-        @if (validationErrors.ContainsKey("rubric"))
+        else
         {
-            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["rubric"]</span>
-        }
-        @if (validationErrors.ContainsKey("rubricWeights"))
-        {
-            <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["rubricWeights"]</span>
-        }
-
-        <h5 style="margin-top: 1rem;">Must-Have Criteria</h5>
-        @for (int i = 0; i < mustHaveCriteria.Count; i++)
-        {
-            var idx = i;
+            @if (isLegacyRubric && IsEditMode)
+            {
+                <div style="background:#fff7ed; border:1px solid #fdba74; color:#9a3412; padding:0.85rem 1rem; border-radius:8px; margin-top:1rem;">
+                    This configuration uses the legacy rubric format. Preview a conversion before item-level editing.
+                    <div style="margin-top:0.5rem;">
+                        <button type="button" @onclick="PreviewLegacyConversion" disabled="@isSaving">Preview conversion</button>
+                    </div>
+                </div>
+            }
+            <h5 style="margin-top: 1rem;">Rubric Categories</h5>
+            @for (int i = 0; i < rubricCategories.Count; i++)
+            {
+                var idx = i;
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input placeholder="Category Name" value="@rubricCategories[idx].Name" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Name = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                    <input type="number" placeholder="Weight" value="@rubricCategories[idx].Weight" @oninput="(e) => OnWeightInput(idx, e)" step="0.05" style="width: 80px;" />
+                    <input placeholder="Description" value="@rubricCategories[idx].Description" @oninput="(e) => rubricCategories[idx] = rubricCategories[idx] with { Description = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                    <button @onclick="() => RemoveCategory(idx)" style="color: red;">✕</button>
+                </div>
+            }
             <div style="display: flex; gap: 0.5rem; align-items: center;">
-                <input value="@mustHaveCriteria[idx]" @oninput="(e) => mustHaveCriteria[idx] = e.Value?.ToString() ?? string.Empty" style="flex: 1;" />
-                <button @onclick="() => mustHaveCriteria.RemoveAt(idx)" style="color: red;">✕</button>
+                <button @onclick="AddCategory" style="padding: 0.25rem 0.5rem;">+ Add Category</button>
+                <span style="font-size: 0.8rem; color: @(validationErrors.ContainsKey("rubricWeights") ? "#dc2626" : Math.Abs(WeightSum - 1.0) < 0.001 ? "green" : "red");">
+                    Weight sum: @WeightSum.ToString("F2") @(Math.Abs(WeightSum - 1.0) < 0.001 ? "✓" : "(must equal 1.0)")
+                </span>
             </div>
-        }
-        <button @onclick="() => mustHaveCriteria.Add(string.Empty)" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Must-Have</button>
+            @if (validationErrors.ContainsKey("rubric"))
+            {
+                <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["rubric"]</span>
+            }
+            @if (validationErrors.ContainsKey("rubricWeights"))
+            {
+                <span style="color: #dc2626; font-size: 0.85rem;">@validationErrors["rubricWeights"]</span>
+            }
 
-        <h5 style="margin-top: 1rem;">Desired Criteria</h5>
-        @for (int i = 0; i < desiredCriteria.Count; i++)
-        {
-            var idx = i;
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-                <input placeholder="Qualification" value="@desiredCriteria[idx].Qualification" @oninput="(e) => desiredCriteria[idx] = desiredCriteria[idx] with { Qualification = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
-                <input placeholder="Description" value="@desiredCriteria[idx].Description" @oninput="(e) => desiredCriteria[idx] = desiredCriteria[idx] with { Description = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
-                <button @onclick="() => desiredCriteria.RemoveAt(idx)" style="color: red;">✕</button>
-            </div>
-        }
-        <button @onclick="() => desiredCriteria.Add(new DesiredCriterionInput(string.Empty, string.Empty))" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Desired Criterion</button>
+            <h5 style="margin-top: 1rem;">Must-Have Criteria</h5>
+            @for (int i = 0; i < mustHaveCriteria.Count; i++)
+            {
+                var idx = i;
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input value="@mustHaveCriteria[idx]" @oninput="(e) => mustHaveCriteria[idx] = e.Value?.ToString() ?? string.Empty" style="flex: 1;" />
+                    <button @onclick="() => mustHaveCriteria.RemoveAt(idx)" style="color: red;">✕</button>
+                </div>
+            }
+            <button @onclick="() => mustHaveCriteria.Add(string.Empty)" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Must-Have</button>
 
+            <h5 style="margin-top: 1rem;">Desired Criteria</h5>
+            @for (int i = 0; i < desiredCriteria.Count; i++)
+            {
+                var idx = i;
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <input placeholder="Qualification" value="@desiredCriteria[idx].Qualification" @oninput="(e) => desiredCriteria[idx] = desiredCriteria[idx] with { Qualification = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                    <input placeholder="Description" value="@desiredCriteria[idx].Description" @oninput="(e) => desiredCriteria[idx] = desiredCriteria[idx] with { Description = e.Value?.ToString() ?? string.Empty }" style="flex: 2;" />
+                    <button @onclick="() => desiredCriteria.RemoveAt(idx)" style="color: red;">✕</button>
+                </div>
+            }
+            <button @onclick="() => desiredCriteria.Add(new DesiredCriterionInput(string.Empty, string.Empty))" style="padding: 0.25rem 0.5rem; width: fit-content;">+ Add Desired Criterion</button>
+        }
+                }
+            </section>
+
+            <section class="editor-section" style="@SectionStyle(EditorSection.Scoring)">
+                <div class="editor-section-header">
+                    <button type="button"
+                            class="editor-section-toggle disclosure-toggle"
+                            aria-label="@SectionToggleLabel(EditorSection.Scoring, "Scoring configuration")"
+                            aria-expanded="@expandedSections.Contains(EditorSection.Scoring)"
+                            @onclick="() => ToggleSection(EditorSection.Scoring)">
+                        <span class="disclosure-chevron" aria-hidden="true"></span>
+                        <span>Scoring configuration</span>
+                    </button>
+                    <div class="editor-section-move-controls" aria-label="Move scoring section">
+                        <button type="button" @onclick="() => MoveSection(EditorSection.Scoring, -1)" disabled="@IsFirstSection(EditorSection.Scoring)">Up</button>
+                        <button type="button" @onclick="() => MoveSection(EditorSection.Scoring, 1)" disabled="@IsLastSection(EditorSection.Scoring)">Down</button>
+                    </div>
+                </div>
+                @if (expandedSections.Contains(EditorSection.Scoring))
+                {
         <h5 style="margin-top: 1rem;">Scoring Configuration</h5>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
             <div>
@@ -249,7 +350,8 @@
             <button @onclick="HandleCancel">Cancel</button>
             <button @onclick="Submit" disabled="@((!CanSubmit && !IsEditMode) || isSaving)">@(IsEditMode ? "Update Configuration" : "Create Job")</button>
         </div>
-    </div>
+               }
+           </section>
     @if (!string.IsNullOrEmpty(message))
     {
         @if (success)
@@ -286,6 +388,11 @@
 
     private enum Tab { Upload, Manual }
     private Tab activeTab = Tab.Upload;
+    private enum EditorSection { JobDetails, Rubric, Scoring }
+    private readonly List<EditorSection> sectionOrder =
+        [EditorSection.JobDetails, EditorSection.Rubric, EditorSection.Scoring];
+    private readonly HashSet<EditorSection> expandedSections =
+        [EditorSection.JobDetails, EditorSection.Rubric, EditorSection.Scoring];
 
     // Drag & resize state
     private int posX, posY, width = 750, height = 600;
@@ -307,8 +414,15 @@
     private List<RubricCategoryInput> rubricCategories = new();
     private List<string> mustHaveCriteria = new();
     private List<DesiredCriterionInput> desiredCriteria = new();
+    private RubricEnvelopeDto? rubricEnvelope;
+    private string? extractionId;
+    private string? extractionInstructionVersionId;
+    private DateTime? extractionCompletedAt;
+    private List<ExtractionValidationFindingDto> extractionValidationFindings = new();
+    private bool isLegacyRubric;
     private bool _populated;
     private bool isSaving;
+    private string? expectedConfigVersionId;
     private bool approveRubricOnSave;
     private Dictionary<string, string> validationErrors = new();
 
@@ -403,6 +517,12 @@
             // Will be properly sized in OnAfterRenderAsync via JS interop
         }
 
+        if (!Visible)
+        {
+            isLegacyRubric = false;
+            rubricEnvelope = null;
+        }
+
         if (IsEditMode && EditingConfig != null && !_populated)
         {
             // Populate config fields
@@ -415,14 +535,24 @@
             // Deserialize rubric categories
             if (!string.IsNullOrEmpty(EditingConfig.RubricJson))
             {
-                try
+                if (TryParseRubricEnvelope(EditingConfig.RubricJson, out var parsedEnvelope))
                 {
-                    var rubricItems = JsonSerializer.Deserialize<List<RubricCategoryInput>>(EditingConfig.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                    rubricCategories = rubricItems ?? new();
+                    rubricEnvelope = parsedEnvelope;
+                    SyncLegacyFieldsFromEnvelope(parsedEnvelope!);
+                    isLegacyRubric = false;
                 }
-                catch { rubricCategories = new(); }
+                else
+                {
+                    isLegacyRubric = true;
+                    try
+                    {
+                        var rubricItems = JsonSerializer.Deserialize<List<RubricCategoryInput>>(EditingConfig.RubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        rubricCategories = rubricItems ?? new();
+                    }
+                    catch { rubricCategories = new(); }
+                }
             }
-            else { rubricCategories = new(); }
+            else { rubricCategories = new(); isLegacyRubric = false; }
 
             // Deserialize must-have criteria
             if (!string.IsNullOrEmpty(EditingConfig.MustHavesJson))
@@ -455,6 +585,11 @@
             postingDate = EditingJob.PostingDate;
             jobDescription = EditingJob.JobDescription ?? "";
             approveRubricOnSave = string.Equals(EditingConfig.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase);
+            extractionId = EditingConfig.ExtractionId;
+            extractionInstructionVersionId = EditingConfig.ExtractionInstructionVersionId;
+            extractionCompletedAt = EditingConfig.Extraction?.CompletedAt;
+            extractionValidationFindings = EditingConfig.Extraction?.ValidationFindings ?? new();
+            expectedConfigVersionId = EditingConfig.Id ?? EditingJob.CurrentConfigVersionId;
 
             _populated = true;
             activeTab = Tab.Manual;
@@ -476,7 +611,7 @@
         }
     }
 
-    private double WeightSum => rubricCategories.Sum(c => c.Weight);
+    private double WeightSum => rubricEnvelope?.Categories.Sum(c => c.Weight) ?? rubricCategories.Sum(c => c.Weight);
     private bool CanSubmit =>
         !string.IsNullOrWhiteSpace(title)
         && !string.IsNullOrWhiteSpace(department)
@@ -526,10 +661,21 @@
         if (UseScopeSelectors && string.IsNullOrWhiteSpace(selectedDepartmentId))
             validationErrors["department"] = "Department is required";
 
-        if (!rubricCategories.Any(c => !string.IsNullOrWhiteSpace(c.Name) && c.Weight > 0))
-            validationErrors["rubric"] = "At least one rubric category with a name and weight is required";
+        if (rubricEnvelope is not null)
+        {
+            if (!rubricEnvelope.Categories.Any())
+                validationErrors["rubric"] = "At least one rubric category is required";
 
-        if (rubricCategories.Any())
+            var envelopeWeightSum = rubricEnvelope.Categories.Sum(c => c.Weight);
+            if (Math.Abs(envelopeWeightSum - 1.0) > 0.01)
+                validationErrors["rubricWeights"] = $"Rubric weights must sum to 1.0 (currently {envelopeWeightSum:F2})";
+        }
+        else if (!rubricCategories.Any(c => !string.IsNullOrWhiteSpace(c.Name) && c.Weight > 0))
+        {
+            validationErrors["rubric"] = "At least one rubric category with a name and weight is required";
+        }
+
+        if (rubricEnvelope is null && rubricCategories.Any())
         {
             var weightSum = rubricCategories.Sum(c => c.Weight);
             if (Math.Abs(weightSum - 1.0) > 0.01)
@@ -585,20 +731,18 @@
             {
                 if (!string.IsNullOrWhiteSpace(result.Title)) title = result.Title;
                 if (!string.IsNullOrWhiteSpace(result.Department)) department = result.Department;
-                if (!string.IsNullOrWhiteSpace(result.Organisation)) organisation = result.Organisation;
+                if (!string.IsNullOrWhiteSpace(result.Organization)) organisation = result.Organization;
                 if (!string.IsNullOrWhiteSpace(result.JobDescription)) jobDescription = result.JobDescription;
+                extractionId = result.ExtractionId;
+                extractionInstructionVersionId = result.InstructionVersionId;
+                extractionValidationFindings = result.ValidationFindings ?? new();
+                extractionCompletedAt = DateTime.UtcNow;
 
                 MatchExtractedScope();
 
-                if (result.MustHaves?.Any() == true)
-                    mustHaveCriteria = result.MustHaves.Select(m => m.Criterion).ToList();
-
-                if (result.DesiredCriteria?.Any() == true)
-                    desiredCriteria = result.DesiredCriteria.Select(d => new DesiredCriterionInput(d.Qualification, d.Description ?? "")).ToList();
-
-                if (result.Rubric?.Any() == true)
+                if (result.Rubric is not null)
                 {
-                    rubricCategories = result.Rubric.Select(r => new RubricCategoryInput(r.Name, r.Weight, r.Description ?? "")).ToList();
+                    ApplyItemizedRubric(result.Rubric);
                 }
                 else if (!rubricCategories.Any())
                 {
@@ -640,16 +784,7 @@
             var result = await Api.ExtractRubricAsync(file.Name, base64Content, file.ContentType);
             if (result != null)
             {
-                if (!string.IsNullOrWhiteSpace(result.Title) && !string.IsNullOrWhiteSpace(title)
-                    && !string.Equals(result.Title, title, StringComparison.OrdinalIgnoreCase))
-                {
-                    rubricTitleMismatch = true;
-                }
-
-                if (result.Categories?.Any() == true)
-                {
-                    rubricCategories = result.Categories.Select(c => new RubricCategoryInput(c.Name, c.Weight, c.Description ?? "")).ToList();
-                }
+                ApplyItemizedRubric(result);
             }
         }
         catch (Exception ex)
@@ -667,6 +802,7 @@
 
     private void AutoGenerateDraftRubric()
     {
+        rubricEnvelope = null;
         var categories = new List<RubricCategoryInput>();
         var mustHaveCount = mustHaveCriteria.Count(c => !string.IsNullOrWhiteSpace(c));
         var desiredCount = desiredCriteria.Count(c => !string.IsNullOrWhiteSpace(c.Qualification));
@@ -696,21 +832,32 @@
 
     private async Task Submit()
     {
+        if (isSaving)
+            return;
+
         if (!Validate()) return;
 
-        var rubricJson = rubricCategories.Any()
+        isSaving = true;
+        message = null;
+
+        var rubricJson = rubricEnvelope is not null
+            ? JsonSerializer.Serialize(rubricEnvelope)
+            : rubricCategories.Any()
             ? JsonSerializer.Serialize(rubricCategories.Where(c => !string.IsNullOrWhiteSpace(c.Name)).Select(c => new { c.Name, c.Weight, c.Description }))
             : null;
-        var mustHaveJson = mustHaveCriteria.Any(c => !string.IsNullOrWhiteSpace(c))
+        var mustHaveJson = rubricEnvelope is not null
+            ? BuildMustHaveProjectionJson(rubricEnvelope)
+            : mustHaveCriteria.Any(c => !string.IsNullOrWhiteSpace(c))
             ? JsonSerializer.Serialize(mustHaveCriteria.Where(c => !string.IsNullOrWhiteSpace(c)))
             : null;
-        var desiredJson = desiredCriteria.Any(c => !string.IsNullOrWhiteSpace(c.Qualification))
+        var desiredJson = rubricEnvelope is not null
+            ? BuildDesiredProjectionJson(rubricEnvelope)
+            : desiredCriteria.Any(c => !string.IsNullOrWhiteSpace(c.Qualification))
             ? JsonSerializer.Serialize(desiredCriteria.Where(c => !string.IsNullOrWhiteSpace(c.Qualification)).Select(c => new { c.Qualification, c.Description }))
             : null;
 
         if (IsEditMode)
         {
-            isSaving = true;
             try
             {
                 await Api.UpdateJobConfigAsync(EditingJob!.Id, new UpdateConfigDto(
@@ -722,6 +869,9 @@
                     longlistThreshold,
                     shortlistThreshold,
                     varianceThreshold,
+                    extractionId,
+                    extractionInstructionVersionId,
+                    expectedConfigVersionId,
                     approveRubricOnSave ? "approved" : "draft"));
                 success = true;
                 message = "Configuration updated!";
@@ -730,8 +880,30 @@
             }
             catch (ApiException ex)
             {
-                message = $"Failed to save: {ex.Message}";
                 success = false;
+                if (IsStaleVersion(ex))
+                {
+                    try
+                    {
+                        var latestConfig = await Api.GetJobConfigAsync(EditingJob!.Id);
+                        expectedConfigVersionId = latestConfig?.Id;
+                        message = latestConfig?.Id is null
+                            ? "The configuration changed while you were editing. Your changes are preserved; close this dialog, reopen it, and try again."
+                            : "The configuration changed while you were editing. Your changes are preserved. Review them, then click Update Configuration again to save against the latest version.";
+                    }
+                    catch (HttpRequestException)
+                    {
+                        message = "The configuration changed while you were editing, and the latest version could not be loaded. Your changes are preserved; close this dialog, reopen it, and try again.";
+                    }
+                    catch (JsonException)
+                    {
+                        message = "The configuration changed while you were editing, but the latest version response was invalid. Your changes are preserved; close this dialog, reopen it, and try again.";
+                    }
+                }
+                else
+                {
+                    message = $"Failed to save: {ex.Message}";
+                }
             }
             catch (Exception)
             {
@@ -750,6 +922,8 @@
                 var result = await Api.CreateJobAsync(new CreateJobDto(title, department, organisation, postingDate,
                     rubricJson, mustHaveJson, desiredJson, scoringRunCount, aggregationStrategy, longlistThreshold, shortlistThreshold, varianceThreshold,
                     string.IsNullOrWhiteSpace(jobDescription) ? null : jobDescription,
+                    ExtractionId: extractionId,
+                    ExtractionInstructionVersionId: extractionInstructionVersionId,
                     OrganizationId: string.IsNullOrWhiteSpace(selectedOrganizationId) ? null : selectedOrganizationId,
                     DepartmentId: string.IsNullOrWhiteSpace(selectedDepartmentId) ? null : selectedDepartmentId));
                 success = result;
@@ -765,8 +939,16 @@
                 success = false;
                 message = ex.Message;
             }
+            finally
+            {
+                isSaving = false;
+            }
         }
     }
+
+    private static bool IsStaleVersion(ApiException exception)
+        => string.Equals(exception.ErrorCode, "stale_version", StringComparison.Ordinal)
+           || exception.Message.Contains("stale_version", StringComparison.OrdinalIgnoreCase);
 
     private void ResetForm()
     {
@@ -785,6 +967,13 @@
         rubricCategories = new();
         mustHaveCriteria = new();
         desiredCriteria = new();
+        rubricEnvelope = null;
+        extractionId = null;
+        extractionInstructionVersionId = null;
+        extractionCompletedAt = null;
+        extractionValidationFindings = new();
+        isLegacyRubric = false;
+        expectedConfigVersionId = null;
         _populated = false;
         message = null;
         success = false;
@@ -793,12 +982,187 @@
         isSaving = false;
         approveRubricOnSave = false;
         _sizedToViewport = false;
+        sectionOrder.Clear();
+        sectionOrder.AddRange([EditorSection.JobDetails, EditorSection.Rubric, EditorSection.Scoring]);
+        expandedSections.Clear();
+        expandedSections.UnionWith([EditorSection.JobDetails, EditorSection.Rubric, EditorSection.Scoring]);
+    }
+
+    private string SectionStyle(EditorSection section)
+        => $"order: {sectionOrder.IndexOf(section)};";
+
+    private bool IsFirstSection(EditorSection section)
+        => sectionOrder.IndexOf(section) == 0;
+
+    private bool IsLastSection(EditorSection section)
+        => sectionOrder.IndexOf(section) == sectionOrder.Count - 1;
+
+    private void ToggleSection(EditorSection section)
+    {
+        if (!expandedSections.Add(section))
+            expandedSections.Remove(section);
+    }
+
+    private string SectionToggleLabel(EditorSection section, string sectionName)
+        => $"{(expandedSections.Contains(section) ? "Collapse" : "Expand")} {sectionName}";
+
+    private void MoveSection(EditorSection section, int offset)
+    {
+        var currentIndex = sectionOrder.IndexOf(section);
+        var targetIndex = currentIndex + offset;
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= sectionOrder.Count)
+            return;
+
+        sectionOrder.RemoveAt(currentIndex);
+        sectionOrder.Insert(targetIndex, section);
     }
 
     private async Task HandleCancel()
     {
         ResetForm();
         await OnCancel.InvokeAsync();
+    }
+
+    private Task HandleRubricEnvelopeChanged(RubricEnvelopeDto updated)
+    {
+        rubricEnvelope = updated;
+        SyncLegacyFieldsFromEnvelope(updated);
+        return Task.CompletedTask;
+    }
+
+    private async Task PreviewLegacyConversion()
+    {
+        if (EditingJob?.Id is null)
+            return;
+
+        isSaving = true;
+        message = null;
+        try
+        {
+            rubricEnvelope = await Api.PreviewLegacyRubricConversionAsync(
+                EditingJob.Id,
+                EditingConfig?.Id ?? EditingJob.CurrentConfigVersionId ?? string.Empty);
+            if (rubricEnvelope is not null)
+                SyncLegacyFieldsFromEnvelope(rubricEnvelope);
+        }
+        catch (ApiException ex)
+        {
+            success = false;
+            message = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ConfirmLegacyConversion()
+    {
+        if (EditingJob?.Id is null || rubricEnvelope is null)
+            return;
+
+        isSaving = true;
+        message = null;
+        try
+        {
+            await Api.ConfirmLegacyRubricConversionAsync(
+                EditingJob.Id,
+                EditingConfig?.Id ?? EditingJob.CurrentConfigVersionId ?? string.Empty,
+                rubricEnvelope);
+            success = true;
+            message = "Legacy rubric converted successfully.";
+            await OnUpdated.InvokeAsync();
+            ResetForm();
+        }
+        catch (ApiException ex)
+        {
+            success = false;
+            message = ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void CancelLegacyPreview()
+    {
+        rubricEnvelope = null;
+        if (EditingConfig is not null)
+        {
+            try
+            {
+                var rubricItems = JsonSerializer.Deserialize<List<RubricCategoryInput>>(EditingConfig.RubricJson ?? "[]", new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                rubricCategories = rubricItems ?? new();
+            }
+            catch
+            {
+                rubricCategories = new();
+            }
+        }
+    }
+
+    private void ApplyItemizedRubric(RubricEnvelopeDto envelope)
+    {
+        rubricEnvelope = envelope;
+        isLegacyRubric = false;
+        SyncLegacyFieldsFromEnvelope(envelope);
+    }
+
+    private void SyncLegacyFieldsFromEnvelope(RubricEnvelopeDto envelope)
+    {
+        rubricCategories = envelope.Categories
+            .OrderBy(category => category.Order)
+            .Select(category => new RubricCategoryInput(category.Name, category.Weight, category.Description ?? string.Empty))
+            .ToList();
+
+        mustHaveCriteria = envelope.Items
+            .Where(item => item.RequirementType is "must_have" or "experience")
+            .OrderBy(item => item.Order)
+            .Select(item => item.Text)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        desiredCriteria = envelope.Items
+            .Where(item => item.RequirementType == "desired")
+            .OrderBy(item => item.Order)
+            .Select(item => new DesiredCriterionInput(item.Text, item.SourceText ?? string.Empty))
+            .ToList();
+    }
+
+    private static bool TryParseRubricEnvelope(string rubricJson, out RubricEnvelopeDto? envelope)
+    {
+        try
+        {
+            envelope = JsonSerializer.Deserialize<RubricEnvelopeDto>(rubricJson, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+            });
+            return string.Equals(envelope?.SchemaVersion, "rubric-v2", StringComparison.Ordinal);
+        }
+        catch
+        {
+            envelope = null;
+            return false;
+        }
+    }
+
+    private static string? BuildMustHaveProjectionJson(RubricEnvelopeDto envelope)
+    {
+        var items = envelope.Items
+            .Where(item => item.RequirementType is "must_have" or "experience")
+            .Select(item => new { Criterion = item.Text, Description = item.SourceText ?? item.Text })
+            .ToList();
+        return items.Count == 0 ? null : JsonSerializer.Serialize(items);
+    }
+
+    private static string? BuildDesiredProjectionJson(RubricEnvelopeDto envelope)
+    {
+        var items = envelope.Items
+            .Where(item => item.RequirementType == "desired")
+            .Select(item => new { Qualification = item.Text, Description = item.SourceText ?? item.Text })
+            .ToList();
+        return items.Count == 0 ? null : JsonSerializer.Serialize(items);
     }
 
     private record RubricCategoryInput(string Name, double Weight, string Description);
@@ -883,6 +1247,38 @@
         overflow-y: auto;
         padding: 1.5rem;
         min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+    }
+
+    .editor-section {
+        border: 1px solid #dbe3ee;
+        border-radius: 0.5rem;
+        padding: 0.85rem;
+        background: #fff;
+    }
+
+    .editor-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .editor-section-toggle {
+        border: 0;
+        background: transparent;
+        padding: 0.25rem 0;
+        font-weight: 600;
+        text-align: left;
+        cursor: pointer;
+    }
+
+    .editor-section-move-controls {
+        display: flex;
+        gap: 0.35rem;
     }
 
     .dialog-resize-handle {

@@ -8,7 +8,7 @@ setting and expose the same canonical error surface.
 
 | Mode | `APP_AUTH_MODE` | Identity source | Intended use |
 | --- | --- | --- | --- |
-| Simple | `simple` (default) | Local username/password records | Demos and offline development |
+| Simple | `simple` (default) | Local username/password records | Demos, automated tests, and offline development |
 | Entra | `entra` | Microsoft Entra ID, single tenant | Shared and production environments |
 
 Switching modes is a configuration change only. Simple-mode credentials are never accepted in Entra
@@ -104,12 +104,13 @@ Operator-facing setup and recovery procedures live in `docs/ENTRA_AUTHORIZATION.
 ## Simple Mode
 
 Simple mode keeps the original username/password system for demos and offline development. It is
-selected when `APP_AUTH_MODE` is unset or set to `simple`. None of the sections below apply in Entra
-mode.
+selected when `APP_AUTH_MODE` is unset or set to `simple`. The .NET server rejects this mode outside
+Development and Testing; shared and production environments must use Entra mode. None of the
+sections below apply in Entra mode.
 
 ## Default Admin Account
 
-On first launch, the system creates a default admin account:
+On first launch in Development or Testing, the system creates a default admin account:
 - **Username**: `admin`
 - **Password**: ``adm1n99
 
