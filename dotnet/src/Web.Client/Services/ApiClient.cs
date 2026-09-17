@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 
 namespace TalentMatch.Web.Client.Services;
@@ -1050,9 +1051,28 @@ public record ExtractionValidationFindingDto(string Code, string Severity, strin
 public record ExtractionSummaryDto(string Id, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string SourceFileName, string SourceMimeType, DateTime CompletedAt, string CorrelationId);
 public record ExtractionInstructionVersionDto(string Id, int VersionNumber, string InstructionText, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
 public record ExtractionInstructionVersionDetailDto(string Id, int VersionNumber, string InstructionText, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, JsonElement ProtectedContract, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
-public record RubricCategoryV2Dto(string Id, string Name, double Weight, string? Description, int Order);
-public record RubricItemDto(string Id, string CategoryId, string Text, string RequirementType, int Order, string? SourceText, string? SourceLocation, string? SourceRequirementId, string ReviewStatus, string CreatedFrom);
-public record RubricEnvelopeDto(string SchemaVersion, string? LegacySourceVersionId, List<RubricCategoryV2Dto> Categories, List<RubricItemDto> Items);
+public record RubricCategoryV2Dto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("weight")] double Weight,
+    [property: JsonPropertyName("description")] string? Description,
+    [property: JsonPropertyName("order")] int Order);
+public record RubricItemDto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("categoryId")] string CategoryId,
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("requirementType")] string RequirementType,
+    [property: JsonPropertyName("order")] int Order,
+    [property: JsonPropertyName("sourceText")] string? SourceText,
+    [property: JsonPropertyName("sourceLocation")] string? SourceLocation,
+    [property: JsonPropertyName("sourceRequirementId")] string? SourceRequirementId,
+    [property: JsonPropertyName("reviewStatus")] string ReviewStatus,
+    [property: JsonPropertyName("createdFrom")] string CreatedFrom);
+public record RubricEnvelopeDto(
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("legacySourceVersionId")] string? LegacySourceVersionId,
+    [property: JsonPropertyName("categories")] List<RubricCategoryV2Dto> Categories,
+    [property: JsonPropertyName("items")] List<RubricItemDto> Items);
 public record JobSpecExtractionRecordDto(string Id, string Purpose, string InstructionVersionId, string ProtectedContractVersion, string SourceFileName, string SourceMimeType, string SourceSha256, string RawResponse, string? NormalizedResponseJson, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string? JobId, string? JobConfigVersionId, DateTime CreatedAt, string CreatedBy, DateTime CompletedAt, string CorrelationId);
 public record ExtractionResultDto(string ExtractionId, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string? Title, string? JobDescription, string? Department, string? Organization, RubricEnvelopeDto Rubric);
 public record ExtractionFailureDto(string ExtractionId, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings);

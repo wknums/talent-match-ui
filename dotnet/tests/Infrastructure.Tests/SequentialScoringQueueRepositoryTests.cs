@@ -20,6 +20,27 @@ public sealed class SequentialScoringQueueRepositoryTests
         {"schemaVersion":"rubric-v2","categories":[{"id":"experience","name":"Experience","weight":1,"order":0}],"items":[]}
         """;
 
+    [Fact]
+    public async Task Claim_AcceptsThePascalCaseRubricShapePersistedByBlazor()
+    {
+        const string rubric = """
+            {"SchemaVersion":"rubric-v2","LegacySourceVersionId":null,
+             "Categories":[{"Id":"experience","Name":"Experience","Weight":1,"Order":0}],
+             "Items":[{"Id":"item-1","CategoryId":"experience","Text":"Relevant experience",
+                       "RequirementType":"experience","Order":0,"ReviewStatus":"confirmed","CreatedFrom":"manual"}]}
+            """;
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync(rubric: rubric);
+        await using var context = database.Open();
+
+        var work = await new SequentialScoringQueueRepository(context).TryClaimAsync("owner", DateTime.UtcNow, Lease);
+
+        work.Should().NotBeNull();
+        work!.ApplicationId.Should().Be(id);
+        work.RubricJson.Should().Be(rubric);
+        (await context.Applications.AsNoTracking().SingleAsync()).Status.Should().Be("Scoring");
+    }
+
     [Theory]
     [InlineData("expected-valid-rubric-v2.json")]
     [InlineData("expected-legacy-conversion.json")]

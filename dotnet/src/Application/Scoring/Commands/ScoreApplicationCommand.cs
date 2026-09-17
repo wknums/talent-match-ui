@@ -3,7 +3,7 @@ using System.Text;
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Common.Services;
-using TalentMatch.Application.Rubrics.Models;
+using TalentMatch.Application.Rubrics.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -577,10 +577,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         try
         {
             using var doc = JsonDocument.Parse(rubricJson);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object
-                && doc.RootElement.TryGetProperty("schemaVersion", out var schemaVersion)
-                && string.Equals(schemaVersion.GetString(), RubricSchemaVersions.RubricV2, StringComparison.Ordinal)
-                && doc.RootElement.TryGetProperty("categories", out var categoriesElement))
+            if (RubricJsonReader.TryGetCategories(doc.RootElement, out var categoriesElement))
             {
                 return JsonSerializer.Deserialize<List<RubricCategoryInfo>>(categoriesElement.GetRawText(), options) ?? [];
             }

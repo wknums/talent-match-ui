@@ -26,9 +26,7 @@ public sealed class LegacyRubricAdapter
         try
         {
             using var document = JsonDocument.Parse(rubricJson);
-            return document.RootElement.ValueKind == JsonValueKind.Object
-                   && document.RootElement.TryGetProperty("schemaVersion", out var version)
-                   && string.Equals(version.GetString(), RubricSchemaVersions.RubricV2, StringComparison.Ordinal);
+            return RubricJsonReader.IsV2(document.RootElement);
         }
         catch (JsonException)
         {

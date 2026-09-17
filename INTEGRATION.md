@@ -35,6 +35,9 @@ No separate worker host, broker, or platform batch API is required.
   Both legacy category arrays and `rubric-v2` objects are supported. A v2 object
   must declare `schemaVersion: "rubric-v2"`, a non-empty `categories` array, and
   an `items` array (which may be empty); approval still owns content validation.
+  Readers also accept PascalCase property names from older Blazor saves.
+  New Blazor saves serialize canonical camelCase keys, including nested
+  categories and items. Existing approved rubrics do not need to be rewritten.
 - The existing server runs one bounded pool for its lifetime. It wakes after an
   upload, explicit process request, or retry, and checks the database every
   second for additional work. A completed or failed assessment immediately

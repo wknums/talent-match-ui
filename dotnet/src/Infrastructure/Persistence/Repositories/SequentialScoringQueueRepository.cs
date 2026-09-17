@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using TalentMatch.Application.Rubrics.Models;
+using TalentMatch.Application.Rubrics.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 using ApplicationEntity = TalentMatch.Domain.Entities.Application;
@@ -289,20 +289,8 @@ public sealed class SequentialScoringQueueRepository(AppDbContext db) : ISequent
         try
         {
             using var document = JsonDocument.Parse(json);
-            var root = document.RootElement;
-            if (root.ValueKind == JsonValueKind.Array)
-                return root.GetArrayLength() > 0;
-
             // Approval validates rubric contents; admission recognizes the supported persisted shapes.
-            return root.ValueKind == JsonValueKind.Object
-                && root.TryGetProperty("schemaVersion", out var version)
-                && version.ValueKind == JsonValueKind.String
-                && version.ValueEquals(RubricSchemaVersions.RubricV2)
-                && root.TryGetProperty("categories", out var categories)
-                && categories.ValueKind == JsonValueKind.Array
-                && categories.GetArrayLength() > 0
-                && root.TryGetProperty("items", out var items)
-                && items.ValueKind == JsonValueKind.Array;
+            return RubricJsonReader.HasScoringRubric(document.RootElement);
         }
         catch (JsonException)
         {
