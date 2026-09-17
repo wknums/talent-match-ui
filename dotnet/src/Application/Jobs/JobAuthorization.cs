@@ -4,7 +4,7 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.Jobs;
 
-internal static class JobAuthorization
+public static class JobAuthorization
 {
     public static bool HasNormalizedScope(Job job)
         => Guid.TryParse(job.OrganizationId, out _)

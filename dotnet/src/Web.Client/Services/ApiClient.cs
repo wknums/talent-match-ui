@@ -629,6 +629,48 @@ public class ApiClient : INavigationAuditClient
     public async Task<SystemStatsDto?> GetSystemStatsAsync()
         => await _http.GetFromJsonAsync<SystemStatsDto>("/api/stats");
 
+    public async Task<ScoringThroughputDto> GetScoringThroughputAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync("/api/stats/scoring-throughput", cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to load scoring throughput.");
+        var result = await response.Content.ReadFromJsonAsync<ScoringThroughputDto>(
+            new JsonSerializerOptions(JsonOptions) { RespectRequiredConstructorParameters = true },
+            cancellationToken)
+            ?? throw new JsonException("The scoring throughput response was empty.");
+
+        if (result.AsOfUtc.Offset != TimeSpan.Zero
+            || result.AsOfUtc < DateTimeOffset.MinValue.AddHours(24)
+            || result.ScoredLastHour < 0
+            || result.ScoredLast24Hours < 0
+            || result.Hours is null
+            || result.Hours.Count != 24)
+        {
+            throw new JsonException("The scoring throughput response must contain 24 rolling hourly buckets and non-negative counts.");
+        }
+
+        long total = 0;
+        for (var index = 0; index < result.Hours.Count; index++)
+        {
+            var bucket = result.Hours[index];
+            if (bucket is null
+                || bucket.Count < 0
+                || bucket.StartUtc.Offset != TimeSpan.Zero
+                || bucket.EndUtc.Offset != TimeSpan.Zero
+                || bucket.StartUtc != result.AsOfUtc.AddHours(index - 24)
+                || bucket.EndUtc != result.AsOfUtc.AddHours(index - 23))
+            {
+                throw new JsonException("The scoring throughput buckets must cover the rolling last 24 hours in chronological order.");
+            }
+
+            total += bucket.Count;
+        }
+
+        if (total != result.ScoredLast24Hours || result.Hours[^1].Count != result.ScoredLastHour)
+            throw new JsonException("The scoring throughput totals do not match the hourly buckets.");
+
+        return result;
+    }
+
     public async Task<List<RecruiterAnalyticsDto>> GetRecruiterAnalyticsAsync()
     {
         var response = await _http.GetAsync("/api/stats/recruiters");
@@ -998,6 +1040,8 @@ public record DocumentDto(string Id, string FileName, string FileType, long File
 public record ExtractionDto(string Id, string NormalisedText, double ConfidenceScore, string Status);
 public record ManualReviewDto(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson, bool HumanEdited = false, string? FinalDecision = null);
 public record SystemStatsDto(int Queued, int Extracting, int Scoring, int Aggregating, int Completed, int NeedsManualReview, int Failed, int TotalJobs, int TotalApplications);
+public record ScoringThroughputDto(DateTimeOffset AsOfUtc, int ScoredLastHour, int ScoredLast24Hours, List<ScoringThroughputBucketDto> Hours);
+public record ScoringThroughputBucketDto(DateTimeOffset StartUtc, DateTimeOffset EndUtc, int Count);
 public record DlqItemDto(string Id, string EntityType, string EntityId, string FailureReason, int RetryCount, DateTime CreatedAt);
 public record AuditEventDto(string Id, string Actor, string EventType, string EntityType, string EntityId, DateTime Timestamp, string CorrelationId);
 public record ResetRequestDto(string Id, string UserId, string Username, string Reason, string Status, DateTime CreatedAt);
@@ -1017,7 +1061,7 @@ public record ExtractRubricResult(string? Title, List<RubricCategoryItem>? Categ
 public record MustHaveItem(string Criterion, string? Description);
 public record DesiredCriterionItem(string Qualification, string? Description);
 public record RubricCategoryItem(string Name, double Weight, string? Description);
-public record ProcessJobResponse(int Processed, int Total, List<string> Errors);
+public record ProcessJobResponse(int Processed, int Total, List<string> Errors, int Queued = 0);
 public record ReAggregateResponse(int Updated, int Total, string? Error);
 public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson);
 public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes);

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TalentMatch.Domain.Entities;
 
@@ -236,6 +237,11 @@ public class AppDbContext : DbContext
             e.Property(x => x.CandidateEmail).HasMaxLength(320);
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
             e.Property(x => x.FinalDecision).HasMaxLength(30);
+            e.Property(x => x.ScoringOwner).HasMaxLength(128).IsConcurrencyToken()
+                .Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
+            e.Property(x => x.ScoringLeaseUntil).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
+            e.HasIndex(x => new { x.Status, x.TestRunId, x.CreatedAt });
+            e.HasIndex(x => new { x.Status, x.ScoringLeaseUntil });
             e.HasMany(x => x.Documents).WithOne(x => x.Application).HasForeignKey(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.ScoringRuns).WithOne(x => x.Application).HasForeignKey(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.AggregatedResult).WithOne(x => x.Application).HasForeignKey<AggregatedResult>(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);

@@ -151,11 +151,15 @@ CREATE TABLE IF NOT EXISTS Applications (
     CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
     UpdatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
     TestRunId       TEXT    NULL,
-    LastError       TEXT    NULL
+    LastError       TEXT    NULL,
+    ScoringOwner    TEXT    NULL,
+    ScoringLeaseUntil TEXT  NULL
 );
 CREATE INDEX IF NOT EXISTS IX_Applications_JobId ON Applications (JobId);
 CREATE INDEX IF NOT EXISTS IX_Applications_TestRunId ON Applications (TestRunId);
 CREATE INDEX IF NOT EXISTS IX_Applications_JobId_Status ON Applications (JobId, Status);
+CREATE INDEX IF NOT EXISTS IX_Applications_Status_TestRunId_CreatedAt ON Applications (Status, TestRunId, CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_Applications_Status_ScoringLeaseUntil ON Applications (Status, ScoringLeaseUntil);
 
 -- 6. APPLICATION DOCUMENTS
 CREATE TABLE IF NOT EXISTS ApplicationDocuments (

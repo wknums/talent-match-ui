@@ -39,6 +39,8 @@ else if (!string.IsNullOrEmpty(statsLoadError))
     </div>
 }
 
+<ScoringThroughputPanel />
+
 <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
     <select @bind="organisationFilter" @bind:after="OnOrganisationFilterChanged" aria-label="Filter jobs by organisation" style="padding: 0.5rem;">
         <option value="">All Organisations</option>

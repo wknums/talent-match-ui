@@ -15,12 +15,14 @@ public record ScoreApplicationCommand(
     int RunCount,
     string PromptVersionId,
     string JobDescriptionText,
-    string? RubricJson = null
+    string? RubricJson = null,
+    bool PersistResults = true
 ) : IRequest<ScoreApplicationResult>;
 
 public record ScoreApplicationResult(
     IReadOnlyList<ScoringRun> Runs,
-    EngineAggregatedResult? Aggregated
+    EngineAggregatedResult? Aggregated,
+    string? CandidateName = null
 );
 
 public record EngineAggregatedResult(
@@ -102,6 +104,9 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         var (runs, extractedCandidateName) = await ScoreAndParseWithRetryAsync(
             request, prompt, primaryDoc, docBytes, resolvedPrompt, ct);
         EngineAggregatedResult? aggregated = null;
+
+        if (!request.PersistResults)
+            return new ScoreApplicationResult(runs, aggregated, extractedCandidateName);
 
         foreach (var run in runs)
         {
@@ -238,7 +243,6 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             {
                 gateElement = val;
                 gateDetected = true;
-                Console.WriteLine($"[GATE DEBUG] Key='{name}' Kind={val.ValueKind} Raw={val.GetRawText()[..Math.Min(500, val.GetRawText().Length)]}");
                 continue;
             }
 
@@ -387,7 +391,6 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                     var met = TryExtractGateEntryStatus(item, out var explicitStatus)
                         ? explicitStatus
                         : InferGateEntryStatus(criterion, ev, gateMissingCriteria, gatePassedHint);
-                    Console.WriteLine($"[GATE ENTRY] criterion='{criterion}' met={met} raw_keys=[{string.Join(",", item.EnumerateObject().Select(p => $"{p.Name}:{p.Value.ValueKind}"))}]");
                     entries.Add(new { criterion, passed = met, evidence = ev });
                     if (!met)
                     {

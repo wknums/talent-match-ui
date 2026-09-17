@@ -189,7 +189,9 @@ CREATE TABLE [talentmatch].Applications (
     CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     TestRunId       NVARCHAR(36)    NULL,
-    LastError       NVARCHAR(MAX)   NULL
+    LastError       NVARCHAR(MAX)   NULL,
+    ScoringOwner    NVARCHAR(128)   NULL,
+    ScoringLeaseUntil DATETIME2     NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_JobId')
@@ -198,6 +200,10 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_TestRunId
     CREATE INDEX IX_Applications_TestRunId ON [talentmatch].Applications (TestRunId) WHERE TestRunId IS NOT NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_JobId_Status')
     CREATE INDEX IX_Applications_JobId_Status ON [talentmatch].Applications (JobId, Status);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_Status_TestRunId_CreatedAt' AND object_id = OBJECT_ID('talentmatch.Applications'))
+    CREATE INDEX IX_Applications_Status_TestRunId_CreatedAt ON [talentmatch].Applications (Status, TestRunId, CreatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_Status_ScoringLeaseUntil' AND object_id = OBJECT_ID('talentmatch.Applications'))
+    CREATE INDEX IX_Applications_Status_ScoringLeaseUntil ON [talentmatch].Applications (Status, ScoringLeaseUntil);
 
 -- 6. APPLICATION DOCUMENTS (metadata only; blobs in Azure Blob Storage or DocumentBlobs table)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ApplicationDocuments' AND schema_id = SCHEMA_ID('talentmatch'))

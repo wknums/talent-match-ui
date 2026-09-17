@@ -32,7 +32,9 @@ public class ApplicationRepositoryTests
                     CreatedAt TEXT NOT NULL,
                     UpdatedAt TEXT NOT NULL,
                     TestRunId TEXT NULL,
-                    LastError TEXT NULL
+                    LastError TEXT NULL,
+                    ScoringOwner TEXT NULL,
+                    ScoringLeaseUntil TEXT NULL
                 );
                 """;
             await setupCommand.ExecuteNonQueryAsync();
@@ -83,7 +85,9 @@ public class ApplicationRepositoryTests
                     CreatedAt TEXT NOT NULL,
                     UpdatedAt TEXT NOT NULL,
                     TestRunId TEXT NULL,
-                    LastError TEXT NULL
+                    LastError TEXT NULL,
+                    ScoringOwner TEXT NULL,
+                    ScoringLeaseUntil TEXT NULL
                 );
 
                 CREATE TABLE ApplicationDocuments (
@@ -171,7 +175,9 @@ public class ApplicationRepositoryTests
                     CreatedAt TEXT NOT NULL,
                     UpdatedAt TEXT NOT NULL,
                     TestRunId TEXT NULL,
-                    LastError TEXT NULL
+                    LastError TEXT NULL,
+                    ScoringOwner TEXT NULL,
+                    ScoringLeaseUntil TEXT NULL
                 );
 
                 CREATE TABLE ExtractionArtifacts (
@@ -247,7 +253,9 @@ public class ApplicationRepositoryTests
                     CreatedAt TEXT NOT NULL,
                     UpdatedAt TEXT NOT NULL,
                     TestRunId TEXT NULL,
-                    LastError TEXT NULL
+                    LastError TEXT NULL,
+                    ScoringOwner TEXT NULL,
+                    ScoringLeaseUntil TEXT NULL
                 );
 
                 CREATE TABLE ManualReviews (

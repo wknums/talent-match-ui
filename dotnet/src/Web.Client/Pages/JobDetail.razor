@@ -340,8 +340,8 @@ else
         ApplySort();
         await LoadPromptStatus();
 
-        // Start fast polling if apps are actively being processed (Scoring/Extracting/Aggregating)
-        if (HasActivelyProcessingApps)
+        ReconcileProcessingErrors();
+        if (HasPendingApps)
         {
             StartJobPolling();
         }
@@ -457,13 +457,17 @@ else
     }
 
     private bool HasPendingApps => allApps.Any(a => a.Status is "Queued" or "Extracting" or "Scoring" or "Aggregating");
-    private bool HasActivelyProcessingApps => allApps.Any(a => a.Status is "Extracting" or "Scoring" or "Aggregating");
     private bool HasFailedApps => allApps.Any(a => a.Status is "Failed" or "ScoringFailed" or "ExtractionFailed");
 
     private void ReconcileProcessingErrors()
     {
         if (!HasFailedApps)
             processingErrors.Clear();
+        else
+            processingErrors = allApps
+                .Where(application => application.Status is "Failed" or "ScoringFailed" or "ExtractionFailed")
+                .Select(application => $"Application {application.CandidateName ?? application.Id}: {application.LastError ?? "Scoring failed. See Failure Queue for details."}")
+                .ToList();
     }
 
     private void StartJobPolling()

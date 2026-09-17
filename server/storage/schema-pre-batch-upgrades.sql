@@ -54,6 +54,15 @@ BEGIN
 END;
 GO
 
+IF OBJECT_ID('talentmatch.Applications', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.Applications', 'ScoringOwner') IS NULL
+        ALTER TABLE [talentmatch].Applications ADD ScoringOwner NVARCHAR(128) NULL;
+    IF COL_LENGTH('talentmatch.Applications', 'ScoringLeaseUntil') IS NULL
+        ALTER TABLE [talentmatch].Applications ADD ScoringLeaseUntil DATETIME2 NULL;
+END;
+GO
+
 IF OBJECT_ID('talentmatch.OrganizationMemberships', 'U') IS NOT NULL
    AND COL_LENGTH('talentmatch.OrganizationMemberships', 'DefaultDepartmentMembershipId') IS NULL
     ALTER TABLE [talentmatch].OrganizationMemberships

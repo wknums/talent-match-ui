@@ -540,6 +540,8 @@ function ensureSqliteCompatibilitySchema(db: any): void {
   ensureSqliteColumn(db, 'Applications', 'CandidateRef', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'Applications', 'CandidateName', 'TEXT NULL')
   ensureSqliteColumn(db, 'Applications', 'CandidateEmail', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Applications', 'ScoringOwner', 'TEXT NULL')
+  ensureSqliteColumn(db, 'Applications', 'ScoringLeaseUntil', 'TEXT NULL')
   ensureSqliteColumn(db, 'Applications', 'Flagged', 'INTEGER NOT NULL DEFAULT 0')
 
   ensureSqliteColumn(db, 'ApplicationDocuments', 'MimeType', "TEXT NOT NULL DEFAULT ''")

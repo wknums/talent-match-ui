@@ -167,6 +167,12 @@ variable "awr_max_parallel" {
   default     = 1
 }
 
+variable "cors_allowed_origins" {
+  description = "Comma-separated browser origins allowed to make credentialed requests to Stack B"
+  type        = string
+  default     = ""
+}
+
 variable "api_mode" {
   description = "Application API mode"
   type        = string

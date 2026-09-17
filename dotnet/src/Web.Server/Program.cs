@@ -159,13 +159,19 @@ builder.Services.AddSwaggerGen(c =>
     c.SwaggerDoc("v1", new() { Title = "TalentMatch API", Version = "v1" });
 });
 
+var allowedCorsOrigins = ResolveAllowedCorsOrigins(builder.Configuration);
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(b => b
-        .SetIsOriginAllowed(_ => true)
-        .AllowAnyMethod()
-        .AllowAnyHeader()
-        .AllowCredentials());
+    options.AddDefaultPolicy(policy =>
+    {
+        if (allowedCorsOrigins.Length > 0)
+            policy.WithOrigins(allowedCorsOrigins);
+
+        policy
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials();
+    });
 });
 
 var app = builder.Build();
@@ -463,6 +469,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         if (hasExistingSchema)
         {
             EnsureSqliteApplicationCandidateColumns(connection);
+            EnsureSqliteSequentialScoringColumns(connection);
             EnsureSqliteManualReviewHumanEditedColumn(connection);
             EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
             EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
@@ -478,6 +485,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         initializeSchemaCommand.CommandText = File.ReadAllText(schemaPath);
         initializeSchemaCommand.ExecuteNonQuery();
         EnsureSqliteApplicationCandidateColumns(connection);
+        EnsureSqliteSequentialScoringColumns(connection);
         EnsureSqliteManualReviewHumanEditedColumn(connection);
         EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
         EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
@@ -488,6 +496,24 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         if (shouldClose)
             connection.Close();
     }
+}
+
+static void EnsureSqliteSequentialScoringColumns(SqliteConnection connection)
+{
+    using var ownerCommand = connection.CreateCommand();
+    ownerCommand.CommandText = "ALTER TABLE Applications ADD COLUMN ScoringOwner TEXT NULL;";
+    TryExecuteSchemaChange(ownerCommand);
+
+    using var leaseCommand = connection.CreateCommand();
+    leaseCommand.CommandText = "ALTER TABLE Applications ADD COLUMN ScoringLeaseUntil TEXT NULL;";
+    TryExecuteSchemaChange(leaseCommand);
+
+    using var indexesCommand = connection.CreateCommand();
+    indexesCommand.CommandText = """
+        CREATE INDEX IF NOT EXISTS IX_Applications_Status_TestRunId_CreatedAt ON Applications (Status, TestRunId, CreatedAt);
+        CREATE INDEX IF NOT EXISTS IX_Applications_Status_ScoringLeaseUntil ON Applications (Status, ScoringLeaseUntil);
+        """;
+    indexesCommand.ExecuteNonQuery();
 }
 
 static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connection)
@@ -860,6 +886,35 @@ static string ResolveSharedSchemaPath(string contentRootPath, string fileName)
     };
 
     return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
+}
+
+static string[] ResolveAllowedCorsOrigins(IConfiguration configuration)
+{
+    var configuredOrigins = configuration["CORS_ALLOWED_ORIGINS"];
+    if (string.IsNullOrWhiteSpace(configuredOrigins))
+        return [];
+
+    var origins = configuredOrigins
+        .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(origin => origin.TrimEnd('/'))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    foreach (var origin in origins)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || !string.IsNullOrEmpty(uri.Query)
+            || !string.IsNullOrEmpty(uri.Fragment)
+            || uri.AbsolutePath != "/")
+        {
+            throw new InvalidOperationException(
+                $"CORS_ALLOWED_ORIGINS contains invalid origin '{origin}'. "
+                + "Use comma- or semicolon-separated HTTP(S) origins without paths.");
+        }
+    }
+
+    return origins;
 }
 
 if (app.Environment.IsDevelopment())

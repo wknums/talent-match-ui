@@ -15,7 +15,7 @@ public class ManualReviewEndpointsIntegrationTests : IClassFixture<UserManagemen
     }
 
     [Fact]
-    public async Task GetManualReview_WithoutSavedReview_ReturnsOkNull()
+    public async Task GetManualReview_ForUnknownApplication_ReturnsNotFound()
     {
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
         {
@@ -32,7 +32,6 @@ public class ManualReviewEndpointsIntegrationTests : IClassFixture<UserManagemen
 
         var response = await client.GetAsync($"/api/applications/{Guid.NewGuid()}/manual-review");
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        (await response.Content.ReadAsStringAsync()).Should().Be("null");
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }

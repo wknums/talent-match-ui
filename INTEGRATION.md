@@ -3,7 +3,7 @@
 A production-grade frontend for an Azure-hosted AI-powered job application scoring system. This application provides recruiters, hiring managers, and administrators with comprehensive tools to manage jobs, upload applications, monitor AI-powered scoring pipelines, and review candidate assessments.
 
 > **Scoring backends.** The client supports two scoring modes selected by env vars:
-> - **Sequential mode** (`AWR_SEQ_API_ENDPOINT`) — synchronous `POST /assess/passthrough`. Used for test scoring and small jobs.
+> - **Sequential mode** (`AWR_SEQ_API_ENDPOINT`) — individual `POST /assess/passthrough` calls. Stack B production scoring uses a continuously replenished in-process pool; upload sizes do not limit scheduling.
 > - **Platform mode** (`AWR_PLATFORM_API_ENDPOINT`) — asynchronous batched submission + polling against a Service Bus + Durable Functions backend. Orchestration (queueing, fan-out per CV, retries) lives on the platform. The client only submits, reconciles, and reports.
 >
 > The full client ↔ platform ↔ engine contract is documented in
@@ -19,6 +19,102 @@ A production-grade frontend for an Azure-hosted AI-powered job application scori
 - **Detailed Assessments**: Drill-down into individual applications with evidence-based scoring
 - **Variance Analysis**: Identify applications requiring manual review based on score variance
 - **Audit Trail**: Complete traceability of all decisions and processing events
+
+## Stack B continuous sequential scoring
+
+Set `AWR_MAX_PARALLEL` to the number of production document assessments allowed
+concurrently in each Stack B application instance. The default is `1`; for
+example, `10` permits ten documents across all eligible jobs, not ten per upload.
+Leave `AWR_PLATFORM_API_ENDPOINT` unset (or equal to `AWR_SEQ_API_ENDPOINT`).
+No separate worker host, broker, or platform batch API is required.
+
+- Uploads are staged as `Uploading` until every accepted document has been saved,
+  then published together as `Queued`. Only ready, non-test applications for
+  active jobs with an approved current rubric and production-approved prompt
+  are eligible. The job configuration and prompt ID are captured when claimed.
+  Both legacy category arrays and `rubric-v2` objects are supported. A v2 object
+  must declare `schemaVersion: "rubric-v2"`, a non-empty `categories` array, and
+  an `items` array (which may be empty); approval still owns content validation.
+- The existing server runs one bounded pool for its lifetime. It wakes after an
+  upload, explicit process request, or retry, and checks the database every
+  second for additional work. A completed or failed assessment immediately
+  frees a slot for the next oldest queued application.
+- `POST /api/jobs/{jobId}/process` returns `202 Accepted` promptly, with
+  `processed: 0`, `queued`, `total`, and `errors` in sequential mode. The
+  `Location` header points to the job's applications resource. Poll that resource
+  for completion; closing the browser does not stop the pool.
+- A slot covers all configured scoring runs, existing automatic retries, and
+  result persistence for one document. Failed assessments enter Failure Queue;
+  use the existing retry action to return them to `Queued`. Polling is read-only
+  and never deletes failed applications.
+- Application rows carry an owner and a two-minute lease, renewed every twenty
+  seconds. Conditional claims prevent two Stack B pools from selecting the same row.
+  Expired owned assessments are marked `ScoringFailed` with an interruption
+  message and a Failure Queue entry, not silently resubmitted. Graceful shutdown
+  also records interruption. Queued work resumes automatically after restart.
+  Older `Scoring` rows without an owner are not reset automatically: their
+  backend outcome must be checked before an operator retries them.
+- A timeout or lost connection does not prove AWR stopped processing. Explicit
+  retry may repeat remote computation; the passthrough API cannot guarantee
+  exactly-once execution. Late results from a lost owner cannot overwrite the
+  persisted assessment.
+- The limit is **per application instance**, not deployment-wide. Multiple
+  instances (or Stack A and Stack B running together) do not share a capacity
+  budget. Prompt tests and extraction retain their separate execution paths.
+  Keep the existing app running/Always On where required; this is not an
+  independent compute service.
+
+Example acceptance check: with ten slots, upload seven documents and wait until
+they are scoring. Upload seven more before the first seven finish. Expect ten
+scoring and four queued; each completion or terminal failure admits one more.
+
+This change requires deploying a newly packaged Stack B artifact, including the
+additive queue-ownership schema upgrade. Changing only `AWR_MAX_PARALLEL` on
+Azure is an App Service configuration update (and restart), not a ZIP rebuild.
+The app-only ZIP deployment script does not apply environment settings.
+
+Scope: Stack A scheduling and the platform-mode batch reconciler are unchanged.
+Do not run the legacy Stack A scheduler against the same production queue as
+this Stack B pool; Stack A does not yet participate in its ownership protocol.
+
+### Live scoring throughput dashboard (Stack B)
+
+The dashboard displays **Applications scored / hour**, counting unique production
+applications first scored in the rolling last 60 minutes, plus a bar chart for
+the rolling past 24 hours. Both refresh every 10 seconds, independently of the
+existing 30-second statistics refresh. Failed refreshes are shown explicitly and
+do not replace the last successful chart with invented zero counts.
+
+`GET /api/stats/scoring-throughput` requires authentication and uses the same
+job authorization scope as dashboard statistics. Job-list display filters do
+not change this overall metric. The response is not cached:
+
+```json
+{
+  "asOfUtc": "2026-09-17T07:32:07+00:00",
+  "scoredLastHour": 7,
+  "scoredLast24Hours": 42,
+  "hours": [
+    { "startUtc": "2026-09-16T07:32:07+00:00", "endUtc": "2026-09-16T08:32:07+00:00", "count": 2 }
+  ]
+}
+```
+
+The example abbreviates `hours`; the actual response always contains 24
+consecutive one-hour windows, oldest first, with zeros for empty windows.
+Windows are start-inclusive and end-exclusive, ending at server UTC time
+rounded down to a whole second. The last bar equals `scoredLastHour`; timestamps
+are displayed in the browser's local timezone. Hourly counts are grouped in
+the database, rather than fetching documents or individual scoring runs.
+
+The timestamp is `AggregatedResults.CreatedAt`, which both repositories preserve
+when an existing result is updated. Each application is counted once at its
+first persisted assessment, including assessments requiring manual review.
+Prompt tests, unsuccessful attempts, re-aggregation and edits do not add counts.
+Re-scoring an existing application does not count it again unless its original
+aggregate record was deleted. Deleted applications/jobs no longer contribute.
+This uses existing historical data and requires no new table or schema change.
+The new dashboard visualization is Stack B only.
 
 ## Dynamic Rubric Editor / Extraction Instruction API
 
@@ -109,13 +205,14 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://your-api.azur
 
 export async function apiRequest<T>(
   endpoint: string,
+  accessToken: string,
   options?: RequestInit
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${endpoint}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${getAuthToken()}`,
+      'Authorization': `Bearer ${accessToken}`,
       ...options?.headers,
     },
   })
@@ -127,11 +224,10 @@ export async function apiRequest<T>(
   return response.json()
 }
 
-function getAuthToken(): string {
-  // Implement Azure AD token retrieval
-  return localStorage.getItem('auth_token') || ''
-}
 ```
+
+Pass a short-lived access token returned by MSAL's in-memory token acquisition flow. Do not
+persist access tokens in `localStorage` or `sessionStorage`.
 
 #### 2. Update API Methods
 
@@ -429,7 +525,8 @@ When deploying:
 2. **Implement CSRF protection** for state-changing operations
 3. **Validate file uploads** on both client and server
 4. **Use HTTPS** for all API communication
-5. **Implement proper CORS** policies on the backend
+5. **Restrict credentialed CORS** with `CORS_ALLOWED_ORIGINS` (comma- or semicolon-separated
+   HTTP(S) origins); leave it empty for same-origin hosting
 
 ## Next Steps
 

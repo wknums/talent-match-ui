@@ -181,6 +181,7 @@ export_tf_vars() {
   export TF_VAR_awr_api_app_role_value="${AWR_API_APP_ROLE_VALUE:-TalentMatch.Access}"
   export TF_VAR_awr_max_parallel="${AWR_MAX_PARALLEL:-1}"
   export TF_VAR_awr_seq_api_endpoint="${AWR_SEQ_API_ENDPOINT:-}"
+  export TF_VAR_cors_allowed_origins="${CORS_ALLOWED_ORIGINS:-}"
   export TF_VAR_api_mode="${API_MODE:-mock}"
   export TF_VAR_database_provider="${DATABASE_PROVIDER:-sqlserver}"
   local use_key_vault_default="TRUE"

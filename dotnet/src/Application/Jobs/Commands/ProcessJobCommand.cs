@@ -1,12 +1,9 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
-using TalentMatch.Application.Common.Services;
 using TalentMatch.Application.Jobs;
-using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -21,7 +18,8 @@ public record ProcessJobCommand(
 public record ProcessJobResult(
     int Processed,
     int Total,
-    List<string> Errors
+    List<string> Errors,
+    int Queued = 0
 );
 
 public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, ProcessJobResult>
@@ -33,8 +31,7 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
     private readonly ILogger<ProcessJobCommandHandler> _logger;
     private readonly ICurrentUserService? _currentUser;
     private readonly IOrganizationRepository? _organizationRepository;
-
-    private static readonly int MaxParallel = int.TryParse(Environment.GetEnvironmentVariable("AWR_MAX_PARALLEL"), out var p) && p > 0 ? p : 1;
+    private readonly IScoringQueueSignal? _queueSignal;
 
     public static string ResolveScoringMode()
     {
@@ -63,7 +60,8 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         IServiceScopeFactory scopeFactory,
         ILogger<ProcessJobCommandHandler> logger,
         ICurrentUserService? currentUser = null,
-        IOrganizationRepository? organizationRepository = null)
+        IOrganizationRepository? organizationRepository = null,
+        IScoringQueueSignal? queueSignal = null)
     {
         _jobRepo = jobRepo;
         _applicationRepo = applicationRepo;
@@ -72,6 +70,7 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         _logger = logger;
         _currentUser = currentUser;
         _organizationRepository = organizationRepository;
+        _queueSignal = queueSignal;
     }
 
     public async Task<ProcessJobResult> Handle(ProcessJobCommand request, CancellationToken ct)
@@ -82,21 +81,29 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         await JobAuthorization.EnsureCanMutateAsync(
             job, _currentUser, _organizationRepository, ct);
 
-        var jobDescriptionText = job.JobDescription ?? job.Title;
         var config = job.ConfigVersions.FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
             ?? job.ConfigVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
-        var varianceThreshold = config?.VarianceThreshold ?? 15;
-        var longlistThreshold = config?.LonglistThreshold ?? 70;
 
-        // Load as no-tracking just to get the list of IDs to process
         var applications = await _applicationRepo.GetByJobIdAsync(request.JobId, ct);
+        if (ResolveScoringMode() == "sequential")
+        {
+            if (!string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Approve the job rubric before processing applications.");
+
+            var queued = applications.Count(application => application.Status == "Queued" && application.TestRunId is null);
+            (_queueSignal ?? throw new InvalidOperationException("The sequential scoring pool is not registered.")).Pulse();
+            _logger.LogInformation("Job {JobId}: notified the scoring pool of {Queued} queued application(s).",
+                request.JobId, queued);
+            return new ProcessJobResult(0, queued, new List<string>(), queued);
+        }
+
         var toProcessIds = applications
             .Where(a => a.Status is "Queued" or "Scored" or "Scoring" or "ScoringFailed")
             .Select(a => a.Id).ToList();
 
         // Platform mode: enqueue ScoringBatches and return immediately. The
         // in-process reconciler (PlatformScoringReconciler hosted service) drives
-        // submit/poll/finalize asynchronously. Sequential mode below is unchanged.
+        // submit/poll/finalize asynchronously.
         if (ResolveScoringMode() == "platform")
         {
             var existingBatches = await _batchRepo.ListByJobAsync(request.JobId, ct);
@@ -154,100 +161,6 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
             return new ProcessJobResult(toEnqueueIds.Count, toProcessIds.Count, new List<string>());
         }
 
-        int processed = 0;
-        var errors = new ConcurrentBag<string>();
-        _logger.LogInformation("Processing job {JobId}: {Count} applications in {Mode} mode (parallelism: {MaxParallel})",
-            request.JobId, toProcessIds.Count, ResolveScoringMode(), MaxParallel);
-
-        // Process apps in parallel — each in its own DI scope to avoid EF Core tracking conflicts.
-        // AWR_MAX_PARALLEL controls concurrency (default 1 = sequential).
-        await Parallel.ForEachAsync(toProcessIds,
-            new ParallelOptions { MaxDegreeOfParallelism = MaxParallel, CancellationToken = ct },
-            async (appId, token) =>
-        {
-            try
-            {
-                using var scope = _scopeFactory.CreateScope();
-                var mediator = scope.ServiceProvider.GetRequiredService<IMediator>();
-                var appRepo = scope.ServiceProvider.GetRequiredService<IApplicationRepository>();
-
-                // Mark as Scoring
-                var app = await appRepo.GetByIdAsync(appId, ct)
-                    ?? throw new InvalidOperationException($"Application {appId} not found");
-                app.Status = "Scoring";
-                await appRepo.UpdateAsync(app, ct);
-
-                // Score via ScoreApplicationCommand (same as test scoring)
-                var scoringResult = await mediator.Send(
-                    new ScoreApplicationCommand(appId, request.JobId, request.RunCount,
-                        request.ProductionPromptId, jobDescriptionText, config?.RubricJson), ct);
-
-                // Aggregation + decision + AggregatedResult persistence shared with platform mode.
-                var finalizer = scope.ServiceProvider.GetRequiredService<IApplicationScoringFinalizer>();
-                await finalizer.FinalizeAsync(appId, request.JobId, scoringResult.Runs,
-                    request.RunCount, varianceThreshold, longlistThreshold, ct);
-
-                Interlocked.Increment(ref processed);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to process application {AppId} in job {JobId}",
-                    appId, request.JobId);
-                errors.Add($"Application {appId}: {ex.Message}");
-
-                using var errScope = _scopeFactory.CreateScope();
-                var errRepo = errScope.ServiceProvider.GetRequiredService<IApplicationRepository>();
-                try
-                {
-                    var failedApp = await errRepo.GetByIdAsync(appId, ct);
-                    if (failedApp != null)
-                    {
-                        failedApp.Status = "ScoringFailed";
-                        failedApp.LastError = ex.Message;
-                        await errRepo.UpdateAsync(failedApp, ct);
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception statusEx)
-                {
-                    _logger.LogError(statusEx,
-                        "Failed to mark application {AppId} as ScoringFailed.", appId);
-                    errors.Add($"Application {appId}: could not persist failed status: {statusEx.Message}");
-                }
-
-                try
-                {
-                    var dlqRepo = errScope.ServiceProvider.GetRequiredService<IFailureQueueRepository>();
-                    var queuedEntityIds = await dlqRepo.GetEntityIdsAsync(ct);
-                    if (!queuedEntityIds.Contains(appId))
-                    {
-                        await dlqRepo.AddAsync(new FailureQueueItem
-                        {
-                            EntityType = "Application",
-                            EntityId = appId,
-                            FailureReason = ex.Message,
-                            RetryCount = ex is ScoringRetriesExhaustedException exhausted
-                                ? exhausted.FailureCount
-                                : 0,
-                        }, ct);
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception queueEx)
-                {
-                    _logger.LogError(queueEx,
-                        "Failed to add application {AppId} to the failure queue.", appId);
-                    errors.Add($"Application {appId}: could not persist failure queue item: {queueEx.Message}");
-                }
-            }
-        });
-
-        return new ProcessJobResult(processed, toProcessIds.Count, errors.ToList());
+        throw new InvalidOperationException("Unsupported scoring mode.");
     }
 }

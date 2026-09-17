@@ -88,6 +88,33 @@ public sealed class SimpleAuthModeTests : IClassFixture<SimpleAuthModeTests.Simp
             .WithMessage("*APP_AUTH_MODE=simple is only supported in Development and Testing environments*");
     }
 
+    [Fact]
+    public async Task Cors_AllowsOnlyConfiguredOrigins()
+    {
+        using var factory = _factory.WithWebHostBuilder(builder =>
+            builder.UseSetting("CORS_ALLOWED_ORIGINS", "https://allowed.example"));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            AllowAutoRedirect = false,
+        });
+
+        using var allowedRequest = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        allowedRequest.Headers.Add("Origin", "https://allowed.example");
+        using var allowedResponse = await client.SendAsync(allowedRequest);
+
+        allowedResponse.Headers.GetValues("Access-Control-Allow-Origin")
+            .Should().Equal("https://allowed.example");
+        allowedResponse.Headers.GetValues("Access-Control-Allow-Credentials")
+            .Should().Equal("true");
+
+        using var rejectedRequest = new HttpRequestMessage(HttpMethod.Get, "/api/health");
+        rejectedRequest.Headers.Add("Origin", "https://rejected.example");
+        using var rejectedResponse = await client.SendAsync(rejectedRequest);
+
+        rejectedResponse.Headers.Contains("Access-Control-Allow-Origin").Should().BeFalse();
+        rejectedResponse.Headers.Contains("Access-Control-Allow-Credentials").Should().BeFalse();
+    }
+
     public sealed class SimpleFactory : WebApplicationFactory<Program>
     {
         private SqliteConnection? _connection;

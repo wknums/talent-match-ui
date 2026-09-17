@@ -8,6 +8,18 @@
 
 ## Overview
 
+**Sequential scoring update (2026-09-16):** Stack B now fills a shared
+`AWR_MAX_PARALLEL`-sized document pool from SQL independently of upload boundaries.
+Stack A retains its existing per-request scheduling; this behavior is not yet
+cross-stack parity. Platform-mode scheduling is unchanged. See
+[continuous sequential scoring](INTEGRATION.md#stack-b-continuous-sequential-scoring)
+for scope, recovery, and capacity limitations.
+
+**Throughput dashboard (2026-09-17):** Stack B adds a scoped rolling-hour count
+and a 24-hour chart refreshed every 10 seconds, using first aggregate-result
+timestamps. Stack A's existing throughput card has not been converted to this
+new metric; the visualization and time-window semantics are not yet at parity.
+
 | Feature | Stack B (.NET) | Stack A (React/Express) | Parity Status | Checklist |
 | ------- | ------------- | ---------------------- | ------------- | --------- |
 | 001 — Dynamic Rubric Editor | ✅ Implemented + targeted tests | ✅ Implemented + targeted tests | 🔶 Feature parity verified; repo-wide Stack A full test suite still blocked by unrelated failures and env-backed E2E prerequisites | [parity.md](specs/001-dynamic-rubric-editor/checklists/parity.md) |

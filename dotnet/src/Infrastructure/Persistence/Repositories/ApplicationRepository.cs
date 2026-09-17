@@ -59,6 +59,27 @@ public class ApplicationRepository : IApplicationRepository
         await _context.SaveChangesAsync(ct);
     }
 
+    public async Task PublishUploadedAsync(IReadOnlyCollection<string> applicationIds, CancellationToken ct = default)
+    {
+        if (applicationIds.Count == 0)
+            return;
+        var now = DateTime.UtcNow;
+        await _context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var transaction = await _context.Database.BeginTransactionAsync(ct);
+            var updated = await _context.Applications
+                .Where(application => applicationIds.Contains(application.Id) && application.Status == "Uploading")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(application => application.Status, "Queued")
+                    .SetProperty(application => application.UpdatedAt, now), ct);
+            if (updated != applicationIds.Count)
+                throw new InvalidOperationException("Some uploaded applications could not be made ready for scoring.");
+            await transaction.CommitAsync(ct);
+        });
+        foreach (var application in _context.Applications.Local.Where(application => applicationIds.Contains(application.Id)).ToArray())
+            _context.Entry(application).State = EntityState.Detached;
+    }
+
     public async Task UpdateAsync(TalentMatch.Domain.Entities.Application application, CancellationToken ct = default)
     {
         var entry = _context.Entry(application);
@@ -78,6 +99,11 @@ public class ApplicationRepository : IApplicationRepository
             }
         }
 
+        // Only the queue repository owns these fields; unrelated updates must not rewind a heartbeat.
+        var persistedEntry = _context.Entry(
+            _context.Applications.Local.FirstOrDefault(app => app.Id == application.Id) ?? application);
+        persistedEntry.Property(app => app.ScoringOwner).IsModified = false;
+        persistedEntry.Property(app => app.ScoringLeaseUntil).IsModified = false;
         await _context.SaveChangesAsync(ct);
     }
 

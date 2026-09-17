@@ -277,3 +277,14 @@ Task: T043 [US4] Stack B diagnostics UI
 - Extraction validation must fail visibly; do not coerce malformed AWReason output into success-shaped payloads
 - Category-level scoring remains the downstream compatibility boundary even after itemization
 - Do not log full prompt content, raw source documents, or secrets in audit/event payloads
+
+## Follow-up: continuous sequential scoring (2026-09-16)
+
+- [X] Q001 Replace fixed upload snapshots with the in-process document pool in `dotnet/src/Infrastructure/HostedServices/SequentialScoringPool.cs` and reuse single-document scoring in `dotnet/src/Application/Common/Services/SequentialApplicationScorer.cs`.
+- [X] Q002 Add ready-upload publication and atomic claim/lease/failure/retry persistence in `dotnet/src/Infrastructure/Persistence/Repositories/ApplicationRepository.cs` and `dotnet/src/Infrastructure/Persistence/Repositories/SequentialScoringQueueRepository.cs`, with additive shared schema upgrades.
+- [X] Q003 Wire upload/process/retry triggers and immediate acceptance responses in `dotnet/src/Application/Applications/Commands/`, `dotnet/src/Application/Jobs/Commands/ProcessJobCommand.cs`, and `dotnet/src/Web.Server/Endpoints/JobsEndpoints.cs`; report persisted errors in `dotnet/src/Web.Client/Pages/JobDetail.razor`.
+- [X] Q004 Verify seven-plus-seven with ten slots, refill after success/failure, cross-scope claims, readiness, approval/test exclusions, ownership recovery, and request acceptance in `dotnet/tests/Application.Tests/`, `dotnet/tests/Infrastructure.Tests/`, and `dotnet/tests/Web.Tests/`.
+- [X] Q005 Document capacity, deployment, recovery, and Stack B-only scheduling scope in `INTEGRATION.md`, `PARITY.md`, and deployment environment examples.
+- [X] Q006 Accept approved `rubric-v2` objects alongside legacy arrays in `dotnet/src/Infrastructure/Persistence/Repositories/SequentialScoringQueueRepository.cs`; verify malformed envelopes, approval gates, paging, and 200-slot scheduler behavior in `dotnet/tests/Infrastructure.Tests/`.
+- [X] Q007 Add an authorized rolling-hour metric with 24 hourly windows from preserved first aggregate timestamps in `dotnet/src/Application/Stats/`, `dotnet/src/Infrastructure/Persistence/Repositories/ScoringThroughputRepository.cs`, and `dotnet/src/Web.Server/Endpoints/StatsEndpoints.cs`.
+- [X] Q008 Add the 10-second-refresh throughput card and accessible chart to the Stack B dashboard in `dotnet/src/Web.Client/Pages/Dashboard.razor` and `dotnet/src/Web.Client/Components/ScoringThroughputPanel.razor`; verify query boundaries, scope, repository history, API and UI behavior in `dotnet/tests/`.

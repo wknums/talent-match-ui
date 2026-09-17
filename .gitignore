@@ -133,6 +133,13 @@ tests/fixtures/*
 !tests/fixtures/authorization-parity-cases.json
 .npmrc
 
+# Local browser automation and Azure Storage emulator state
+.playwright-mcp/
+AzuriteConfig
+__azurite_db_*.json
+__blobstorage__/
+__queuestorage__/
+
 # Terraform
 .terraform/
 .terraform-bin/

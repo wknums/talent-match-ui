@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
 
@@ -35,13 +34,13 @@ public class LlmProxyService : ILlmProxyService
         specContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
         formData.Add(specContent, "specFile", "context.md");
 
-        _logger.LogInformation("Sending LLM request via passthrough to {Endpoint}", endpoint);
+        _logger.LogInformation("Sending LLM request via passthrough");
         var response = await _httpClient.PostAsync($"{endpoint}/assess/passthrough", formData, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError("Passthrough API error: {Status} {Error}", (int)response.StatusCode, errorText);
+            _logger.LogError("Passthrough API error: {Status}", (int)response.StatusCode);
             throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "LLM passthrough request", errorText));
         }
 
@@ -63,13 +62,13 @@ public class LlmProxyService : ILlmProxyService
         specContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
         formData.Add(specContent, "cvFiles[]", "candidate-cv.md");
 
-        _logger.LogInformation("Sending scoring request via passthrough to {Endpoint}", endpoint);
+        _logger.LogInformation("Sending scoring request via passthrough");
         var response = await _httpClient.PostAsync($"{endpoint}/assess/passthrough", formData, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError("Scoring passthrough API error: {Status} {Error}", (int)response.StatusCode, errorText);
+            _logger.LogError("Scoring passthrough API error: {Status}", (int)response.StatusCode);
             throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "Scoring passthrough request", errorText));
         }
 
@@ -120,7 +119,7 @@ public class LlmProxyService : ILlmProxyService
                 return await CallEngineOnce(endpoint, resolvedPrompt, documentBytes, fileName, mimeType,
                     batchId, runNumber, totalRuns, cancellationToken);
             }
-            catch (Exception ex) when (attempt < MaxRetriesPerRun)
+            catch (Exception ex) when (attempt < MaxRetriesPerRun && !cancellationToken.IsCancellationRequested)
             {
                 _logger.LogWarning(ex, "Scoring run {RunNumber} attempt {Attempt}/{MaxRetries} failed, retrying...",
                     runNumber, attempt, MaxRetriesPerRun);
@@ -155,14 +154,17 @@ public class LlmProxyService : ILlmProxyService
             formData.Add(new StringContent(totalRuns.ToString()), "totalRuns");
         }
 
-        _logger.LogInformation("Sending scoring run {RunNumber}/{TotalRuns} via passthrough to {Endpoint} for {FileName} ({MimeType}, {Size} bytes, batchId={BatchId})",
-            runNumber, totalRuns, endpoint, fileName, mimeType, documentBytes.Length, batchId ?? "none");
+        _logger.LogInformation(
+            "Sending scoring run {RunNumber}/{TotalRuns} via passthrough ({MimeType}, {Size} bytes)",
+            runNumber, totalRuns, resolvedMimeType, documentBytes.Length);
         var response = await _httpClient.PostAsync($"{endpoint}/assess/passthrough", formData, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError("Scoring passthrough API error on run {RunNumber}: {Status} {Error}", runNumber, (int)response.StatusCode, errorText);
+            _logger.LogError(
+                "Scoring passthrough API error on run {RunNumber}: {Status}",
+                runNumber, (int)response.StatusCode);
             throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "Scoring passthrough request", errorText));
         }
 
@@ -197,14 +199,15 @@ public class LlmProxyService : ILlmProxyService
         docContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
         formData.Add(docContent, "specFile", fileName);
 
-        _logger.LogInformation("Sending extraction request via passthrough to {Endpoint} for {FileName} ({MimeType}, {Size} bytes)",
-            endpoint, fileName, mimeType, documentBytes.Length);
+        _logger.LogInformation(
+            "Sending extraction request via passthrough ({MimeType}, {Size} bytes)",
+            mimeType, documentBytes.Length);
         var response = await _httpClient.PostAsync($"{endpoint}/assess/passthrough", formData, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError("Extraction passthrough API error: {Status} {Error}", (int)response.StatusCode, errorText);
+            _logger.LogError("Extraction passthrough API error: {Status}", (int)response.StatusCode);
             throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "Extraction passthrough request", errorText));
         }
 
@@ -219,55 +222,6 @@ public class LlmProxyService : ILlmProxyService
             return $"{operation} failed ({statusCode}): Azure OpenAI deployment not found in AWReason service (DeploymentNotFound). Verify awreason-http-service deployment env vars (AOAI_DEPLOYMENT/AZURE_OPENAI_DEPLOYMENT) and API version.";
         }
 
-        if (TryReadProblemDetails(errorText, out var title, out var detail))
-        {
-            var condensed = string.IsNullOrWhiteSpace(detail) ? title : $"{title}: {detail}";
-            return $"{operation} failed ({statusCode}): {Truncate(condensed, 600)}";
-        }
-
-        return $"{operation} failed ({statusCode}): {Truncate(errorText, 600)}";
-    }
-
-    private static bool TryReadProblemDetails(string json, out string title, out string detail)
-    {
-        title = string.Empty;
-        detail = string.Empty;
-
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return false;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            if (root.TryGetProperty("title", out var titleProp) && titleProp.ValueKind == JsonValueKind.String)
-            {
-                title = titleProp.GetString() ?? string.Empty;
-            }
-
-            if (root.TryGetProperty("detail", out var detailProp) && detailProp.ValueKind == JsonValueKind.String)
-            {
-                detail = detailProp.GetString() ?? string.Empty;
-            }
-
-            return !string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(detail);
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static string Truncate(string value, int maxChars)
-    {
-        if (string.IsNullOrEmpty(value) || value.Length <= maxChars)
-        {
-            return value;
-        }
-
-        return value[..maxChars] + "...";
+        return $"{operation} failed ({statusCode}).";
     }
 }

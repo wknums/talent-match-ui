@@ -2,6 +2,7 @@ using System.Reflection;
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using TalentMatch.Application.Common.Behaviours;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Common.Services;
@@ -21,6 +22,8 @@ public static class DependencyInjection
 
         services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
         services.AddScoped<IApplicationScoringFinalizer, ApplicationScoringFinalizer>();
+        services.AddScoped<ISequentialApplicationScorer, SequentialApplicationScorer>();
+        services.TryAddSingleton(TimeProvider.System);
 
         return services;
     }

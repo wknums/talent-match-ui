@@ -1,5 +1,6 @@
 using MediatR;
-using Microsoft.Extensions.Logging;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -20,22 +21,30 @@ public record GetApplicationsQuery(
 public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery, IReadOnlyList<Domain.Entities.Application>>
 {
     private readonly IApplicationRepository _applicationRepository;
-    private readonly IFailureQueueRepository _failureQueueRepository;
-    private readonly ILogger<GetApplicationsQueryHandler> _logger;
+    private readonly IJobRepository _jobRepository;
+    private readonly ICurrentUserService? _currentUser;
+    private readonly IOrganizationRepository? _organizations;
 
     public GetApplicationsQueryHandler(
         IApplicationRepository applicationRepository,
-        IFailureQueueRepository failureQueueRepository,
-        ILogger<GetApplicationsQueryHandler> logger)
+        IJobRepository jobRepository,
+        ICurrentUserService? currentUser = null,
+        IOrganizationRepository? organizations = null)
     {
         _applicationRepository = applicationRepository;
-        _failureQueueRepository = failureQueueRepository;
-        _logger = logger;
+        _jobRepository = jobRepository;
+        _currentUser = currentUser;
+        _organizations = organizations;
     }
 
     public async Task<IReadOnlyList<Domain.Entities.Application>> Handle(GetApplicationsQuery request, CancellationToken cancellationToken)
     {
+        var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
+            ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
+        await JobAuthorization.EnsureCanReadAsync(job, _currentUser, _organizations, cancellationToken);
+
         var apps = await _applicationRepository.GetByJobIdAsync(request.JobId, cancellationToken);
+        apps = apps.Where(application => application.Status != "Uploading").ToList();
 
         // FR-038: Filter out test run applications from production results unless explicitly requested
         if (!request.IncludeTestCases)
@@ -52,35 +61,6 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
                     || (!string.IsNullOrWhiteSpace(a.CandidateRef)
                         && a.CandidateRef.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
-        }
-
-        // Remove orphaned failed apps (ScoringFailed/ExtractionFailed with no DLQ entry)
-        var failedApps = apps.Where(a => a.Status is "ScoringFailed" or "ExtractionFailed").ToList();
-        if (failedApps.Any())
-        {
-            var dlqEntityIds = await _failureQueueRepository.GetEntityIdsAsync(cancellationToken);
-            var orphanIds = new HashSet<string>();
-            foreach (var fa in failedApps)
-            {
-                if (!dlqEntityIds.Contains(fa.Id))
-                {
-                    orphanIds.Add(fa.Id);
-                    try
-                    {
-                        await _applicationRepository.DeleteAsync(fa.Id, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Read operations must remain stable even if best-effort cleanup fails.
-                        _logger.LogWarning(ex,
-                            "Failed to delete orphaned failed application {ApplicationId} during list query for job {JobId}",
-                            fa.Id,
-                            request.JobId);
-                    }
-                }
-            }
-            if (orphanIds.Count > 0)
-                apps = apps.Where(a => !orphanIds.Contains(a.Id)).ToList();
         }
 
         return apps;

@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using TalentMatch.Application.Jobs.Commands;
+using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -11,6 +12,52 @@ namespace TalentMatch.Application.Tests;
 
 public class ProcessJobCommandTests
 {
+    [Fact]
+    public async Task Handle_Sequential_OnlySignalsQueuedProductionWork_WithoutStartingAnotherPool()
+    {
+        var originalPlatformEndpoint = Environment.GetEnvironmentVariable("AWR_PLATFORM_API_ENDPOINT");
+        Environment.SetEnvironmentVariable("AWR_PLATFORM_API_ENDPOINT", null);
+        try
+        {
+            var jobs = new Mock<IJobRepository>();
+            var applications = new Mock<IApplicationRepository>();
+            var batches = new Mock<IScoringBatchRepository>(MockBehavior.Strict);
+            var signal = new Mock<IScoringQueueSignal>();
+            jobs.Setup(repo => repo.GetByIdAsync("job-1", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new Job
+                {
+                    Id = "job-1",
+                    CurrentConfigVersionId = "config-1",
+                    ConfigVersions = [new JobConfigVersion { Id = "config-1", RubricApprovalStatus = "approved" }],
+                });
+            applications.Setup(repo => repo.GetByJobIdAsync("job-1", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(
+                [
+                    new Domain.Entities.Application { Id = "queued", Status = "Queued" },
+                    new Domain.Entities.Application { Id = "active", Status = "Scoring" },
+                    new Domain.Entities.Application { Id = "failed", Status = "ScoringFailed" },
+                    new Domain.Entities.Application { Id = "test", Status = "Queued", TestRunId = "test-1" },
+                ]);
+            var handler = new ProcessJobCommandHandler(jobs.Object, applications.Object, batches.Object,
+                Mock.Of<IServiceScopeFactory>(), Mock.Of<ILogger<ProcessJobCommandHandler>>(), queueSignal: signal.Object);
+
+            var first = await handler.Handle(new ProcessJobCommand("job-1", "prompt-1", 3), CancellationToken.None);
+            var second = await handler.Handle(new ProcessJobCommand("job-1", "prompt-1", 3), CancellationToken.None);
+
+            first.Processed.Should().Be(0);
+            first.Queued.Should().Be(1);
+            second.Queued.Should().Be(1);
+            signal.Verify(x => x.Pulse(), Times.Exactly(2));
+            applications.Verify(
+                repo => repo.UpdateAsync(It.IsAny<Domain.Entities.Application>(), It.IsAny<CancellationToken>()),
+                Times.Never);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AWR_PLATFORM_API_ENDPOINT", originalPlatformEndpoint);
+        }
+    }
+
     [Fact]
     public async Task Handle_DoesNotCreateAnotherBatchWhenAllApplicationsAreAlreadyActive()
     {

@@ -17,6 +17,10 @@ public class Application
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string? TestRunId { get; set; }
     public string? LastError { get; set; }
+    [JsonIgnore]
+    public string? ScoringOwner { get; set; }
+    [JsonIgnore]
+    public DateTime? ScoringLeaseUntil { get; set; }
     
     // Navigation properties
     [JsonIgnore]

@@ -360,16 +360,16 @@ public static class JobsEndpoints
             }
         });
 
-        group.MapPost("/{jobId}/process", async (string jobId, ISender mediator, HttpContext httpContext) =>
+        group.MapPost("/{jobId}/process", async (string jobId, ISender mediator, HttpContext httpContext, CancellationToken ct) =>
         {
             // Check for production-approved prompt before allowing scoring pipeline trigger
-            var prompts = await mediator.Send(new TalentMatch.Application.Prompts.Queries.GetPromptsQuery(jobId));
+            var prompts = await mediator.Send(new TalentMatch.Application.Prompts.Queries.GetPromptsQuery(jobId), ct);
             var productionPrompt = prompts.FirstOrDefault(p => p.Status == "production-approved");
             if (productionPrompt == null)
                 return Results.Problem("No production-approved prompt exists for this job. Approve a prompt before processing.", statusCode: 400);
 
             // Load job to get run count from config
-            var job = await mediator.Send(new GetJobDetailQuery(jobId));
+            var job = await mediator.Send(new GetJobDetailQuery(jobId), ct);
             if (job == null)
                 return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
 
@@ -377,13 +377,20 @@ public static class JobsEndpoints
                 .FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
                 ?? job.ConfigVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
             var runCount = config?.ScoringRunCount ?? 3;
+            if (TalentMatch.Application.Jobs.Commands.ProcessJobCommandHandler.ResolveScoringMode() == "sequential"
+                && !string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
+                return Results.Problem("Approve the job rubric before processing applications.", statusCode: 400);
 
-            // Delegate to ProcessJobCommand which properly persists status changes
+            // Sequential processing wakes the in-process pool; the request does not wait for scoring.
             var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ProcessJobCommand(
-                jobId, productionPrompt.Id, runCount));
+                jobId, productionPrompt.Id, runCount), ct);
 
-            return Results.Accepted(null, new { processed = result.Processed, total = result.Total, errors = result.Errors });
-        });
+            return Results.Accepted($"/api/jobs/{jobId}/applications",
+                new { processed = result.Processed, total = result.Total, errors = result.Errors, queued = result.Queued });
+        })
+        .WithSummary("Request processing of queued job applications")
+        .WithDescription("Returns immediately after notifying the sequential scoring pool or enqueueing platform batches. Poll the applications resource for results.")
+        .Produces(StatusCodes.Status202Accepted);
 
         group.MapPost("/{jobId}/reaggregate", async (string jobId, ISender mediator) =>
         {

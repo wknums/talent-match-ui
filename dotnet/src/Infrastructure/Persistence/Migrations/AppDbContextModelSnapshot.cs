@@ -103,6 +103,14 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("LastError")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("ScoringLeaseUntil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScoringOwner")
+                        .IsConcurrencyToken()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Status")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -122,6 +130,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("JobId");
 
                     b.HasIndex("TestRunId");
+
+                    b.HasIndex("Status", "ScoringLeaseUntil");
+
+                    b.HasIndex("Status", "TestRunId", "CreatedAt");
 
                     b.ToTable("Applications");
                 });

@@ -10,6 +10,25 @@ namespace TalentMatch.Application.Tests;
 
 public class ScoringRetryTests
 {
+    [Fact]
+    public async Task Handle_CanReturnParsedRunsWithoutPersistingBeforeOwnershipIsChecked()
+    {
+        var fixture = CreateFixture();
+        fixture.Llm.Setup(x => x.ScoreWithDocumentAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(),
+                It.IsAny<string>(), 1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { """{"overallScore":82,"recommendation":"Eligible"}""" });
+
+        var result = await fixture.Handler.Handle(CreateCommand() with { PersistResults = false }, CancellationToken.None);
+
+        result.Runs.Should().ContainSingle();
+        result.Runs[0].TotalScore.Should().Be(82);
+        fixture.Applications.Verify(repo => repo.AddScoringRunAsync(
+            It.IsAny<ScoringRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Applications.Verify(repo => repo.UpdateAsync(
+            It.IsAny<Domain.Entities.Application>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Theory]
     [InlineData(1, true)]
     [InlineData(2, true)]

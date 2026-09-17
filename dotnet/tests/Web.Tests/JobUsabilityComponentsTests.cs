@@ -15,6 +15,36 @@ namespace TalentMatch.Web.Tests;
 public sealed class JobUsabilityComponentsTests : BunitContext
 {
     [Fact]
+    public void JobDetail_ShowsPersistedBackgroundScoringFailuresWithoutAProcessResponse()
+    {
+        using var httpClient = new HttpClient(new RoutingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/auth/me" => JsonResponse(new UserInfo("user-1", "admin", "admin", "IT", "Admin", "admin@example.com")),
+            "/api/jobs/job-1" => JsonResponse(new JobDto(
+                "job-1", "JOB-1", "Test Job", "IT", "TalentMatch", DateTime.UtcNow, "active",
+                null, null, "user-1", DateTime.UtcNow)),
+            "/api/jobs/job-1/applications" => JsonResponse(new[]
+            {
+                new ApplicationDto("app-1", "job-1", "candidate-1", "Candidate One", null,
+                    "ScoringFailed", null, null, null, DateTime.UtcNow, "Scoring interrupted; retry explicitly."),
+            }),
+            "/api/jobs/job-1/prompts" => JsonResponse(Array.Empty<ScoringPromptDto>()),
+            "/api/jobs/job-1/config" => JsonResponse<JobConfigDto?>(null),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+        })) { BaseAddress = new Uri("http://localhost/") };
+        Services.AddSingleton(new ApiClient(httpClient));
+
+        using var cut = Render<JobDetail>(parameters => parameters.Add(component => component.JobId, "job-1"));
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.Should().Contain("Failed (1)");
+            cut.Markup.Should().Contain("Scoring interrupted; retry explicitly.");
+            cut.Markup.Should().Contain("Processing Errors (1)");
+        });
+    }
+
+    [Fact]
     public void UploadApplications_ShowsDefaultOffDuplicateOverride()
     {
         using var httpClient = new HttpClient(new EmptyHandler()) { BaseAddress = new Uri("http://localhost/") };

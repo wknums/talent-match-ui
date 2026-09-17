@@ -53,6 +53,10 @@ public static class DependencyInjection
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
         services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();
         services.AddScoped<IScoringBatchRepository, ScoringBatchRepository>();
+        services.AddScoped<ISequentialScoringQueueRepository, SequentialScoringQueueRepository>();
+        services.AddScoped<IScoringThroughputRepository, ScoringThroughputRepository>();
+        services.AddSingleton<IScoringQueueSignal, SequentialScoringSignal>();
+        services.AddSingleton(_ => SequentialScoringOptions.FromEnvironment());
         services.AddScoped<ICurrentUserService, CurrentUserService>();
         services.AddScoped<RubricOrderNormalizer>();
         services.AddScoped<LegacyRubricAdapter>();
@@ -100,6 +104,7 @@ public static class DependencyInjection
         // Platform-mode reconciler hosted service. It self-disables when scoring
         // mode is sequential, so it is safe to register unconditionally.
         services.AddHostedService<TalentMatch.Infrastructure.HostedServices.PlatformScoringReconciler>();
+        services.AddHostedService<TalentMatch.Infrastructure.HostedServices.SequentialScoringPool>();
 
         return services;
     }

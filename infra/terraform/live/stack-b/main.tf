@@ -29,6 +29,7 @@ locals {
     AWR_AUTH_MODE                         = var.awr_auth_mode
     AWR_AAD_AUDIENCE                      = var.awr_aad_audience
     AWR_MAX_PARALLEL                      = tostring(var.awr_max_parallel)
+    CORS_ALLOWED_ORIGINS                  = var.cors_allowed_origins
     API_MODE                              = var.api_mode
   }
 }

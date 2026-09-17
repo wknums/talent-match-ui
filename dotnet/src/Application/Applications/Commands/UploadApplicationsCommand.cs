@@ -2,6 +2,8 @@ using MediatR;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 using System.IO;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 
 namespace TalentMatch.Application.Applications.Commands;
 
@@ -16,17 +18,29 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
 {
     private readonly IApplicationRepository _applicationRepository;
     private readonly IJobRepository _jobRepository;
+    private readonly IScoringQueueSignal? _queueSignal;
+    private readonly ICurrentUserService? _currentUser;
+    private readonly IOrganizationRepository? _organizations;
 
-    public UploadApplicationsCommandHandler(IApplicationRepository applicationRepository, IJobRepository jobRepository)
+    public UploadApplicationsCommandHandler(
+        IApplicationRepository applicationRepository,
+        IJobRepository jobRepository,
+        IScoringQueueSignal? queueSignal = null,
+        ICurrentUserService? currentUser = null,
+        IOrganizationRepository? organizations = null)
     {
         _applicationRepository = applicationRepository;
         _jobRepository = jobRepository;
+        _queueSignal = queueSignal;
+        _currentUser = currentUser;
+        _organizations = organizations;
     }
 
     public async Task<List<Domain.Entities.Application>> Handle(UploadApplicationsCommand request, CancellationToken cancellationToken)
     {
         var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
             ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
+        await JobAuthorization.EnsureCanMutateAsync(job, _currentUser, _organizations, cancellationToken);
 
         var applications = new List<Domain.Entities.Application>();
         var createdApplicationIds = new List<string>();
@@ -52,7 +66,7 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
                     JobId = request.JobId,
                     CandidateRef = $"candidate-{Guid.NewGuid().ToString("N")[..8]}",
                     CandidateName = DeriveCandidateName(file.FileName),
-                    Status = "Queued"
+                    Status = "Uploading"
                 };
                 await _applicationRepository.AddAsync(app, cancellationToken);
                 createdApplicationIds.Add(app.Id);
@@ -82,7 +96,7 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
                 applications.Add(app);
             }
 
-            return applications;
+            await _applicationRepository.PublishUploadedAsync(createdApplicationIds, cancellationToken);
         }
         catch
         {
@@ -93,6 +107,12 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
 
             throw;
         }
+
+        foreach (var application in applications)
+            application.Status = "Queued";
+        if (applications.Count > 0)
+            _queueSignal?.Pulse();
+        return applications;
 
         async Task SafeDeleteApplicationAsync(string applicationId, CancellationToken ct)
         {
