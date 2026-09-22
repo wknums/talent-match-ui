@@ -4,10 +4,12 @@ using TalentMatch.Application.Rubrics.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 using ApplicationEntity = TalentMatch.Domain.Entities.Application;
+using TalentMatch.Application.Common.Interfaces;
 
 namespace TalentMatch.Infrastructure.Persistence.Repositories;
 
-public sealed class SequentialScoringQueueRepository(AppDbContext db) : ISequentialScoringQueueRepository
+public sealed class SequentialScoringQueueRepository(
+    AppDbContext db) : ISequentialScoringQueueRepository
 {
     private const string ExpiredLeaseError = "Sequential scoring lease expired; scoring outcome is unknown. Manual retry is required.";
 
@@ -29,7 +31,6 @@ public sealed class SequentialScoringQueueRepository(AppDbContext db) : ISequent
         ValidateLease(owner, leaseDuration);
         var until = now.Add(leaseDuration);
         var offset = 0;
-
         while (true)
         {
             ct.ThrowIfCancellationRequested();
@@ -55,6 +56,19 @@ public sealed class SequentialScoringQueueRepository(AppDbContext db) : ISequent
                     PromptId = db.ScoringPrompts
                         .Where(prompt => prompt.JobId == application.JobId
                             && prompt.Status.ToLower() == "production-approved"
+                            && ((prompt.ModelId == ""
+                                    || prompt.ModelId.ToLower() == "passthrough-llm")
+                                || (prompt.ReasoningLevel != ""
+                                    && prompt.ApprovedModelId == prompt.ModelId
+                                    && prompt.ApprovedReasoningLevel == prompt.ReasoningLevel
+                                    && db.PromptTestRuns.Any(run =>
+                                        run.Id == prompt.ApprovedTestRunId
+                                        && run.PromptId == prompt.Id
+                                        && run.Status == "approved"
+                                        && run.ModelId == prompt.ModelId
+                                        && run.ReasoningLevel == prompt.ReasoningLevel
+                                        && run.ApprovedModelId == prompt.ModelId
+                                        && run.ApprovedReasoningLevel == prompt.ReasoningLevel)))
                             && prompt.PromptText.Replace("\r", "").Replace("\n", "").Replace("\t", "").Trim() != "")
                         .OrderByDescending(prompt => prompt.VersionNumber)
                         .ThenBy(prompt => prompt.Id)
@@ -84,6 +98,19 @@ public sealed class SequentialScoringQueueRepository(AppDbContext db) : ISequent
                             prompt.Id == candidate.PromptId
                             && prompt.JobId == application.JobId
                             && prompt.Status.ToLower() == "production-approved"
+                            && ((prompt.ModelId == ""
+                                    || prompt.ModelId.ToLower() == "passthrough-llm")
+                                || (prompt.ReasoningLevel != ""
+                                    && prompt.ApprovedModelId == prompt.ModelId
+                                    && prompt.ApprovedReasoningLevel == prompt.ReasoningLevel
+                                    && db.PromptTestRuns.Any(run =>
+                                        run.Id == prompt.ApprovedTestRunId
+                                        && run.PromptId == prompt.Id
+                                        && run.Status == "approved"
+                                        && run.ModelId == prompt.ModelId
+                                        && run.ReasoningLevel == prompt.ReasoningLevel
+                                        && run.ApprovedModelId == prompt.ModelId
+                                        && run.ApprovedReasoningLevel == prompt.ReasoningLevel)))
                             && prompt.PromptText.Replace("\r", "").Replace("\n", "").Replace("\t", "").Trim() != ""))
                     .ExecuteUpdateAsync(setters => setters
                         .SetProperty(application => application.Status, "Scoring")

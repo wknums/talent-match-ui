@@ -373,7 +373,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Total Score</p>
                 <p className="text-2xl font-mono font-bold text-accent">
-                  {totalScore.toFixed(1)}
+                  {totalScore.toFixed(3)}
                 </p>
               </div>
               <Button onClick={handleSave} disabled={saving}>
@@ -439,7 +439,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
                   <span>
                     Pre-populated from AI scoring
                     {aggregatedResult && (
-                      <> (score: {aggregatedResult.finalScore.toFixed(1)}, variance: {aggregatedResult.variance.toFixed(2)})</>
+                      <> (score: {aggregatedResult.finalScore.toFixed(3)}, variance: {aggregatedResult.variance.toFixed(3)})</>
                     )}
                     . Please verify and adjust.
                   </span>

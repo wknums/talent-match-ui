@@ -74,6 +74,24 @@ As an administrator or authorized reviewer, I want each generated rubric to iden
 1. **Given** a completed extraction, **When** an authorized user reviews its details, **Then** the instruction version and extraction time are shown.
 2. **Given** extracted requirements that cannot all be mapped confidently, **When** the result is presented, **Then** unmapped items are retained individually and clearly flagged for review rather than discarded.
 
+---
+
+### User Story 5 - Govern Scoring Prompt Generation and Precision (Priority: P1)
+
+As an administrator or recruiter, I want scoring-prompt generation instructions, model settings, and reasoning settings to participate in the same versioned test-and-approval workflow so that large candidate sets remain consistently and precisely ranked when scoring behavior changes.
+
+**Why this priority**: A model-only change can alter candidate rankings even when prompt text is unchanged, and jobs may contain up to 50,000 applications whose close scores require three-decimal precision.
+
+**Independent Test**: Activate a system generation instruction, override it for one job, generate and edit prompt versions, approve a test run for a named model/reasoning profile, change only that profile, and verify production scoring is blocked until a new prompt version is tested and approved.
+
+**Acceptance Scenarios**:
+
+1. **Given** an administrator viewing scoring generation settings, **When** a new system instruction draft is created and activated, **Then** later jobs without an override use that exact instruction version and prior versions remain in history.
+2. **Given** a job with an active job-specific generation instruction, **When** a scoring prompt is generated, **Then** the job instruction overrides the active system default and its version is recorded on the generated prompt.
+3. **Given** an existing scoring prompt, **When** its text is edited, **Then** a new draft version is created and the historical version remains unchanged.
+4. **Given** a scoring prompt created and tested for one model/reasoning profile, **When** either configured value changes, **Then** production scoring is blocked and the user is instructed to create, test, and approve a new prompt version.
+5. **Given** two applications whose scores differ only beyond the second decimal place, **When** they are displayed and sorted, **Then** their three-decimal scores remain distinguishable and determine stable ranking order.
+
 ### Edge Cases
 
 - A single bullet contains multiple skills, certifications, experience thresholds, or responsibilities joined by punctuation or conjunctions.
@@ -86,6 +104,11 @@ As an administrator or authorized reviewer, I want each generated rubric to iden
 - Two administrators edit the same instruction version concurrently.
 - An extraction starts while a new instruction version is activated; the extraction retains one identifiable version for its entire run.
 - A legacy rubric stores several requirements in one description rather than as individual items.
+- The system scoring generation instruction changes while a job-specific instruction remains active.
+- A backend model or reasoning change occurs without any scoring prompt text change.
+- A test run starts before a profile change and is reviewed after the change.
+- A previously production-approved prompt is selected after its model/reasoning profile becomes stale.
+- Multiple candidates have scores equal to two decimal places but different at the third decimal place.
 
 ## Requirements *(mandatory)*
 
@@ -123,6 +146,16 @@ As an administrator or authorized reviewer, I want each generated rubric to iden
 - **FR-030**: The improved extraction and rubric-editing behavior MUST be functionally consistent across both supported application experiences.
 - **FR-031**: Legacy category descriptions containing multiple requirements MUST remain readable, and users MUST be offered a controlled way to convert them into individual items before editing or approval.
 - **FR-032**: The system MUST detect conflicting concurrent prompt edits or rubric edits and prevent one user's changes from silently overwriting another's.
+- **FR-033**: Administrators MUST be able to create, review, activate, and roll back immutable versions of the system-wide scoring-prompt generation instruction.
+- **FR-034**: Authorized job editors MUST be able to create and activate immutable job-specific scoring-prompt generation instruction versions.
+- **FR-035**: Scoring prompt generation MUST use the active job-specific instruction when present and otherwise use the active system instruction, recording the selected instruction version and scope.
+- **FR-036**: Editing scoring prompt text MUST create a new draft prompt version without mutating the source version.
+- **FR-037**: Every scoring prompt version and prompt test run MUST snapshot the configured LLM model identifier and reasoning level.
+- **FR-038**: Production approval and re-promotion MUST require an approved test run whose prompt version, model identifier, and reasoning level exactly match the current configured scoring profile.
+- **FR-039**: If the configured model identifier or reasoning level changes, the system MUST block production scoring for stale prompt versions and require creation, testing, and approval of a new prompt version.
+- **FR-040**: Scoring requests MUST forward the snapshotted model and reasoning settings and each scoring run MUST record the settings actually used.
+- **FR-041**: Scores used for persistence, aggregation, API responses, display, and sorting MUST preserve three digits after the decimal point.
+- **FR-042**: Profile mismatches and required retesting MUST be visible to authorized users and MUST NOT be converted into queued or successful scoring results.
 
 ### Key Entities
 
@@ -132,6 +165,10 @@ As an administrator or authorized reviewer, I want each generated rubric to iden
 - **Rubric Category**: A named weighted grouping with an ordered collection of rubric items.
 - **Rubric Item**: An individually editable and movable requirement, including wording, order, source traceability, and category assignment.
 - **Extraction Record**: The result of one extraction, including instruction version, raw response, validation findings, and generated rubric.
+- **Scoring Generation Instruction Version**: An immutable system-wide or job-specific instruction version used to generate final candidate-scoring prompts.
+- **Scoring Profile**: The configured model identifier and reasoning level that define the effective scoring behavior.
+- **Scoring Prompt Version**: An immutable job prompt revision containing instruction provenance, scoring-profile snapshot, approval profile, and approved test-run reference.
+- **Prompt Test Run**: A validation run tied to one prompt version and one scoring-profile snapshot; approval is invalid after that profile changes.
 
 ### Assumptions
 
@@ -141,6 +178,8 @@ As an administrator or authorized reviewer, I want each generated rubric to iden
 - Category weights continue to be managed independently from the number and position of items.
 - Prompt versions and extraction diagnostics follow the product's existing audit and retention practices.
 - Both supported application experiences must remain behaviorally equivalent.
+- Deployment owners keep the configured scoring model identifier and reasoning level synchronized with the AWReason backend.
+- Existing score storage supports at least three decimal digits without a destructive type migration.
 
 ## Success Criteria *(mandatory)*
 
@@ -156,3 +195,7 @@ As an administrator or authorized reviewer, I want each generated rubric to iden
 - **SC-008**: All item movement operations are successfully completable using pointer, touch, and keyboard interaction.
 - **SC-009**: Existing jobs and approved rubrics show no content changes after a default instruction version is activated or rolled back.
 - **SC-010**: Both supported application experiences pass the same extraction completeness, prompt administration, and rubric reorganization acceptance tests.
+- **SC-011**: 100% of production scoring attempts using a stale model/reasoning profile are blocked before candidate scoring begins.
+- **SC-012**: 100% of approved scoring prompt versions identify the exact generation instruction version, model identifier, reasoning level, and approved test run.
+- **SC-013**: Candidate rankings remain correctly ordered for scores that differ by as little as 0.001 across sets of up to 50,000 applications.
+- **SC-014**: Administrators can activate a revised system scoring generation instruction without an application release, while existing job-specific overrides remain unchanged.

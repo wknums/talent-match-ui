@@ -531,12 +531,26 @@ public class ApiClient : INavigationAuditClient
     public async Task<List<ExtractionInstructionVersionDto>> GetExtractionInstructionsAsync()
         => await _http.GetFromJsonAsync<List<ExtractionInstructionVersionDto>>("/api/admin/extraction-instructions", JsonOptions) ?? new();
 
+    public async Task<ReasoningModelsResponseDto> GetReasoningModelsAsync()
+    {
+        var response = await _http.GetAsync("/api/reasoning-models");
+        return await ReadRequiredResponseAsync<ReasoningModelsResponseDto>(
+            response,
+            "Failed to load supported reasoning models.");
+    }
+
     public async Task<ExtractionInstructionVersionDetailDto?> GetExtractionInstructionAsync(string versionId)
         => await _http.GetFromJsonAsync<ExtractionInstructionVersionDetailDto>($"/api/admin/extraction-instructions/{versionId}", JsonOptions);
 
-    public async Task<ExtractionInstructionVersionDto?> CreateExtractionInstructionDraftAsync(string instructionText, string? changeNote)
+    public async Task<ExtractionInstructionVersionDto?> CreateExtractionInstructionDraftAsync(
+        string instructionText,
+        string? changeNote,
+        string modelId,
+        string reasoningLevel)
     {
-        var response = await _http.PostAsJsonAsync("/api/admin/extraction-instructions", new { instructionText, changeNote });
+        var response = await _http.PostAsJsonAsync(
+            "/api/admin/extraction-instructions",
+            new { instructionText, changeNote, modelId, reasoningLevel });
         await EnsureSuccessOrThrowAsync(response, "Failed to create extraction instruction draft.");
         return await response.Content.ReadFromJsonAsync<ExtractionInstructionVersionDto>(JsonOptions);
     }
@@ -714,16 +728,36 @@ public class ApiClient : INavigationAuditClient
     public async Task<List<ScoringPromptDto>> GetPromptsAsync(string jobId)
         => await _http.GetFromJsonAsync<List<ScoringPromptDto>>($"/api/jobs/{jobId}/prompts") ?? new();
 
-    public async Task<ScoringPromptDto?> CreatePromptAsync(string jobId, string promptText, string source, string? generationMetadataJson = null)
+    public async Task<ScoringPromptDto?> CreatePromptAsync(
+        string jobId,
+        string promptText,
+        string source,
+        string modelId,
+        string reasoningLevel,
+        string? generationMetadataJson = null)
     {
-        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts", new CreatePromptRequest(promptText, source, generationMetadataJson));
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts",
+            new CreatePromptRequest(
+                promptText,
+                source,
+                generationMetadataJson,
+                modelId,
+                reasoningLevel));
         if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
     }
 
-    public async Task<ScoringPromptDto?> EditPromptAsync(string jobId, string promptId, string promptText)
+    public async Task<ScoringPromptDto?> EditPromptAsync(
+        string jobId,
+        string promptId,
+        string promptText,
+        string modelId,
+        string reasoningLevel)
     {
-        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/edit", new { PromptText = promptText });
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts/{promptId}/edit",
+            new { PromptText = promptText, ModelId = modelId, ReasoningLevel = reasoningLevel });
         if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
     }
@@ -740,9 +774,14 @@ public class ApiClient : INavigationAuditClient
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<GeneratePromptResult?> GeneratePromptAsync(string jobId)
+    public async Task<GeneratePromptResult?> GeneratePromptAsync(
+        string jobId,
+        string modelId,
+        string reasoningLevel)
     {
-        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/generate", null);
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts/generate",
+            new { ModelId = modelId, ReasoningLevel = reasoningLevel });
         await EnsureSuccessOrThrowAsync(response, "Failed to generate prompt.");
 
         var payload = await response.Content.ReadAsStringAsync();
@@ -762,13 +801,89 @@ public class ApiClient : INavigationAuditClient
     public async Task<bool> ApprovePromptForProductionAsync(string jobId, string promptId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/approve-production", null);
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to approve the prompt for production.");
+        return true;
     }
 
     public async Task<bool> SetProductionPromptAsync(string jobId, string promptId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/set-production", null);
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to set the production prompt.");
+        return true;
+    }
+
+    public async Task<PromptProfileStatusDto> GetPromptProfileStatusAsync(
+        string jobId, string promptId)
+    {
+        var response = await _http.GetAsync($"/api/jobs/{jobId}/prompts/{promptId}/profile");
+        return await ReadRequiredResponseAsync<PromptProfileStatusDto>(
+            response, "Failed to load the scoring profile status.");
+    }
+
+    public async Task<List<PromptGenerationInstructionDto>> GetPromptGenerationInstructionsAsync(
+        string jobId)
+        => await _http.GetFromJsonAsync<List<PromptGenerationInstructionDto>>(
+            $"/api/jobs/{jobId}/prompt-generation-instructions") ?? new();
+
+    public async Task<PromptGenerationInstructionDto> CreatePromptGenerationInstructionAsync(
+        string jobId,
+        string instructionText,
+        string? changeNote,
+        string modelId,
+        string reasoningLevel)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompt-generation-instructions",
+            new
+            {
+                InstructionText = instructionText,
+                ChangeNote = changeNote,
+                ModelId = modelId,
+                ReasoningLevel = reasoningLevel
+            });
+        return await ReadRequiredResponseAsync<PromptGenerationInstructionDto>(
+            response, "Failed to create the generation instruction.");
+    }
+
+    public async Task ActivatePromptGenerationInstructionAsync(
+        string jobId, string instructionId)
+    {
+        var response = await _http.PostAsync(
+            $"/api/jobs/{jobId}/prompt-generation-instructions/{instructionId}/activate",
+            null);
+        await EnsureSuccessOrThrowAsync(response, "Failed to activate the generation instruction.");
+    }
+
+    public async Task<List<PromptGenerationInstructionDto>> GetSystemPromptGenerationInstructionsAsync()
+        => await _http.GetFromJsonAsync<List<PromptGenerationInstructionDto>>(
+            "/api/admin/prompt-generation-instructions") ?? new();
+
+    public async Task<PromptGenerationInstructionDto> CreateSystemPromptGenerationInstructionAsync(
+        string instructionText,
+        string? changeNote,
+        string modelId,
+        string reasoningLevel)
+    {
+        var response = await _http.PostAsJsonAsync(
+            "/api/admin/prompt-generation-instructions",
+            new
+            {
+                InstructionText = instructionText,
+                ChangeNote = changeNote,
+                ModelId = modelId,
+                ReasoningLevel = reasoningLevel
+            });
+        return await ReadRequiredResponseAsync<PromptGenerationInstructionDto>(
+            response, "Failed to create the system scoring generation instruction.");
+    }
+
+    public async Task ActivateSystemPromptGenerationInstructionAsync(string instructionId)
+    {
+        var response = await _http.PostAsync(
+            $"/api/admin/prompt-generation-instructions/{instructionId}/activate",
+            null);
+        await EnsureSuccessOrThrowAsync(
+            response, "Failed to activate the system scoring generation instruction.");
     }
 
     public async Task<PromptTestRunDto?> CreateTestRunAsync(string jobId, string promptId, object files)
@@ -797,13 +912,21 @@ public class ApiClient : INavigationAuditClient
     public async Task<bool> ApproveTestRunAsync(string jobId, string promptId, string testRunId)
     {
         var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/approve", new { ReviewNotes = (string?)null });
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to approve the test run.");
+        return true;
     }
 
     public async Task<bool> RetryTestRunAsync(string jobId, string promptId, string testRunId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/retry", null);
         return response.IsSuccessStatusCode;
+    }
+
+    public async Task RetestPromptAsync(string jobId, string promptId, string testRunId)
+    {
+        var response = await _http.PostAsync(
+            $"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/retest", null);
+        await EnsureSuccessOrThrowAsync(response, "Failed to retest the prompt.");
     }
 
     public async Task<NavigationAuditResult> RecordNavigationAsync(
@@ -1034,7 +1157,7 @@ public record JobSummaryDto(string Id, string JobCode, string Title, string Depa
 public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? OrganizationId = null, string? DepartmentId = null);
 public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? ExpectedConfigVersionId = null, string? RubricApprovalStatus = null);
 public record ApplicationDto(string Id, string JobId, string CandidateRef, string? CandidateName, string? CandidateEmail, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
-public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default);
+public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default, string ReasoningLevel = "");
 public record ReparseScoringRunResultDto(ScoringRunDto ScoringRun, bool FallbackParsingActivated, bool EligibilityFallbackActivated, bool TotalScoreFallbackActivated, bool GateDetected, string EligibilityPath, string Source);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);
 public record DocumentDto(string Id, string FileName, string FileType, long FileSize, string? ContentBase64);
@@ -1049,8 +1172,10 @@ public record ResetRequestDto(string Id, string UserId, string Username, string 
 public record JobConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null, string? RubricSource = null, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? Id = null, int VersionNumber = 0, ExtractionSummaryDto? Extraction = null);
 public record ExtractionValidationFindingDto(string Code, string Severity, string Path, string Message);
 public record ExtractionSummaryDto(string Id, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string SourceFileName, string SourceMimeType, DateTime CompletedAt, string CorrelationId);
-public record ExtractionInstructionVersionDto(string Id, int VersionNumber, string InstructionText, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
-public record ExtractionInstructionVersionDetailDto(string Id, int VersionNumber, string InstructionText, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, JsonElement ProtectedContract, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
+public record ReasoningModelOptionDto(string Slot, string Deployment, bool IsDefault);
+public record ReasoningModelsResponseDto(string DefaultModel, string DefaultReasoningEffort, List<string> SupportedReasoningEfforts, List<ReasoningModelOptionDto> Models);
+public record ExtractionInstructionVersionDto(string Id, int VersionNumber, string InstructionText, string ModelId, string ReasoningLevel, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
+public record ExtractionInstructionVersionDetailDto(string Id, int VersionNumber, string InstructionText, string ModelId, string ReasoningLevel, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, JsonElement ProtectedContract, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
 public record RubricCategoryV2Dto(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
@@ -1083,12 +1208,14 @@ public record DesiredCriterionItem(string Qualification, string? Description);
 public record RubricCategoryItem(string Name, double Weight, string? Description);
 public record ProcessJobResponse(int Processed, int Total, List<string> Errors, int Queued = 0);
 public record ReAggregateResponse(int Updated, int Total, string? Error);
-public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson);
-public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes);
+public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson, string? GenerationInstructionVersionId = null, string ModelId = "", string ReasoningLevel = "", string? ApprovedTestRunId = null, string? ApprovedModelId = null, string? ApprovedReasoningLevel = null);
+public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes, string ModelId = "", string ReasoningLevel = "", string? ApprovedModelId = null, string? ApprovedReasoningLevel = null);
+public sealed record PromptProfileStatusDto(string PromptId, string ModelId, string ReasoningLevel, string CurrentModelId, string CurrentReasoningLevel, bool IsMatch, bool HasExactProfileApprovedTest, string? ApprovedTestRunId, string? MismatchMessage);
+public sealed record PromptGenerationInstructionDto(string Id, string? JobId, int VersionNumber, string InstructionText, string ModelId, string ReasoningLevel, string Status, string? ChangeNote, DateTime CreatedAt, string CreatedBy, DateTime? ActivatedAt, string? ActivatedBy);
 public record TestRunApplicationDetailDto(ApplicationDto Application, List<ScoringRunDto> ScoringRuns);
 public record PromptTestRunDetailDto(PromptTestRunDto TestRun, List<TestRunApplicationDetailDto> Applications);
 public record ReconcilePromptTestRunsResponseDto(int HealedCount, List<PromptTestRunDto> Runs);
-public record CreatePromptRequest(string PromptText, string Source, string? GenerationMetadataJson);
+public record CreatePromptRequest(string PromptText, string Source, string? GenerationMetadataJson, string ModelId, string ReasoningLevel);
 public record GeneratePromptResult(string PromptText, string? GenerationMetadataJson);
 public record RecruiterAnalyticsDto(string RecruiterId, string RecruiterName, string Department, int ApplicationsInQueue, int ManualReviewsPerformed, int ShortlistRecommendations, double? AverageProcessingTime, int ActiveJobs);
 public record DepartmentAnalyticsDto(string Department, int TotalRecruiters, int ApplicationsInQueue, int ManualReviewsPerformed, int ShortlistRecommendations, int ActiveJobs, List<RecruiterAnalyticsDto> Recruiters);

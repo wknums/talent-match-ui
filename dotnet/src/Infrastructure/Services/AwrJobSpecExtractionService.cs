@@ -18,6 +18,23 @@ public sealed class AwrJobSpecExtractionService : IJobSpecExtractionTransport
         string mimeType,
         string prompt,
         CancellationToken cancellationToken = default)
+        => await ExtractAsync(
+            documentBytes,
+            fileName,
+            mimeType,
+            prompt,
+            Environment.GetEnvironmentVariable("AWR_MODEL_ID") ?? "o3",
+            Environment.GetEnvironmentVariable("AWR_REASONING_LEVEL") ?? "high",
+            cancellationToken);
+
+    public async Task<string> ExtractAsync(
+        byte[] documentBytes,
+        string fileName,
+        string mimeType,
+        string prompt,
+        string modelId,
+        string reasoningLevel,
+        CancellationToken cancellationToken = default)
     {
         var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
             ?? throw new InvalidOperationException("AWR_SEQ_API_ENDPOINT is not configured.");
@@ -33,6 +50,8 @@ public sealed class AwrJobSpecExtractionService : IJobSpecExtractionTransport
             ? "application/octet-stream"
             : mimeType);
         formData.Add(docContent, "specFile", fileName);
+        formData.Add(new StringContent(modelId), "reasoningModel");
+        formData.Add(new StringContent(reasoningLevel), "reasoningEffort");
 
         var response = await _httpClient.PostAsync($"{endpoint}/assess/passthrough", formData, cancellationToken);
         if (!response.IsSuccessStatusCode)

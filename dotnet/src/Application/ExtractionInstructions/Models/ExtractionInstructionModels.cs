@@ -6,6 +6,8 @@ public record ExtractionInstructionVersionModel(
     string Id,
     int VersionNumber,
     string InstructionText,
+    string ModelId,
+    string ReasoningLevel,
     string ProtectedContractVersion,
     string Status,
     string ValidationStatus,
@@ -23,6 +25,8 @@ public sealed record ExtractionInstructionVersionDetailModel(
     string Id,
     int VersionNumber,
     string InstructionText,
+    string ModelId,
+    string ReasoningLevel,
     string ProtectedContractVersion,
     string Status,
     string ValidationStatus,
@@ -40,6 +44,8 @@ public sealed record ExtractionInstructionVersionDetailModel(
         Id,
         VersionNumber,
         InstructionText,
+        ModelId,
+        ReasoningLevel,
         ProtectedContractVersion,
         Status,
         ValidationStatus,
@@ -55,6 +61,8 @@ public sealed record ExtractionInstructionVersionDetailModel(
 
 public sealed record CreateExtractionInstructionDraftRequest(
     string InstructionText,
-    string? ChangeNote);
+    string? ChangeNote,
+    string ModelId = "o3",
+    string ReasoningLevel = "high");
 
 public sealed record ActivateExtractionInstructionRequest(int ExpectedConcurrencyVersion);

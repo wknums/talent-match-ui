@@ -6,6 +6,15 @@ import { auditService } from '../services/audit.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
 import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
 import { createPipelineOrchestrator } from '../services/pipeline.js'
+import { resolvePromptGenerationInstruction } from '../services/prompt-generation-instructions.js'
+import {
+  addScoringProfile,
+  assertPromptProfileCurrent,
+  getPromptProfileStatus,
+  isExactProfileApprovedTest,
+  scoringProfileMatches,
+} from '../services/scoring-profile.js'
+import { resolveSupportedReasoningProfile } from '../services/reasoning-models.js'
 import type {
   ScoringPrompt, PromptTestRun, Application,
   ApplicationDocument
@@ -17,6 +26,88 @@ const AWR_SEQ_API_ENDPOINT = process.env.AWR_SEQ_API_ENDPOINT || ''
 export function createPromptsRouter() {
   const router = Router()
   const audit = auditService
+
+  router.get('/:jobId/prompt-generation-instructions', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      res.json(await promptRepo.listInstructions(req.params.jobId))
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  router.post('/:jobId/prompt-generation-instructions', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const job = await jobRepo.getById(req.params.jobId)
+      if (!job) return res.status(404).json({ error: 'Not Found', message: 'Job not found' })
+      const instructionText = req.body.instructionText?.trim()
+      if (!instructionText) {
+        return res.status(400).json({ error: 'Validation Error', message: 'instructionText is required.' })
+      }
+      let profile
+      try {
+        profile = await resolveSupportedReasoningProfile(req.body.modelId, req.body.reasoningLevel)
+      } catch (error) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: error instanceof Error ? error.message : 'Invalid model or reasoning effort.',
+        })
+      }
+      const versions = await promptRepo.listInstructions(req.params.jobId)
+      const instruction = {
+        id: randomUUID(),
+        jobId: req.params.jobId,
+        versionNumber: Math.max(0, ...versions.map(version => version.versionNumber)) + 1,
+        instructionText,
+        modelId: profile.modelId,
+        reasoningLevel: profile.reasoningLevel,
+        status: 'draft' as const,
+        changeNote: req.body.changeNote?.trim() || undefined,
+        createdAt: new Date().toISOString(),
+        createdBy: req.user?.userId || req.user?.username || 'unknown',
+      }
+      await promptRepo.createInstruction(instruction)
+      await audit.appendEvent(
+        req.user?.username || 'unknown',
+        'scoring-generation-instruction.created',
+        'PromptGenerationInstruction',
+        instruction.id,
+        {
+          jobId: req.params.jobId,
+          versionNumber: instruction.versionNumber,
+          scope: 'job',
+          modelId: instruction.modelId,
+          reasoningLevel: instruction.reasoningLevel,
+        },
+      )
+      res.status(201).json(instruction)
+    } catch (error) {
+      next(error)
+    }
+  })
+
+  router.post('/:jobId/prompt-generation-instructions/:instructionId/activate', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const instruction = await promptRepo.getInstructionById(req.params.instructionId)
+      if (!instruction || instruction.jobId !== req.params.jobId) {
+        return res.status(404).json({ error: 'Not Found', message: 'Job instruction not found.' })
+      }
+      await promptRepo.activateInstruction(
+        instruction.id,
+        req.params.jobId,
+        req.user?.userId || req.user?.username || 'unknown',
+      )
+      await audit.appendEvent(
+        req.user?.username || 'unknown',
+        'scoring-generation-instruction.activated',
+        'PromptGenerationInstruction',
+        instruction.id,
+        { jobId: req.params.jobId, versionNumber: instruction.versionNumber, scope: 'job' },
+      )
+      res.json(await promptRepo.getInstructionById(instruction.id))
+    } catch (error) {
+      next(error)
+    }
+  })
 
   // GET /api/jobs/:jobId/prompts - list all prompt revisions
   router.get('/:jobId/prompts', async (req: AuthenticatedRequest, res, next) => {
@@ -53,6 +144,15 @@ export function createPromptsRouter() {
       if (!promptText) {
         return res.status(400).json({ error: 'Validation Error', message: 'promptText is required' })
       }
+      let profile
+      try {
+        profile = await resolveSupportedReasoningProfile(req.body.modelId, req.body.reasoningLevel)
+      } catch (error) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: error instanceof Error ? error.message : 'Invalid model or reasoning effort.',
+        })
+      }
 
       // Auto-increment version number
       const maxVersion = await promptRepo.getMaxVersion(jobId)
@@ -68,6 +168,9 @@ export function createPromptsRouter() {
         author: req.user?.userId || 'unknown',
         source: source || 'manual',
         generationMetadata: generationMetadata || undefined,
+        generationInstructionVersionId: generationMetadata?.generationInstructionVersionId,
+        modelId: profile.modelId,
+        reasoningLevel: profile.reasoningLevel,
       }
 
       await promptRepo.create(prompt)
@@ -112,12 +215,21 @@ export function createPromptsRouter() {
       }
 
       const original = await promptRepo.getById(promptId)
-      if (!original) {
+      if (!original || original.jobId !== jobId) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
       }
 
       // Create new revision with incremented version (FR-035)
       const maxVersion = await promptRepo.getMaxVersion(jobId)
+      let profile
+      try {
+        profile = await resolveSupportedReasoningProfile(req.body.modelId, req.body.reasoningLevel)
+      } catch (error) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: error instanceof Error ? error.message : 'Invalid model or reasoning effort.',
+        })
+      }
       const newPrompt: ScoringPrompt = {
         promptId: randomUUID(),
         jobId,
@@ -128,6 +240,10 @@ export function createPromptsRouter() {
         lastModifiedAt: new Date().toISOString(),
         author: req.user?.userId || 'unknown',
         source: original.source,
+        generationInstructionVersionId: original.generationInstructionVersionId,
+        generationMetadata: original.generationMetadata,
+        modelId: profile.modelId,
+        reasoningLevel: profile.reasoningLevel,
       }
 
       await promptRepo.create(newPrompt)
@@ -143,6 +259,19 @@ export function createPromptsRouter() {
       res.status(201).json(newPrompt)
     } catch (err) {
       next(err)
+    }
+  })
+
+  router.get('/:jobId/prompts/:promptId/profile', async (req: AuthenticatedRequest, res, next) => {
+    try {
+      const prompt = await promptRepo.getById(req.params.promptId)
+      if (!prompt || prompt.jobId !== req.params.jobId) {
+        return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
+      }
+      const testRuns = await promptRepo.getTestRunsByPrompt(prompt.promptId)
+      res.json(getPromptProfileStatus(prompt, testRuns))
+    } catch (error) {
+      next(error)
     }
   })
 
@@ -266,19 +395,12 @@ export function createPromptsRouter() {
         })),
       }
 
-      const systemPrompt = `You are an expert at creating scoring prompts for candidate evaluation. 
-Given the following job rubric, create a structured scoring prompt that an AI model can use to evaluate candidate applications.
-The prompt should:
-1. Evaluate candidates across all rubric categories with the specified weights
-2. Check all must-have criteria
-3. Consider desired qualifications
-4. Produce scores from 0-100 for each category
-5. Provide evidence citations from the candidate's documents
-6. Include improvement recommendations
-7. Include all eligibility gate details regardless if they are met or not.
-8. Extract the candidate's full name from the application documents and include it as candidate_name.
-Return ONLY the scoring prompt text, ready for use.
- At the end of the prompt, include the instruction to return all the output as valid json.`
+      const { instruction, scope } = await resolvePromptGenerationInstruction(jobId)
+      const systemPrompt = instruction.instructionText
+      const profile = {
+        modelId: instruction.modelId,
+        reasoningLevel: instruction.reasoningLevel,
+      }
 
       let promptText: string
       let generationMetadata: Record<string, any> = {}
@@ -292,6 +414,7 @@ Return ONLY the scoring prompt text, ready for use.
           const formData = new FormData()
           formData.append('promptFile', new Blob([combinedPrompt], { type: 'text/plain' }), 'generate-prompt.md')
           formData.append('specFile', new Blob([JSON.stringify(rubricContext, null, 2)], { type: 'text/plain' }), 'context.md')
+          addScoringProfile(formData, profile)
 
           const timeout = createAwrTimeoutSignal()
           const response = await fetch(`${AWR_SEQ_API_ENDPOINT}/assess/passthrough`, {
@@ -308,15 +431,38 @@ Return ONLY the scoring prompt text, ready for use.
           // Passthrough returns the raw output text directly
           const responseText = await response.text()
           promptText = responseText
-          generationMetadata = { source: 'AWR_SEQ_API', timestamp: new Date().toISOString() }
+          generationMetadata = {
+            source: 'AWR_SEQ_API',
+            timestamp: new Date().toISOString(),
+            generationInstructionVersionId: instruction.id,
+            generationInstructionScope: scope,
+            modelId: profile.modelId,
+            reasoningLevel: profile.reasoningLevel,
+          }
         } catch {
           // Fallback to locally generated prompt
           promptText = generateFallbackPrompt(rubricContext)
-          generationMetadata = { source: 'fallback', reason: 'API call failed', timestamp: new Date().toISOString() }
+          generationMetadata = {
+            source: 'fallback',
+            reason: 'API call failed',
+            timestamp: new Date().toISOString(),
+            generationInstructionVersionId: instruction.id,
+            generationInstructionScope: scope,
+            modelId: profile.modelId,
+            reasoningLevel: profile.reasoningLevel,
+          }
         }
       } else {
         promptText = generateFallbackPrompt(rubricContext)
-        generationMetadata = { source: 'fallback', reason: 'AWR_SEQ_API_ENDPOINT not configured', timestamp: new Date().toISOString() }
+        generationMetadata = {
+          source: 'fallback',
+          reason: 'AWR_SEQ_API_ENDPOINT not configured',
+          timestamp: new Date().toISOString(),
+          generationInstructionVersionId: instruction.id,
+          generationInstructionScope: scope,
+          modelId: profile.modelId,
+          reasoningLevel: profile.reasoningLevel,
+        }
       }
 
       promptText = ensureCandidateNamePromptContract(promptText)
@@ -342,8 +488,13 @@ Return ONLY the scoring prompt text, ready for use.
 
       // Validate prompt exists
       const prompt = await promptRepo.getById(promptId)
-      if (!prompt) {
+      if (!prompt || prompt.jobId !== jobId) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
+      }
+      assertPromptProfileCurrent(prompt)
+      const profile = {
+        modelId: prompt.modelId ?? '',
+        reasoningLevel: prompt.reasoningLevel ?? '',
       }
 
       const files = req.body.files as Array<{ fileName: string; content: string; mimeType: string; sizeBytes: number }>
@@ -410,6 +561,8 @@ Return ONLY the scoring prompt text, ready for use.
         status: 'pending_scoring',
         applicationIds,
         createdAt: new Date().toISOString(),
+        modelId: profile.modelId,
+        reasoningLevel: profile.reasoningLevel,
       }
 
       await promptRepo.createTestRun(testRun)
@@ -477,7 +630,6 @@ Return ONLY the scoring prompt text, ready for use.
       if (!testRun || testRun.promptId !== promptId || testRun.jobId !== jobId) {
         return res.status(404).json({ error: 'Not Found', message: 'Test run not found for this prompt' })
       }
-
       // Enrich with application details and scoring runs
       const testApps = await applicationRepo.getByTestRunId(testRunId)
       const applications = await Promise.all(
@@ -507,6 +659,21 @@ Return ONLY the scoring prompt text, ready for use.
       const testRun = await promptRepo.getTestRun(testRunId)
       if (!testRun || testRun.promptId !== promptId || testRun.jobId !== jobId) {
         return res.status(404).json({ error: 'Not Found', message: 'Test run not found for this prompt' })
+      }
+      const prompt = await promptRepo.getById(promptId)
+      if (!prompt) {
+        return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
+      }
+      assertPromptProfileCurrent(prompt)
+      const currentProfile = {
+        modelId: prompt.modelId ?? '',
+        reasoningLevel: prompt.reasoningLevel ?? '',
+      }
+      if (!scoringProfileMatches(currentProfile, testRun.modelId, testRun.reasoningLevel)) {
+        return res.status(409).json({
+          error: 'Scoring Profile Mismatch',
+          message: 'This test run used a stale model or reasoning profile. Create a new prompt version and test run.',
+        })
       }
 
       // Only allow re-scoring for pending_review or scoring_failed runs
@@ -569,16 +736,34 @@ Return ONLY the scoring prompt text, ready for use.
     try {
       const { jobId, promptId, testRunId } = req.params
       const testRun = await promptRepo.getTestRun(testRunId)
-      if (!testRun) {
+      if (!testRun || testRun.promptId !== promptId || testRun.jobId !== jobId) {
         return res.status(404).json({ error: 'Not Found', message: 'Test run not found' })
+      }
+      const prompt = await promptRepo.getById(promptId)
+      if (!prompt || prompt.jobId !== jobId) {
+        return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
+      }
+      assertPromptProfileCurrent(prompt)
+      const currentProfile = {
+        modelId: prompt.modelId ?? '',
+        reasoningLevel: prompt.reasoningLevel ?? '',
+      }
+      if (!scoringProfileMatches(currentProfile, testRun.modelId, testRun.reasoningLevel)) {
+        return res.status(409).json({
+          error: 'Scoring Profile Mismatch',
+          message: 'This test run used a stale model or reasoning profile. Create a new prompt version and test run.',
+        })
       }
 
       // Verify all test applications completed manual review without score changes (FR-039)
       const testApps = await applicationRepo.getByTestRunId(testRunId)
 
-      const allCompleted = testApps.every(a =>
-        a.status === 'Completed' || a.status === 'NeedsManualReview'
-      )
+      const allCompleted = ['pending_review', 'approved'].includes(testRun.status)
+        && testRun.applicationIds.length > 0
+        && testApps.length === testRun.applicationIds.length
+        && testApps.every(a => a.jobId === jobId && a.testRunId === testRunId
+          && testRun.applicationIds.includes(a.applicationId)
+          && (a.status === 'Completed' || a.status === 'NeedsManualReview'))
 
       if (!allCompleted) {
         return res.status(400).json({
@@ -592,6 +777,8 @@ Return ONLY the scoring prompt text, ready for use.
         completedAt: new Date().toISOString(),
         reviewedBy: req.user?.userId,
         reviewNotes: req.body.reviewNotes,
+        approvedModelId: currentProfile.modelId,
+        approvedReasoningLevel: currentProfile.reasoningLevel,
       })
 
       await audit.appendEvent(
@@ -615,15 +802,21 @@ Return ONLY the scoring prompt text, ready for use.
       const { jobId, promptId } = req.params
 
       const prompt = await promptRepo.getById(promptId)
-      if (!prompt) {
+      if (!prompt || prompt.jobId !== jobId) {
         return res.status(404).json({ error: 'Not Found', message: 'Prompt not found' })
+      }
+      assertPromptProfileCurrent(prompt)
+      const currentProfile = {
+        modelId: prompt.modelId ?? '',
+        reasoningLevel: prompt.reasoningLevel ?? '',
       }
 
       // Verify a PromptTestRun for this prompt has status=approved (FR-040)
       const testRuns = await promptRepo.getTestRunsByPrompt(promptId)
-      const hasApprovedTestRun = testRuns.some(tr => tr.status === 'approved')
+      const approvedTestRun = testRuns.find(tr =>
+        isExactProfileApprovedTest(prompt, tr))
 
-      if (!hasApprovedTestRun) {
+      if (!approvedTestRun) {
         return res.status(400).json({
           error: 'Validation Error',
           message: 'A test run for this prompt must be approved before production approval (FR-040)'
@@ -631,15 +824,25 @@ Return ONLY the scoring prompt text, ready for use.
       }
 
       // Set prompt to production-approved; deactivate previous production-approved (FR-036)
-      await promptRepo.deactivateAllForJob(jobId)
-      await promptRepo.updateStatus(promptId, 'production-approved')
+      await promptRepo.deactivateProductionForJob(jobId, promptId)
+      await promptRepo.updateProductionApproval(
+        promptId,
+        approvedTestRun.testRunId,
+        currentProfile.modelId,
+        currentProfile.reasoningLevel,
+      )
 
       await audit.appendEvent(
         req.user?.username || 'unknown',
         'prompt.production-approved',
         'scoring_prompt',
         promptId,
-        { jobId }
+        {
+          jobId,
+          approvedTestRunId: approvedTestRun.testRunId,
+          modelId: currentProfile.modelId,
+          reasoningLevel: currentProfile.reasoningLevel,
+        }
       )
 
       const approved = await promptRepo.getById(promptId)
@@ -684,12 +887,12 @@ ${mustHaves || 'None specified'}
 ${desired || 'None specified'}
 
 ## Instructions
-1. Score each category from 0-100 based on evidence from the candidate's documents
+1. Score each category from 0-100 to exactly three decimal places based on evidence from the candidate's documents
 2. For each must-have criterion, determine PASS or FAIL with justification
 3. Note any desired qualifications that are met
 4. Extract the candidate's full name from the documents and set candidate_name when identifiable
 5. Provide specific evidence citations from the documents
-6. Calculate a weighted overall score
+6. Calculate a weighted overall score to exactly three decimal places
 7. Provide improvement recommendations
 
 Respond in JSON format with the following structure:

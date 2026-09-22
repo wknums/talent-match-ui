@@ -21,19 +21,22 @@ public sealed class JobSpecExtractionOrchestrator : IExtractionInstructionValida
     private readonly IJobSpecExtractionTransport _transport;
     private readonly JobSpecExtractionContractValidator _validator;
     private readonly ICurrentUserService _currentUser;
+    private readonly IReasoningModelCatalog? _reasoningModels;
 
     public JobSpecExtractionOrchestrator(
         IExtractionInstructionRepository instructionRepository,
         IJobSpecExtractionRepository extractionRepository,
         IJobSpecExtractionTransport transport,
         JobSpecExtractionContractValidator validator,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        IReasoningModelCatalog? reasoningModels = null)
     {
         _instructionRepository = instructionRepository;
         _extractionRepository = extractionRepository;
         _transport = transport;
         _validator = validator;
         _currentUser = currentUser;
+        _reasoningModels = reasoningModels;
     }
 
     public async Task<JobSpecExtractionExecutionResult> ExecuteAsync(
@@ -59,11 +62,19 @@ public sealed class JobSpecExtractionOrchestrator : IExtractionInstructionValida
             throw new InvalidOperationException("Invalid base64 document content.", exception);
         }
 
+        var executionProfile = _reasoningModels is null
+            ? new ScoringProfile(instruction.ModelId, instruction.ReasoningLevel)
+            : await _reasoningModels.ResolveForExecutionAsync(
+                instruction.ModelId,
+                instruction.ReasoningLevel,
+                cancellationToken);
         var rawResponse = await _transport.ExtractAsync(
             documentBytes,
             request.FileName,
             request.MimeType,
             ComposePrompt(instruction.InstructionText),
+            executionProfile.ModelId,
+            executionProfile.ReasoningLevel,
             cancellationToken);
 
         var validation = _validator.Validate(rawResponse);

@@ -21,6 +21,10 @@ import type {
   ScoringPrompt,
   PromptTestRun,
   PromptTestRunDetail,
+  PromptGenerationInstruction,
+  PromptProfileStatus,
+  ReasoningEffort,
+  ReasoningModelsResponse,
   ManualReviewData,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
@@ -329,6 +333,15 @@ const generateMockScoringRuns = (applicationId: string, rubricCategories: Rubric
 }
 
 const mockAPI = {
+  async getReasoningModels(): Promise<ReasoningModelsResponse> {
+    await delay(100)
+    return {
+      defaultModel: 'o3',
+      defaultReasoningEffort: 'high',
+      supportedReasoningEfforts: ['low', 'medium', 'high'],
+      models: [{ slot: 'reason01', deployment: 'o3', isDefault: true }],
+    }
+  },
   async getSystemStats(): Promise<SystemStats> {
     await delay(300)
     const jobs = await generateMockJobs()
@@ -604,6 +617,8 @@ const mockAPI = {
       id: 'instruction-v1',
       versionNumber: 1,
       instructionText: 'Extract every independently assessable requirement as its own item.',
+      modelId: 'o3',
+      reasoningLevel: 'high',
       protectedContractVersion: 'extraction-rubric-v1',
       status: 'active',
       validationStatus: 'valid',
@@ -623,12 +638,19 @@ const mockAPI = {
     return { ...version, protectedContract: { version: 'extraction-rubric-v1' } }
   },
 
-  async createExtractionInstructionDraft(instructionText: string, changeNote?: string): Promise<ExtractionInstructionVersion> {
+  async createExtractionInstructionDraft(
+    instructionText: string,
+    changeNote: string | undefined,
+    modelId: string,
+    reasoningLevel: ReasoningEffort,
+  ): Promise<ExtractionInstructionVersion> {
     await delay(200)
     return {
       id: `instruction-${Date.now()}`,
       versionNumber: 2,
       instructionText,
+      modelId,
+      reasoningLevel,
       protectedContractVersion: 'extraction-rubric-v1',
       status: 'draft',
       validationStatus: 'unvalidated',
@@ -1016,6 +1038,105 @@ const mockAPI = {
   },
 
   // Scoring Prompts (US3a)
+  async getPromptProfileStatus(_jobId: string, promptId: string): Promise<PromptProfileStatus> {
+    await delay(100)
+    return {
+      promptId,
+      modelId: 'passthrough-llm',
+      reasoningLevel: 'medium',
+      currentModelId: 'passthrough-llm',
+      currentReasoningLevel: 'medium',
+      isMatch: true,
+      hasExactProfileApprovedTest: true,
+    }
+  },
+
+  async getPromptGenerationInstructions(_jobId: string): Promise<PromptGenerationInstruction[]> {
+    await delay(100)
+    return []
+  },
+
+  async createPromptGenerationInstruction(
+    jobId: string,
+    instructionText: string,
+    changeNote?: string,
+    modelId: string = 'o3',
+    reasoningLevel: ReasoningEffort = 'high',
+  ): Promise<PromptGenerationInstruction> {
+    await delay(100)
+    return {
+      id: `mock-job-instruction-${Date.now()}`,
+      jobId,
+      versionNumber: 1,
+      instructionText,
+      modelId,
+      reasoningLevel,
+      status: 'draft',
+      changeNote,
+      createdAt: new Date().toISOString(),
+      createdBy: 'admin',
+    }
+  },
+
+  async activatePromptGenerationInstruction(
+    jobId: string,
+    instructionId: string,
+  ): Promise<PromptGenerationInstruction> {
+    await delay(100)
+    return {
+      id: instructionId,
+      jobId,
+      versionNumber: 1,
+      instructionText: 'Active job scoring generation instruction',
+      modelId: 'o3',
+      reasoningLevel: 'high',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      createdBy: 'admin',
+    }
+  },
+
+  async getSystemPromptGenerationInstructions(): Promise<PromptGenerationInstruction[]> {
+    await delay(100)
+    return []
+  },
+
+  async createSystemPromptGenerationInstruction(
+    instructionText: string,
+    changeNote?: string,
+    modelId: string = 'o3',
+    reasoningLevel: ReasoningEffort = 'high',
+  ): Promise<PromptGenerationInstruction> {
+    await delay(100)
+    return {
+      id: `mock-system-instruction-${Date.now()}`,
+      versionNumber: 1,
+      instructionText,
+      modelId,
+      reasoningLevel,
+      status: 'draft',
+      changeNote,
+      createdAt: new Date().toISOString(),
+      createdBy: 'admin',
+    }
+  },
+
+  async activateSystemPromptGenerationInstruction(
+    instructionId: string,
+  ): Promise<PromptGenerationInstruction> {
+    await delay(100)
+    return {
+      id: instructionId,
+      versionNumber: 1,
+      instructionText: 'Active system scoring generation instruction',
+      modelId: 'o3',
+      reasoningLevel: 'high',
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      createdBy: 'admin',
+    }
+  },
+
   async getPrompts(jobId: string): Promise<ScoringPrompt[]> {
     await delay(300)
     return [
@@ -1031,11 +1152,19 @@ const mockAPI = {
         rating: 4,
         comments: 'Initial draft prompt',
         source: 'manual',
+        modelId: 'o3',
+        reasoningLevel: 'high',
       },
     ]
   },
 
-  async createPrompt(jobId: string, data: { promptText: string; source: string; generationMetadata?: Record<string, any> }): Promise<ScoringPrompt> {
+  async createPrompt(jobId: string, data: {
+    promptText: string
+    source: string
+    generationMetadata?: Record<string, any>
+    modelId: string
+    reasoningLevel: ReasoningEffort
+  }): Promise<ScoringPrompt> {
     await delay(500)
     return {
       promptId: `mock-prompt-${Date.now()}`,
@@ -1048,6 +1177,8 @@ const mockAPI = {
       author: 'admin',
       source: data.source as ScoringPrompt['source'],
       generationMetadata: data.generationMetadata,
+      modelId: data.modelId,
+      reasoningLevel: data.reasoningLevel,
     }
   },
 
@@ -1063,10 +1194,16 @@ const mockAPI = {
       lastModifiedAt: new Date().toISOString(),
       author: 'admin',
       source: 'manual',
+      modelId: 'o3',
+      reasoningLevel: 'high',
     }
   },
 
-  async editPrompt(jobId: string, promptId: string, data: { promptText: string }): Promise<ScoringPrompt> {
+  async editPrompt(jobId: string, promptId: string, data: {
+    promptText: string
+    modelId: string
+    reasoningLevel: ReasoningEffort
+  }): Promise<ScoringPrompt> {
     await delay(500)
     return {
       promptId: `mock-prompt-${Date.now()}`,
@@ -1078,6 +1215,8 @@ const mockAPI = {
       lastModifiedAt: new Date().toISOString(),
       author: 'admin',
       source: 'manual',
+      modelId: data.modelId,
+      reasoningLevel: data.reasoningLevel,
     }
   },
 

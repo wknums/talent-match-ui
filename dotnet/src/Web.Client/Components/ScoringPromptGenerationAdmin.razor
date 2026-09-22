@@ -1,0 +1,165 @@
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<section style="display:grid; gap:1rem; margin-top:1.5rem;">
+    <div>
+        <h3 style="margin-bottom:0.5rem;">System Scoring Prompt Generation</h3>
+        <p style="color:#475569; margin-top:0;">
+            Manage the versioned system instruction used when a job has no active job-specific generation instruction.
+        </p>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div role="status"
+             style="padding:0.75rem 1rem; border-radius:8px; background:@(success ? "#dcfce7" : "#fee2e2"); color:@(success ? "#166534" : "#991b1b");">
+            @message
+        </div>
+    }
+
+    <div style="border:1px solid #e2e8f0; border-radius:10px; padding:1rem; background:#fff;">
+        <h4 style="margin-top:0;">Create draft</h4>
+        <textarea rows="8"
+                  aria-label="System scoring prompt generation instruction"
+                  style="width:100%;"
+                  @bind="instructionText"></textarea>
+        <input aria-label="Scoring generation instruction change note"
+               placeholder="Change note (optional)"
+               style="width:100%; margin-top:0.5rem;"
+               @bind="changeNote" />
+        <div style="margin-top:0.75rem;">
+            <ReasoningProfileFields Catalog="reasoningCatalog"
+                                    @bind-ModelId="modelId"
+                                    @bind-ReasoningLevel="reasoningLevel"
+                                    Disabled="isBusy" />
+        </div>
+        <button type="button"
+                style="margin-top:0.75rem;"
+                @onclick="CreateDraft"
+                disabled="@isBusy">
+            Create draft
+        </button>
+    </div>
+
+    <div style="display:grid; gap:0.75rem;">
+        @foreach (var version in versions)
+        {
+            <article style="border:1px solid #e2e8f0; border-radius:10px; padding:1rem; background:#fff;">
+                <div style="display:flex; justify-content:space-between; gap:1rem;">
+                    <div>
+                        <strong>v@(version.VersionNumber)</strong> - @version.Status
+                        <div style="font-size:0.85rem; color:#64748b;">
+                            @version.CreatedBy - @version.CreatedAt.ToString("u")
+                        </div>
+                        <div style="font-size:0.85rem; color:#64748b;">
+                            @version.ModelId - reasoning effort @version.ReasoningLevel
+                        </div>
+                    </div>
+                    @if (version.Status != "active")
+                    {
+                        <button type="button"
+                                @onclick="@(() => Activate(version.Id))"
+                                disabled="@isBusy">
+                            Activate
+                        </button>
+                    }
+                </div>
+                <pre style="white-space:pre-wrap; margin:0.75rem 0 0;">@version.InstructionText</pre>
+                @if (!string.IsNullOrWhiteSpace(version.ChangeNote))
+                {
+                    <div style="margin-top:0.5rem; color:#475569;">@version.ChangeNote</div>
+                }
+            </article>
+        }
+    </div>
+</section>
+
+@code {
+    private List<PromptGenerationInstructionDto> versions = new();
+    private string instructionText = "";
+    private string? changeNote;
+    private string? message;
+    private bool success;
+    private bool isBusy;
+    private ReasoningModelsResponseDto? reasoningCatalog;
+    private string modelId = "";
+    private string reasoningLevel = "high";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadVersions();
+    }
+
+    private async Task LoadVersions()
+    {
+        try
+        {
+            versions = await Api.GetSystemPromptGenerationInstructionsAsync();
+            reasoningCatalog = await Api.GetReasoningModelsAsync();
+            if (string.IsNullOrWhiteSpace(modelId))
+                modelId = reasoningCatalog.DefaultModel;
+            if (!reasoningCatalog.SupportedReasoningEfforts.Contains(reasoningLevel))
+                reasoningLevel = reasoningCatalog.DefaultReasoningEffort;
+        }
+        catch (Exception ex)
+        {
+            success = false;
+            message = $"The system scoring generation instructions could not be loaded: {ex.Message}";
+        }
+    }
+
+    private async Task CreateDraft()
+    {
+        if (string.IsNullOrWhiteSpace(instructionText))
+        {
+            success = false;
+            message = "Instruction text is required.";
+            return;
+        }
+
+        isBusy = true;
+        try
+        {
+            await Api.CreateSystemPromptGenerationInstructionAsync(
+                instructionText,
+                changeNote,
+                modelId,
+                reasoningLevel);
+            instructionText = "";
+            changeNote = null;
+            success = true;
+            message = "System scoring generation instruction draft created.";
+            await LoadVersions();
+        }
+        catch (HttpRequestException ex)
+        {
+            success = false;
+            message = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task Activate(string instructionId)
+    {
+        isBusy = true;
+        try
+        {
+            await Api.ActivateSystemPromptGenerationInstructionAsync(instructionId);
+            success = true;
+            message = "System scoring generation instruction activated.";
+            await LoadVersions();
+        }
+        catch (HttpRequestException ex)
+        {
+            success = false;
+            message = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+}

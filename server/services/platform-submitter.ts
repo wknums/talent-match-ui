@@ -14,6 +14,11 @@ import { createAwrTimeoutSignal } from './awr-timeout.js'
 import { auditService } from './audit.js'
 import { finalizeApplicationFromScoringResult, buildScoringRunFromParsedResponse, interpretAggregatedResult, extractCandidateName } from './pipeline.js'
 import type { ScoringRun } from '../../src/types/index.js'
+import {
+  getCurrentScoringProfile,
+  getPromptProfileStatus,
+  scoringProfileMatches,
+} from './scoring-profile.js'
 
 const AWR_PLATFORM_API_ENDPOINT = process.env.AWR_PLATFORM_API_ENDPOINT || ''
 const PLATFORM_SUBMIT_TIMEOUT_S = Number(process.env.AWR_PLATFORM_SUBMIT_TIMEOUT_S || 60)
@@ -76,7 +81,25 @@ export async function submitBatch(batch: ScoringBatch): Promise<SubmitOutcome> {
   const job = await jobRepo.getById(batch.jobId)
   if (!job) return { status: 'permanent-failure', error: `Job ${batch.jobId} not found` }
   const prompt = await promptRepo.getById(batch.promptVersionId)
-  if (!prompt) return { status: 'permanent-failure', error: `Prompt ${batch.promptVersionId} not found` }
+  if (!prompt || prompt.jobId !== batch.jobId) {
+    return { status: 'permanent-failure', error: `Prompt ${batch.promptVersionId} not found for job ${batch.jobId}` }
+  }
+  const queueProfile = getCurrentScoringProfile()
+  if (!scoringProfileMatches(queueProfile, prompt.modelId, prompt.reasoningLevel)) {
+    return {
+      status: 'permanent-failure',
+      error: `Queue-worker profile is '${queueProfile.modelId}' / '${queueProfile.reasoningLevel}', `
+        + `but prompt v${prompt.versionNumber} uses '${prompt.modelId}' / '${prompt.reasoningLevel}'. `
+        + 'Queue-worker scoring remains limited to its configured profile.',
+    }
+  }
+  const profileStatus = getPromptProfileStatus(
+    prompt,
+    await promptRepo.getTestRunsByPrompt(prompt.promptId),
+  )
+  if (!profileStatus.isMatch) {
+    return { status: 'permanent-failure', error: profileStatus.mismatchMessage }
+  }
 
   const jobDescriptionText = job.jobDescription || job.title
   const resolvedPrompt = prompt.promptText.replace(/\{\{JOB_SPEC_TEXT\}\}/g, jobDescriptionText)
@@ -120,6 +143,8 @@ export async function submitBatch(batch: ScoringBatch): Promise<SubmitOutcome> {
     promptVersionId: batch.promptVersionId,
     runCount: batch.runCount,
     prompt: { kind: 'inline' as const, text: resolvedPrompt },
+    model: prompt.modelId,
+    reasoning: prompt.reasoningLevel,
     cvs,
     callbackUrl: null,
   }
@@ -192,7 +217,15 @@ interface PerCvResult {
   aggregated?: Record<string, unknown>
 }
 
-function runsFromCvBlock(applicationId: string, versionId: string, promptVersionId: string, durationMs: number, cv: PerCvResult): ScoringRun[] {
+function runsFromCvBlock(
+  applicationId: string,
+  versionId: string,
+  promptVersionId: string,
+  durationMs: number,
+  cv: PerCvResult,
+  modelId: string,
+  reasoningLevel: string,
+): ScoringRun[] {
   if (!Array.isArray(cv.runs)) return []
   return cv.runs.map((run: any, idx: number) => buildScoringRunFromParsedResponse({
     applicationId,
@@ -202,7 +235,8 @@ function runsFromCvBlock(applicationId: string, versionId: string, promptVersion
     durationMs,
     rawParsedResponse: (run && typeof run === 'object') ? run as Record<string, unknown> : { value: run },
     rawResponseText: JSON.stringify(run ?? {}),
-    modelDeploymentId: 'platform-llm',
+    modelDeploymentId: modelId,
+    reasoningLevel,
   }))
 }
 
@@ -270,6 +304,16 @@ export async function pollBatch(batch: ScoringBatch): Promise<PollOutcome> {
   const cvById = new Map<string, PerCvResult>(cvs.map(c => [c.applicationId, c]))
   const job = await jobRepo.getById(batch.jobId)
   const versionId = job?.currentVersion?.versionId || 'unknown'
+  const prompt = await promptRepo.getById(batch.promptVersionId)
+  if (!prompt) {
+    const error = `Prompt ${batch.promptVersionId} not found while processing platform result`
+    await scoringBatchRepo.markFailed(batch.batchId, error)
+    await scoringBatchRepo.applyTransition(batch.jobId, 'submitted', 'failed', { failed: batch.applicationIds.length })
+    for (const applicationId of batch.applicationIds) {
+      await applicationRepo.updateStatus(applicationId, 'ScoringFailed')
+    }
+    return { status: 'failed', error }
+  }
 
   await scoringBatchRepo.markCompleted(batch.batchId, JSON.stringify(payload))
 
@@ -284,7 +328,15 @@ export async function pollBatch(batch: ScoringBatch): Promise<PollOutcome> {
       continue
     }
     try {
-      const runs = runsFromCvBlock(applicationId, versionId, batch.promptVersionId, durationMs, cv)
+      const runs = runsFromCvBlock(
+        applicationId,
+        versionId,
+        batch.promptVersionId,
+        durationMs,
+        cv,
+        prompt.modelId ?? '',
+        prompt.reasoningLevel ?? '',
+      )
       const aggregated = cv.aggregated && typeof cv.aggregated === 'object'
         ? interpretAggregatedResult(cv.aggregated as Record<string, unknown>)
         : undefined

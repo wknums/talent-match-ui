@@ -559,6 +559,7 @@ function ensureSqliteCompatibilitySchema(db: any): void {
 
   ensureSqliteColumn(db, 'ScoringRuns', 'VersionId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ScoringRuns', 'ModelDeploymentId', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'ScoringRuns', 'ReasoningLevel', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ScoringRuns', 'PromptVersionId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ScoringRuns', 'OverallScore', 'REAL NULL')
   ensureSqliteColumn(db, 'ScoringRuns', 'SubScoresJson', "TEXT NOT NULL DEFAULT '{}'")
@@ -583,6 +584,23 @@ function ensureSqliteCompatibilitySchema(db: any): void {
   ensureSqliteColumn(db, 'ManualReviews', 'JobId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ManualReviews', 'LastModifiedBy', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'ManualReviews', 'HumanEdited', 'INTEGER NOT NULL DEFAULT 0')
+
+  ensureSqliteColumn(db, 'ScoringPrompts', 'GenerationInstructionVersionId', 'TEXT NULL')
+  ensureSqliteColumn(db, 'ScoringPrompts', 'ModelId', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'ScoringPrompts', 'ReasoningLevel', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'ScoringPrompts', 'ApprovedModelId', 'TEXT NULL')
+  ensureSqliteColumn(db, 'ScoringPrompts', 'ApprovedReasoningLevel', 'TEXT NULL')
+  ensureSqliteColumn(db, 'ScoringPrompts', 'ApprovedTestRunId', 'TEXT NULL')
+
+  ensureSqliteColumn(db, 'PromptTestRuns', 'ModelId', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'PromptTestRuns', 'ReasoningLevel', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'PromptTestRuns', 'ApprovedModelId', 'TEXT NULL')
+  ensureSqliteColumn(db, 'PromptTestRuns', 'ApprovedReasoningLevel', 'TEXT NULL')
+
+  ensureSqliteColumn(db, 'ExtractionInstructionVersions', 'ModelId', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'ExtractionInstructionVersions', 'ReasoningLevel', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'PromptGenerationInstructions', 'ModelId', "TEXT NOT NULL DEFAULT ''")
+  ensureSqliteColumn(db, 'PromptGenerationInstructions', 'ReasoningLevel', "TEXT NOT NULL DEFAULT ''")
 
   ensureSqliteColumn(db, 'FailureQueueItems', 'ApplicationId', "TEXT NOT NULL DEFAULT ''")
   ensureSqliteColumn(db, 'FailureQueueItems', 'JobId', "TEXT NOT NULL DEFAULT ''")

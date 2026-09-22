@@ -10,6 +10,20 @@ export type ExtractionInstructionValidationStatus = 'unvalidated' | 'valid' | 'i
 export type RequirementType = 'must_have' | 'desired' | 'experience' | 'responsibility' | 'other'
 export type RubricItemReviewStatus = 'confirmed' | 'needs_review'
 export type RubricItemCreatedFrom = 'extracted' | 'manual' | 'legacy_conversion'
+export type ReasoningEffort = 'low' | 'medium' | 'high'
+
+export interface ReasoningModelOption {
+  slot: string
+  deployment: string
+  isDefault: boolean
+}
+
+export interface ReasoningModelsResponse {
+  defaultModel: string
+  defaultReasoningEffort: ReasoningEffort
+  supportedReasoningEfforts: ReasoningEffort[]
+  models: ReasoningModelOption[]
+}
 
 export interface ExtractionValidationFinding {
   code: string
@@ -22,6 +36,8 @@ export interface ExtractionInstructionVersion {
   id: string
   versionNumber: number
   instructionText: string
+  modelId: string
+  reasoningLevel: ReasoningEffort
   protectedContractVersion: string
   status: ExtractionInstructionStatus
   validationStatus: ExtractionInstructionValidationStatus
@@ -253,6 +269,7 @@ export interface ScoringRun {
   versionId: string
   runIndex: number
   modelDeploymentId: string
+  reasoningLevel?: string
   promptVersionId: string
   overallScore: number
   subScores: Record<string, number>
@@ -697,6 +714,12 @@ export interface ScoringPrompt {
   comments?: string
   source: PromptSource
   generationMetadata?: Record<string, any>
+  generationInstructionVersionId?: string
+  modelId?: string
+  reasoningLevel?: string
+  approvedModelId?: string
+  approvedReasoningLevel?: string
+  approvedTestRunId?: string
 }
 
 export interface PromptTestRun {
@@ -709,6 +732,37 @@ export interface PromptTestRun {
   completedAt?: string
   reviewedBy?: string
   reviewNotes?: string
+  modelId?: string
+  reasoningLevel?: string
+  approvedModelId?: string
+  approvedReasoningLevel?: string
+}
+
+export interface PromptGenerationInstruction {
+  id: string
+  jobId?: string
+  versionNumber: number
+  instructionText: string
+  modelId: string
+  reasoningLevel: ReasoningEffort
+  status: 'draft' | 'active' | 'inactive'
+  changeNote?: string
+  createdAt: string
+  createdBy: string
+  activatedAt?: string
+  activatedBy?: string
+}
+
+export interface PromptProfileStatus {
+  promptId: string
+  modelId: string
+  reasoningLevel: string
+  currentModelId: string
+  currentReasoningLevel: string
+  isMatch: boolean
+  hasExactProfileApprovedTest: boolean
+  approvedTestRunId?: string
+  mismatchMessage?: string
 }
 
 export interface TestRunApplicationDetail {

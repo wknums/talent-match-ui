@@ -51,7 +51,14 @@ public static class DependencyInjection
         services.AddScoped<INavigationAuditRepository, NavigationAuditRepository>();
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
+        services.AddScoped<IPromptGenerationInstructionRepository, PromptGenerationInstructionRepository>();
         services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();
+        services.AddSingleton<IScoringProfileProvider, ConfigurationScoringProfileProvider>();
+        services.AddHttpClient<IReasoningModelCatalog, AwrReasoningModelCatalog>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(1);
+            })
+            .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddScoped<IScoringBatchRepository, ScoringBatchRepository>();
         services.AddScoped<ISequentialScoringQueueRepository, SequentialScoringQueueRepository>();
         services.AddScoped<IScoringThroughputRepository, ScoringThroughputRepository>();

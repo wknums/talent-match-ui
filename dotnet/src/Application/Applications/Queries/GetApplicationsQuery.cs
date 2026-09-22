@@ -3,6 +3,7 @@ using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Common.Services;
 
 namespace TalentMatch.Application.Applications.Queries;
 
@@ -61,6 +62,19 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
                     || (!string.IsNullOrWhiteSpace(a.CandidateRef)
                         && a.CandidateRef.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
+        }
+
+        foreach (var app in apps)
+        {
+            app.FinalScore = ScorePrecision.Round(app.FinalScore);
+            app.Variance = ScorePrecision.Round(app.Variance);
+        }
+
+        if (string.Equals(request.SortField, "score", StringComparison.OrdinalIgnoreCase))
+        {
+            apps = string.Equals(request.SortOrder, "asc", StringComparison.OrdinalIgnoreCase)
+                ? apps.OrderBy(app => Math.Round(app.FinalScore ?? 0, ScorePrecision.DecimalPlaces)).ToList()
+                : apps.OrderByDescending(app => Math.Round(app.FinalScore ?? 0, ScorePrecision.DecimalPlaces)).ToList();
         }
 
         return apps;

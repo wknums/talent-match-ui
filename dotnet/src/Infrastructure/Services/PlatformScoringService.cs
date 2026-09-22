@@ -7,6 +7,7 @@ using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Prompts.Services;
 
 namespace TalentMatch.Infrastructure.Services;
 
@@ -91,6 +92,25 @@ public class PlatformScoringService : IPlatformScoringService
         if (job is null) return new PlatformSubmitOutcome(PlatformSubmitStatus.PermanentFailure, Error: $"Job {batch.JobId} not found");
         var prompt = await promptRepo.GetByIdAsync(batch.PromptVersionId, ct);
         if (prompt is null) return new PlatformSubmitOutcome(PlatformSubmitStatus.PermanentFailure, Error: $"Prompt {batch.PromptVersionId} not found");
+        var queueProfile = scope.ServiceProvider.GetRequiredService<IScoringProfileProvider>().Current;
+        if (!queueProfile.Matches(prompt.ModelId, prompt.ReasoningLevel))
+        {
+            return new PlatformSubmitOutcome(
+                PlatformSubmitStatus.PermanentFailure,
+                Error: $"Queue-worker profile is '{queueProfile.ModelId}' / '{queueProfile.ReasoningLevel}', "
+                    + $"but prompt v{prompt.VersionNumber} uses '{prompt.ModelId}' / '{prompt.ReasoningLevel}'. "
+                    + "Queue-worker scoring remains limited to its configured profile.");
+        }
+        var profileGuard = scope.ServiceProvider.GetRequiredService<IPromptProfileGuard>();
+        try
+        {
+            await profileGuard.EnsureProductionReadyAsync(prompt, ct);
+        }
+        catch (ScoringProfileMismatchException ex)
+        {
+            return new PlatformSubmitOutcome(
+                PlatformSubmitStatus.PermanentFailure, Error: ex.Message);
+        }
 
         var jobDescriptionText = job.JobDescription ?? job.Title;
         var resolvedPrompt = prompt.PromptText.Replace("{{JOB_SPEC_TEXT}}", jobDescriptionText);
@@ -131,6 +151,8 @@ public class PlatformScoringService : IPlatformScoringService
             promptVersionId = batch.PromptVersionId,
             runCount = batch.RunCount,
             prompt = new { kind = "inline", text = resolvedPrompt },
+            model = prompt.ApprovedModelId,
+            reasoning = prompt.ApprovedReasoningLevel,
             cvs,
             callbackUrl = (string?)null,
         };
@@ -320,7 +342,13 @@ public class PlatformScoringService : IPlatformScoringService
                             idx++;
                             extractedCandidateName ??= ExtractCandidateName(r);
                             var parsedRunJson = r.GetRawText();
-                            var run = ScoreApplicationCommandHandler.ParseSingleRunStatic(r, applicationId, prompt?.Id ?? batch.PromptVersionId, idx);
+                            var run = ScoreApplicationCommandHandler.ParseSingleRunStatic(
+                                r,
+                                applicationId,
+                                prompt?.Id ?? batch.PromptVersionId,
+                                idx,
+                                prompt?.ApprovedModelId ?? prompt?.ModelId ?? "passthrough-llm",
+                                prompt?.ApprovedReasoningLevel ?? prompt?.ReasoningLevel ?? "medium");
                             run.RawResponseText = parsedRunJson;
                             run.RawParsedResponseJson = parsedRunJson;
                             ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubric);

@@ -6,6 +6,7 @@ import { auditService } from '../services/audit.js'
 import { ensureCorrelationId, mapAuthorizationError, sendAuthorizationError } from '../services/authorization-errors.js'
 import { getProtectedContractMetadata } from '../services/extraction-contract.js'
 import { jobSpecExtractionService } from '../services/job-spec-extraction.js'
+import { resolveSupportedReasoningProfile } from '../services/reasoning-models.js'
 
 function isAdmin(req: AuthenticatedRequest) {
   return req.authorizationContext?.globalRole === 'admin' || req.user?.role === 'admin'
@@ -60,12 +61,26 @@ export function createExtractionInstructionsRouter() {
   router.post('/', async (req: AuthenticatedRequest, res, next) => {
     try {
       if (!isAdmin(req)) return sendForbidden(req, res)
-      const { instructionText, changeNote } = req.body
+      const { instructionText, changeNote, modelId, reasoningLevel } = req.body
       if (!instructionText?.trim()) return sendApiError(req, res, 400, 'validation_error', 'instructionText is required.')
+      let profile
+      try {
+        profile = await resolveSupportedReasoningProfile(modelId, reasoningLevel)
+      } catch (error) {
+        return sendApiError(
+          req,
+          res,
+          400,
+          'validation_error',
+          error instanceof Error ? error.message : 'Invalid model or reasoning effort.',
+        )
+      }
       const created = {
         id: randomUUID(),
         versionNumber: await extractionInstructionRepo.getNextVersionNumber(),
         instructionText: instructionText.trim(),
+        modelId: profile.modelId,
+        reasoningLevel: profile.reasoningLevel,
         protectedContractVersion: getProtectedContractMetadata().version,
         status: 'draft' as const,
         validationStatus: 'unvalidated' as const,
@@ -82,6 +97,8 @@ export function createExtractionInstructionsRouter() {
         status: created.status,
         validationStatus: created.validationStatus,
         hasChangeNote: Boolean(created.changeNote),
+        modelId: created.modelId,
+        reasoningLevel: created.reasoningLevel,
       })
       res.status(201).json(created)
     } catch (error) {

@@ -190,6 +190,55 @@ Validated representation of AWReason output.
 
 Existing `MustHavesJson` and `DesiredCriteriaJson` remain populated as projections of `RubricItemV2` so existing eligibility and display flows continue to work during migration.
 
+## PromptGenerationInstruction
+
+Represents one immutable system-wide or job-specific instruction used to generate a final scoring prompt.
+
+### Fields
+
+- `Id`: UUID/string primary key.
+- `JobId`: nullable job scope; null means system-wide default.
+- `VersionNumber`: increasing integer unique within its scope.
+- `InstructionText`: non-empty editable generation instruction.
+- `Status`: `draft | active | inactive`.
+- `ChangeNote`: optional reason for the version.
+- `CreatedAt`, `CreatedBy`: immutable creation audit fields.
+- `ActivatedAt`, `ActivatedBy`: nullable activation audit fields.
+
+### Invariants
+
+- At most one version is active per system or job scope.
+- Job-specific active instructions override the active system instruction.
+- Editing creates a new draft; historical rows are not overwritten.
+- Activating a version deactivates the previously active version in the same scope.
+
+## Scoring Prompt Profile Extensions
+
+Each `ScoringPrompt` stores:
+
+- `GenerationInstructionVersionId`: instruction version used to generate it.
+- `ModelId` and `ReasoningLevel`: backend profile when the prompt version was created.
+- `ApprovedModelId` and `ApprovedReasoningLevel`: exact profile accepted for production.
+- `ApprovedTestRunId`: approved test evidence for that profile.
+
+Each `PromptTestRun` stores its `ModelId` and `ReasoningLevel`, plus the profile values accepted by review. Each `ScoringRun` records both the model identifier and reasoning level actually forwarded to the scoring backend.
+
+### Profile Invariants
+
+- A prompt can be tested only when its creation profile equals the current configured backend profile.
+- Test approval requires the test-run profile to remain current.
+- Production approval and re-promotion require an approved test for the prompt's exact current profile.
+- A model-only or reasoning-only change invalidates production readiness without mutating history.
+- Recovery requires creating a new prompt version, then testing and approving that new version.
+- Existing prompt, test, and scoring tables are extended additively; legacy clients can ignore the new fields.
+
+## Score Precision
+
+- Persisted and calculated scores use the existing floating-point storage.
+- Parsing, aggregation, API projections, and visible score formatting normalize candidate scores to three decimal places.
+- Sorting uses the normalized numeric value rather than formatted text.
+- Duration, file-size, percentage, and non-score metrics retain their existing precision rules.
+
 ## LegacyRubricAdapter
 
 Legacy shape:

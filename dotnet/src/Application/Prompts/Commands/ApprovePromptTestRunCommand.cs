@@ -2,6 +2,8 @@ using System.Text.Json;
 using MediatR;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Prompts.Services;
 
 namespace TalentMatch.Application.Prompts.Commands;
 
@@ -16,21 +18,29 @@ public class ApprovePromptTestRunCommandHandler : IRequestHandler<ApprovePromptT
     private readonly IPromptTestRunRepository _testRunRepo;
     private readonly IApplicationRepository _applicationRepo;
     private readonly IProcessingEventRepository _eventRepo;
+    private readonly IScoringProfileProvider? _profileProvider;
 
     public ApprovePromptTestRunCommandHandler(
         IPromptTestRunRepository testRunRepo,
         IApplicationRepository applicationRepo,
-        IProcessingEventRepository eventRepo)
+        IProcessingEventRepository eventRepo,
+        IScoringProfileProvider? profileProvider = null)
     {
         _testRunRepo = testRunRepo;
         _applicationRepo = applicationRepo;
         _eventRepo = eventRepo;
+        _profileProvider = profileProvider;
     }
 
     public async Task<PromptTestRun> Handle(ApprovePromptTestRunCommand request, CancellationToken ct)
     {
         var testRun = await _testRunRepo.GetByIdAsync(request.TestRunId, ct)
             ?? throw new InvalidOperationException("Test run not found");
+        var profile = new ScoringProfile(testRun.ModelId, testRun.ReasoningLevel);
+        if (string.IsNullOrWhiteSpace(profile.ModelId)
+            || string.IsNullOrWhiteSpace(profile.ReasoningLevel))
+            throw new ScoringProfileMismatchException(
+                "This test run does not have a model and reasoning effort. Create a new test run.");
 
         // FR-039: Verify all test applications have been reviewed (completed or have results)
         var applicationIds = JsonSerializer.Deserialize<List<string>>(testRun.ApplicationIdsJson) ?? [];
@@ -68,6 +78,8 @@ public class ApprovePromptTestRunCommandHandler : IRequestHandler<ApprovePromptT
         testRun.CompletedAt = DateTime.UtcNow;
         testRun.ReviewedBy = request.ReviewedBy;
         testRun.ReviewNotes = request.ReviewNotes;
+        testRun.ApprovedModelId = profile.ModelId;
+        testRun.ApprovedReasoningLevel = profile.ReasoningLevel;
 
         await _testRunRepo.UpdateAsync(testRun, ct);
 

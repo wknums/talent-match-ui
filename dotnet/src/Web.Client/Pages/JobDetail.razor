@@ -40,6 +40,14 @@
                 <span style="color: #c53030; font-size: 0.85rem; align-self: center;">⚠️ Production-approved prompt required</span>
             }
         </div>
+        @if (productionProfileStatus is { IsMatch: false })
+        {
+            <div role="alert" style="margin-top:0.75rem; padding:0.85rem; background:#fee2e2; border:2px solid #dc2626; border-radius:6px; color:#7f1d1d;">
+                <strong>Scoring profile mismatch — uploads and production scoring are blocked.</strong>
+                <div>@productionProfileStatus.MismatchMessage</div>
+                <button @onclick="() => showPrompts = true" style="margin-top:0.5rem;">Open prompt manager to retest</button>
+            </div>
+        }
     </div>
 
     <section class="pipeline-section">
@@ -65,12 +73,12 @@
         </div>
     }
 
-    <details class="job-collapsible pipeline-results">
+    <details class="job-collapsible pipeline-results" open>
         <summary>Longlist, Shortlist and Excluded Applications (@allApps.Count)</summary>
         <div class="job-collapsible-content">
     <div class="tab-row">
-        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F0") (@longlist.Count)</button>
-        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F0") (@shortlist.Count)</button>
+        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F3") (@longlist.Count)</button>
+        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F3") (@shortlist.Count)</button>
         <button @onclick="@(() => activeTab = "excluded")" style="@TabStyle("excluded")">Excluded (@excluded.Count)</button>
     </div>
 
@@ -111,10 +119,10 @@
                             <div style="font-size: 0.8rem; color: #718096;">@app.CandidateEmail</div>
                         }
                     </td>
-                    <td style="padding: 0.5rem;">@(app.FinalScore?.ToString("F1") ?? "—")</td>
+                    <td style="padding: 0.5rem;">@(app.FinalScore?.ToString("F3") ?? "—")</td>
                     <td style="padding: 0.5rem;">@app.Status</td>
                     <td style="padding: 0.5rem;">@(app.FinalDecision ?? "—")</td>
-                    <td style="padding: 0.5rem;">@(app.Variance?.ToString("F1") ?? "—")</td>
+                    <td style="padding: 0.5rem;">@(app.Variance?.ToString("F3") ?? "—")</td>
                     <td style="padding: 0.5rem; font-size: 0.85rem; color: #718096;">@app.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
                     <td style="padding: 0.5rem;">
                         <button @onclick="@(() => Navigation.NavigateTo($"/applications/{app.Id}"))">View</button>
@@ -198,7 +206,10 @@ else
                           ProductionPromptId="@productionPromptId"
                           OnPromptStatusChange="OnPromptStatusChanged" />
         <hr style="margin: 1rem 0;" />
-        <PromptTestRunner JobId="@JobId" ActivePrompt="activePrompt" OnPromptStatusChange="OnPromptStatusChanged" />
+        <PromptTestRunner JobId="@JobId"
+                          ActivePrompt="activePrompt"
+                          Prompts="promptVersions"
+                          OnPromptStatusChange="OnPromptStatusChanged" />
     </FloatingPanel>
 }
 
@@ -248,6 +259,7 @@ else
     private string sortField = "none";
     private bool sortAscending;
     private bool hasProductionApprovedPrompt;
+    private PromptProfileStatusDto? productionProfileStatus;
     private bool hasApprovedRubric;
     private bool isAdmin;
     private bool showDeleteDialog;
@@ -257,6 +269,7 @@ else
     private string? editError;
     private string applicantSearch = string.Empty;
     private ScoringPromptDto? activePrompt;
+    private List<ScoringPromptDto> promptVersions = new();
     private string? productionPromptId;
     private JobConfigDto? jobConfig;
     private RubricEnvelopeDto? rubricEnvelope;
@@ -266,10 +279,14 @@ else
 
     private double EffectiveLonglistThreshold => jobConfig?.LonglistThreshold ?? 70;
     private double EffectiveShortlistThreshold => jobConfig?.ShortlistThreshold ?? 85;
-    private bool CanUploadApplications => hasApprovedRubric && hasProductionApprovedPrompt;
+    private bool CanUploadApplications => hasApprovedRubric
+        && hasProductionApprovedPrompt
+        && productionProfileStatus?.IsMatch == true;
     private string UploadApplicationsTitle => CanUploadApplications
         ? "Upload candidate applications"
-        : "Available after the job rubric and scoring prompt are production-approved.";
+        : productionProfileStatus is { IsMatch: false }
+            ? "Blocked until the production prompt is retested and approved with the current backend model and reasoning level."
+            : "Available after the job rubric and scoring prompt are production-approved.";
 
     // Longlist is inclusive by threshold, so shortlist is naturally a subset
     // when shortlist threshold >= longlist threshold.
@@ -359,11 +376,39 @@ else
             !string.IsNullOrWhiteSpace(config?.RubricJson) &&
             string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase);
 
-        var prompts = await Api.GetPromptsAsync(JobId);
-        var productionPrompt = prompts.FirstOrDefault(p => p.Status == "production-approved");
+        promptVersions = await Api.GetPromptsAsync(JobId);
+        var productionPrompt = promptVersions.FirstOrDefault(p => p.Status == "production-approved");
         hasProductionApprovedPrompt = productionPrompt is not null;
         productionPromptId = productionPrompt?.Id;
-        activePrompt = productionPrompt ?? prompts.FirstOrDefault(p => p.Status == "active");
+        activePrompt = promptVersions.FirstOrDefault(p => p.Status == "active")
+            ?? productionPrompt;
+        if (productionPrompt is null)
+        {
+            productionProfileStatus = null;
+        }
+        else
+        {
+            try
+            {
+                productionProfileStatus = await Api.GetPromptProfileStatusAsync(
+                    JobId, productionPrompt.Id);
+            }
+            catch
+            {
+                // Compatibility for API mocks and rolling deployments. The production API
+                // enforces the profile again before upload, queue claim, and submission.
+                productionProfileStatus = new PromptProfileStatusDto(
+                    productionPrompt.Id,
+                    productionPrompt.ApprovedModelId ?? productionPrompt.ModelId,
+                    productionPrompt.ApprovedReasoningLevel ?? productionPrompt.ReasoningLevel,
+                    productionPrompt.ApprovedModelId ?? productionPrompt.ModelId,
+                    productionPrompt.ApprovedReasoningLevel ?? productionPrompt.ReasoningLevel,
+                    true,
+                    true,
+                    productionPrompt.ApprovedTestRunId,
+                    null);
+            }
+        }
     }
 
     private async Task OnPromptStatusChanged()
@@ -390,8 +435,8 @@ else
     {
         allApps = (sortField, sortAscending) switch
         {
-            ("score", true) => allApps.OrderBy(a => a.FinalScore).ToList(),
-            ("score", false) => allApps.OrderByDescending(a => a.FinalScore).ToList(),
+            ("score", true) => allApps.OrderBy(a => Math.Round(a.FinalScore ?? 0, 3)).ToList(),
+            ("score", false) => allApps.OrderByDescending(a => Math.Round(a.FinalScore ?? 0, 3)).ToList(),
             ("date", true) => allApps.OrderBy(a => a.CreatedAt).ToList(),
             ("date", false) => allApps.OrderByDescending(a => a.CreatedAt).ToList(),
             _ => allApps

@@ -26,6 +26,7 @@ public class AppDbContext : DbContext
     public DbSet<PasswordResetRequest> PasswordResetRequests => Set<PasswordResetRequest>();
     public DbSet<ScoringPrompt> ScoringPrompts => Set<ScoringPrompt>();
     public DbSet<PromptTestRun> PromptTestRuns => Set<PromptTestRun>();
+    public DbSet<PromptGenerationInstruction> PromptGenerationInstructions => Set<PromptGenerationInstruction>();
     public DbSet<ScoringBatch> ScoringBatches => Set<ScoringBatch>();
     public DbSet<ScoringJobProgress> ScoringJobProgress => Set<ScoringJobProgress>();
     public DbSet<Organization> Organizations => Set<Organization>();
@@ -179,6 +180,8 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.InstructionText).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
             e.Property(x => x.ProtectedContractVersion).HasMaxLength(50).IsRequired();
             e.Property(x => x.Status).HasMaxLength(20).IsRequired();
             e.Property(x => x.ValidationStatus).HasMaxLength(20).IsRequired();
@@ -284,6 +287,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.MustHaveEvaluationJson).HasColumnName("MustHaveResultJson");
             e.Property(x => x.ImprovementTipsJson).HasColumnName("ImprovementRecsJson");
             e.Property(x => x.AiModelId).HasColumnName("ModelDeploymentId").HasMaxLength(100);
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30);
             e.Property(x => x.PromptVersion).HasColumnName("PromptVersionId");
             e.Ignore(x => x.InputTokens);
             e.Ignore(x => x.OutputTokens);
@@ -348,6 +352,10 @@ public class AppDbContext : DbContext
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
             e.Property(x => x.Source).HasMaxLength(20).IsRequired();
             e.Property(x => x.Author).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ApprovedModelId).HasMaxLength(100);
+            e.Property(x => x.ApprovedReasoningLevel).HasMaxLength(30);
             e.HasIndex(x => new { x.JobId, x.Status });
             e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.TestRuns).WithOne(x => x.Prompt).HasForeignKey(x => x.PromptId).OnDelete(DeleteBehavior.Cascade);
@@ -358,8 +366,24 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ApprovedModelId).HasMaxLength(100);
+            e.Property(x => x.ApprovedReasoningLevel).HasMaxLength(30);
             e.HasIndex(x => x.PromptId);
             e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<PromptGenerationInstruction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.InstructionText).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.JobId, x.VersionNumber }).IsUnique();
+            e.HasIndex(x => new { x.JobId, x.Status });
         });
 
         // ScoringBatch

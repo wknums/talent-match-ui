@@ -5,6 +5,7 @@ using TalentMatch.Application.Authorization;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Common.Services;
 
 namespace TalentMatch.Web.Server.Endpoints;
 
@@ -26,11 +27,21 @@ public static class ApplicationsEndpoints
                 var fingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
                 files.Add(new UploadedFile(file.FileName, file.ContentType, file.Length, Convert.ToBase64String(bytes), fingerprint));
             }
-            var result = await mediator.Send(new UploadApplicationsCommand(
-                jobId,
-                files,
-                AllowDuplicates: allowDuplicates == true), ct);
-            return Results.Ok(result);
+            try
+            {
+                var result = await mediator.Send(new UploadApplicationsCommand(
+                    jobId,
+                    files,
+                    AllowDuplicates: allowDuplicates == true), ct);
+                return Results.Ok(result);
+            }
+            catch (TalentMatch.Application.Prompts.Services.ScoringProfileMismatchException ex)
+            {
+                return Results.Problem(
+                    ex.Message,
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Scoring profile mismatch");
+            }
         }).DisableAntiforgery();
 
         jobAppsGroup.MapGet("/", async (string jobId, string? list, string? applicantName, string? sortField, string? sortOrder,
@@ -94,6 +105,11 @@ public static class ApplicationsEndpoints
         appGroup.MapGet("/", async (string applicationId, IApplicationRepository repo) =>
         {
             var application = await repo.GetByIdAsync(applicationId);
+            if (application is not null)
+            {
+                application.FinalScore = ScorePrecision.Round(application.FinalScore);
+                application.Variance = ScorePrecision.Round(application.Variance);
+            }
             return application != null ? Results.Ok(application) : Results.NotFound();
         });
 

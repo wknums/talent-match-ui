@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { applicationRepo, jobRepo } from '../storage/repos/index.js'
 import type { AggregatedResult } from '../../src/types/index.js'
+import { roundScore3 } from '../services/scoring-profile.js'
 
 /**
  * Fuzzy-match an LLM-derived category name to the closest rubric category name.
@@ -61,10 +62,11 @@ export async function runAggregation(
     // weighted - use mean as fallback
     finalScore = scores.reduce((a, b) => a + b, 0) / scores.length
   }
+  finalScore = roundScore3(finalScore)
 
-  const variance = Math.sqrt(
+  const variance = roundScore3(Math.sqrt(
     scores.reduce((sum, s) => sum + Math.pow(s - finalScore, 2), 0) / scores.length
-  )
+  ))
 
   // Compute sub-score averages (fuzzy-match LLM category names to rubric names)
   const finalSubScores: Record<string, number> = {}
@@ -77,7 +79,9 @@ export async function runAggregation(
         const match = findBestRubricMatch(cat.name, Object.keys(r.subScores))
         return match ? r.subScores[match] : 0
       })
-      finalSubScores[cat.name] = catScores.reduce((a, b) => a + b, 0) / catScores.length
+      finalSubScores[cat.name] = roundScore3(
+        catScores.reduce((a, b) => a + b, 0) / catScores.length,
+      )
     }
   }
 
@@ -111,10 +115,10 @@ export async function runAggregation(
     variance,
     finalDecision,
     rationaleText: gateFailedByAggregation
-      ? `Excluded: eligibility gate failed by aggregated votes (passed: ${gatePassVotes}, failed: ${gateFailVotes}). Score: ${finalScore.toFixed(1)} (${strategy}, ${runs.length} run${runs.length > 1 ? 's' : ''}).`
+      ? `Excluded: eligibility gate failed by aggregated votes (passed: ${gatePassVotes}, failed: ${gateFailVotes}). Score: ${finalScore.toFixed(3)} (${strategy}, ${runs.length} run${runs.length > 1 ? 's' : ''}).`
       : hasGateVotes
-        ? `Aggregated ${runs.length} scoring runs using ${strategy} strategy. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}. Eligibility votes: passed ${gatePassVotes}, failed ${gateFailVotes}.`
-        : `Aggregated ${runs.length} scoring runs using ${strategy} strategy. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}.`,
+        ? `Aggregated ${runs.length} scoring runs using ${strategy} strategy. Final score: ${finalScore.toFixed(3)}, Variance: ${variance.toFixed(3)}. Eligibility votes: passed ${gatePassVotes}, failed ${gateFailVotes}.`
+        : `Aggregated ${runs.length} scoring runs using ${strategy} strategy. Final score: ${finalScore.toFixed(3)}, Variance: ${variance.toFixed(3)}.`,
     recommendationsText: runs[0]?.improvementRecommendations?.join('; ') || '',
     allRuns: runs,
     createdAt: new Date().toISOString(),

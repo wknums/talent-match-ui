@@ -15,6 +15,21 @@
     gap: .75rem;
 }
 
+.throughput-title {
+    display: flex;
+    align-items: start;
+    gap: .35rem;
+}
+
+.throughput-toggle {
+    flex: 0 0 auto;
+    margin-top: .1rem;
+    border: 0;
+    background: transparent;
+    color: #1d4ed8;
+    cursor: pointer;
+}
+
 .throughput-header h4,
 .throughput-header p {
     margin: 0 0 .25rem;
@@ -76,13 +91,25 @@
     stroke: #64748b;
 }
 
-.throughput-bar {
-    fill: #64748b;
+.throughput-line {
+    fill: none;
+    stroke: #64748b;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 3px;
     pointer-events: none;
 }
 
-.current-bar {
+.throughput-point {
+    fill: #fff;
+    stroke: #64748b;
+    stroke-width: 3px;
+    pointer-events: none;
+}
+
+.current-point {
     fill: #1d4ed8;
+    stroke: #1d4ed8;
 }
 
 .bucket-hit-area {
@@ -99,12 +126,19 @@
     stroke-width: 2px;
 }
 
+.throughput-bucket:hover .throughput-point,
+.throughput-bucket:focus .throughput-point {
+    fill: #1e293b;
+    stroke: #1e293b;
+}
+
 .throughput-legend span {
     display: inline-block;
     width: .75rem;
     height: .75rem;
     margin-right: .3rem;
     background: #1d4ed8;
+    border-radius: 50%;
 }
 
 .throughput-table summary {

@@ -382,8 +382,19 @@ public static class JobsEndpoints
                 return Results.Problem("Approve the job rubric before processing applications.", statusCode: 400);
 
             // Sequential processing wakes the in-process pool; the request does not wait for scoring.
-            var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ProcessJobCommand(
-                jobId, productionPrompt.Id, runCount), ct);
+            TalentMatch.Application.Jobs.Commands.ProcessJobResult result;
+            try
+            {
+                result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ProcessJobCommand(
+                    jobId, productionPrompt.Id, runCount), ct);
+            }
+            catch (TalentMatch.Application.Prompts.Services.ScoringProfileMismatchException ex)
+            {
+                return Results.Problem(
+                    ex.Message,
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Scoring profile mismatch");
+            }
 
             return Results.Accepted($"/api/jobs/{jobId}/applications",
                 new { processed = result.Processed, total = result.Total, errors = result.Errors, queued = result.Queued });

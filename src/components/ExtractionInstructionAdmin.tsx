@@ -6,7 +6,14 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
-import type { ExtractionInstructionVersion, ExtractionInstructionVersionDetail } from '@/types'
+import type {
+  ExtractionInstructionVersion,
+  ExtractionInstructionVersionDetail,
+  PromptGenerationInstruction,
+  ReasoningEffort,
+  ReasoningModelsResponse,
+} from '@/types'
+import { ReasoningProfileFields } from '@/components/ReasoningProfileFields'
 
 interface ExtractionInstructionAdminProps {
   open: boolean
@@ -19,24 +26,95 @@ export function ExtractionInstructionAdmin({ open, onClose }: ExtractionInstruct
   const [instructionText, setInstructionText] = useState('Extract every independently assessable requirement as its own rubric item.')
   const [changeNote, setChangeNote] = useState('')
   const [busy, setBusy] = useState(false)
+  const [scoringVersions, setScoringVersions] = useState<PromptGenerationInstruction[]>([])
+  const [scoringInstructionText, setScoringInstructionText] = useState('')
+  const [scoringChangeNote, setScoringChangeNote] = useState('')
+  const [catalog, setCatalog] = useState<ReasoningModelsResponse | null>(null)
+  const [extractionModelId, setExtractionModelId] = useState('')
+  const [extractionReasoningLevel, setExtractionReasoningLevel] = useState<ReasoningEffort>('high')
+  const [scoringModelId, setScoringModelId] = useState('')
+  const [scoringReasoningLevel, setScoringReasoningLevel] = useState<ReasoningEffort>('high')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (open) void refresh()
+    if (open) void refresh().catch((error: unknown) => {
+      toast.error(error instanceof Error ? error.message : 'Failed to load instruction versions')
+    })
   }, [open])
 
   const refresh = async () => {
-    const list = await api.listExtractionInstructions()
+    const [list, scoringList] = await Promise.all([
+      api.listExtractionInstructions(),
+      api.getSystemPromptGenerationInstructions(),
+    ])
     setVersions(list)
+    setScoringVersions(scoringList)
+    try {
+      const reasoningCatalog = await api.getReasoningModels()
+      setCatalog(reasoningCatalog)
+      setExtractionModelId(current => current || reasoningCatalog.defaultModel)
+      setExtractionReasoningLevel(current =>
+        reasoningCatalog.supportedReasoningEfforts.includes(current)
+          ? current
+          : reasoningCatalog.defaultReasoningEffort)
+      setScoringModelId(current => current || reasoningCatalog.defaultModel)
+      setScoringReasoningLevel(current =>
+        reasoningCatalog.supportedReasoningEfforts.includes(current)
+          ? current
+          : reasoningCatalog.defaultReasoningEffort)
+    } catch (error) {
+      setCatalog(null)
+      toast.error(error instanceof Error
+        ? `Supported models could not be loaded: ${error.message}`
+        : 'Supported models could not be loaded')
+    }
     if (list[0]) {
       setSelected(await api.getExtractionInstruction(list[0].id))
+    }
+  }
+
+  const createScoringDraft = async () => {
+    setBusy(true)
+    try {
+      await api.createSystemPromptGenerationInstruction(
+        scoringInstructionText,
+        scoringChangeNote || undefined,
+        scoringModelId,
+        scoringReasoningLevel,
+      )
+      toast.success('System scoring generation draft created')
+      setScoringInstructionText('')
+      setScoringChangeNote('')
+      await refresh()
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to create scoring generation draft')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const activateScoringVersion = async (instructionId: string) => {
+    setBusy(true)
+    try {
+      await api.activateSystemPromptGenerationInstruction(instructionId)
+      toast.success('System scoring generation instruction activated')
+      await refresh()
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to activate scoring generation instruction')
+    } finally {
+      setBusy(false)
     }
   }
 
   const createDraft = async () => {
     setBusy(true)
     try {
-      await api.createExtractionInstructionDraft(instructionText, changeNote || undefined)
+      await api.createExtractionInstructionDraft(
+        instructionText,
+        changeNote || undefined,
+        extractionModelId,
+        extractionReasoningLevel,
+      )
       toast.success('Draft created')
       setChangeNote('')
       await refresh()
@@ -104,7 +182,16 @@ export function ExtractionInstructionAdmin({ open, onClose }: ExtractionInstruct
             <CardContent className="space-y-3">
               <Textarea value={instructionText} onChange={(event) => setInstructionText(event.target.value)} rows={8} />
               <Input value={changeNote} onChange={(event) => setChangeNote(event.target.value)} placeholder="Change note (optional)" />
-              <Button onClick={createDraft} disabled={busy}>Create draft</Button>
+              <ReasoningProfileFields
+                idPrefix="extraction-instruction"
+                catalog={catalog}
+                modelId={extractionModelId}
+                reasoningLevel={extractionReasoningLevel}
+                onModelChange={setExtractionModelId}
+                onReasoningLevelChange={setExtractionReasoningLevel}
+                disabled={busy}
+              />
+              <Button onClick={createDraft} disabled={busy || !catalog || !extractionModelId}>Create draft</Button>
             </CardContent>
           </Card>
 
@@ -126,6 +213,9 @@ export function ExtractionInstructionAdmin({ open, onClose }: ExtractionInstruct
                   <div>
                     <div className="font-medium">v{version.versionNumber} · {version.status} · {version.validationStatus}</div>
                     <div className="text-xs text-muted-foreground">{version.createdBy} · {new Date(version.createdAt).toLocaleString()}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {version.modelId} · reasoning effort {version.reasoningLevel}
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" onClick={async () => setSelected(await api.getExtractionInstruction(version.id))} disabled={busy}>View</Button>
@@ -156,6 +246,71 @@ export function ExtractionInstructionAdmin({ open, onClose }: ExtractionInstruct
               </CardContent>
             </Card>
           ))}
+        </div>
+        <div className="border-t pt-6 space-y-4">
+          <div>
+            <h2 className="text-2xl font-semibold">System Scoring Prompt Generation</h2>
+            <p className="text-sm text-muted-foreground">
+              Manage the versioned system instruction used when a job has no active job-specific override.
+            </p>
+          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Create scoring generation draft</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                aria-label="System scoring prompt generation instruction"
+                value={scoringInstructionText}
+                onChange={(event) => setScoringInstructionText(event.target.value)}
+                rows={8}
+              />
+              <Input
+                aria-label="Scoring generation change note"
+                value={scoringChangeNote}
+                onChange={(event) => setScoringChangeNote(event.target.value)}
+                placeholder="Change note (optional)"
+              />
+              <ReasoningProfileFields
+                idPrefix="system-scoring-generation"
+                catalog={catalog}
+                modelId={scoringModelId}
+                reasoningLevel={scoringReasoningLevel}
+                onModelChange={setScoringModelId}
+                onReasoningLevelChange={setScoringReasoningLevel}
+                disabled={busy}
+              />
+              <Button onClick={createScoringDraft} disabled={busy || !catalog || !scoringInstructionText.trim()}>
+                Create scoring draft
+              </Button>
+            </CardContent>
+          </Card>
+          <div className="grid gap-3">
+            {scoringVersions.map((version) => (
+              <Card key={version.id}>
+                <CardContent className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="font-medium">v{version.versionNumber} · {version.status}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {version.createdBy} · {new Date(version.createdAt).toLocaleString()}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {version.modelId} · reasoning effort {version.reasoningLevel}
+                      </div>
+                    </div>
+                    {version.status !== 'active' && (
+                      <Button size="sm" onClick={() => void activateScoringVersion(version.id)} disabled={busy}>
+                        Activate
+                      </Button>
+                    )}
+                  </div>
+                  <pre className="text-sm whitespace-pre-wrap">{version.instructionText}</pre>
+                  {version.changeNote && <p className="text-xs text-muted-foreground">{version.changeNote}</p>}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         </div>
       </div>
     </div>

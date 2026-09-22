@@ -13,6 +13,10 @@ public class PromptTestRun
     public DateTime? CompletedAt { get; set; }
     public string? ReviewedBy { get; set; }
     public string? ReviewNotes { get; set; }
+    public string ModelId { get; set; } = string.Empty;
+    public string ReasoningLevel { get; set; } = string.Empty;
+    public string? ApprovedModelId { get; set; }
+    public string? ApprovedReasoningLevel { get; set; }
 
     // Navigation properties
     [JsonIgnore]

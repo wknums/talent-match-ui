@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
 
@@ -8,15 +9,34 @@ public class LlmProxyService : ILlmProxyService
 {
     private readonly HttpClient _httpClient;
     private readonly ILogger<LlmProxyService> _logger;
+    private readonly IScoringProfileProvider _profileProvider;
+    private readonly IReasoningModelCatalog? _reasoningModels;
 
-    public LlmProxyService(HttpClient httpClient, ILogger<LlmProxyService> logger)
+    public LlmProxyService(
+        HttpClient httpClient,
+        ILogger<LlmProxyService> logger,
+        IScoringProfileProvider profileProvider,
+        IReasoningModelCatalog? reasoningModels = null)
     {
         _httpClient = httpClient;
         _logger = logger;
+        _profileProvider = profileProvider;
+        _reasoningModels = reasoningModels;
     }
 
     // FR-065: Prompt generation ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
     public async Task<string> SendPromptAsync(string systemPrompt, string userPrompt, CancellationToken cancellationToken = default)
+        => await SendPromptAsync(
+            systemPrompt,
+            userPrompt,
+            await ResolveConfiguredProfileAsync(cancellationToken),
+            cancellationToken);
+
+    public async Task<string> SendPromptAsync(
+        string systemPrompt,
+        string userPrompt,
+        ScoringProfile profile,
+        CancellationToken cancellationToken = default)
     {
         var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
             ?? throw new InvalidOperationException("AWR_SEQ_API_ENDPOINT is not configured.");
@@ -33,6 +53,7 @@ public class LlmProxyService : ILlmProxyService
         var specContent = new ByteArrayContent(Encoding.UTF8.GetBytes(userPrompt));
         specContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
         formData.Add(specContent, "specFile", "context.md");
+        AddProfile(formData, profile);
 
         _logger.LogInformation("Sending LLM request via passthrough");
         var response = await _httpClient.PostAsync($"{endpoint}/assess/passthrough", formData, cancellationToken);
@@ -48,6 +69,17 @@ public class LlmProxyService : ILlmProxyService
     }
 
     public async Task<string> ScoreAsync(string resolvedPrompt, string candidateText, CancellationToken cancellationToken = default)
+        => await ScoreAsync(
+            resolvedPrompt,
+            candidateText,
+            await ResolveConfiguredProfileAsync(cancellationToken),
+            cancellationToken);
+
+    public async Task<string> ScoreAsync(
+        string resolvedPrompt,
+        string candidateText,
+        ScoringProfile profile,
+        CancellationToken cancellationToken = default)
     {
         var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
             ?? throw new InvalidOperationException("AWR_SEQ_API_ENDPOINT is not configured.");
@@ -61,6 +93,7 @@ public class LlmProxyService : ILlmProxyService
         var specContent = new ByteArrayContent(Encoding.UTF8.GetBytes(candidateText));
         specContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
         formData.Add(specContent, "cvFiles[]", "candidate-cv.md");
+        AddProfile(formData, profile);
 
         _logger.LogInformation("Sending scoring request via passthrough");
         var response = await _httpClient.PostAsync($"{endpoint}/assess/passthrough", formData, cancellationToken);
@@ -89,6 +122,23 @@ public class LlmProxyService : ILlmProxyService
 
     // FR-065/FR-066: Always uses AWR_SEQ_API_ENDPOINT — platform-mode scoring lives in IPlatformScoringService.
     public async Task<IReadOnlyList<string>> ScoreWithDocumentAsync(string resolvedPrompt, byte[] documentBytes, string fileName, string mimeType, int runs = 1, CancellationToken cancellationToken = default)
+        => await ScoreWithDocumentAsync(
+            resolvedPrompt,
+            documentBytes,
+            fileName,
+            mimeType,
+            await ResolveConfiguredProfileAsync(cancellationToken),
+            runs,
+            cancellationToken);
+
+    public async Task<IReadOnlyList<string>> ScoreWithDocumentAsync(
+        string resolvedPrompt,
+        byte[] documentBytes,
+        string fileName,
+        string mimeType,
+        ScoringProfile profile,
+        int runs = 1,
+        CancellationToken cancellationToken = default)
     {
         var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT")
             ?? throw new InvalidOperationException("AWR_SEQ_API_ENDPOINT is not configured.");
@@ -101,7 +151,7 @@ public class LlmProxyService : ILlmProxyService
         {
             var responseText = await CallEngineOnceWithRetry(
                 endpoint, resolvedPrompt, documentBytes, fileName, mimeType,
-                batchId, runNumber, runs, cancellationToken);
+                profile, batchId, runNumber, runs, cancellationToken);
             results.Add(responseText);
         }
 
@@ -110,14 +160,14 @@ public class LlmProxyService : ILlmProxyService
 
     private async Task<string> CallEngineOnceWithRetry(
         string endpoint, string resolvedPrompt, byte[] documentBytes, string fileName, string mimeType,
-        string? batchId, int runNumber, int totalRuns, CancellationToken cancellationToken)
+        ScoringProfile profile, string? batchId, int runNumber, int totalRuns, CancellationToken cancellationToken)
     {
         for (int attempt = 1; attempt <= MaxRetriesPerRun; attempt++)
         {
             try
             {
                 return await CallEngineOnce(endpoint, resolvedPrompt, documentBytes, fileName, mimeType,
-                    batchId, runNumber, totalRuns, cancellationToken);
+                    profile, batchId, runNumber, totalRuns, cancellationToken);
             }
             catch (Exception ex) when (attempt < MaxRetriesPerRun && !cancellationToken.IsCancellationRequested)
             {
@@ -128,12 +178,12 @@ public class LlmProxyService : ILlmProxyService
 
         // Final attempt — let it throw
         return await CallEngineOnce(endpoint, resolvedPrompt, documentBytes, fileName, mimeType,
-            batchId, runNumber, totalRuns, cancellationToken);
+            profile, batchId, runNumber, totalRuns, cancellationToken);
     }
 
     private async Task<string> CallEngineOnce(
         string endpoint, string resolvedPrompt, byte[] documentBytes, string fileName, string mimeType,
-        string? batchId, int runNumber, int totalRuns, CancellationToken cancellationToken)
+        ScoringProfile profile, string? batchId, int runNumber, int totalRuns, CancellationToken cancellationToken)
     {
         using var formData = new MultipartFormDataContent();
 
@@ -153,6 +203,7 @@ public class LlmProxyService : ILlmProxyService
             formData.Add(new StringContent(runNumber.ToString()), "runNumber");
             formData.Add(new StringContent(totalRuns.ToString()), "totalRuns");
         }
+        AddProfile(formData, profile);
 
         _logger.LogInformation(
             "Sending scoring run {RunNumber}/{TotalRuns} via passthrough ({MimeType}, {Size} bytes)",
@@ -162,14 +213,34 @@ public class LlmProxyService : ILlmProxyService
         if (!response.IsSuccessStatusCode)
         {
             var errorText = await response.Content.ReadAsStringAsync(cancellationToken);
+            var failureMessage = BuildPassthroughFailureMessage(
+                (int)response.StatusCode,
+                "Scoring passthrough request",
+                errorText);
             _logger.LogError(
-                "Scoring passthrough API error on run {RunNumber}: {Status}",
-                runNumber, (int)response.StatusCode);
-            throw new InvalidOperationException(BuildPassthroughFailureMessage((int)response.StatusCode, "Scoring passthrough request", errorText));
+                "Scoring passthrough API error on run {RunNumber}: {FailureMessage}",
+                runNumber,
+                failureMessage);
+            throw new InvalidOperationException(failureMessage);
         }
 
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
+
+    private static void AddProfile(MultipartFormDataContent formData, ScoringProfile profile)
+    {
+        formData.Add(new StringContent(profile.ModelId), "reasoningModel");
+        formData.Add(new StringContent(profile.ReasoningLevel), "reasoningEffort");
+    }
+
+    private Task<ScoringProfile> ResolveConfiguredProfileAsync(
+        CancellationToken cancellationToken)
+        => _reasoningModels is null
+            ? Task.FromResult(_profileProvider.Current)
+            : _reasoningModels.ResolveForExecutionAsync(
+                _profileProvider.Current.ModelId,
+                _profileProvider.Current.ReasoningLevel,
+                cancellationToken);
 
     // FR-065: Extraction ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
     public async Task<string> ExtractAsync(byte[] documentBytes, string fileName, string mimeType, CancellationToken cancellationToken = default)
@@ -220,6 +291,36 @@ public class LlmProxyService : ILlmProxyService
         if (errorText.Contains("DeploymentNotFound", StringComparison.OrdinalIgnoreCase))
         {
             return $"{operation} failed ({statusCode}): Azure OpenAI deployment not found in AWReason service (DeploymentNotFound). Verify awreason-http-service deployment env vars (AOAI_DEPLOYMENT/AZURE_OPENAI_DEPLOYMENT) and API version.";
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(errorText);
+            var root = document.RootElement;
+            var title = root.TryGetProperty("title", out var titleElement)
+                ? titleElement.GetString()
+                : null;
+            var detail = root.TryGetProperty("detail", out var detailElement)
+                ? detailElement.GetString()
+                : null;
+            var correlationId = root.TryGetProperty("correlationId", out var correlationElement)
+                ? correlationElement.GetString()
+                : null;
+            if (!string.IsNullOrWhiteSpace(title) || !string.IsNullOrWhiteSpace(detail))
+            {
+                var summary = string.Join(
+                    ": ",
+                    new[] { title, detail }
+                        .Where(value => !string.IsNullOrWhiteSpace(value))
+                        .Select(value => value!.Trim()));
+                return $"{operation} failed ({statusCode}): {summary}"
+                    + (string.IsNullOrWhiteSpace(correlationId)
+                        ? "."
+                        : $" Correlation ID: {correlationId}.");
+            }
+        }
+        catch (JsonException)
+        {
         }
 
         return $"{operation} failed ({statusCode}).";

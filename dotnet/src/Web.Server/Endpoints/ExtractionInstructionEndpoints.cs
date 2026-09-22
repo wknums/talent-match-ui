@@ -44,7 +44,11 @@ public static class ExtractionInstructionEndpoints
         {
             try
             {
-                var created = await mediator.Send(new CreateExtractionInstructionCommand(request.InstructionText, request.ChangeNote));
+                var created = await mediator.Send(new CreateExtractionInstructionCommand(
+                    request.InstructionText,
+                    request.ChangeNote,
+                    request.ModelId,
+                    request.ReasoningLevel));
                 return Results.Created($"/api/admin/extraction-instructions/{created.Id}", created);
             }
             catch (UnauthorizedAccessException)

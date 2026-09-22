@@ -9,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TalentMatch.Application.JobExtraction.Services;
+using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Infrastructure.Persistence;
 
 namespace TalentMatch.Web.Tests;
@@ -142,11 +143,13 @@ public sealed class ExtractionInstructionEndpointsTests
             {
                 services.RemoveAll<DbContextOptions<AppDbContext>>();
                 services.RemoveAll<IJobSpecExtractionTransport>();
+                services.RemoveAll<IReasoningModelCatalog>();
 
                 _connection = new SqliteConnection("Data Source=:memory:");
                 _connection.Open();
                 services.AddDbContext<AppDbContext>(options => options.UseSqlite(_connection));
                 services.AddSingleton<IJobSpecExtractionTransport>(new StubTransport(_rawResponse));
+                services.AddSingleton<IReasoningModelCatalog>(new StubReasoningModelCatalog());
 
                 using var provider = services.BuildServiceProvider();
                 using var scope = provider.CreateScope();
@@ -174,6 +177,8 @@ public sealed class ExtractionInstructionEndpointsTests
                     Id = "instruction-v1",
                     VersionNumber = 1,
                     InstructionText = "Extract every requirement as an item.",
+                    ModelId = "o3",
+                    ReasoningLevel = "high",
                     ProtectedContractVersion = "extraction-rubric-v1",
                     Status = "active",
                     ValidationStatus = "valid",
@@ -206,5 +211,30 @@ public sealed class ExtractionInstructionEndpointsTests
 
         public Task<string> ExtractAsync(byte[] documentBytes, string fileName, string mimeType, string prompt, CancellationToken cancellationToken = default)
             => Task.FromResult(_rawResponse);
+    }
+
+    private sealed class StubReasoningModelCatalog : IReasoningModelCatalog
+    {
+        public Task<ReasoningModelsResponse> GetAsync(
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new ReasoningModelsResponse(
+                "o3",
+                "high",
+                ["low", "medium", "high"],
+                [new ReasoningModelOption("reason01", "o3", true)]));
+
+        public Task<ScoringProfile> ResolveForExecutionAsync(
+            string? modelId,
+            string? reasoningEffort,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new ScoringProfile(
+                string.IsNullOrWhiteSpace(modelId) ? "o3" : modelId,
+                string.IsNullOrWhiteSpace(reasoningEffort) ? "high" : reasoningEffort));
+
+        public Task<ScoringProfile> ValidateAsync(
+            string modelId,
+            string reasoningEffort,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(new ScoringProfile(modelId, reasoningEffort));
     }
 }

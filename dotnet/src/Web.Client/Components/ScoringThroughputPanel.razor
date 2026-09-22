@@ -7,9 +7,19 @@
 
 <section class="throughput-panel" aria-labelledby="@($"{panelId}-heading")">
     <header class="throughput-header">
-        <div>
-            <h4 id="@($"{panelId}-heading")">Applications scored / hour</h4>
-            <p class="throughput-help">Rolling last 60 minutes</p>
+        <div class="throughput-title">
+            <button type="button"
+                    class="throughput-toggle disclosure-toggle disclosure-toggle-icon-only"
+                    aria-label="@(expanded ? "Collapse dashboard performance" : "Expand dashboard performance")"
+                    aria-expanded="@(expanded ? "true" : "false")"
+                    aria-controls="@($"{panelId}-content")"
+                    @onclick="ToggleExpanded">
+                <span class="disclosure-chevron" aria-hidden="true"></span>
+            </button>
+            <div>
+                <h4 id="@($"{panelId}-heading")">Applications scored / hour</h4>
+                <p class="throughput-help">Rolling last 60 minutes</p>
+            </div>
         </div>
         @if (snapshot is not null)
         {
@@ -19,6 +29,9 @@
         }
     </header>
 
+    @if (expanded)
+    {
+    <div id="@($"{panelId}-content")">
     <div class="throughput-status" aria-live="polite" aria-atomic="true">
         @if (snapshot is not null)
         {
@@ -56,9 +69,9 @@
             <title id="@($"{panelId}-chart-title")">Applications scored in the rolling last 24 hours</title>
             <desc id="@($"{panelId}-chart-description")">
                 24 consecutive one-hour windows, oldest on the left, ending at @LocalTime(snapshot.AsOfUtc).
-                Each bar counts unique production applications by their first persisted aggregate score.
-                The highlighted rightmost bar is the rolling last 60 minutes: @snapshot.ScoredLastHour applications.
-                Zero-height bars represent actual zero counts. Times are local. Exact values are available in the data table below.
+                Each point counts unique production applications by their first persisted aggregate score.
+                The highlighted rightmost point is the rolling last 60 minutes: @snapshot.ScoredLastHour applications.
+                Points on the baseline represent actual zero counts. Times are local. Exact values are available in the data table below.
             </desc>
             <text class="axis-title" x="60" y="18">Applications</text>
             @for (long tick = 0; tick <= axisMaximum; tick += tickStep)
@@ -71,18 +84,19 @@
             }
             <line class="axis-line" x1="60" y1="36" x2="60" y2="216" />
             <line class="axis-line" x1="60" y1="216" x2="780" y2="216" />
+            <polyline class="throughput-line" points="@LinePoints(snapshot.Hours)" />
             @for (var index = 0; index < snapshot.Hours.Count; index++)
             {
                 var bucket = snapshot.Hours[index];
                 var current = index == 23;
-                var height = 180.0 * bucket.Count / axisMaximum;
+                var y = SvgNumber(216 - 180.0 * bucket.Count / axisMaximum);
                 var label = BucketLabel(bucket, current);
                 <g class="throughput-bucket" tabindex="0" role="img" aria-label="@label">
                     <title>@label</title>
                     <rect class="bucket-hit-area" x="@(60 + index * 30)" y="36" width="30" height="180" />
-                    <rect class="throughput-bar @(current ? "current-bar" : "")"
-                          x="@(65 + index * 30)" y="@SvgNumber(216 - height)" width="20" height="@SvgNumber(height)"
-                          data-count="@bucket.Count" data-current="@(current ? "true" : "false")" />
+                    <circle class="throughput-point @(current ? "current-point" : "")"
+                            cx="@(75 + index * 30)" cy="@y" r="@(current ? "6" : "4")"
+                            data-count="@bucket.Count" data-current="@(current ? "true" : "false")" />
                 </g>
                 @if (index % 6 == 0 || current)
                 {
@@ -93,7 +107,7 @@
             }
             <text class="axis-title" x="420" y="272" text-anchor="middle">Hour starting (local time)</text>
         </svg>
-        <p class="throughput-legend"><span aria-hidden="true"></span>Highlighted rightmost bar: rolling last 60 minutes.</p>
+        <p class="throughput-legend"><span aria-hidden="true"></span>Highlighted rightmost point: rolling last 60 minutes.</p>
 
         <details class="throughput-table">
             <summary>View hourly data table</summary>
@@ -128,6 +142,8 @@
         scoring runs, retries, reaggregation and test applications do not add to this count.
         Refreshes independently every 10 seconds.
     </p>
+    </div>
+    }
 </section>
 
 @code {
@@ -138,6 +154,7 @@
     private string? loadError;
     private Task? refreshTask;
     private bool disposed;
+    private bool expanded = true;
     private long tickStep = 1;
     private long axisMaximum = 1;
 
@@ -201,6 +218,12 @@
                 : ex.Message;
         }
     }
+
+    private void ToggleExpanded() => expanded = !expanded;
+
+    private string LinePoints(IReadOnlyList<ScoringThroughputBucketDto> hours)
+        => string.Join(" ", hours.Select((bucket, index) =>
+            $"{75 + index * 30},{SvgNumber(216 - 180.0 * bucket.Count / axisMaximum)}"));
 
     private static string SvgNumber(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
     private static string LocalTime(DateTimeOffset value) => value.ToLocalTime().ToString("MMM d, yyyy HH:mm:ss zzz");

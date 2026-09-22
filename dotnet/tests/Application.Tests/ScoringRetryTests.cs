@@ -107,10 +107,54 @@ public class ScoringRetryTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task Handle_ResolvesLegacyPlaceholderToTheLiveDefaultProfile()
+    {
+        var catalog = new Mock<IReasoningModelCatalog>();
+        catalog.Setup(item => item.ResolveForExecutionAsync(
+                "passthrough-llm",
+                "medium",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScoringProfile("gpt-5.6-luna", "high"));
+        var fixture = CreateFixture(
+            new ScoringPrompt
+            {
+                Id = "prompt-1",
+                JobId = "job-1",
+                PromptText = "Score {{JOB_SPEC_TEXT}}",
+                ModelId = "passthrough-llm",
+                ReasoningLevel = "medium",
+            },
+            catalog.Object);
+        fixture.Llm.Setup(item => item.ScoreWithDocumentAsync(
+                It.IsAny<string>(),
+                It.IsAny<byte[]>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                new ScoringProfile("gpt-5.6-luna", "high"),
+                1,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["""{"overallScore":82,"recommendation":"Eligible"}"""]);
+
+        var result = await fixture.Handler.Handle(
+            CreateCommand() with { PersistResults = false },
+            CancellationToken.None);
+
+        result.Runs.Should().ContainSingle();
+        result.Runs[0].AiModelId.Should().Be("gpt-5.6-luna");
+        result.Runs[0].ReasoningLevel.Should().Be("high");
+        catalog.Verify(item => item.ResolveForExecutionAsync(
+            "passthrough-llm",
+            "medium",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static ScoreApplicationCommand CreateCommand()
         => new("app-1", "job-1", 1, "prompt-1", "Job description");
 
-    private static RetryFixture CreateFixture()
+    private static RetryFixture CreateFixture(
+        ScoringPrompt? scoringPrompt = null,
+        IReasoningModelCatalog? reasoningModels = null)
     {
         var llm = new Mock<ILlmProxyService>();
         var applications = new Mock<IApplicationRepository>();
@@ -118,7 +162,7 @@ public class ScoringRetryTests
         var blobs = new Mock<IBlobStore>();
 
         prompts.Setup(x => x.GetByIdAsync("prompt-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ScoringPrompt
+            .ReturnsAsync(scoringPrompt ?? new ScoringPrompt
             {
                 Id = "prompt-1",
                 JobId = "job-1",
@@ -149,7 +193,8 @@ public class ScoringRetryTests
             applications.Object,
             prompts.Object,
             blobs.Object,
-            (_, _) => Task.CompletedTask);
+            (_, _) => Task.CompletedTask,
+            reasoningModels: reasoningModels);
 
         return new RetryFixture(handler, llm, applications);
     }

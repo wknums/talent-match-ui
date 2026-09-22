@@ -108,7 +108,7 @@ export function ApplicationsTable({ applications, onApplicationClick, onStartMan
               <TableCell>
                 {app.finalScore !== undefined ? (
                   <span className={cn('font-mono font-semibold text-lg', getScoreColor(app.finalScore))}>
-                    {app.finalScore.toFixed(1)}
+                    {app.finalScore.toFixed(3)}
                   </span>
                 ) : (
                   <span className="text-muted-foreground">—</span>
@@ -117,7 +117,7 @@ export function ApplicationsTable({ applications, onApplicationClick, onStartMan
               <TableCell>
                 {app.variance !== undefined ? (
                   <span className={cn('font-mono text-sm', app.variance > 15 && 'text-destructive font-semibold')}>
-                    ±{app.variance.toFixed(1)}
+                    ±{app.variance.toFixed(3)}
                   </span>
                 ) : (
                   <span className="text-muted-foreground">—</span>

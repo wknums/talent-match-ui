@@ -7,7 +7,11 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.ExtractionInstructions.Commands;
 
-public sealed record CreateExtractionInstructionCommand(string InstructionText, string? ChangeNote)
+public sealed record CreateExtractionInstructionCommand(
+    string InstructionText,
+    string? ChangeNote,
+    string ModelId = "o3",
+    string ReasoningLevel = "high")
     : IRequest<ExtractionInstructionVersionModel>;
 
 public sealed class CreateExtractionInstructionCommandHandler : IRequestHandler<CreateExtractionInstructionCommand, ExtractionInstructionVersionModel>
@@ -15,15 +19,18 @@ public sealed class CreateExtractionInstructionCommandHandler : IRequestHandler<
     private readonly IExtractionInstructionRepository _repository;
     private readonly ICurrentUserService _currentUser;
     private readonly IProcessingEventRepository _events;
+    private readonly IReasoningModelCatalog? _reasoningModels;
 
     public CreateExtractionInstructionCommandHandler(
         IExtractionInstructionRepository repository,
         ICurrentUserService currentUser,
-        IProcessingEventRepository events)
+        IProcessingEventRepository events,
+        IReasoningModelCatalog? reasoningModels = null)
     {
         _repository = repository;
         _currentUser = currentUser;
         _events = events;
+        _reasoningModels = reasoningModels;
     }
 
     public async Task<ExtractionInstructionVersionModel> Handle(CreateExtractionInstructionCommand request, CancellationToken cancellationToken)
@@ -31,11 +38,19 @@ public sealed class CreateExtractionInstructionCommandHandler : IRequestHandler<
         EnsureAdmin();
         if (string.IsNullOrWhiteSpace(request.InstructionText))
             throw new InvalidOperationException("Instruction text is required.");
+        var profile = _reasoningModels is null
+            ? new ScoringProfile(request.ModelId.Trim(), request.ReasoningLevel.Trim())
+            : await _reasoningModels.ValidateAsync(
+                request.ModelId,
+                request.ReasoningLevel,
+                cancellationToken);
 
         var version = new ExtractionInstructionVersion
         {
             VersionNumber = await _repository.GetNextVersionNumberAsync(cancellationToken),
             InstructionText = request.InstructionText.Trim(),
+            ModelId = profile.ModelId,
+            ReasoningLevel = profile.ReasoningLevel,
             ProtectedContractVersion = JobExtraction.Services.JobSpecExtractionContractValidator.ProtectedContractVersion,
             Status = "draft",
             ChangeNote = string.IsNullOrWhiteSpace(request.ChangeNote) ? null : request.ChangeNote.Trim(),
@@ -59,7 +74,9 @@ public sealed class CreateExtractionInstructionCommandHandler : IRequestHandler<
                 versionNumber = version.VersionNumber,
                 status = version.Status,
                 validationStatus = version.ValidationStatus,
-                hasChangeNote = version.ChangeNote is not null
+                hasChangeNote = version.ChangeNote is not null,
+                version.ModelId,
+                version.ReasoningLevel
             })
         }, cancellationToken);
 

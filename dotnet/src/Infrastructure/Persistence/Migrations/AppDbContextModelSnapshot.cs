@@ -358,9 +358,19 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ProtectedContractVersion")
                         .IsRequired()
                         .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
@@ -870,6 +880,63 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.ToTable("ProcessingEvents");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.PromptGenerationInstruction", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActivatedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChangeNote")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstructionText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId", "Status");
+
+                    b.HasIndex("JobId", "VersionNumber")
+                        .IsUnique();
+
+                    b.ToTable("PromptGenerationInstructions");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.PromptTestRun", b =>
                 {
                     b.Property<string>("Id")
@@ -877,6 +944,14 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("ApplicationIdsJson")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedModelId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedReasoningLevel")
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("CompletedAt")
@@ -889,8 +964,18 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PromptId")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ReviewNotes")
@@ -1179,6 +1264,17 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ApprovedModelId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedReasoningLevel")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedTestRunId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Author")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -1188,6 +1284,9 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GenerationInstructionVersionId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("GenerationMetadataJson")
@@ -1200,12 +1299,22 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("LastModifiedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PromptText")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("Rating")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Source")
                         .IsRequired()
@@ -1279,6 +1388,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("RawResponseText")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("RunIndex")

@@ -18,6 +18,7 @@ import type {
   ExtractionResult,
   JobSpecExtractionRecord,
 } from '../../src/types/index.js'
+import { addScoringProfile } from './scoring-profile.js'
 
 export interface JobSpecExtractionExecutionContext {
   fileName: string
@@ -50,6 +51,10 @@ export const jobSpecExtractionService = {
     const formData = new FormData()
     formData.append('promptFile', new Blob([composeExtractionPrompt(instruction.instructionText)], { type: 'text/plain' }), 'job-spec-extraction-prompt.md')
     formData.append('specFile', new Blob([documentBuffer], { type: context.mimeType || 'application/octet-stream' }), context.fileName)
+    addScoringProfile(formData, {
+      modelId: instruction.modelId,
+      reasoningLevel: instruction.reasoningLevel,
+    })
 
     const awrHeaders = await getAwrAuthHeaders(context.actor ? { username: context.actor.username, role: context.actor.role } : undefined)
     const timeout = createAwrTimeoutSignal()

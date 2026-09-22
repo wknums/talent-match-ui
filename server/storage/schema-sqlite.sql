@@ -91,6 +91,8 @@ CREATE TABLE IF NOT EXISTS ExtractionInstructionVersions (
     Id                      TEXT    NOT NULL PRIMARY KEY,
     VersionNumber           INTEGER NOT NULL,
     InstructionText         TEXT    NOT NULL,
+    ModelId                 TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel          TEXT    NOT NULL DEFAULT '',
     ProtectedContractVersion TEXT   NOT NULL,
     Status                  TEXT    NOT NULL DEFAULT 'draft',
     ChangeNote              TEXT    NULL,
@@ -199,6 +201,7 @@ CREATE TABLE IF NOT EXISTS ScoringRuns (
     VersionId               TEXT    NOT NULL DEFAULT '',
     RunIndex                INTEGER NOT NULL,
     ModelDeploymentId       TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel          TEXT    NOT NULL DEFAULT '',
     PromptVersionId         TEXT    NOT NULL DEFAULT '',
     OverallScore            REAL    NOT NULL,
     SubScoresJson           TEXT    NOT NULL DEFAULT '{}',
@@ -263,7 +266,13 @@ CREATE TABLE IF NOT EXISTS ScoringPrompts (
     Rating                  INTEGER NULL,
     Comments                TEXT    NULL,
     Source                  TEXT    NOT NULL DEFAULT 'manual',
-    GenerationMetadataJson  TEXT    NULL
+    GenerationMetadataJson  TEXT    NULL,
+    GenerationInstructionVersionId TEXT NULL,
+    ModelId                 TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel          TEXT    NOT NULL DEFAULT '',
+    ApprovedModelId         TEXT    NULL,
+    ApprovedReasoningLevel  TEXT    NULL,
+    ApprovedTestRunId       TEXT    NULL
 );
 CREATE INDEX IF NOT EXISTS IX_ScoringPrompts_JobId_Status ON ScoringPrompts (JobId, Status);
 
@@ -277,9 +286,32 @@ CREATE TABLE IF NOT EXISTS PromptTestRuns (
     CreatedAt           TEXT    NOT NULL DEFAULT (datetime('now')),
     CompletedAt         TEXT    NULL,
     ReviewedBy          TEXT    NULL,
-    ReviewNotes         TEXT    NULL
+    ReviewNotes         TEXT    NULL,
+    ModelId             TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel      TEXT    NOT NULL DEFAULT '',
+    ApprovedModelId     TEXT    NULL,
+    ApprovedReasoningLevel TEXT NULL
 );
 CREATE INDEX IF NOT EXISTS IX_PromptTestRuns_PromptId ON PromptTestRuns (PromptId);
+
+CREATE TABLE IF NOT EXISTS PromptGenerationInstructions (
+    Id              TEXT    NOT NULL PRIMARY KEY,
+    JobId           TEXT    NULL,
+    VersionNumber   INTEGER NOT NULL,
+    InstructionText TEXT    NOT NULL,
+    ModelId         TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel  TEXT    NOT NULL DEFAULT '',
+    Status          TEXT    NOT NULL DEFAULT 'draft',
+    ChangeNote      TEXT    NULL,
+    CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
+    CreatedBy       TEXT    NOT NULL,
+    ActivatedAt     TEXT    NULL,
+    ActivatedBy     TEXT    NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_PromptGenerationInstructions_Scope_Version
+    ON PromptGenerationInstructions (JobId, VersionNumber);
+CREATE INDEX IF NOT EXISTS IX_PromptGenerationInstructions_Scope_Status
+    ON PromptGenerationInstructions (JobId, Status);
 
 -- 14. FAILURE QUEUE (DLQ)
 CREATE TABLE IF NOT EXISTS FailureQueueItems (

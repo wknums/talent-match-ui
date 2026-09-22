@@ -139,6 +139,144 @@ public sealed class JobUsabilityComponentsTests : BunitContext
     }
 
     [Fact]
+    public void JobDetail_TestsTheActivePromptInsteadOfTheOlderProductionPrompt()
+    {
+        var activePrompt = new ScoringPromptDto(
+            "prompt-luna",
+            "job-1",
+            7,
+            "Luna prompt",
+            "active",
+            DateTime.UtcNow,
+            DateTime.UtcNow,
+            "admin",
+            null,
+            null,
+            "manual",
+            null,
+            null,
+            "gpt-5.6-luna",
+            "high");
+        var productionPrompt = new ScoringPromptDto(
+            "prompt-o3",
+            "job-1",
+            6,
+            "O3 prompt",
+            "production-approved",
+            DateTime.UtcNow,
+            DateTime.UtcNow,
+            "admin",
+            null,
+            null,
+            "manual",
+            null,
+            null,
+            "o3",
+            "high",
+            "test-o3",
+            "o3",
+            "high");
+        var config = new JobConfigDto(
+            """[{"name":"Technical","weight":1,"description":"Technical"}]""",
+            "[]",
+            "[]",
+            1,
+            "median",
+            60,
+            80,
+            15,
+            "approved");
+        using var httpClient = new HttpClient(new RoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            return path switch
+            {
+                "/api/auth/me" => JsonResponse(new UserInfo(
+                    "user-1",
+                    "admin",
+                    "admin",
+                    "Engineering",
+                    "Admin",
+                    "admin@example.com")),
+                "/api/jobs/job-1" => JsonResponse(new JobDto(
+                    "job-1",
+                    "JOB-1",
+                    "Test Job",
+                    "Engineering",
+                    "TalentMatch",
+                    DateTime.UtcNow,
+                    "active",
+                    "config-1",
+                    "Description",
+                    "user-1",
+                    DateTime.UtcNow)),
+                "/api/jobs/job-1/applications" => JsonResponse(Array.Empty<ApplicationDto>()),
+                "/api/jobs/job-1/config" => JsonResponse(config),
+                "/api/jobs/job-1/prompts" => JsonResponse(new[] { activePrompt, productionPrompt }),
+                "/api/jobs/job-1/prompts/prompt-o3/profile" => JsonResponse(
+                    new PromptProfileStatusDto(
+                        "prompt-o3",
+                        "o3",
+                        "high",
+                        "o3",
+                        "high",
+                        true,
+                        true,
+                        "test-o3",
+                        null)),
+                "/api/jobs/job-1/prompts/prompt-luna/profile" => JsonResponse(
+                    new PromptProfileStatusDto(
+                        "prompt-luna",
+                        "gpt-5.6-luna",
+                        "high",
+                        "gpt-5.6-luna",
+                        "high",
+                        false,
+                        false,
+                        null,
+                        "Testing required")),
+                "/api/jobs/job-1/prompts/prompt-luna/test-runs" =>
+                    JsonResponse(Array.Empty<PromptTestRunDto>()),
+                "/api/jobs/job-1/prompts/prompt-o3/test-runs" =>
+                    JsonResponse(Array.Empty<PromptTestRunDto>()),
+                "/api/jobs/job-1/prompt-generation-instructions" =>
+                    JsonResponse(Array.Empty<PromptGenerationInstructionDto>()),
+                "/api/reasoning-models" => JsonResponse(new ReasoningModelsResponseDto(
+                    "o3",
+                    "high",
+                    ["low", "medium", "high"],
+                    [
+                        new ReasoningModelOptionDto("reason01", "o3", true),
+                        new ReasoningModelOptionDto("reason02", "gpt-5.6-luna", false)
+                    ])),
+                _ => new HttpResponseMessage(HttpStatusCode.NotFound),
+            };
+        }))
+        {
+            BaseAddress = new Uri("http://localhost/")
+        };
+        Services.AddSingleton(new ApiClient(httpClient));
+
+        using var cut = Render<JobDetail>(parameters => parameters
+            .Add(component => component.JobId, "job-1"));
+        cut.WaitForAssertion(() => cut.FindAll(".action-row button")
+            .Should().Contain(button => button.TextContent.Trim() == "Manage Prompts"));
+        cut.FindAll(".action-row button")
+            .Single(button => button.TextContent.Trim() == "Manage Prompts")
+            .Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            var runner = cut.FindComponent<PromptTestRunner>();
+            runner.Instance.ActivePrompt.Should().NotBeNull();
+            runner.Instance.ActivePrompt!.Id.Should().Be("prompt-luna");
+            runner.Instance.Prompts.Should().HaveCount(2);
+            runner.Markup.Should().Contain("New tests will use prompt: v7 (active)");
+            runner.Markup.Should().Contain("gpt-5.6-luna / high");
+        });
+    }
+
+    [Fact]
     public async Task JobDetail_PrioritizesPipelineAndAutomaticallyProcessesUploadedApplications()
     {
         var processRequests = 0;
@@ -206,6 +344,7 @@ public sealed class JobUsabilityComponentsTests : BunitContext
             .Add(component => component.JobId, "job-1"));
 
         cut.WaitForAssertion(() => cut.Find(".pipeline-section"));
+        cut.Find("details.pipeline-results").HasAttribute("open").Should().BeTrue();
         cut.FindAll(".action-row button").Single(button => button.TextContent.Trim() == "Help").Click();
 
         cut.WaitForAssertion(() =>

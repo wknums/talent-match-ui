@@ -181,6 +181,8 @@ usable when the other mode is active.
   "jobId": "job-123",
   "promptVersionId": "pv-456",
   "runCount": 3,
+  "model": "approved-model-version", // pinned to the approved prompt profile
+  "reasoning": "high",               // pinned to the approved prompt profile
   "prompt": {
     "kind": "inline",                 // "inline" | "ref" (future)
     "text": "<resolved prompt md>"    // present when kind=inline
@@ -214,6 +216,14 @@ usable when the other mode is active.
 **Idempotency:** if the same `Idempotency-Key` is received within the dedup
 window (≥ 7 days), the platform MUST return the original `submissionId` with
 `200 OK` (not create a new submission).
+
+**Scoring profile (governance extension):** updated clients send `model` and
+`reasoning` from the approved prompt version. The platform must honor those
+values for every run rather than silently substituting its defaults, or reject
+an unsupported profile. Include these values in the idempotency comparison.
+Backend support for these fields must be verified before enabling governed
+platform scoring; a successful client unit test does not verify the remote
+platform implementation.
 
 **Errors:**
 

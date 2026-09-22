@@ -6,6 +6,7 @@ using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Prompts.Services;
 
 namespace TalentMatch.Application.Jobs.Commands;
 
@@ -32,6 +33,8 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
     private readonly ICurrentUserService? _currentUser;
     private readonly IOrganizationRepository? _organizationRepository;
     private readonly IScoringQueueSignal? _queueSignal;
+    private readonly IScoringPromptRepository? _promptRepository;
+    private readonly IPromptProfileGuard? _profileGuard;
 
     public static string ResolveScoringMode()
     {
@@ -61,7 +64,9 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         ILogger<ProcessJobCommandHandler> logger,
         ICurrentUserService? currentUser = null,
         IOrganizationRepository? organizationRepository = null,
-        IScoringQueueSignal? queueSignal = null)
+        IScoringQueueSignal? queueSignal = null,
+        IScoringPromptRepository? promptRepository = null,
+        IPromptProfileGuard? profileGuard = null)
     {
         _jobRepo = jobRepo;
         _applicationRepo = applicationRepo;
@@ -71,6 +76,8 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
         _currentUser = currentUser;
         _organizationRepository = organizationRepository;
         _queueSignal = queueSignal;
+        _promptRepository = promptRepository;
+        _profileGuard = profileGuard;
     }
 
     public async Task<ProcessJobResult> Handle(ProcessJobCommand request, CancellationToken ct)
@@ -80,6 +87,14 @@ public class ProcessJobCommandHandler : IRequestHandler<ProcessJobCommand, Proce
 
         await JobAuthorization.EnsureCanMutateAsync(
             job, _currentUser, _organizationRepository, ct);
+        if (_promptRepository is not null && _profileGuard is not null)
+        {
+            var prompt = await _promptRepository.GetByIdAsync(request.ProductionPromptId, ct)
+                ?? throw new InvalidOperationException("Production prompt not found.");
+            if (prompt.JobId != request.JobId || prompt.Status != "production-approved")
+                throw new InvalidOperationException("The selected prompt is not production-approved for this job.");
+            await _profileGuard.EnsureProductionReadyAsync(prompt, ct);
+        }
 
         var config = job.ConfigVersions.FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
             ?? job.ConfigVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();

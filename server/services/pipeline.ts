@@ -6,6 +6,7 @@ import type { ScoringResult } from '../workers/scoring.js'
 import { buildScoringRunFromParsedResponse, interpretAggregatedResult, extractCandidateName } from '../workers/scoring.js'
 import { findBestRubricMatch } from '../workers/aggregation.js'
 import { getProductionApprovedPromptId } from './prompt-helpers.js'
+import { roundScore3 } from './scoring-profile.js'
 import type { DLQItem, AggregatedResult } from '../../src/types/index.js'
 
 const MAX_RETRIES = 3
@@ -240,8 +241,8 @@ export async function finalizeApplicationFromScoringResult(
   const hasGateVotes = gatePassVotes + gateFailVotes > 0
 
   if (scoringResult.aggregated) {
-    finalScore = scoringResult.aggregated.finalScore
-    variance = scoringResult.aggregated.variance
+    finalScore = roundScore3(scoringResult.aggregated.finalScore)
+    variance = roundScore3(scoringResult.aggregated.variance)
     confidence = scoringResult.aggregated.confidence
     finalSubScores = remapSubScoresToRubric(scoringResult.aggregated.subScoreAverages, config?.rubric)
     if (gateFailedByAggregation) finalDecision = 'Excluded'
@@ -255,8 +256,8 @@ export async function finalizeApplicationFromScoringResult(
     const scores = scoringResult.runs.map(r => r.overallScore)
     const sorted = [...scores].sort((a, b) => a - b)
     const mid = Math.floor(sorted.length / 2)
-    finalScore = sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
-    variance = Math.sqrt(scores.reduce((sum, s) => Math.pow(s - finalScore, 2) + sum, 0) / scores.length)
+    finalScore = roundScore3(sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2)
+    variance = roundScore3(Math.sqrt(scores.reduce((sum, s) => Math.pow(s - finalScore, 2) + sum, 0) / scores.length))
     confidence = 1 - (variance / 100)
     finalSubScores = {}
     if (config?.rubric) {
@@ -274,13 +275,14 @@ export async function finalizeApplicationFromScoringResult(
     else if (finalScore >= longlistThreshold) finalDecision = 'Eligible'
     else finalDecision = 'Excluded'
     rationaleText = gateFailedByAggregation
-      ? `Excluded: eligibility gate failed by aggregated votes (passed: ${gatePassVotes}, failed: ${gateFailVotes}). Score: ${finalScore.toFixed(1)} (${scoringResult.runs.length} runs).`
+      ? `Excluded: eligibility gate failed by aggregated votes (passed: ${gatePassVotes}, failed: ${gateFailVotes}). Score: ${finalScore.toFixed(3)} (${scoringResult.runs.length} runs).`
       : hasGateVotes
-        ? `Aggregated ${scoringResult.runs.length} scoring runs. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}. Eligibility votes: passed ${gatePassVotes}, failed ${gateFailVotes}.`
-        : `Aggregated ${scoringResult.runs.length} scoring runs. Final score: ${finalScore.toFixed(1)}, Variance: ${variance.toFixed(2)}.`
+        ? `Aggregated ${scoringResult.runs.length} scoring runs. Final score: ${finalScore.toFixed(3)}, Variance: ${variance.toFixed(3)}. Eligibility votes: passed ${gatePassVotes}, failed ${gateFailVotes}.`
+        : `Aggregated ${scoringResult.runs.length} scoring runs. Final score: ${finalScore.toFixed(3)}, Variance: ${variance.toFixed(3)}.`
     recommendationsText = scoringResult.runs[0]?.improvementRecommendations?.join('; ') || ''
   }
 
+  finalSubScores = Object.fromEntries(Object.entries(finalSubScores).map(([key, value]) => [key, roundScore3(value)]))
   const result: AggregatedResult = {
     resultId: randomUUID(), applicationId, versionId: config?.versionId || 'unknown',
     finalScore, finalSubScores, confidence, variance, finalDecision,

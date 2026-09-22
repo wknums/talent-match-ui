@@ -63,6 +63,60 @@ BEGIN
 END;
 GO
 
+IF OBJECT_ID('talentmatch.ScoringRuns', 'U') IS NOT NULL
+   AND COL_LENGTH('talentmatch.ScoringRuns', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ScoringRuns
+        ADD ReasoningLevel NVARCHAR(30) NOT NULL CONSTRAINT DF_ScoringRuns_ReasoningLevel DEFAULT '';
+GO
+
+IF OBJECT_ID('talentmatch.ScoringPrompts', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.ScoringPrompts', 'GenerationInstructionVersionId') IS NULL
+        ALTER TABLE [talentmatch].ScoringPrompts ADD GenerationInstructionVersionId NVARCHAR(36) NULL;
+    IF COL_LENGTH('talentmatch.ScoringPrompts', 'ModelId') IS NULL
+        ALTER TABLE [talentmatch].ScoringPrompts ADD ModelId NVARCHAR(100) NOT NULL CONSTRAINT DF_ScoringPrompts_ModelId DEFAULT '';
+    IF COL_LENGTH('talentmatch.ScoringPrompts', 'ReasoningLevel') IS NULL
+        ALTER TABLE [talentmatch].ScoringPrompts ADD ReasoningLevel NVARCHAR(30) NOT NULL CONSTRAINT DF_ScoringPrompts_ReasoningLevel DEFAULT '';
+    IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedModelId') IS NULL
+        ALTER TABLE [talentmatch].ScoringPrompts ADD ApprovedModelId NVARCHAR(100) NULL;
+    IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedReasoningLevel') IS NULL
+        ALTER TABLE [talentmatch].ScoringPrompts ADD ApprovedReasoningLevel NVARCHAR(30) NULL;
+    IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedTestRunId') IS NULL
+        ALTER TABLE [talentmatch].ScoringPrompts ADD ApprovedTestRunId NVARCHAR(36) NULL;
+END;
+GO
+
+IF OBJECT_ID('talentmatch.PromptTestRuns', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.PromptTestRuns', 'ModelId') IS NULL
+        ALTER TABLE [talentmatch].PromptTestRuns ADD ModelId NVARCHAR(100) NOT NULL CONSTRAINT DF_PromptTestRuns_ModelId DEFAULT '';
+    IF COL_LENGTH('talentmatch.PromptTestRuns', 'ReasoningLevel') IS NULL
+        ALTER TABLE [talentmatch].PromptTestRuns ADD ReasoningLevel NVARCHAR(30) NOT NULL CONSTRAINT DF_PromptTestRuns_ReasoningLevel DEFAULT '';
+    IF COL_LENGTH('talentmatch.PromptTestRuns', 'ApprovedModelId') IS NULL
+        ALTER TABLE [talentmatch].PromptTestRuns ADD ApprovedModelId NVARCHAR(100) NULL;
+    IF COL_LENGTH('talentmatch.PromptTestRuns', 'ApprovedReasoningLevel') IS NULL
+        ALTER TABLE [talentmatch].PromptTestRuns ADD ApprovedReasoningLevel NVARCHAR(30) NULL;
+END;
+GO
+
+IF OBJECT_ID('talentmatch.ExtractionInstructionVersions', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.ExtractionInstructionVersions', 'ModelId') IS NULL
+        ALTER TABLE [talentmatch].ExtractionInstructionVersions ADD ModelId NVARCHAR(100) NOT NULL CONSTRAINT DF_ExtractionInstructionVersions_ModelId DEFAULT '';
+    IF COL_LENGTH('talentmatch.ExtractionInstructionVersions', 'ReasoningLevel') IS NULL
+        ALTER TABLE [talentmatch].ExtractionInstructionVersions ADD ReasoningLevel NVARCHAR(30) NOT NULL CONSTRAINT DF_ExtractionInstructionVersions_ReasoningLevel DEFAULT '';
+END;
+GO
+
+IF OBJECT_ID('talentmatch.PromptGenerationInstructions', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.PromptGenerationInstructions', 'ModelId') IS NULL
+        ALTER TABLE [talentmatch].PromptGenerationInstructions ADD ModelId NVARCHAR(100) NOT NULL CONSTRAINT DF_PromptGenerationInstructions_ModelId DEFAULT '';
+    IF COL_LENGTH('talentmatch.PromptGenerationInstructions', 'ReasoningLevel') IS NULL
+        ALTER TABLE [talentmatch].PromptGenerationInstructions ADD ReasoningLevel NVARCHAR(30) NOT NULL CONSTRAINT DF_PromptGenerationInstructions_ReasoningLevel DEFAULT '';
+END;
+GO
+
 IF OBJECT_ID('talentmatch.OrganizationMemberships', 'U') IS NOT NULL
    AND COL_LENGTH('talentmatch.OrganizationMemberships', 'DefaultDepartmentMembershipId') IS NULL
     ALTER TABLE [talentmatch].OrganizationMemberships

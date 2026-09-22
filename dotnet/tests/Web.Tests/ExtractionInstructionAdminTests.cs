@@ -59,6 +59,22 @@ public sealed class ExtractionInstructionAdminTests : BunitContext
               "concurrencyVersion":1
             }
             """);
+        handler.SetupResponse("GET", "/api/admin/prompt-generation-instructions", HttpStatusCode.OK, """
+            [
+              {
+                "id":"scoring-instruction-v1",
+                "jobId":null,
+                "versionNumber":1,
+                "instructionText":"Generate an evidence-based candidate scoring prompt.",
+                "status":"active",
+                "changeNote":"Initial default",
+                "createdAt":"2026-09-17T00:00:00Z",
+                "createdBy":"seed",
+                "activatedAt":"2026-09-17T00:00:00Z",
+                "activatedBy":"seed"
+              }
+            ]
+            """);
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
         Services.AddSingleton(new ApiClient(httpClient));
 
@@ -72,6 +88,40 @@ public sealed class ExtractionInstructionAdminTests : BunitContext
             cut.Markup.Should().Contain("How to activate a draft prompt");
             cut.Markup.Should().Contain("The draft must show a validation status of");
             cut.Markup.Should().NotContain("Activation disabled:");
+            cut.Markup.Should().NotContain("System Scoring Prompt Generation");
+        });
+    }
+
+    [Fact]
+    public void ScoringPromptGenerationPage_RendersSystemInstructionVersions()
+    {
+        var handler = new MockHttpHandler();
+        handler.SetupResponse("GET", "/api/admin/prompt-generation-instructions", HttpStatusCode.OK, """
+            [
+              {
+                "id":"scoring-instruction-v1",
+                "jobId":null,
+                "versionNumber":1,
+                "instructionText":"Generate an evidence-based candidate scoring prompt.",
+                "status":"active",
+                "changeNote":"Initial default",
+                "createdAt":"2026-09-17T00:00:00Z",
+                "createdBy":"seed",
+                "activatedAt":"2026-09-17T00:00:00Z",
+                "activatedBy":"seed"
+              }
+            ]
+            """);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost/") };
+        Services.AddSingleton(new ApiClient(httpClient));
+
+        var cut = Render<ScoringPromptGeneration>();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.Should().Contain("System Scoring Prompt Generation");
+            cut.Markup.Should().Contain("Generate an evidence-based candidate scoring prompt.");
+            cut.Markup.Should().NotContain("Job Extraction Prompt");
         });
     }
 
@@ -196,7 +246,7 @@ public sealed class ExtractionInstructionAdminTests : BunitContext
     }
 
     [Fact]
-    public void NavMenu_ShowsJobExtractionPromptUnderSystemConfiguration()
+    public void NavMenu_ShowsCollapsedSystemConfigurationWithSeparatePromptLinks()
     {
         var handler = new MockHttpHandler();
         handler.SetupResponse("GET", "/api/auth/me", HttpStatusCode.OK, """
@@ -212,9 +262,13 @@ public sealed class ExtractionInstructionAdminTests : BunitContext
         {
             var configurationMenu = cut.Find("details.nav-group");
             configurationMenu.TextContent.Should().Contain("System Configuration");
-            var promptLink = configurationMenu.QuerySelector("a[href='extraction-instructions']");
-            promptLink.Should().NotBeNull();
-            promptLink!.TextContent.Should().Contain("Job Extraction Prompt");
+            configurationMenu.HasAttribute("open").Should().BeFalse();
+            var extractionLink = configurationMenu.QuerySelector("a[href='extraction-instructions']");
+            extractionLink.Should().NotBeNull();
+            extractionLink!.TextContent.Should().Contain("Job Extraction Prompt");
+            var scoringLink = configurationMenu.QuerySelector("a[href='scoring-prompt-generation']");
+            scoringLink.Should().NotBeNull();
+            scoringLink!.TextContent.Should().Contain("Scoring Prompt Generation");
         });
     }
 

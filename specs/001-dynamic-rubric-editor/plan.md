@@ -204,3 +204,15 @@ No constitution violations require exception tracking. Two new persisted entitie
 | IX. Clean Architecture | PASS | .NET interfaces and use cases point inward; EF and HTTP remain Infrastructure concerns. |
 
 Post-design gate result: PASS.
+
+## Follow-up Design: Scoring Prompt Governance and Precision (2026-09-17)
+
+The scoring prompt lifecycle is extended without replacing the existing extraction lifecycle:
+
+1. Add immutable `PromptGenerationInstruction` versions scoped either globally or to one job. Generation resolves the active job version first and falls back to the active global version.
+2. Treat every manual edit of final scoring prompt text as a new `ScoringPrompt` draft version.
+3. Snapshot the configured AWReason model identifier and reasoning level on prompt versions, prompt tests, approvals, and scoring runs.
+4. Reject testing, production approval, queue admission, and production scoring when the selected prompt was created for a different profile. A profile-only change therefore requires a new prompt version and new test evidence.
+5. Keep schema changes additive so the previously deployed Stack B application can continue operating during a rolling deployment, while only the new application version enforces profile compatibility.
+6. Preserve candidate scores to three decimal places through parsing, aggregation, API projection, display, and numeric sorting.
+7. Reuse the existing prompt-management and extraction-administration surfaces rather than introduce another administration framework.

@@ -5,6 +5,7 @@ using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Common.Services;
 
 namespace TalentMatch.Application.Jobs.Commands;
 
@@ -59,8 +60,10 @@ public class ReAggregateJobCommandHandler : IRequestHandler<ReAggregateJobComman
             if (!runs.Any()) continue;
 
             var scores = runs.Select(r => r.TotalScore).ToList();
-            var avgScore = scores.Average();
-            var variance = Math.Sqrt(scores.Sum(s => Math.Pow(s - avgScore, 2)) / scores.Count);
+            var unroundedAverage = scores.Average();
+            var avgScore = ScorePrecision.Round(unroundedAverage);
+            var variance = ScorePrecision.Round(
+                Math.Sqrt(scores.Sum(s => Math.Pow(s - unroundedAverage, 2)) / scores.Count));
 
             // Compute per-category averages across all runs
             var categoryTotals = new Dictionary<string, List<double>>();
@@ -78,7 +81,8 @@ public class ReAggregateJobCommandHandler : IRequestHandler<ReAggregateJobComman
                 }
                 catch { /* ignore malformed JSON */ }
             }
-            var finalSubScores = categoryTotals.ToDictionary(kv => kv.Key, kv => kv.Value.Average());
+            var finalSubScores = categoryTotals.ToDictionary(
+                kv => kv.Key, kv => ScorePrecision.Round(kv.Value.Average()));
             var finalSubScoresJson = JsonSerializer.Serialize(finalSubScores);
 
             var gatePassVotes = 0;
@@ -126,7 +130,10 @@ public class ReAggregateJobCommandHandler : IRequestHandler<ReAggregateJobComman
                 newStatus = "Completed";
             }
 
-            var changed = app.FinalDecision != newDecision || app.Status != newStatus;
+            var changed = app.FinalDecision != newDecision
+                          || app.Status != newStatus
+                          || app.FinalScore != avgScore
+                          || app.Variance != variance;
             if (changed)
             {
                 _logger.LogInformation("Re-aggregating {AppId}: {OldDecision} → {NewDecision}",
@@ -146,10 +153,10 @@ public class ReAggregateJobCommandHandler : IRequestHandler<ReAggregateJobComman
                     Confidence = 1.0,
                     Decision = newDecision,
                     ConsolidatedRationale = gateFailedByAggregation
-                        ? $"Excluded: eligibility gate failed by aggregated votes (passed: {gatePassVotes}, failed: {gateFailVotes}). Score: {avgScore:F1} ({scores.Count} run(s), variance: {variance:F1})."
+                        ? $"Excluded: eligibility gate failed by aggregated votes (passed: {gatePassVotes}, failed: {gateFailVotes}). Score: {avgScore:F3} ({scores.Count} run(s), variance: {variance:F3})."
                         : hasGateVotes
-                            ? $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}. Eligibility votes: passed {gatePassVotes}, failed {gateFailVotes}."
-                            : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}",
+                            ? $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F3}, Variance: {variance:F3}. Eligibility votes: passed {gatePassVotes}, failed {gateFailVotes}."
+                            : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F3}, Variance: {variance:F3}",
                     FinalSubScoresJson = finalSubScoresJson,
                 }, ct);
 

@@ -104,24 +104,29 @@ public sealed class ScoringThroughputPanelTests : BunitContext
     }
 
     [Fact]
-    public void Panel_Renders24OrderedBarsLast60MinuteHeadlineAndAccessibleDetails()
+    public void Panel_RendersDefaultOpenCollapsibleLineGraphWithAccessibleHourlyDetails()
     {
         var expected = Snapshot(Enumerable.Range(1, 24).ToArray());
         Register((_, _) => Task.FromResult(Response(expected)));
 
         var cut = Render<ScoringThroughputPanel>();
 
-        cut.WaitForAssertion(() => cut.FindAll("rect.throughput-bar").Count.Should().Be(24));
+        cut.WaitForAssertion(() => cut.FindAll("circle.throughput-point").Count.Should().Be(24));
+        var toggle = cut.Find("button.throughput-toggle");
+        toggle.GetAttribute("aria-expanded").Should().Be("true");
+        toggle.GetAttribute("aria-label").Should().Be("Collapse dashboard performance");
+        toggle.QuerySelector(".disclosure-chevron").Should().NotBeNull();
         cut.Find(".throughput-metric").TextContent.Should().Be("24");
         cut.Find("h4").TextContent.Should().Be("Applications scored / hour");
         cut.Markup.Should().Contain("Rolling last 60 minutes");
         cut.Find(".throughput-total").TextContent.Should().Contain("300");
-        var bars = cut.FindAll("rect.throughput-bar");
-        bars.Select(bar => int.Parse(bar.GetAttribute("data-count")!))
+        cut.FindAll("polyline.throughput-line").Should().ContainSingle();
+        var points = cut.FindAll("circle.throughput-point");
+        points.Select(point => int.Parse(point.GetAttribute("data-count")!))
             .Should().Equal(Enumerable.Range(1, 24));
-        cut.FindAll(".current-bar").Should().ContainSingle().Which.Should().BeSameAs(bars[^1]);
-        bars[^1].GetAttribute("data-current").Should().Be("true");
-        bars[^1].GetAttribute("height").Should().Be("144");
+        cut.FindAll(".current-point").Should().ContainSingle().Which.Should().BeSameAs(points[^1]);
+        points[^1].GetAttribute("data-current").Should().Be("true");
+        points[^1].GetAttribute("cy").Should().Be("72");
         cut.FindAll(".throughput-bucket title").Should().HaveCount(24);
         cut.Find("svg title").TextContent.Should().Contain("rolling last 24 hours");
         cut.Find("svg desc").TextContent.Should().Contain("first persisted aggregate score");
@@ -134,20 +139,25 @@ public sealed class ScoringThroughputPanelTests : BunitContext
         cut.FindAll(".x-tick text")[^1].TextContent.Should().Be(AsOf.AddHours(-1).ToLocalTime().ToString("HH:mm"));
         cut.Find(".throughput-scope").TextContent.Should().Contain("regardless of the job-list filters")
             .And.Contain("scoring runs, retries, reaggregation and test applications");
+
+        toggle.Click();
+        cut.Find("button.throughput-toggle").GetAttribute("aria-expanded").Should().Be("false");
+        cut.Find("button.throughput-toggle").GetAttribute("aria-label").Should().Be("Expand dashboard performance");
+        cut.FindAll("svg.throughput-chart").Should().BeEmpty();
     }
 
     [Fact]
-    public void Panel_ZeroHistoryIsRealDataWith24ZeroHeightBarsAndIntegerAxis()
+    public void Panel_ZeroHistoryIsRealDataWith24BaselinePointsAndIntegerAxis()
     {
         Register((_, _) => Task.FromResult(Response(Snapshot())));
 
         var cut = Render<ScoringThroughputPanel>();
 
-        cut.WaitForAssertion(() => cut.FindAll("rect.throughput-bar").Count.Should().Be(24));
+        cut.WaitForAssertion(() => cut.FindAll("circle.throughput-point").Count.Should().Be(24));
         cut.Find(".throughput-metric").TextContent.Should().Be("0");
         cut.Find(".throughput-empty").TextContent.Should().Contain("No applications were scored");
-        cut.FindAll("rect.throughput-bar").Should().OnlyContain(bar =>
-            bar.GetAttribute("data-count") == "0" && bar.GetAttribute("height") == "0");
+        cut.FindAll("circle.throughput-point").Should().OnlyContain(point =>
+            point.GetAttribute("data-count") == "0" && point.GetAttribute("cy") == "216");
         cut.FindAll(".y-tick text").Select(tick => tick.TextContent).Should().Equal("0", "1");
         cut.FindAll("[role=alert]").Should().BeEmpty();
     }
@@ -165,14 +175,14 @@ public sealed class ScoringThroughputPanelTests : BunitContext
 
             var cut = Render<ScoringThroughputPanel>();
 
-            cut.WaitForAssertion(() => cut.FindAll("rect.throughput-bar").Count.Should().Be(24));
+            cut.WaitForAssertion(() => cut.FindAll("circle.throughput-point").Count.Should().Be(24));
             var ticks = cut.FindAll(".y-tick text")
                 .Select(tick => long.Parse(tick.TextContent, NumberStyles.Number)).ToArray();
             ticks.Should().HaveCount(4).And.BeInAscendingOrder();
             ticks[^1].Should().BeGreaterThanOrEqualTo(int.MaxValue);
-            var bar = cut.Find(".current-bar");
-            bar.GetAttribute("height").Should().NotContain(",");
-            double.Parse(bar.GetAttribute("height")!, CultureInfo.InvariantCulture).Should().BeInRange(0, 180);
+            var point = cut.Find(".current-point");
+            point.GetAttribute("cy").Should().NotContain(",");
+            double.Parse(point.GetAttribute("cy")!, CultureInfo.InvariantCulture).Should().BeInRange(36, 216);
         }
         finally
         {
@@ -188,12 +198,12 @@ public sealed class ScoringThroughputPanelTests : BunitContext
         var cut = Render<ScoringThroughputPanel>();
 
         cut.Find(".throughput-loading").TextContent.Should().Contain("Loading");
-        cut.FindAll(".throughput-metric, .throughput-bar, .throughput-empty").Should().BeEmpty();
+        cut.FindAll(".throughput-metric, .throughput-point, .throughput-empty").Should().BeEmpty();
         await cut.InvokeAsync(() => completion.SetResult(Failure()));
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Scoring throughput unavailable"));
         cut.Find("[role=alert]").TextContent.Should().Contain("Statistics temporarily unavailable");
-        cut.FindAll(".throughput-metric, .throughput-bar, .throughput-empty, .throughput-updated").Should().BeEmpty();
+        cut.FindAll(".throughput-metric, .throughput-point, .throughput-empty, .throughput-updated").Should().BeEmpty();
     }
 
     [Fact]
@@ -215,8 +225,8 @@ public sealed class ScoringThroughputPanelTests : BunitContext
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Stale data"));
         cut.Find(".throughput-metric").TextContent.Should().Be("2");
-        cut.FindAll(".throughput-bar").Should().HaveCount(24)
-            .And.OnlyContain(bar => bar.GetAttribute("data-count") == "2");
+        cut.FindAll(".throughput-point").Should().HaveCount(24)
+            .And.OnlyContain(point => point.GetAttribute("data-count") == "2");
         cut.Find(".throughput-updated").TextContent.Should().Contain("Last successful update:");
         cut.Find(".throughput-updated time").GetAttribute("datetime").Should().Be(AsOf.ToString("O"));
 

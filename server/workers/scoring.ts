@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { applicationRepo, jobRepo, promptRepo } from '../storage/repos/index.js'
 import { getAwrAuthHeaders } from '../services/awr-auth.js'
+import { addScoringProfile, assertPromptProfileCurrent, roundScore3 } from '../services/scoring-profile.js'
 import { createAwrTimeoutSignal } from '../services/awr-timeout.js'
 import type { ScoringRun } from '../../src/types/index.js'
 
@@ -128,6 +129,7 @@ interface BuildScoringRunOptions {
   rawResponseText?: string
   rawParsedResponse: Record<string, unknown>
   modelDeploymentId?: string
+  reasoningLevel?: string
 }
 
 function normalizeKey(input: string): string {
@@ -682,12 +684,12 @@ function interpretRun(root: Record<string, unknown>): InterpretedRun {
   const subScores: Record<string, number> = {}
   for (const candidate of categoryCandidates) {
     if (candidate.name in subScores) continue
-    subScores[candidate.name] = candidate.score
+    subScores[candidate.name] = roundScore3(candidate.score)
   }
   if (Object.keys(subScores).length === 0) {
     for (const candidate of numericCandidates) {
       if (!looksLikeTotalScore(candidate.key) && !looksLikeEligibilityKey(candidate.path)) {
-        subScores[candidate.key] = candidate.value
+        subScores[candidate.key] = roundScore3(candidate.value)
       }
     }
   }
@@ -715,7 +717,9 @@ function interpretRun(root: Record<string, unknown>): InterpretedRun {
     .map(candidate => candidate.value)
 
   const mustHaveResult = inferEligibility(root, gateCandidates, recommendation, warnings)
-  const overallScore = inferOverallScore(numericCandidates, subScores, warnings, textCandidates)
+  const overallScore = roundScore3(
+    inferOverallScore(numericCandidates, subScores, warnings, textCandidates),
+  )
 
   if (Object.keys(subScores).length === 0) {
     warnings.push('No category-level scores were confidently extracted from the parsed JSON.')
@@ -751,16 +755,20 @@ export function interpretAggregatedResult(aggregated: Record<string, unknown>): 
   const subScoreAverages: Record<string, number> = {}
   for (const candidate of categoryCandidates) {
     if (!looksLikeTotalScore(candidate.name)) {
-      subScoreAverages[candidate.name] = candidate.score
+      subScoreAverages[candidate.name] = roundScore3(candidate.score)
     }
   }
 
-  const finalScore = inferOverallScore(numericCandidates, subScoreAverages, warnings, textCandidates)
-  const variance = numericCandidates.find(candidate => normalizeKey(candidate.key).includes('variance'))?.value ?? 0
+  const finalScore = roundScore3(
+    inferOverallScore(numericCandidates, subScoreAverages, warnings, textCandidates),
+  )
+  const variance = roundScore3(
+    numericCandidates.find(candidate => normalizeKey(candidate.key).includes('variance'))?.value ?? 0,
+  )
   const confidence = numericCandidates.find(candidate => normalizeKey(candidate.key) === 'confidence' || normalizeKey(candidate.path).includes('confidence'))?.value ?? 0
   const decision = textCandidates.find(candidate => looksLikeRecommendation(candidate.key) || normalizeKey(candidate.key).includes('decision'))?.value ?? 'Excluded'
   const rationale = textCandidates.find(candidate => looksLikeNotes(candidate.key) || looksLikeNotes(candidate.path))?.value
-    ?? `Aggregated result inferred from parsed response. Final score: ${finalScore.toFixed(1)}.`
+    ?? `Aggregated result inferred from parsed response. Final score: ${finalScore.toFixed(3)}.`
 
   return {
     finalScore,
@@ -781,6 +789,7 @@ export function buildScoringRunFromParsedResponse(options: BuildScoringRunOption
     versionId: options.versionId,
     runIndex: options.runIndex,
     modelDeploymentId: options.modelDeploymentId ?? 'passthrough-llm',
+    reasoningLevel: options.reasoningLevel,
     promptVersionId: options.promptVersionId,
     overallScore: interpreted.overallScore,
     subScores: interpreted.subScores,
@@ -809,6 +818,8 @@ function parseSingleRun(
   rawResponseText: string,
   rawParsedResponse?: Record<string, unknown>,
   rubric?: Array<{ name: string }>,
+  modelId: string = 'passthrough-llm',
+  reasoningLevel: string = 'medium',
 ): ScoringRun {
   return remapRunCategoryScoresToRubric(buildScoringRunFromParsedResponse({
     applicationId,
@@ -818,7 +829,8 @@ function parseSingleRun(
     durationMs,
     rawResponseText,
     rawParsedResponse: (rawParsedResponse ?? parsed) as Record<string, unknown>,
-    modelDeploymentId: 'passthrough-llm',
+    modelDeploymentId: modelId,
+    reasoningLevel,
   }), rubric)
 }
 export interface ScoringResult {
@@ -863,6 +875,7 @@ export async function runScoring(
   if (!prompt) {
     throw new Error(`No scoring prompt found for job ${jobId} (promptVersionId: ${promptVersionId || 'production-approved'})`)
   }
+  assertPromptProfileCurrent(prompt)
   // TypeScript can't narrow across the async closure below, so bind to a definitely-assigned const
   const resolvedPromptRecord = prompt
 
@@ -895,6 +908,10 @@ export async function runScoring(
     formData.append('promptFile', new Blob([resolvedPrompt], { type: 'text/plain' }), 'score-prompt.md')
     // CV/PDF goes in cvFiles[] (not specFile) per the engine's OpenAPI spec
     formData.append('cvFiles[]', new Blob([docBuffer], { type: primaryDoc.mimeType }), primaryDoc.fileName)
+    addScoringProfile(formData, {
+      modelId: resolvedPromptRecord.modelId ?? '',
+      reasoningLevel: resolvedPromptRecord.reasoningLevel ?? '',
+    })
     // Batch params for multi-run (matches assess-ux.py / api_client.py pattern)
     if (batchId) {
       formData.append('batchId', batchId)
@@ -930,7 +947,9 @@ export async function runScoring(
       const message = parseError instanceof Error ? parseError.message : 'Unknown JSON parsing error'
       const failedRun: ScoringRun = {
         runId: randomUUID(), applicationId, versionId: config.versionId, runIndex,
-        modelDeploymentId: 'passthrough-llm', promptVersionId: resolvedPromptRecord.promptId,
+        modelDeploymentId: resolvedPromptRecord.modelId ?? '',
+        reasoningLevel: resolvedPromptRecord.reasoningLevel,
+        promptVersionId: resolvedPromptRecord.promptId,
         overallScore: 0, subScores: {}, mustHaveResult: { passed: false, missingCriteria: [], details: {} },
         evidenceCitations: [], rationale: `LLM response was not valid JSON: ${message}`,
         improvementRecommendations: [], createdAt: new Date().toISOString(), durationMs,
@@ -963,7 +982,9 @@ export async function runScoring(
         for (const engineRun of combined.runs) {
           const run = parseSingleRun(
             engineRun, applicationId, config.versionId, engineRun.runIndex,
-            resolvedPromptRecord.promptId, durationMs, responseText, engineRun as unknown as Record<string, unknown>, config.rubric,
+            resolvedPromptRecord.promptId, durationMs, responseText,
+            engineRun as unknown as Record<string, unknown>, config.rubric,
+            resolvedPromptRecord.modelId ?? '', resolvedPromptRecord.reasoningLevel ?? '',
           )
           await applicationRepo.addScoringRun(run)
           runs.push(run)
@@ -979,7 +1000,7 @@ export async function runScoring(
         applicationId, config.versionId, runIndex, resolvedPromptRecord.promptId,
         durationMs, responseText,
         (isRecord(parsed) ? parsed : { value: parsed }) as Record<string, unknown>,
-        config.rubric,
+        config.rubric, resolvedPromptRecord.modelId ?? '', resolvedPromptRecord.reasoningLevel ?? '',
       )
       await applicationRepo.addScoringRun(singleRun)
       return { run: singleRun }
@@ -987,7 +1008,9 @@ export async function runScoring(
       const message = interpretationError instanceof Error ? interpretationError.message : 'Unknown interpretation error'
       const failedRun: ScoringRun = {
         runId: randomUUID(), applicationId, versionId: config.versionId, runIndex,
-        modelDeploymentId: 'passthrough-llm', promptVersionId: resolvedPromptRecord.promptId,
+        modelDeploymentId: resolvedPromptRecord.modelId ?? '',
+        reasoningLevel: resolvedPromptRecord.reasoningLevel,
+        promptVersionId: resolvedPromptRecord.promptId,
         overallScore: 0, subScores: {}, mustHaveResult: { passed: false, missingCriteria: [], details: {} },
         evidenceCitations: [], rationale: `LLM response was valid JSON, but semantic interpretation failed: ${message}`,
         improvementRecommendations: [], createdAt: new Date().toISOString(), durationMs,

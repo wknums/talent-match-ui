@@ -10,6 +10,53 @@ namespace TalentMatch.Application.Tests;
 public sealed class RetryDlqItemCommandTests
 {
     [Fact]
+    public async Task Handle_RetriesSequentialFailureAndWakesTheScoringPool()
+    {
+        var failures = new Mock<IFailureQueueRepository>();
+        failures.Setup(repo => repo.GetByIdAsync("failure-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FailureQueueItem
+            {
+                Id = "failure-1",
+                EntityType = "Application",
+                EntityId = "application-1",
+            });
+        var applications = new Mock<IApplicationRepository>();
+        applications.Setup(repo => repo.GetByIdAsync("application-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Domain.Entities.Application
+            {
+                Id = "application-1",
+                JobId = "job-1",
+                Status = "ScoringFailed",
+            });
+        var jobs = new Mock<IJobRepository>();
+        jobs.Setup(repo => repo.GetByIdAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Job { Id = "job-1" });
+        var queue = new Mock<ISequentialScoringQueueRepository>();
+        queue.Setup(item => item.RetryAsync("failure-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var signal = new Mock<IScoringQueueSignal>();
+        var handler = new RetryDlqItemCommandHandler(
+            failures.Object,
+            applications.Object,
+            jobs.Object,
+            queue.Object,
+            signal.Object);
+
+        var retried = await handler.Handle(
+            new RetryDlqItemCommand("failure-1"),
+            CancellationToken.None);
+
+        retried.Should().BeTrue();
+        queue.Verify(item => item.RetryAsync(
+            "failure-1",
+            It.IsAny<CancellationToken>()), Times.Once);
+        signal.Verify(item => item.Pulse(), Times.Once);
+        failures.Verify(item => item.RemoveAsync(
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Handle_DeniesRetryOutsideTheCurrentAuthorizationScope()
     {
         var failures = new Mock<IFailureQueueRepository>();

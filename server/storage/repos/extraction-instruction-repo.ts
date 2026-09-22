@@ -12,6 +12,8 @@ function mapVersion(row: any): ExtractionInstructionVersion {
     id: row.Id,
     versionNumber: Number(row.VersionNumber ?? 0),
     instructionText: row.InstructionText ?? '',
+    modelId: row.ModelId ?? '',
+    reasoningLevel: row.ReasoningLevel ?? 'high',
     protectedContractVersion: row.ProtectedContractVersion ?? '',
     status: row.Status ?? 'draft',
     validationStatus: row.ValidationStatus ?? 'unvalidated',
@@ -65,6 +67,8 @@ export const extractionInstructionRepo = {
       .input('id', sql.NVarChar, version.id)
       .input('versionNumber', sql.Int, version.versionNumber)
       .input('instructionText', sql.NVarChar, version.instructionText)
+      .input('modelId', sql.NVarChar, version.modelId)
+      .input('reasoningLevel', sql.NVarChar, version.reasoningLevel)
       .input('protectedContractVersion', sql.NVarChar, version.protectedContractVersion)
       .input('status', sql.NVarChar, version.status)
       .input('changeNote', sql.NVarChar, version.changeNote ?? null)
@@ -78,11 +82,11 @@ export const extractionInstructionRepo = {
       .input('activatedBy', sql.NVarChar, version.activatedBy ?? null)
       .input('concurrencyVersion', sql.Int, version.concurrencyVersion)
       .query(`INSERT INTO ${T('ExtractionInstructionVersions')} (
-        Id, VersionNumber, InstructionText, ProtectedContractVersion, Status, ChangeNote,
+        Id, VersionNumber, InstructionText, ModelId, ReasoningLevel, ProtectedContractVersion, Status, ChangeNote,
         ValidationStatus, ValidationFindingsJson, CreatedAt, CreatedBy, ValidatedAt, ValidatedBy,
         ActivatedAt, ActivatedBy, ConcurrencyVersion)
         VALUES (
-        @id, @versionNumber, @instructionText, @protectedContractVersion, @status, @changeNote,
+        @id, @versionNumber, @instructionText, @modelId, @reasoningLevel, @protectedContractVersion, @status, @changeNote,
         @validationStatus, @validationFindingsJson, @createdAt, @createdBy, @validatedAt, @validatedBy,
         @activatedAt, @activatedBy, @concurrencyVersion)`)
   },

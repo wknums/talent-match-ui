@@ -266,6 +266,8 @@ static Task InitializeApplicationDataAsync(
                 - Preserve source wording for every requirement and enough metadata to trace it.
                 - Respect any rubric already present in the document; otherwise produce a thoughtful generated rubric with weights summing to 1.0.
                 """,
+            ModelId = Environment.GetEnvironmentVariable("AWR_MODEL_ID") ?? "o3",
+            ReasoningLevel = Environment.GetEnvironmentVariable("AWR_REASONING_LEVEL") ?? "high",
             ProtectedContractVersion = JobSpecExtractionContractValidator.ProtectedContractVersion,
             Status = "active",
             ValidationStatus = "valid",
@@ -275,6 +277,24 @@ static Task InitializeApplicationDataAsync(
             ActivatedAt = seededAt,
             ActivatedBy = "system:seed",
             ConcurrencyVersion = 1,
+        });
+        db.SaveChanges();
+    }
+
+    if (!db.PromptGenerationInstructions.Any())
+    {
+        var seededAt = DateTime.UtcNow;
+        db.PromptGenerationInstructions.Add(new PromptGenerationInstruction
+        {
+            VersionNumber = 1,
+            InstructionText = TalentMatch.Application.Prompts.Commands.GeneratePromptCommandHandler.DefaultGenerationInstruction,
+            ModelId = Environment.GetEnvironmentVariable("AWR_MODEL_ID") ?? "o3",
+            ReasoningLevel = Environment.GetEnvironmentVariable("AWR_REASONING_LEVEL") ?? "high",
+            Status = "active",
+            CreatedAt = seededAt,
+            CreatedBy = "system:seed",
+            ActivatedAt = seededAt,
+            ActivatedBy = "system:seed",
         });
         db.SaveChanges();
     }
@@ -381,6 +401,7 @@ static bool BaselineSharedSqliteSchemaIfNeeded(AppDbContext db)
         "20260313150938_AddRubricSourceToJobConfigVersion",
         "20260323182030_AddLastErrorToApplication",
         "20260909184257_AddExtractionInstructionLifecycle",
+        "20260917123941_AddScoringPromptProfiles",
     ];
 
     if (!db.Database.IsSqlite())
@@ -474,6 +495,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
             EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
             EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
             EnsureSqliteExtractionLifecycleSchema(connection);
+            EnsureSqliteScoringProfileSchema(connection);
             return;
         }
 
@@ -490,6 +512,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
         EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
         EnsureSqliteExtractionLifecycleSchema(connection);
+        EnsureSqliteScoringProfileSchema(connection);
     }
     finally
     {
@@ -514,6 +537,56 @@ static void EnsureSqliteSequentialScoringColumns(SqliteConnection connection)
         CREATE INDEX IF NOT EXISTS IX_Applications_Status_ScoringLeaseUntil ON Applications (Status, ScoringLeaseUntil);
         """;
     indexesCommand.ExecuteNonQuery();
+}
+
+static void EnsureSqliteScoringProfileSchema(SqliteConnection connection)
+{
+    string[] alterations =
+    [
+        "ALTER TABLE ScoringRuns ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ApprovedModelId TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ApprovedReasoningLevel TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ApprovedTestRunId TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN GenerationInstructionVersionId TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ApprovedModelId TEXT NULL;",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ApprovedReasoningLevel TEXT NULL;",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptGenerationInstructions ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptGenerationInstructions ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+    ];
+
+    foreach (var sql in alterations)
+    {
+        using var alter = connection.CreateCommand();
+        alter.CommandText = sql;
+        TryExecuteSchemaChange(alter);
+    }
+
+    using var create = connection.CreateCommand();
+    create.CommandText = """
+        CREATE TABLE IF NOT EXISTS PromptGenerationInstructions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            JobId TEXT NULL,
+            VersionNumber INTEGER NOT NULL,
+            InstructionText TEXT NOT NULL,
+            ModelId TEXT NOT NULL DEFAULT '',
+            ReasoningLevel TEXT NOT NULL DEFAULT '',
+            Status TEXT NOT NULL DEFAULT 'draft',
+            ChangeNote TEXT NULL,
+            CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CreatedBy TEXT NOT NULL DEFAULT '',
+            ActivatedAt TEXT NULL,
+            ActivatedBy TEXT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_PromptGenerationInstructions_JobId_VersionNumber
+            ON PromptGenerationInstructions (JobId, VersionNumber);
+        CREATE INDEX IF NOT EXISTS IX_PromptGenerationInstructions_JobId_Status
+            ON PromptGenerationInstructions (JobId, Status);
+        """;
+    create.ExecuteNonQuery();
 }
 
 static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connection)
@@ -585,6 +658,8 @@ static void EnsureSqliteExtractionLifecycleSchema(SqliteConnection connection)
             Id TEXT NOT NULL PRIMARY KEY,
             VersionNumber INTEGER NOT NULL,
             InstructionText TEXT NOT NULL,
+            ModelId TEXT NOT NULL DEFAULT '',
+            ReasoningLevel TEXT NOT NULL DEFAULT '',
             ProtectedContractVersion TEXT NOT NULL,
             Status TEXT NOT NULL DEFAULT 'draft',
             ChangeNote TEXT NULL,
@@ -605,6 +680,14 @@ static void EnsureSqliteExtractionLifecycleSchema(SqliteConnection connection)
         CREATE INDEX IF NOT EXISTS IX_ExtractionInstructionVersions_Status_VersionNumber ON ExtractionInstructionVersions (Status, VersionNumber DESC);
         """;
     createInstructionTable.ExecuteNonQuery();
+
+    using var alterInstructionModel = connection.CreateCommand();
+    alterInstructionModel.CommandText = "ALTER TABLE ExtractionInstructionVersions ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';";
+    TryExecuteSchemaChange(alterInstructionModel);
+
+    using var alterInstructionReasoning = connection.CreateCommand();
+    alterInstructionReasoning.CommandText = "ALTER TABLE ExtractionInstructionVersions ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';";
+    TryExecuteSchemaChange(alterInstructionReasoning);
 
     using var createExtractionTable = connection.CreateCommand();
     createExtractionTable.CommandText = """
@@ -859,6 +942,65 @@ END;
 UPDATE [talentmatch].PasswordResetRequests
 SET [CreatedAt] = [RequestedAt]
 WHERE [RequestedAt] IS NOT NULL AND [CreatedAt] <> [RequestedAt];
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.ScoringRuns', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ScoringRuns ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_ScoringRuns_ReasoningLevel DEFAULT N'';
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedModelId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ApprovedModelId] NVARCHAR(100) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ApprovedReasoningLevel] NVARCHAR(30) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedTestRunId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ApprovedTestRunId] NVARCHAR(450) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'GenerationInstructionVersionId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [GenerationInstructionVersionId] NVARCHAR(450) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_ScoringPrompts_ModelId DEFAULT N'';
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_ScoringPrompts_ReasoningLevel DEFAULT N'';
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ApprovedModelId') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ApprovedModelId] NVARCHAR(100) NULL;
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ApprovedReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ApprovedReasoningLevel] NVARCHAR(30) NULL;
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_PromptTestRuns_ModelId DEFAULT N'';
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_PromptTestRuns_ReasoningLevel DEFAULT N'';
+IF OBJECT_ID('talentmatch.ExtractionInstructionVersions', 'U') IS NOT NULL
+   AND COL_LENGTH('talentmatch.ExtractionInstructionVersions', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].ExtractionInstructionVersions ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_ExtractionInstructionVersions_ModelId DEFAULT N'';
+IF OBJECT_ID('talentmatch.ExtractionInstructionVersions', 'U') IS NOT NULL
+   AND COL_LENGTH('talentmatch.ExtractionInstructionVersions', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ExtractionInstructionVersions ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_ExtractionInstructionVersions_ReasoningLevel DEFAULT N'';
+");
+
+        ExecuteSql(@"
+IF OBJECT_ID(N'[talentmatch].[PromptGenerationInstructions]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [talentmatch].[PromptGenerationInstructions] (
+        [Id] NVARCHAR(450) NOT NULL PRIMARY KEY,
+        [JobId] NVARCHAR(450) NULL,
+        [VersionNumber] INT NOT NULL,
+        [InstructionText] NVARCHAR(MAX) NOT NULL,
+        [ModelId] NVARCHAR(100) NOT NULL,
+        [ReasoningLevel] NVARCHAR(30) NOT NULL,
+        [Status] NVARCHAR(20) NOT NULL,
+        [ChangeNote] NVARCHAR(MAX) NULL,
+        [CreatedAt] DATETIME2 NOT NULL,
+        [CreatedBy] NVARCHAR(100) NOT NULL,
+        [ActivatedAt] DATETIME2 NULL,
+        [ActivatedBy] NVARCHAR(MAX) NULL
+    );
+    CREATE UNIQUE INDEX [IX_PromptGenerationInstructions_JobId_VersionNumber]
+        ON [talentmatch].[PromptGenerationInstructions] ([JobId], [VersionNumber]);
+    CREATE INDEX [IX_PromptGenerationInstructions_JobId_Status]
+        ON [talentmatch].[PromptGenerationInstructions] ([JobId], [Status]);
+END;
+IF COL_LENGTH('talentmatch.PromptGenerationInstructions', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].PromptGenerationInstructions ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_PromptGenerationInstructions_ModelId DEFAULT N'';
+IF COL_LENGTH('talentmatch.PromptGenerationInstructions', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].PromptGenerationInstructions ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_PromptGenerationInstructions_ReasoningLevel DEFAULT N'';
 ");
 
         void ExecuteSql(string sql)

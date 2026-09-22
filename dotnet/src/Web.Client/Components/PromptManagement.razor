@@ -12,7 +12,53 @@
     }
     else
     {
+        <details style="margin-bottom:1rem; border:1px solid #cbd5e1; border-radius:6px; padding:0.75rem;">
+            <summary style="font-weight:600; cursor:pointer;">Prompt generation instructions</summary>
+            <p style="color:#4a5568; margin-bottom:0.5rem;">
+                An active job instruction overrides the active system default. Creating or editing always makes a new immutable version.
+            </p>
+            <textarea @bind="instructionText" rows="5" placeholder="Job-specific generation instruction" style="width:100%;"></textarea>
+            <input @bind="instructionChangeNote" placeholder="Change note (optional)" style="width:100%; margin-top:0.35rem;" />
+            <div style="margin-top:0.5rem;">
+                <ReasoningProfileFields Catalog="reasoningCatalog"
+                                        @bind-ModelId="instructionModelId"
+                                        @bind-ReasoningLevel="instructionReasoningLevel"
+                                        Disabled="isSavingInstruction" />
+            </div>
+            <button @onclick="CreateInstruction" disabled="@isSavingInstruction" style="margin-top:0.5rem;">
+                @(isSavingInstruction ? "Creating..." : "Create instruction draft")
+            </button>
+            @foreach (var instruction in instructions)
+            {
+                <div style="display:flex; justify-content:space-between; gap:0.5rem; margin-top:0.5rem; padding:0.5rem; background:#f8fafc;">
+                    <span>v@instruction.VersionNumber — @instruction.Status — @instruction.CreatedBy</span>
+                    <span style="font-size:0.8rem; color:#475569;">
+                        @instruction.ModelId / @instruction.ReasoningLevel
+                    </span>
+                    @if (instruction.Status != "active")
+                    {
+                        <button @onclick="() => ActivateInstruction(instruction.Id)">Activate</button>
+                    }
+                </div>
+            }
+        </details>
+
+        @if (productionProfileStatus is { IsMatch: false })
+        {
+            <div role="alert" style="padding:0.85rem; margin-bottom:1rem; background:#fee2e2; border:2px solid #dc2626; border-radius:6px; color:#7f1d1d;">
+                <strong>Scoring profile mismatch — production scoring is blocked.</strong>
+                <div>@productionProfileStatus.MismatchMessage</div>
+            </div>
+        }
+
         <!-- Creation controls -->
+        <div style="margin-bottom:1rem;">
+            <strong>New scoring prompt profile</strong>
+            <ReasoningProfileFields Catalog="reasoningCatalog"
+                                    @bind-ModelId="editorModelId"
+                                    @bind-ReasoningLevel="editorReasoningLevel"
+                                    Disabled="@(isSaving || isGenerating)" />
+        </div>
         <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
             <button @onclick="StartManualCreate" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">✏️ Write Manually</button>
             <button @onclick="StartFileImport" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">📄 Import File</button>
@@ -49,6 +95,7 @@
                     <th style="padding: 0.5rem;">Version</th>
                     <th style="padding: 0.5rem;">Status</th>
                     <th style="padding: 0.5rem;">Source</th>
+                    <th style="padding: 0.5rem;">Profile snapshot</th>
                     <th style="padding: 0.5rem;">Rating</th>
                     <th style="padding: 0.5rem;">Created</th>
                     <th style="padding: 0.5rem;">Actions</th>
@@ -69,6 +116,7 @@
                             }
                         </td>
                         <td style="padding: 0.5rem;">@prompt.Source</td>
+                        <td style="padding: 0.5rem; font-size:0.85rem;">@prompt.ModelId / @prompt.ReasoningLevel</td>
                         <td style="padding: 0.5rem;">@(prompt.Rating.HasValue ? $"⭐ {prompt.Rating}/5" : "—")</td>
                         <td style="padding: 0.5rem;">@prompt.CreatedAt.ToString("g")</td>
                         <td style="padding: 0.5rem; display: flex; gap: 0.25rem; flex-wrap: wrap;">
@@ -126,6 +174,16 @@
     private ScoringPromptDto? ratingPrompt;
     private int ratingValue;
     private string ratingComments = "";
+    private List<PromptGenerationInstructionDto> instructions = new();
+    private PromptProfileStatusDto? productionProfileStatus;
+    private string instructionText = "";
+    private string? instructionChangeNote;
+    private bool isSavingInstruction;
+    private ReasoningModelsResponseDto? reasoningCatalog;
+    private string instructionModelId = "";
+    private string instructionReasoningLevel = "high";
+    private string editorModelId = "";
+    private string editorReasoningLevel = "high";
 
     protected override async Task OnInitializedAsync()
     {
@@ -136,13 +194,98 @@
     {
         try
         {
-            prompts = await Api.GetPromptsAsync(JobId);
+            var promptsTask = Api.GetPromptsAsync(JobId);
+            prompts = await promptsTask;
+            try
+            {
+                reasoningCatalog = await Api.GetReasoningModelsAsync();
+            }
+            catch (Exception ex)
+            {
+                reasoningCatalog = null;
+                generationError = $"Supported models could not be loaded: {ex.Message}";
+            }
+            if (reasoningCatalog is null)
+                return;
+            if (string.IsNullOrWhiteSpace(instructionModelId))
+                instructionModelId = reasoningCatalog.DefaultModel;
+            if (!reasoningCatalog.SupportedReasoningEfforts.Contains(instructionReasoningLevel))
+                instructionReasoningLevel = reasoningCatalog.DefaultReasoningEffort;
+            if (string.IsNullOrWhiteSpace(editorModelId))
+                editorModelId = reasoningCatalog.DefaultModel;
+            if (!reasoningCatalog.SupportedReasoningEfforts.Contains(editorReasoningLevel))
+                editorReasoningLevel = reasoningCatalog.DefaultReasoningEffort;
+            try
+            {
+                instructions = await Api.GetPromptGenerationInstructionsAsync(JobId);
+            }
+            catch
+            {
+                instructions = new();
+            }
+            var production = prompts.FirstOrDefault(IsProductionPrompt);
+            if (production is null)
+            {
+                productionProfileStatus = null;
+            }
+            else
+            {
+                try
+                {
+                    productionProfileStatus = await Api.GetPromptProfileStatusAsync(
+                        JobId, production.Id);
+                }
+                catch
+                {
+                    productionProfileStatus = null;
+                }
+            }
         }
-        catch (HttpRequestException ex)
+
+        catch (Exception ex)
         {
             // A failed refresh must not tear the component down: keep the list that is already on
             // screen and explain why it is not current.
             generationError = $"The prompt list could not be refreshed: {ex.Message}";
+        }
+    }
+
+    private async Task CreateInstruction()
+    {
+        if (string.IsNullOrWhiteSpace(instructionText)) return;
+        isSavingInstruction = true;
+        try
+        {
+            await Api.CreatePromptGenerationInstructionAsync(
+                JobId,
+                instructionText,
+                instructionChangeNote,
+                instructionModelId,
+                instructionReasoningLevel);
+            instructionText = "";
+            instructionChangeNote = null;
+            await LoadPrompts();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
+        finally
+        {
+            isSavingInstruction = false;
+        }
+    }
+
+    private async Task ActivateInstruction(string instructionId)
+    {
+        try
+        {
+            await Api.ActivatePromptGenerationInstructionAsync(JobId, instructionId);
+            await LoadPrompts();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
         }
     }
 
@@ -171,7 +314,10 @@
         StateHasChanged();
         try
         {
-            var result = await Api.GeneratePromptAsync(JobId);
+            var result = await Api.GeneratePromptAsync(
+                JobId,
+                editorModelId,
+                editorReasoningLevel);
             if (result != null)
             {
                 editorText = result.PromptText;
@@ -208,8 +354,18 @@
         try
         {
             var saved = editingPromptId != null
-                ? await Api.EditPromptAsync(JobId, editingPromptId, editorText)
-                : await Api.CreatePromptAsync(JobId, editorText, editorSource);
+                ? await Api.EditPromptAsync(
+                    JobId,
+                    editingPromptId,
+                    editorText,
+                    editorModelId,
+                    editorReasoningLevel)
+                : await Api.CreatePromptAsync(
+                    JobId,
+                    editorText,
+                    editorSource,
+                    editorModelId,
+                    editorReasoningLevel);
 
             if (saved is null)
             {
@@ -238,6 +394,8 @@
         editorText = prompt.PromptText;
         editorSource = prompt.Source;
         editingPromptId = prompt.Id;
+        editorModelId = prompt.ModelId;
+        editorReasoningLevel = prompt.ReasoningLevel;
         showEditor = true;
     }
 
@@ -250,9 +408,16 @@
 
     private async Task SetAsProduction(ScoringPromptDto prompt)
     {
-        await Api.SetProductionPromptAsync(JobId, prompt.Id);
-        await LoadPrompts();
-        await OnPromptStatusChange.InvokeAsync();
+        try
+        {
+            await Api.SetProductionPromptAsync(JobId, prompt.Id);
+            await LoadPrompts();
+            await OnPromptStatusChange.InvokeAsync();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
     }
 
     private void ShowRating(ScoringPromptDto prompt)

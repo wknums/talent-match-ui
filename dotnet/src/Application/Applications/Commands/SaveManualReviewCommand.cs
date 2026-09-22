@@ -2,6 +2,7 @@ using MediatR;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Common.Services;
 
 namespace TalentMatch.Application.Applications.Commands;
 
@@ -33,7 +34,7 @@ public class SaveManualReviewCommandHandler : IRequestHandler<SaveManualReviewCo
         var review = existing ?? new ManualReviewData { ApplicationId = request.ApplicationId };
         review.RubricScoresJson = request.RubricScoresJson;
         review.OverallComment = request.OverallComment;
-        review.AdjustedFinalScore = request.AdjustedFinalScore;
+        review.AdjustedFinalScore = ScorePrecision.Round(request.AdjustedFinalScore);
         review.AuditTrailJson = request.AuditTrailJson;
         review.HumanEdited = review.HumanEdited || request.HumanEdited;
         review.UpdatedAt = DateTime.UtcNow;
@@ -52,7 +53,7 @@ public class SaveManualReviewCommandHandler : IRequestHandler<SaveManualReviewCo
 
         if (request.AdjustedFinalScore.HasValue)
         {
-            app.FinalScore = request.AdjustedFinalScore.Value;
+            app.FinalScore = ScorePrecision.Round(request.AdjustedFinalScore.Value);
         }
 
         app.UpdatedAt = DateTime.UtcNow;
@@ -68,7 +69,7 @@ public class SaveManualReviewCommandHandler : IRequestHandler<SaveManualReviewCo
 
             if (request.AdjustedFinalScore.HasValue)
             {
-                aggregatedResult.FinalScore = request.AdjustedFinalScore.Value;
+                aggregatedResult.FinalScore = ScorePrecision.Round(request.AdjustedFinalScore.Value);
             }
 
             await _applicationRepository.SetAggregatedResultAsync(aggregatedResult, cancellationToken);

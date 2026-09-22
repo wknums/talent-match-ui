@@ -5,6 +5,8 @@ public class ExtractionInstructionVersion
     public string Id { get; set; } = Guid.NewGuid().ToString();
     public int VersionNumber { get; set; }
     public string InstructionText { get; set; } = string.Empty;
+    public string ModelId { get; set; } = string.Empty;
+    public string ReasoningLevel { get; set; } = string.Empty;
     public string ProtectedContractVersion { get; set; } = string.Empty;
     public string Status { get; set; } = "draft";
     public string? ChangeNote { get; set; }

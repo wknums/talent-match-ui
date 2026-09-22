@@ -4,6 +4,7 @@ using TalentMatch.Domain.Interfaces;
 using System.IO;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs;
+using TalentMatch.Application.Prompts.Services;
 
 namespace TalentMatch.Application.Applications.Commands;
 
@@ -21,19 +22,25 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
     private readonly IScoringQueueSignal? _queueSignal;
     private readonly ICurrentUserService? _currentUser;
     private readonly IOrganizationRepository? _organizations;
+    private readonly IScoringPromptRepository? _prompts;
+    private readonly IPromptProfileGuard? _profileGuard;
 
     public UploadApplicationsCommandHandler(
         IApplicationRepository applicationRepository,
         IJobRepository jobRepository,
         IScoringQueueSignal? queueSignal = null,
         ICurrentUserService? currentUser = null,
-        IOrganizationRepository? organizations = null)
+        IOrganizationRepository? organizations = null,
+        IScoringPromptRepository? prompts = null,
+        IPromptProfileGuard? profileGuard = null)
     {
         _applicationRepository = applicationRepository;
         _jobRepository = jobRepository;
         _queueSignal = queueSignal;
         _currentUser = currentUser;
         _organizations = organizations;
+        _prompts = prompts;
+        _profileGuard = profileGuard;
     }
 
     public async Task<List<Domain.Entities.Application>> Handle(UploadApplicationsCommand request, CancellationToken cancellationToken)
@@ -41,6 +48,15 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
         var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
             ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
         await JobAuthorization.EnsureCanMutateAsync(job, _currentUser, _organizations, cancellationToken);
+        if (_prompts is not null && _profileGuard is not null)
+        {
+            var productionPrompt = await _prompts.GetProductionApprovedForJobAsync(
+                request.JobId, cancellationToken)
+                ?? throw new InvalidOperationException(
+                    "A production-approved prompt is required before applications can be queued.");
+            await _profileGuard.EnsureProductionReadyAsync(
+                productionPrompt, cancellationToken);
+        }
 
         var applications = new List<Domain.Entities.Application>();
         var createdApplicationIds = new List<string>();

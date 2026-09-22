@@ -12,7 +12,7 @@
             <span style="background: @StatusColor; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">@application.Status</span>
             @if (application.FinalScore.HasValue)
             {
-                <span style="font-weight: bold; font-size: 1.1rem;">Score: @application.FinalScore.Value.ToString("F1")</span>
+                <span style="font-weight: bold; font-size: 1.1rem;">Score: @application.FinalScore.Value.ToString("F3")</span>
             }
             @if (application.FinalDecision != null)
             {
@@ -149,10 +149,10 @@
             {
                 <div style="background: #edf2f7; border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem; font-size: 0.9rem;">
-                        <div><strong>Final Score:</strong> @aggregatedResult.FinalScore.ToString("F1")</div>
+                        <div><strong>Final Score:</strong> @aggregatedResult.FinalScore.ToString("F3")</div>
                         <div><strong>Decision:</strong> @aggregatedResult.Decision</div>
                         <div><strong>Confidence:</strong> @aggregatedResult.Confidence.ToString("P0")</div>
-                        <div><strong>Variance:</strong> @aggregatedResult.Variance.ToString("F2")</div>
+                        <div><strong>Variance:</strong> @aggregatedResult.Variance.ToString("F3")</div>
                     </div>
                     @if (!string.IsNullOrEmpty(aggregatedResult.ConsolidatedRationale))
                     {
@@ -165,54 +165,33 @@
 
             @* Aggregated Must-Have Requirements summary *@
             @{
-                var firstRunGate = scoringRuns.Any() ? ParseGate(scoringRuns.OrderBy(r => r.RunIndex).First().MustHaveEvaluationJson) : null;
-                var firstRunEntries = scoringRuns.Any()
-                    ? ParseGateEntries(scoringRuns.OrderBy(r => r.RunIndex).First().MustHaveEvaluationJson)
-                    : null;
+                var aggregateGate = ScoringGateSummary.Build(
+                    scoringRuns.Select(run => run.MustHaveEvaluationJson),
+                    mustHaveCriteria);
             }
-            @if (firstRunGate != null && mustHaveCriteria.Any())
+            @if (aggregateGate != null && mustHaveCriteria.Any())
             {
-                <div style="background: @(firstRunGate.Passed ? "#f0fff4" : "#fff5f5"); border: 1px solid @(firstRunGate.Passed ? "#c6f6d5" : "#fed7d7"); border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
-                    <h6 style="margin: 0 0 0.5rem;">Must-Have Requirements — @(firstRunGate.Passed ? "✅ Passed" : "❌ Failed")</h6>
-                    @if (!string.IsNullOrEmpty(firstRunGate.Recommendation))
+                <div style="background: @(aggregateGate.Passed ? "#f0fff4" : "#fff5f5"); border: 1px solid @(aggregateGate.Passed ? "#c6f6d5" : "#fed7d7"); border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
+                    <h6 style="margin: 0 0 0.5rem;">
+                        Must-Have Requirements — @(aggregateGate.Passed ? "✅ Passed" : "❌ Failed")
+                        (@aggregateGate.PassedVotes passed / @aggregateGate.FailedVotes failed runs)
+                    </h6>
+                    @if (aggregateGate.Entries.Count > 0)
                     {
-                        <div style="font-size: 0.8rem; color: #555; margin-bottom: 0.5rem; font-style: italic;">@firstRunGate.Recommendation</div>
-                    }
-                    @if (firstRunEntries?.Any() == true)
-                    {
-                        @foreach (var entry in firstRunEntries)
+                        @foreach (var entry in aggregateGate.Entries)
                         {
                             <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
                                 <span style="color: @(entry.Passed ? "#276749" : "#c53030"); flex-shrink: 0;">@(entry.Passed ? "✅" : "❌")</span>
                                 <div>
                                     <span style="font-size: 0.85rem;">@entry.Criterion</span>
+                                    <span style="font-size: 0.75rem; color: #718096;">
+                                        (@entry.PassedVotes passed / @entry.FailedVotes failed)
+                                    </span>
                                     @if (!string.IsNullOrEmpty(entry.Evidence))
                                     {
                                         <div style="font-size: 0.8rem; color: #718096; font-style: italic; margin-top: 0.15rem;">@entry.Evidence</div>
                                     }
                                 </div>
-                            </div>
-                        }
-                    }
-                    else
-                    {
-                        @* Fallback: show must-have criteria from job config with overall pass/fail *@
-                        @foreach (var criterion in mustHaveCriteria)
-                        {
-                            var isMissing = firstRunGate.MissingCriteria?.Any(m =>
-                                m.Equals(criterion, StringComparison.OrdinalIgnoreCase) ||
-                                criterion.Contains(m, StringComparison.OrdinalIgnoreCase) ||
-                                m.Contains(criterion, StringComparison.OrdinalIgnoreCase)) == true;
-                            var criterionPassed = firstRunGate.Passed || !isMissing;
-                            <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
-                                <span style="color: @(criterionPassed ? "#276749" : "#c53030"); flex-shrink: 0;">@(criterionPassed ? "✅" : "❌")</span>
-                                <span style="font-size: 0.85rem;">@criterion</span>
-                            </div>
-                        }
-                        @if (!firstRunGate.Passed && (firstRunGate.MissingCriteria == null || !firstRunGate.MissingCriteria.Any()))
-                        {
-                            <div style="font-size: 0.8rem; color: #c53030; margin-top: 0.25rem;">
-                                ⚠️ Gate failed but specific missing criteria were not identified by the AI. Review the scoring runs below for details.
                             </div>
                         }
                     }
@@ -233,7 +212,7 @@
                 {
                     <details open style="border: 1px solid @(HasError(run.MustHaveEvaluationJson) ? "#feb2b2" : "#e2e8f0"); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; background: @(HasError(run.MustHaveEvaluationJson) ? "#fff5f5" : "white");">
                         <summary style="cursor: pointer; font-weight: bold; font-size: 0.9rem;">
-                            Run #@(run.RunIndex) — Score: @run.TotalScore.ToString("F1")
+                            Run #@(run.RunIndex) — Score: @run.TotalScore.ToString("F3")
                             @if (run.CreatedAt != default)
                             {
                                 <span style="font-weight: normal; font-size: 0.8rem; color: #718096; margin-left: 0.5rem;">@run.CreatedAt.ToString("yyyy-MM-dd HH:mm")</span>
@@ -265,7 +244,7 @@
                                     @foreach (var kv in catScores)
                                     {
                                         <span style="color: #4a5568;">@kv.Key</span>
-                                        <span style="font-weight: bold; text-align: right;">@kv.Value.ToString("F1")</span>
+                                        <span style="font-weight: bold; text-align: right;">@kv.Value.ToString("F3")</span>
                                     }
                                 </div>
                             }
@@ -383,8 +362,8 @@ else
 
     private IEnumerable<ScoringRunDto> SortedRuns() => (runSortField, runSortAsc) switch
     {
-        ("score", true) => scoringRuns.OrderBy(r => r.TotalScore),
-        ("score", false) => scoringRuns.OrderByDescending(r => r.TotalScore),
+        ("score", true) => scoringRuns.OrderBy(r => Math.Round(r.TotalScore, 3)),
+        ("score", false) => scoringRuns.OrderByDescending(r => Math.Round(r.TotalScore, 3)),
         ("date", true) => scoringRuns.OrderBy(r => r.CreatedAt),
         ("date", false) => scoringRuns.OrderByDescending(r => r.CreatedAt),
         (_, true) => scoringRuns.OrderBy(r => r.RunIndex),

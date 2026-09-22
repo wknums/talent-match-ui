@@ -310,14 +310,14 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
             <div>
               <p className="text-sm text-muted-foreground mb-1">Final Score</p>
               <p className={cn('text-4xl font-mono font-bold', getScoreColor(application.finalScore))}>
-                {application.finalScore.toFixed(1)}
+                {application.finalScore.toFixed(3)}
               </p>
             </div>
             {application.variance !== undefined && (
               <div>
                 <p className="text-sm text-muted-foreground mb-1">Variance</p>
                 <p className={cn('text-2xl font-mono', application.variance > 15 && 'text-destructive font-bold')}>
-                  ±{application.variance.toFixed(1)}
+                  ±{application.variance.toFixed(3)}
                 </p>
               </div>
             )}
@@ -445,7 +445,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                                     </div>
                                     {typeof score === 'number' ? (
                                       <span className={cn('font-mono font-semibold', getScoreColor(Number(score ?? 0)))}>
-                                        {Number(score ?? 0).toFixed(1)}
+                                        {Number(score ?? 0).toFixed(3)}
                                       </span>
                                     ) : (
                                       <span className="text-xs text-muted-foreground">No AI score</span>
@@ -457,7 +457,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                                   {typeof score === 'number' && (
                                     <p className="text-xs font-medium text-muted-foreground mb-2">
                                       {scoreSource === 'overall' ? 'AI Score (overall fallback): ' : 'AI Score: '}
-                                      <span className={cn('font-mono', getScoreColor(Number(score ?? 0)))}>{Number(score ?? 0).toFixed(1)} / 100</span>
+                                      <span className={cn('font-mono', getScoreColor(Number(score ?? 0)))}>{Number(score ?? 0).toFixed(3)} / 100</span>
                                     </p>
                                   )}
                                   {typeof score === 'number' && (
@@ -543,7 +543,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                               <Badge variant="outline">{run.status}</Badge>
                             </div>
                             <Badge variant="outline" className="font-mono">
-                              {run.overallScore.toFixed(1)}
+                              {run.overallScore.toFixed(3)}
                             </Badge>
                           </div>
                           <div className="flex gap-4 text-xs text-muted-foreground mt-2">
@@ -575,7 +575,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                                   <div key={category} className="flex justify-between">
                                     <span>{category}</span>
                                     <span className={cn('font-mono font-medium', getScoreColor(Number(score ?? 0)))}>
-                                      {Number(score ?? 0).toFixed(1)}
+                                      {Number(score ?? 0).toFixed(3)}
                                     </span>
                                   </div>
                                 ))}

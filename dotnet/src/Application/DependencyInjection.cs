@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using TalentMatch.Application.Common.Behaviours;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Common.Services;
+using TalentMatch.Application.Prompts.Services;
 
 namespace TalentMatch.Application;
 
@@ -23,6 +24,7 @@ public static class DependencyInjection
         services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
         services.AddScoped<IApplicationScoringFinalizer, ApplicationScoringFinalizer>();
         services.AddScoped<ISequentialApplicationScorer, SequentialApplicationScorer>();
+        services.AddScoped<IPromptProfileGuard, PromptProfileGuard>();
         services.TryAddSingleton(TimeProvider.System);
 
         return services;

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using TalentMatch.Application.Common.Services;
+using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Infrastructure.Persistence;
 using TalentMatch.Infrastructure.Persistence.Repositories;
@@ -149,6 +150,59 @@ public sealed class SequentialScoringQueueRepositoryTests
             .Status.Should().Be("production-approved");
         (await queue.TryClaimAsync("next", DateTime.UtcNow, Lease))!.ApplicationId.Should().Be(newest);
         (await queue.TryClaimAsync("last", DateTime.UtcNow, Lease)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Claim_UsesThePromptStoredProfileInsteadOfTheEnvironmentProfile()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using var context = database.Open();
+
+        var work = await new SequentialScoringQueueRepository(context)
+            .TryClaimAsync("owner", DateTime.UtcNow, Lease);
+
+        work.Should().NotBeNull();
+        work!.ApplicationId.Should().Be(id);
+        var prompt = await context.ScoringPrompts.SingleAsync();
+        prompt.ModelId.Should().Be("o3");
+        prompt.ReasoningLevel.Should().Be("high");
+    }
+
+    [Fact]
+    public async Task Claim_RejectsApprovalEvidenceForAnotherPromptProfile()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        await database.SeedAsync();
+        await using var context = database.Open();
+        await context.PromptTestRuns.ExecuteUpdateAsync(setters => setters
+            .SetProperty(run => run.ApprovedReasoningLevel, "low"));
+
+        var work = await new SequentialScoringQueueRepository(context)
+            .TryClaimAsync("owner", DateTime.UtcNow, Lease);
+
+        work.Should().BeNull();
+        (await context.Applications.SingleAsync()).Status.Should().Be("Queued");
+    }
+
+    [Fact]
+    public async Task Claim_AcceptsLegacyPlaceholderProfileForRuntimeDefaultResolution()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using var context = database.Open();
+        await context.ScoringPrompts.ExecuteUpdateAsync(setters => setters
+            .SetProperty(prompt => prompt.ModelId, "passthrough-llm")
+            .SetProperty(prompt => prompt.ReasoningLevel, "medium")
+            .SetProperty(prompt => prompt.ApprovedModelId, (string?)null)
+            .SetProperty(prompt => prompt.ApprovedReasoningLevel, (string?)null)
+            .SetProperty(prompt => prompt.ApprovedTestRunId, (string?)null));
+
+        var work = await new SequentialScoringQueueRepository(context)
+            .TryClaimAsync("owner", DateTime.UtcNow, Lease);
+
+        work.Should().NotBeNull();
+        work!.ApplicationId.Should().Be(id);
     }
 
     [Theory]
@@ -789,8 +843,29 @@ public sealed class SequentialScoringQueueRepositoryTests
             job.CurrentConfigVersionId = config.Id;
             var application = new ApplicationEntity { JobId = job.Id, CreatedAt = createdAt ?? DateTime.UtcNow };
             var document = new ApplicationDocument { ApplicationId = application.Id, FileName = "cv.txt", BlobUri = blobUri };
-            context.AddRange(job, config, application, document,
-                new ScoringPrompt { JobId = job.Id, PromptText = "Score {{JOB_SPEC_TEXT}}", Status = "production-approved" });
+            var prompt = new ScoringPrompt
+            {
+                JobId = job.Id,
+                PromptText = "Score {{JOB_SPEC_TEXT}}",
+                Status = "production-approved",
+                ModelId = "o3",
+                ReasoningLevel = "high",
+                ApprovedModelId = "o3",
+                ApprovedReasoningLevel = "high"
+            };
+            var testRun = new PromptTestRun
+            {
+                JobId = job.Id,
+                PromptId = prompt.Id,
+                Status = "approved",
+                ModelId = "o3",
+                ReasoningLevel = "high",
+                ApprovedModelId = "o3",
+                ApprovedReasoningLevel = "high",
+                ApplicationIdsJson = "[]"
+            };
+            prompt.ApprovedTestRunId = testRun.Id;
+            context.AddRange(job, config, application, document, prompt, testRun);
             if (blobUri is null)
                 context.DocumentBlobs.Add(new DocumentBlob { DocumentId = document.Id, Content = "Y3Y=" });
             await context.SaveChangesAsync();

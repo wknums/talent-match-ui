@@ -54,13 +54,17 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     private readonly IScoringPromptRepository _promptRepo;
     private readonly IBlobStore _blobStore;
     private readonly Func<int, CancellationToken, Task> _retryDelay;
+    private readonly IScoringProfileProvider? _profileProvider;
+    private readonly IReasoningModelCatalog? _reasoningModels;
 
     public ScoreApplicationCommandHandler(
         ILlmProxyService llmService,
         IApplicationRepository applicationRepo,
         IScoringPromptRepository promptRepo,
         IBlobStore blobStore,
-        Func<int, CancellationToken, Task>? retryDelay = null)
+        Func<int, CancellationToken, Task>? retryDelay = null,
+        IScoringProfileProvider? profileProvider = null,
+        IReasoningModelCatalog? reasoningModels = null)
     {
         _llmService = llmService;
         _applicationRepo = applicationRepo;
@@ -68,6 +72,8 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         _blobStore = blobStore;
         _retryDelay = retryDelay
             ?? ((failureCount, token) => Task.Delay(ScoringRetryPolicy.GetBackoff(failureCount), token));
+        _profileProvider = profileProvider;
+        _reasoningModels = reasoningModels;
     }
 
     private async Task<byte[]?> ResolveDocumentBytesAsync(ApplicationDocument doc, CancellationToken ct)
@@ -100,9 +106,10 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         // Resolve placeholders — job description passed in to avoid loading Job with tracked Applications
         var resolvedPrompt = prompt.PromptText
             .Replace("{{JOB_SPEC_TEXT}}", request.JobDescriptionText);
+        var executionProfile = await ResolveExecutionProfileAsync(prompt, ct);
 
         var (runs, extractedCandidateName) = await ScoreAndParseWithRetryAsync(
-            request, prompt, primaryDoc, docBytes, resolvedPrompt, ct);
+            request, prompt, primaryDoc, docBytes, resolvedPrompt, executionProfile, ct);
         EngineAggregatedResult? aggregated = null;
 
         if (!request.PersistResults)
@@ -133,6 +140,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         ApplicationDocument primaryDoc,
         byte[] docBytes,
         string resolvedPrompt,
+        ScoringProfile executionProfile,
         CancellationToken ct)
     {
         var failureCount = 0;
@@ -142,7 +150,20 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             try
             {
                 var responses = await _llmService.ScoreWithDocumentAsync(
-                    resolvedPrompt, docBytes, primaryDoc.FileName, primaryDoc.FileType, request.RunCount, ct);
+                    resolvedPrompt,
+                    docBytes,
+                    primaryDoc.FileName,
+                    primaryDoc.FileType,
+                    executionProfile,
+                    request.RunCount,
+                    ct);
+                responses ??= await _llmService.ScoreWithDocumentAsync(
+                    resolvedPrompt,
+                    docBytes,
+                    primaryDoc.FileName,
+                    primaryDoc.FileType,
+                    request.RunCount,
+                    ct);
 
                 if (responses.Count < request.RunCount)
                 {
@@ -163,7 +184,8 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
 
                     extractedCandidateName ??= ExtractCandidateName(root);
                     var parsed = ParseSingleRunWithDiagnostics(
-                        root, request.ApplicationId, prompt.Id, runIndex);
+                        root, request.ApplicationId, prompt.Id, runIndex,
+                        executionProfile.ModelId, executionProfile.ReasoningLevel);
                     var run = parsed.Run;
                     run.RawResponseText = responseText;
                     run.RawParsedResponseJson = jsonText;
@@ -186,6 +208,21 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                 await _retryDelay(failureCount, ct);
             }
         }
+    }
+
+    private async Task<ScoringProfile> ResolveExecutionProfileAsync(
+        ScoringPrompt prompt,
+        CancellationToken cancellationToken)
+    {
+        var storedModel = prompt.ModelId?.Trim() ?? string.Empty;
+        var storedEffort = prompt.ReasoningLevel?.Trim() ?? string.Empty;
+        if (_reasoningModels is null)
+            return new ScoringProfile(storedModel, storedEffort);
+
+        return await _reasoningModels.ResolveForExecutionAsync(
+            storedModel,
+            storedEffort,
+            cancellationToken);
     }
 
     private static bool IsRetryableScoringFailure(Exception ex, CancellationToken ct)
@@ -215,10 +252,23 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     /// Platform-mode reuses the same parsing logic without instantiating the handler.
     /// Kept logically identical to the instance method body.
     /// </summary>
-    public static ScoringRun ParseSingleRunStatic(JsonElement root, string applicationId, string promptId, int runIndex)
-        => ParseSingleRunWithDiagnostics(root, applicationId, promptId, runIndex).Run;
+    public static ScoringRun ParseSingleRunStatic(
+        JsonElement root,
+        string applicationId,
+        string promptId,
+        int runIndex,
+        string modelId = "passthrough-llm",
+        string reasoningLevel = "medium")
+        => ParseSingleRunWithDiagnostics(
+            root, applicationId, promptId, runIndex, modelId, reasoningLevel).Run;
 
-    public static ScoreRunParseResult ParseSingleRunWithDiagnostics(JsonElement root, string applicationId, string promptId, int runIndex)
+    public static ScoreRunParseResult ParseSingleRunWithDiagnostics(
+        JsonElement root,
+        string applicationId,
+        string promptId,
+        int runIndex,
+        string modelId = "passthrough-llm",
+        string reasoningLevel = "medium")
     {
         var categoryScores = new Dictionary<string, double>();
         var evidenceCitations = new List<object>();
@@ -484,12 +534,14 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         {
             ApplicationId = applicationId,
             RunIndex = runIndex,
-            TotalScore = totalScore,
-            CategoryScoresJson = JsonSerializer.Serialize(categoryScores),
+            TotalScore = ScorePrecision.Round(totalScore),
+            CategoryScoresJson = JsonSerializer.Serialize(
+                categoryScores.ToDictionary(item => item.Key, item => ScorePrecision.Round(item.Value))),
             MustHaveEvaluationJson = mustHaveJson,
             EvidenceCitationsJson = JsonSerializer.Serialize(evidenceCitations),
             ImprovementTipsJson = JsonSerializer.Serialize(tips),
-            AiModelId = "passthrough-llm",
+            AiModelId = modelId,
+            ReasoningLevel = reasoningLevel,
             PromptVersion = promptId,
             InputTokens = 0,
             OutputTokens = 0,

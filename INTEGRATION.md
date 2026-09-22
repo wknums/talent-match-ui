@@ -121,6 +121,72 @@ The new dashboard visualization is Stack B only.
 
 ## Dynamic Rubric Editor / Extraction Instruction API
 
+### Versioned scoring generation profile
+
+Both stacks now treat scoring-prompt generation instructions and the effective
+AWReason scoring profile as versioned production inputs.
+
+- The application queries the HTTP service's authenticated
+  `GET /reasoning-models` endpoint and uses its `models`,
+  `supportedReasoningEfforts`, `defaultModel`, and
+  `defaultReasoningEffort` values to populate prompt-configuration dropdowns.
+- Extraction instructions, system/job scoring-generation instructions, and
+  final scoring prompts each store the selected model deployment and reasoning
+  effort with the immutable prompt version.
+- HTTP-service passthrough calls forward those stored values as multipart
+  `reasoningModel` and `reasoningEffort` fields. Prompt test runs, approvals,
+  and scoring runs snapshot the same values.
+- The HTTP service rejects model deployments not returned by
+  `GET /reasoning-models`; clients must not invent model identifiers.
+- An active job-specific generation instruction overrides the active system
+  instruction. If no job override exists, generation uses the active system
+  instruction.
+- Editing final prompt text creates a new immutable draft version.
+- Changing a stored model or reasoning selection creates a new prompt version.
+  Operators must run and approve tests for that exact version/profile before
+  approving it for production.
+- Stack A returns an actionable HTTP `409` when a legacy prompt has no stored
+  profile or when approval evidence does not match the prompt profile.
+  Production admission checks the specific approved test reference as well as
+  the test's execution and approval profiles; unrelated or empty test evidence
+  cannot approve a prompt.
+
+The asynchronous platform/queue-worker API is intentionally unchanged.
+`AWR_MODEL_ID` and `AWR_REASONING_LEVEL` remain its single configured profile,
+and platform submissions continue to use the existing JSON `model` and
+`reasoning` fields. A prompt with a different stored profile is rejected before
+queue/platform submission; multi-model selection applies only to the
+HTTP-service passthrough path.
+
+Stack B's in-process sequential scoring pool is part of the HTTP-service path,
+not the asynchronous queue-worker API. Its database claim query therefore
+matches each production prompt to its own stored model/reasoning snapshot and
+exact approved test-run evidence. It must not filter queued applications
+against `AWR_MODEL_ID` or `AWR_REASONING_LEVEL`; doing so leaves valid
+multi-model HTTP work permanently queued.
+
+Legacy production prompts created before profile discovery may contain the
+sentinel model `passthrough-llm` (or blank profile fields). For HTTP-service
+execution only, Stack B resolves those sentinels through `GET /reasoning-models`
+and uses the backend's advertised default model and reasoning effort. The
+actual resolved values are recorded on each scoring run. Explicit modern
+profiles remain strictly validated against the live catalog.
+
+The application cannot detect an AWReason deployment silently remapping an
+unchanged deployment identifier to a different model. Use stable deployment
+identifiers and verify that the backend honors the pinned
+`reasoningModel`/`reasoningEffort` values.
+
+The database rollout is additive: it creates `PromptGenerationInstructions`
+and adds profile/provenance columns with defaults to extraction instructions,
+scoring-generation instructions, scoring prompts, test runs, and scoring runs.
+The previously deployed Stack B build can continue to use the upgraded database
+during a rolling deployment, but it does not expose the new dropdowns.
+
+Candidate scores remain numeric and are normalized and displayed to three
+decimal places. This permits deterministic ordering when large job populations
+contain scores that differ only at the third decimal place.
+
 The `001-dynamic-rubric-editor` feature introduces a protected extraction contract plus a versioned `rubric-v2` job-config payload shared by Stack A and Stack B.
 
 ### New persisted concepts

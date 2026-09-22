@@ -8,6 +8,9 @@ vi.mock('@/lib/api', () => ({
     createExtractionInstructionDraft: vi.fn(),
     validateExtractionInstruction: vi.fn(),
     activateExtractionInstruction: vi.fn(),
+    getSystemPromptGenerationInstructions: vi.fn(),
+    createSystemPromptGenerationInstruction: vi.fn(),
+    activateSystemPromptGenerationInstruction: vi.fn(),
   },
 }))
 
@@ -19,5 +22,7 @@ describe('ExtractionInstructionAdmin', () => {
     expect(html).toContain('Extraction Instruction Versions')
     expect(html).toContain('Create draft')
     expect(html).toContain('Protected contract')
+    expect(html).toContain('System Scoring Prompt Generation')
+    expect(html).toContain('Create scoring draft')
   })
 })

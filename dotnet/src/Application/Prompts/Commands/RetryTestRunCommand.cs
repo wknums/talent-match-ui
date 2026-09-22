@@ -2,9 +2,11 @@ using System.Text.Json;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TalentMatch.Application.Prompts.Services;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Common.Interfaces;
 
 namespace TalentMatch.Application.Prompts.Commands;
 
@@ -28,19 +30,25 @@ public class RetryTestRunCommandHandler : IRequestHandler<RetryTestRunCommand, P
     private readonly IJobRepository _jobRepo;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<RetryTestRunCommandHandler> _logger;
+    private readonly IScoringProfileProvider? _profileProvider;
+    private readonly IScoringPromptRepository? _promptRepo;
 
     public RetryTestRunCommandHandler(
         IPromptTestRunRepository testRunRepo,
         IApplicationRepository applicationRepo,
         IJobRepository jobRepo,
         IServiceScopeFactory scopeFactory,
-        ILogger<RetryTestRunCommandHandler> logger)
+        ILogger<RetryTestRunCommandHandler> logger,
+        IScoringProfileProvider? profileProvider = null,
+        IScoringPromptRepository? promptRepo = null)
     {
         _testRunRepo = testRunRepo;
         _applicationRepo = applicationRepo;
         _jobRepo = jobRepo;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _profileProvider = profileProvider;
+        _promptRepo = promptRepo;
     }
 
     public async Task<PromptTestRun> Handle(RetryTestRunCommand request, CancellationToken ct)
@@ -48,10 +56,11 @@ public class RetryTestRunCommandHandler : IRequestHandler<RetryTestRunCommand, P
         var testRun = await _testRunRepo.GetByIdAsync(request.TestRunId, ct)
             ?? throw new InvalidOperationException("Test run not found");
 
-        if (testRun.Status is not ("scoring_failed" or "pending_scoring" or "scoring" or "pending_review"))
-            throw new InvalidOperationException($"Test run must be in scoring_failed, pending_scoring, scoring, or pending_review status to retry (current: {testRun.Status})");
+        if (testRun.Status is not ("scoring_failed" or "pending_scoring" or "scoring" or "pending_review" or "approved" or "rejected"))
+            throw new InvalidOperationException($"Test run cannot be retried from status '{testRun.Status}'.");
 
         var applicationIds = JsonSerializer.Deserialize<List<string>>(testRun.ApplicationIdsJson) ?? new();
+        var forceFullRetest = testRun.Status is "approved" or "rejected";
 
         // Find applications that need re-scoring (failed or still queued).
         // If a run is marked scoring_failed but no app is flagged failed, allow a full retry.
@@ -62,7 +71,7 @@ public class RetryTestRunCommandHandler : IRequestHandler<RetryTestRunCommand, P
             if (app == null)
                 continue;
 
-            if (app.Status is "ScoringFailed" or "ExtractionFailed" or "Queued")
+            if (forceFullRetest || app.Status is "ScoringFailed" or "ExtractionFailed" or "Queued")
             {
                 app.Status = "Queued";
                 await _applicationRepo.UpdateAsync(app, ct);
@@ -90,6 +99,21 @@ public class RetryTestRunCommandHandler : IRequestHandler<RetryTestRunCommand, P
         // Reset test run status
         testRun.Status = "scoring";
         testRun.CompletedAt = null;
+        testRun.ReviewedBy = null;
+        testRun.ReviewNotes = null;
+        testRun.ApprovedModelId = null;
+        testRun.ApprovedReasoningLevel = null;
+        var prompt = _promptRepo is null
+            ? null
+            : await _promptRepo.GetByIdAsync(testRun.PromptId, ct);
+        var profile = prompt is null
+            ? new ScoringProfile(testRun.ModelId, testRun.ReasoningLevel)
+            : new ScoringProfile(prompt.ModelId, prompt.ReasoningLevel);
+        if (!profile.Matches(testRun.ModelId, testRun.ReasoningLevel))
+            throw new ScoringProfileMismatchException(
+                $"This test run used '{testRun.ModelId}' / '{testRun.ReasoningLevel}', "
+                + $"but the prompt uses '{profile.ModelId}' / '{profile.ReasoningLevel}'. "
+                + "Create a new prompt version and test run.");
         await _testRunRepo.UpdateAsync(testRun, ct);
 
         var testRunId = testRun.Id;

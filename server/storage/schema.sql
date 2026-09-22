@@ -121,6 +121,8 @@ CREATE TABLE [talentmatch].ExtractionInstructionVersions (
     Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
     VersionNumber           INT             NOT NULL,
     InstructionText         NVARCHAR(MAX)   NOT NULL,
+    ModelId                 NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel          NVARCHAR(30)    NOT NULL DEFAULT '',
     ProtectedContractVersion NVARCHAR(50)   NOT NULL,
     Status                  NVARCHAR(20)    NOT NULL DEFAULT 'draft',
     ChangeNote              NVARCHAR(1000)  NULL,
@@ -253,6 +255,7 @@ CREATE TABLE [talentmatch].ScoringRuns (
     VersionId               NVARCHAR(36)    NOT NULL DEFAULT '',
     RunIndex                INT             NOT NULL,
     ModelDeploymentId       NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel          NVARCHAR(30)    NOT NULL DEFAULT '',
     PromptVersionId         NVARCHAR(36)    NOT NULL DEFAULT '',
     OverallScore            FLOAT           NOT NULL,
     SubScoresJson           NVARCHAR(MAX)   NOT NULL DEFAULT '{}',
@@ -326,7 +329,13 @@ CREATE TABLE [talentmatch].ScoringPrompts (
     Rating                  INT             NULL,
     Comments                NVARCHAR(MAX)   NULL,
     Source                  NVARCHAR(20)    NOT NULL DEFAULT 'manual',
-    GenerationMetadataJson  NVARCHAR(MAX)   NULL
+    GenerationMetadataJson  NVARCHAR(MAX)   NULL,
+    GenerationInstructionVersionId NVARCHAR(36) NULL,
+    ModelId                 NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel          NVARCHAR(30)    NOT NULL DEFAULT '',
+    ApprovedModelId         NVARCHAR(100)   NULL,
+    ApprovedReasoningLevel  NVARCHAR(30)    NULL,
+    ApprovedTestRunId       NVARCHAR(36)    NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ScoringPrompts_JobId_Status')
@@ -343,11 +352,38 @@ CREATE TABLE [talentmatch].PromptTestRuns (
     CreatedAt           DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     CompletedAt         DATETIME2       NULL,
     ReviewedBy          NVARCHAR(36)    NULL,
-    ReviewNotes         NVARCHAR(MAX)   NULL
+    ReviewNotes         NVARCHAR(MAX)   NULL,
+    ModelId             NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel      NVARCHAR(30)    NOT NULL DEFAULT '',
+    ApprovedModelId     NVARCHAR(100)   NULL,
+    ApprovedReasoningLevel NVARCHAR(30) NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PromptTestRuns_PromptId')
     CREATE INDEX IX_PromptTestRuns_PromptId ON [talentmatch].PromptTestRuns (PromptId);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PromptGenerationInstructions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].PromptGenerationInstructions (
+    Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
+    JobId           NVARCHAR(36)    NULL,
+    VersionNumber   INT             NOT NULL,
+    InstructionText NVARCHAR(MAX)   NOT NULL,
+    ModelId         NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel  NVARCHAR(30)    NOT NULL DEFAULT '',
+    Status          NVARCHAR(20)    NOT NULL DEFAULT 'draft',
+    ChangeNote      NVARCHAR(MAX)   NULL,
+    CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy       NVARCHAR(100)   NOT NULL,
+    ActivatedAt     DATETIME2       NULL,
+    ActivatedBy     NVARCHAR(100)   NULL
+);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_PromptGenerationInstructions_Scope_Version')
+    CREATE UNIQUE INDEX UX_PromptGenerationInstructions_Scope_Version
+        ON [talentmatch].PromptGenerationInstructions (JobId, VersionNumber);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PromptGenerationInstructions_Scope_Status')
+    CREATE INDEX IX_PromptGenerationInstructions_Scope_Status
+        ON [talentmatch].PromptGenerationInstructions (JobId, Status);
 
 -- 14. FAILURE QUEUE (DLQ)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'FailureQueueItems' AND schema_id = SCHEMA_ID('talentmatch'))

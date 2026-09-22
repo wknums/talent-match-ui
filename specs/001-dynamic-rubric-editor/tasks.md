@@ -289,3 +289,18 @@ Task: T043 [US4] Stack B diagnostics UI
 - [X] Q007 Add an authorized rolling-hour metric with 24 hourly windows from preserved first aggregate timestamps in `dotnet/src/Application/Stats/`, `dotnet/src/Infrastructure/Persistence/Repositories/ScoringThroughputRepository.cs`, and `dotnet/src/Web.Server/Endpoints/StatsEndpoints.cs`.
 - [X] Q008 Add the 10-second-refresh throughput card and accessible chart to the Stack B dashboard in `dotnet/src/Web.Client/Pages/Dashboard.razor` and `dotnet/src/Web.Client/Components/ScoringThroughputPanel.razor`; verify query boundaries, scope, repository history, API and UI behavior in `dotnet/tests/`.
 - [X] Q009 Repair legacy Blazor PascalCase rubric compatibility with shared readers in `dotnet/src/Application/Rubrics/Services/RubricJsonReader.cs` and canonical serialization in `dotnet/src/Web.Client/Services/ApiClient.cs`; verify queue admission, adaptation, category mapping and serialization in the .NET tests and confirm the affected QA applications progress after deployment.
+
+## Follow-up: scoring prompt governance and precision (2026-09-17)
+
+- [X] Q010 Add additive shared schema and typed contracts for system/job `PromptGenerationInstruction` versions, prompt/test model and reasoning snapshots, approval evidence, and scoring-run reasoning metadata across Stack A and Stack B.
+- [X] Q011 Add system-wide and job-specific scoring generation instruction lifecycle APIs and administration UI; resolve job override before system default and retain version provenance on generated prompts.
+- [X] Q012 Make final scoring prompt edits immutable revisions and require a newly created prompt version whenever the configured model or reasoning level changes.
+- [X] Q013 Enforce exact prompt/test/approval profile compatibility during testing, production approval, re-promotion, queue admission, sequential scoring, and platform submission; expose actionable mismatch state.
+- [X] Q014 Preserve and display candidate scores to three decimal places through parsing, aggregation, persistence, APIs, UI, and numeric sorting for jobs with up to 50,000 applications.
+- [X] Q015 Document scoring profile deployment configuration and backward-compatible schema rollout; add focused cross-stack lifecycle, forwarding, precision, API, and UI tests and run both build/test suites.
+
+## Follow-up: Stack B disclosure defaults and navigation (2026-09-18)
+
+- [X] Q016 Convert the Stack B dashboard performance visualization to a line graph in a default-open collapsible section using the standard disclosure icon, with bUnit coverage in `dotnet/src/Web.Client/Components/ScoringThroughputPanel.razor`, `dotnet/src/Web.Client/Components/ScoringThroughputPanel.razor.css`, and `dotnet/tests/Web.Tests/ScoringThroughputPanelTests.cs`.
+- [X] Q017 Expand the Stack B job longlist/shortlist results section by default and cover the disclosure default in `dotnet/src/Web.Client/Pages/JobDetail.razor` and `dotnet/tests/Web.Tests/JobUsabilityComponentsTests.cs`.
+- [X] Q018 Collapse Stack B System Configuration by default and split Job Extraction Prompt and Scoring Prompt Generation into separate menu routes in `dotnet/src/Web.Client/Layout/NavMenu.razor`, `dotnet/src/Web.Client/Pages/ExtractionInstructions.razor`, `dotnet/src/Web.Client/Pages/ScoringPromptGeneration.razor`, and `dotnet/tests/Web.Tests/ExtractionInstructionAdminTests.cs`.

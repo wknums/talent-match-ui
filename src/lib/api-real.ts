@@ -18,6 +18,10 @@ import type {
   ScoringPrompt,
   PromptTestRun,
   PromptTestRunDetail,
+  PromptGenerationInstruction,
+  PromptProfileStatus,
+  ReasoningEffort,
+  ReasoningModelsResponse,
   AuthenticationProvider,
   AuthorizationContext,
   CanonicalApiError,
@@ -57,6 +61,10 @@ function mapTestRun(raw: any): PromptTestRun {
     completedAt: raw.completedAt,
     reviewedBy: raw.reviewedBy,
     reviewNotes: raw.reviewNotes,
+    modelId: raw.modelId ?? '',
+    reasoningLevel: raw.reasoningLevel ?? '',
+    approvedModelId: raw.approvedModelId,
+    approvedReasoningLevel: raw.approvedReasoningLevel,
   }
 }
 
@@ -67,6 +75,7 @@ function mapScoringRun(raw: any): ScoringRun {
     versionId: raw.versionId ?? raw.aiModelId ?? '',
     runIndex: raw.runIndex ?? 0,
     modelDeploymentId: raw.modelDeploymentId ?? raw.aiModelId ?? '',
+    reasoningLevel: raw.reasoningLevel,
     promptVersionId: raw.promptVersionId ?? raw.promptVersion ?? '',
     overallScore: raw.overallScore ?? raw.totalScore ?? 0,
     subScores: typeof raw.categoryScoresJson === 'string'
@@ -318,6 +327,9 @@ async function fetchVoid(url: string, options?: RequestInit): Promise<void> {
 }
 
 export const realAPI = {
+  async getReasoningModels(): Promise<ReasoningModelsResponse> {
+    return fetchJSON(`${API_BASE}/reasoning-models`)
+  },
   // Auth
   async login(username: string, password: string): Promise<User> {
     return fetchJSON(`${API_BASE}/auth/login`, {
@@ -639,10 +651,15 @@ export const realAPI = {
     return fetchJSON(`${API_BASE}/admin/extraction-instructions/${versionId}`)
   },
 
-  async createExtractionInstructionDraft(instructionText: string, changeNote?: string): Promise<ExtractionInstructionVersion> {
+  async createExtractionInstructionDraft(
+    instructionText: string,
+    changeNote: string | undefined,
+    modelId: string,
+    reasoningLevel: ReasoningEffort,
+  ): Promise<ExtractionInstructionVersion> {
     return fetchJSON(`${API_BASE}/admin/extraction-instructions`, {
       method: 'POST',
-      body: JSON.stringify({ instructionText, changeNote }),
+      body: JSON.stringify({ instructionText, changeNote, modelId, reasoningLevel }),
     })
   },
 
@@ -871,7 +888,67 @@ export const realAPI = {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts`)
   },
 
-  async createPrompt(jobId: string, data: { promptText: string; source: string; generationMetadata?: Record<string, any> }): Promise<ScoringPrompt> {
+  async getPromptProfileStatus(jobId: string, promptId: string): Promise<PromptProfileStatus> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/profile`)
+  },
+
+  async getPromptGenerationInstructions(jobId: string): Promise<PromptGenerationInstruction[]> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompt-generation-instructions`)
+  },
+
+  async createPromptGenerationInstruction(
+    jobId: string,
+    instructionText: string,
+    changeNote?: string,
+    modelId?: string,
+    reasoningLevel?: ReasoningEffort,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompt-generation-instructions`, {
+      method: 'POST',
+      body: JSON.stringify({ instructionText, changeNote, modelId, reasoningLevel }),
+    })
+  },
+
+  async activatePromptGenerationInstruction(
+    jobId: string,
+    instructionId: string,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompt-generation-instructions/${instructionId}/activate`, {
+      method: 'POST',
+    })
+  },
+
+  async getSystemPromptGenerationInstructions(): Promise<PromptGenerationInstruction[]> {
+    return fetchJSON(`${API_BASE}/admin/prompt-generation-instructions`)
+  },
+
+  async createSystemPromptGenerationInstruction(
+    instructionText: string,
+    changeNote?: string,
+    modelId?: string,
+    reasoningLevel?: ReasoningEffort,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/admin/prompt-generation-instructions`, {
+      method: 'POST',
+      body: JSON.stringify({ instructionText, changeNote, modelId, reasoningLevel }),
+    })
+  },
+
+  async activateSystemPromptGenerationInstruction(
+    instructionId: string,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/admin/prompt-generation-instructions/${instructionId}/activate`, {
+      method: 'POST',
+    })
+  },
+
+  async createPrompt(jobId: string, data: {
+    promptText: string
+    source: string
+    generationMetadata?: Record<string, any>
+    modelId: string
+    reasoningLevel: ReasoningEffort
+  }): Promise<ScoringPrompt> {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -882,7 +959,11 @@ export const realAPI = {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}`)
   },
 
-  async editPrompt(jobId: string, promptId: string, data: { promptText: string }): Promise<ScoringPrompt> {
+  async editPrompt(jobId: string, promptId: string, data: {
+    promptText: string
+    modelId: string
+    reasoningLevel: ReasoningEffort
+  }): Promise<ScoringPrompt> {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}`, {
       method: 'PUT',
       body: JSON.stringify(data),

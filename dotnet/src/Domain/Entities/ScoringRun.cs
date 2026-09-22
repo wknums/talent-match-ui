@@ -13,6 +13,7 @@ public class ScoringRun
     public string EvidenceCitationsJson { get; set; } = "[]"; // JSON serialized
     public string ImprovementTipsJson { get; set; } = "[]"; // JSON serialized
     public string AiModelId { get; set; } = string.Empty;
+    public string ReasoningLevel { get; set; } = string.Empty;
     public string PromptVersion { get; set; } = string.Empty;
     public int InputTokens { get; set; }
     public int OutputTokens { get; set; }

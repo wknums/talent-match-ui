@@ -9,7 +9,9 @@ namespace TalentMatch.Application.Prompts.Commands;
 
 public record GeneratePromptCommand(
     string JobId,
-    string Author
+    string Author,
+    string ModelId = "o3",
+    string ReasoningLevel = "high"
 ) : IRequest<ScoringPrompt>;
 
 public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptCommand, ScoringPrompt>
@@ -17,9 +19,12 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
     private readonly IScoringPromptRepository _promptRepo;
     private readonly IJobRepository _jobRepo;
     private readonly ILlmProxyService? _llmService;
+    private readonly IPromptGenerationInstructionRepository? _instructionRepo;
+    private readonly IScoringProfileProvider? _profileProvider;
+    private readonly IReasoningModelCatalog? _reasoningModels;
 
     // Identical to Stack A system prompt in server/routes/prompts.ts
-    private const string SystemPrompt = """
+    public const string DefaultGenerationInstruction = """
         You are an expert at creating scoring prompts for candidate evaluation.
         Given an approved job rubric and a target scoring JSON template derived from that rubric, create a structured scoring prompt that an AI model can use to evaluate candidate applications.
         The prompt should:
@@ -40,11 +45,17 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
     public GeneratePromptCommandHandler(
         IScoringPromptRepository promptRepo,
         IJobRepository jobRepo,
-        ILlmProxyService? llmService = null)
+        ILlmProxyService? llmService = null,
+        IPromptGenerationInstructionRepository? instructionRepo = null,
+        IScoringProfileProvider? profileProvider = null,
+        IReasoningModelCatalog? reasoningModels = null)
     {
         _promptRepo = promptRepo;
         _jobRepo = jobRepo;
         _llmService = llmService;
+        _instructionRepo = instructionRepo;
+        _profileProvider = profileProvider;
+        _reasoningModels = reasoningModels;
     }
 
     public async Task<ScoringPrompt> Handle(GeneratePromptCommand request, CancellationToken ct)
@@ -127,18 +138,55 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
 
         string promptText;
         string? metadataJson = null;
+        var profile = _reasoningModels is null
+            ? _profileProvider?.Current
+              ?? new ScoringProfile(request.ModelId.Trim(), request.ReasoningLevel.Trim())
+            : await _reasoningModels.ValidateAsync(
+                request.ModelId,
+                request.ReasoningLevel,
+                ct);
+        var instruction = _instructionRepo is null
+            ? null
+            : await _instructionRepo.GetActiveAsync(request.JobId, ct)
+              ?? await _instructionRepo.GetActiveAsync(null, ct);
+        var generationInstruction = instruction?.InstructionText
+            ?? DefaultGenerationInstruction;
+        var generationProfile = instruction is null
+            ? profile
+            : _reasoningModels is null
+                ? string.IsNullOrWhiteSpace(instruction.ModelId)
+                    || string.IsNullOrWhiteSpace(instruction.ReasoningLevel)
+                    ? profile
+                    : new ScoringProfile(instruction.ModelId, instruction.ReasoningLevel)
+                : await _reasoningModels.ResolveForExecutionAsync(
+                    instruction.ModelId,
+                    instruction.ReasoningLevel,
+                    ct);
 
         if (_llmService != null)
         {
             // FR-034: Generate prompt from rubric using LLM
             var userPrompt = JsonSerializer.Serialize(rubricContext, new JsonSerializerOptions { WriteIndented = true });
 
-            promptText = await _llmService.SendPromptAsync(SystemPrompt, userPrompt, ct);
+            promptText = await _llmService.SendPromptAsync(
+                generationInstruction,
+                userPrompt,
+                generationProfile,
+                ct);
+            if (promptText is null)
+                promptText = await _llmService.SendPromptAsync(
+                    generationInstruction,
+                    userPrompt,
+                    ct);
             metadataJson = JsonSerializer.Serialize(new
             {
                 GeneratedBy = "llm",
                 Source = "AWR_SEQ_API",
-                GeneratedAt = DateTime.UtcNow
+                GeneratedAt = DateTime.UtcNow,
+                GenerationInstructionVersionId = instruction?.Id,
+                GenerationInstructionScope = instruction?.JobId is null ? "system" : "job",
+                ModelId = generationProfile.ModelId,
+                ReasoningLevel = generationProfile.ReasoningLevel
             });
         }
         else
@@ -149,7 +197,11 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
             {
                 GeneratedBy = "fallback",
                 Reason = "LLM service not available",
-                GeneratedAt = DateTime.UtcNow
+                GeneratedAt = DateTime.UtcNow,
+                GenerationInstructionVersionId = instruction?.Id,
+                GenerationInstructionScope = instruction?.JobId is null ? "system" : "job",
+                ModelId = generationProfile.ModelId,
+                ReasoningLevel = generationProfile.ReasoningLevel
             });
         }
 
@@ -166,7 +218,10 @@ public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptComman
             Status = "draft",
             Author = request.Author,
             Source = "generated",
-            GenerationMetadataJson = metadataJson
+            GenerationMetadataJson = metadataJson,
+            GenerationInstructionVersionId = instruction?.Id,
+            ModelId = profile.ModelId,
+            ReasoningLevel = profile.ReasoningLevel
         };
 
         await _promptRepo.AddAsync(prompt, ct);

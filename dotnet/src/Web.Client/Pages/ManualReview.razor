@@ -38,7 +38,7 @@
                     Pre-populated from AI scoring
                     @if (aiOriginalScore.HasValue)
                     {
-                        <text> (score: @aiOriginalScore.Value.ToString("F1"), variance: @(aiOriginalVariance?.ToString("F2") ?? "N/A"))</text>
+                        <text> (score: @aiOriginalScore.Value.ToString("F3"), variance: @(aiOriginalVariance?.ToString("F3") ?? "N/A"))</text>
                     }
                     . Please verify and adjust.
                 </span>
@@ -94,7 +94,7 @@
             }
 
             <div style="margin: 1rem 0; padding: 0.75rem; background: #f5f5f5; border-radius: 4px;">
-                <strong>Total Weighted Score: @currentWeightedScore.ToString("F1")</strong>
+                <strong>Total Weighted Score: @currentWeightedScore.ToString("F3")</strong>
             </div>
 
             <div style="margin-bottom: 1rem;">
@@ -430,7 +430,7 @@
         {
             if (avgScoresByCategory.TryGetValue(cat.Name, out var score))
             {
-                var parts = new List<string> { $"AI Score\n{score:F1} / 100" };
+                var parts = new List<string> { $"AI Score\n{score:F3} / 100" };
                 if (categoryEvidenceMap.TryGetValue(cat.Name, out var evidence) && evidence.Any())
                 {
                     parts.Add($"\nEvidence\n{string.Join("\n", evidence.Select(e => $"- {e}"))}");
@@ -443,7 +443,7 @@
         {
             var commentParts = new List<string>
             {
-                $"Pre-populated from AI scoring (score: {aiOriginalScore?.ToString("F1") ?? "N/A"}, variance: {aiOriginalVariance?.ToString("F2") ?? "N/A"}). Please verify and adjust."
+                $"Pre-populated from AI scoring (score: {aiOriginalScore?.ToString("F3") ?? "N/A"}, variance: {aiOriginalVariance?.ToString("F3") ?? "N/A"}). Please verify and adjust."
             };
 
             if (!string.IsNullOrEmpty(aggregatedResult?.ConsolidatedRationale))
@@ -583,8 +583,8 @@
                     reviewer,
                     timestamp,
                     $"{cat.Name} score",
-                    previousScore.ToString("F1"),
-                    newScore.ToString("F1")));
+                    previousScore.ToString("F3"),
+                    newScore.ToString("F3")));
             }
 
             var previousComment = baselineCategoryComments.TryGetValue(cat.Name, out var oldComment) ? oldComment : string.Empty;
