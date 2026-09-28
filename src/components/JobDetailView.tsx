@@ -457,13 +457,28 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
               <ApplicationsTable applications={applications} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
             </TabsContent>
             <TabsContent value="longlist" className="mt-6">
-              <ApplicationsTable applications={longlistApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
+              <ApplicationsTable
+                applications={longlistApps}
+                onApplicationClick={onApplicationClick}
+                onStartManualReview={onStartManualReview}
+                exportContext={{ jobTitle: job.title, viewName: 'Longlist' }}
+              />
             </TabsContent>
             <TabsContent value="shortlist" className="mt-6">
-              <ApplicationsTable applications={shortlistApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
+              <ApplicationsTable
+                applications={shortlistApps}
+                onApplicationClick={onApplicationClick}
+                onStartManualReview={onStartManualReview}
+                exportContext={{ jobTitle: job.title, viewName: 'Shortlist' }}
+              />
             </TabsContent>
             <TabsContent value="excluded" className="mt-6">
-              <ApplicationsTable applications={excludedApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
+              <ApplicationsTable
+                applications={excludedApps}
+                onApplicationClick={onApplicationClick}
+                onStartManualReview={onStartManualReview}
+                exportContext={{ jobTitle: job.title, viewName: 'Excluded' }}
+              />
             </TabsContent>
             <TabsContent value="review" className="mt-6">
               <ApplicationsTable applications={manualReviewApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
@@ -488,6 +503,11 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
                 onStartManualReview(appId, jobId)
                 setDrilldownOpen(false)
               } : undefined}
+              exportContext={drilldownType === 'longlist'
+                ? { jobTitle: job.title, viewName: 'Longlist' }
+                : drilldownType === 'shortlist'
+                  ? { jobTitle: job.title, viewName: 'Shortlist' }
+                  : undefined}
             />
           </div>
         </SheetContent>

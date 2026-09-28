@@ -35,6 +35,9 @@ public class AppDbContext : DbContext
     public DbSet<DepartmentMembership> DepartmentMemberships => Set<DepartmentMembership>();
     public DbSet<RoleGroupMapping> RoleGroupMappings => Set<RoleGroupMapping>();
     public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
+    public DbSet<UploadSettings> UploadSettings => Set<UploadSettings>();
+    public DbSet<UploadSession> UploadSessions => Set<UploadSession>();
+    public DbSet<UploadItem> UploadItems => Set<UploadItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -162,6 +165,79 @@ public class AppDbContext : DbContext
                 .HasForeignKey(x => new { x.DepartmentId, x.OrganizationId })
                 .HasPrincipalKey(x => new { x.Id, x.OrganizationId }).OnDelete(DeleteBehavior.Restrict);
             e.HasIndex(x => new { x.OrganizationId, x.DepartmentId });
+        });
+
+        modelBuilder.Entity<UploadSettings>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(64);
+            e.Property(x => x.CreatedBy).HasMaxLength(128).IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(128).IsRequired();
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_UploadSettings_FileConcurrency", "FileConcurrency > 0");
+                t.HasCheckConstraint("CK_UploadSettings_MaxIndividualFileBytes", "MaxIndividualFileBytes > 0");
+                t.HasCheckConstraint("CK_UploadSettings_MaxInFlightBytes", "MaxInFlightBytes >= MaxIndividualFileBytes");
+                t.HasCheckConstraint("CK_UploadSettings_Singleton", "Id = 'optional-file-upload'");
+            });
+        });
+
+        modelBuilder.Entity<UploadSession>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(36);
+            e.Property(x => x.JobId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.OwnerActorId).HasMaxLength(128).IsRequired();
+            e.Property(x => x.OwnerDisplayName).HasMaxLength(200);
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Restrict);
+            e.HasMany(x => x.Items).WithOne(x => x.Session).HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.OwnerActorId, x.CreatedAt });
+            e.HasIndex(x => new { x.JobId, x.CreatedAt });
+            e.HasIndex(x => new { x.Status, x.LastHeartbeatAt });
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_UploadSessions_Status", "Status IN ('active', 'completed')");
+                t.HasCheckConstraint("CK_UploadSessions_Limits", "FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes");
+                t.HasCheckConstraint("CK_UploadSessions_Counts", "TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0");
+            });
+        });
+
+        modelBuilder.Entity<UploadItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(36);
+            e.Property(x => x.SessionId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.ApplicationId).HasMaxLength(36);
+            e.Property(x => x.OccurrenceKey).HasMaxLength(36).IsRequired();
+            e.Property(x => x.FileName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.MimeType).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Status).HasConversion(
+                value => value.ToWireValue(),
+                value => ParseUploadItemStatus(value))
+                .HasMaxLength(32)
+                .IsRequired();
+            e.Property(x => x.ContentFingerprint).HasMaxLength(64);
+            e.Property(x => x.OutcomeCode).HasMaxLength(100);
+            e.Property(x => x.OutcomeMessage).HasMaxLength(1000);
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.HasOne(x => x.Application).WithOne().HasForeignKey<UploadItem>(x => x.ApplicationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.SessionId, x.OccurrenceKey }).IsUnique();
+            e.HasIndex(x => new { x.SessionId, x.Ordinal }).IsUnique();
+            e.HasIndex(x => x.ApplicationId).IsUnique().HasFilter("[ApplicationId] IS NOT NULL");
+            e.HasIndex(x => new { x.SessionId, x.Status, x.Ordinal });
+            e.HasIndex(x => new { x.Status, x.UpdatedAt });
+            e.HasIndex(x => new { x.SessionId, x.ContentFingerprint });
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_UploadItems_Status", "Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted')");
+                t.HasCheckConstraint("CK_UploadItems_Attempts", "AttemptCount >= 0 AND AttemptCount <= 4");
+                t.HasCheckConstraint("CK_UploadItems_RawSizeBytes", "RawSizeBytes >= 0");
+                t.HasCheckConstraint("CK_UploadItems_Application", "(Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)");
+            });
         });
 
         // JobConfigVersion
@@ -411,4 +487,17 @@ public class AppDbContext : DbContext
             e.Property(x => x.JobId).HasMaxLength(36);
         });
     }
+
+    private static UploadItemStatus ParseUploadItemStatus(string value) => value switch
+    {
+        "waiting" => UploadItemStatus.Waiting,
+        "throttled" => UploadItemStatus.Throttled,
+        "uploading" => UploadItemStatus.Uploading,
+        "retrying" => UploadItemStatus.Retrying,
+        "succeeded" => UploadItemStatus.Succeeded,
+        "skipped_duplicate" => UploadItemStatus.SkippedDuplicate,
+        "failed" => UploadItemStatus.Failed,
+        "interrupted" => UploadItemStatus.Interrupted,
+        _ => throw new InvalidOperationException($"Unknown upload item status '{value}'."),
+    };
 }

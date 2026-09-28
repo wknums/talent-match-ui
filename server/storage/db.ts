@@ -59,13 +59,14 @@ export async function getPool(): Promise<any> {
 }
 
 export async function getStorageProvider(): Promise<import('./types.js').StorageProvider> {
-  const [{ userRepo }, { organizationRepo }, { roleAssignmentRepo }, { accessManagementRepo }, { extractionInstructionRepo }, { jobSpecExtractionRepo }] = await Promise.all([
+  const [{ userRepo }, { organizationRepo }, { roleAssignmentRepo }, { accessManagementRepo }, { extractionInstructionRepo }, { jobSpecExtractionRepo }, { uploadRepo }] = await Promise.all([
     import('./repos/user-repo.js'),
     import('./repos/organization-repo.js'),
     import('./repos/role-assignment-repo.js'),
     import('./repos/access-management-repo.js'),
     import('./repos/extraction-instruction-repo.js'),
     import('./repos/job-spec-extraction-repo.js'),
+    import('./repos/upload-repo.js'),
   ])
   return {
     users: userRepo,
@@ -74,6 +75,7 @@ export async function getStorageProvider(): Promise<import('./types.js').Storage
     accessManagement: accessManagementRepo,
     extractionInstructions: extractionInstructionRepo,
     jobSpecExtractions: jobSpecExtractionRepo,
+    uploads: uploadRepo,
   }
 }
 

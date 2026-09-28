@@ -13,6 +13,59 @@ public sealed class PromptProfileLifecycleTests
     private static readonly ScoringProfile CurrentProfile = new("model-current", "high");
 
     [Fact]
+    public async Task Comment_update_preserves_existing_rating()
+    {
+        var prompt = new ScoringPrompt
+        {
+            Id = "prompt-1",
+            Rating = 4,
+            Comments = "Old comment",
+        };
+        var repository = new Mock<IScoringPromptRepository>();
+        repository.Setup(item => item.GetByIdAsync("prompt-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(prompt);
+        repository.Setup(item => item.UpdateAsync(prompt, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var result = await new RatePromptCommandHandler(repository.Object)
+            .Handle(new RatePromptCommand("prompt-1", null, "Updated comment"), CancellationToken.None);
+
+        result.Rating.Should().Be(4);
+        result.Comments.Should().Be("Updated comment");
+    }
+
+    [Fact]
+    public async Task Create_test_run_rejects_inactive_prompt()
+    {
+        var prompts = new Mock<IScoringPromptRepository>();
+        prompts.Setup(item => item.GetByIdAsync("prompt-3", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ScoringPrompt
+            {
+                Id = "prompt-3",
+                JobId = "job-1",
+                VersionNumber = 3,
+                Status = "inactive",
+                ModelId = "o3",
+                ReasoningLevel = "high",
+            });
+        var handler = new CreatePromptTestRunCommandHandler(
+            null!,
+            prompts.Object,
+            null!,
+            null!,
+            null!,
+            null!,
+            null!);
+
+        var action = () => handler.Handle(
+            new CreatePromptTestRunCommand("job-1", "prompt-3", []),
+            CancellationToken.None);
+
+        await action.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Prompt v3 is inactive. Activate or approve it before creating a test run.");
+    }
+
+    [Fact]
     public async Task Edit_creates_new_version_without_mutating_source()
     {
         var source = new ScoringPrompt

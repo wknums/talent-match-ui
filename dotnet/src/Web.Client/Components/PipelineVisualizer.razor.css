@@ -1,0 +1,80 @@
+.pipeline-visualizer {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.pipeline-stage {
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: center;
+}
+
+.pipeline-bar {
+    display: flex;
+    height: 24px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: #e0e0e0;
+}
+
+.pipeline-stage-progress,
+.upload-progress-pending,
+.upload-progress-attention {
+    height: 100%;
+    transition: width 180ms ease-out;
+}
+
+.upload-progress-pending {
+    background: #7dd3fc;
+}
+
+.upload-progress-attention {
+    background: #f59e0b;
+}
+
+.pipeline-stage-label {
+    margin-top: 4px;
+    font-size: 0.75rem;
+}
+
+.pipeline-upload-link {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.pipeline-upload-link:hover .pipeline-stage-label {
+    text-decoration: underline;
+}
+
+.pipeline-upload-link:focus-visible {
+    border-radius: 4px;
+    outline: 3px solid #123a72;
+    outline-offset: 3px;
+}
+
+@media (max-width: 760px) {
+    .pipeline-visualizer {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .pipeline-visualizer > span {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pipeline-stage-progress,
+    .upload-progress-pending,
+    .upload-progress-attention {
+        transition: none;
+    }
+}

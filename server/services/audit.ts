@@ -21,12 +21,31 @@ export interface AuthorizationAuditDetails {
   reasonCode?: string
 }
 
-const forbiddenAuditKeys = new Set(['token', 'accessToken', 'idToken', 'refreshToken', 'authorization'])
+const forbiddenAuditKeys = new Set([
+  'authorization',
+  'accesstoken',
+  'idtoken',
+  'refreshtoken',
+  'token',
+  'content',
+  'contentbase64',
+  'bytes',
+  'filebytes',
+  'secret',
+  'credentials',
+])
 
 function assertSafeDetails(details: Record<string, unknown>): void {
-  for (const key of Object.keys(details)) {
-    if (forbiddenAuditKeys.has(key)) throw new Error(`Audit details must not contain ${key}.`)
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (forbiddenAuditKeys.has(key.toLowerCase())) {
+        throw new Error(`Audit details must not contain ${key}.`)
+      }
+      visit(nested)
+    }
   }
+  visit(details)
 }
 
 export const auditService = {

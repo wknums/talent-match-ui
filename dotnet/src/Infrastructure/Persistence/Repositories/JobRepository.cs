@@ -29,6 +29,10 @@ public class JobRepository : IJobRepository
         => await _context.Jobs.Include(j => j.ConfigVersions).Include(j => j.Applications)
             .FirstOrDefaultAsync(j => j.Id == id, ct);
 
+    public async Task<Job?> GetByIdWithoutApplicationsAsync(string id, CancellationToken ct = default)
+        => await _context.Jobs.Include(j => j.ConfigVersions)
+            .FirstOrDefaultAsync(j => j.Id == id, ct);
+
     public async Task AddAsync(Job job, CancellationToken ct = default)
     {
         await _context.Jobs.AddAsync(job, ct);

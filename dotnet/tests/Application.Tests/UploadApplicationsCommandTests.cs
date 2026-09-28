@@ -105,6 +105,24 @@ public class UploadApplicationsCommandTests
             Times.Once);
     }
 
+    [Fact]
+    public async Task Handle_LegacyPathStillSkipsLaterMatchingOccurrenceAndPublishesOnce()
+    {
+        var applications = new Mock<IApplicationRepository>();
+        var signal = new Mock<IScoringQueueSignal>();
+        var handler = new UploadApplicationsCommandHandler(
+            applications.Object, CreateJobRepository().Object, signal.Object);
+
+        var result = await handler.Handle(new UploadApplicationsCommand(
+            "job-1", [CreateFile(), CreateFile()], AllowDuplicates: false), CancellationToken.None);
+
+        result.Should().ContainSingle().Which.Status.Should().Be("Queued");
+        applications.Verify(x => x.PublishUploadedAsync(
+            It.Is<IReadOnlyCollection<string>>(ids => ids.Count == 1),
+            It.IsAny<CancellationToken>()), Times.Once);
+        signal.Verify(x => x.Pulse(), Times.Once);
+    }
+
     private static Mock<IJobRepository> CreateJobRepository()
     {
         var jobs = new Mock<IJobRepository>();

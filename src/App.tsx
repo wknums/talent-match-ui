@@ -19,6 +19,8 @@ import type { Job } from '@/types'
 import { requestPasswordReset } from '@/lib/auth'
 import { useAuth } from '@/hooks/useAuth'
 import { toast } from 'sonner'
+import { UploadStatusSurface } from '@/components/UploadStatusSurface'
+import { OptionalUploadSettings } from '@/components/OptionalUploadSettings'
 
 type View = 'dashboard' | 'job-detail' | 'manual-review' | 'analytics'
 
@@ -39,6 +41,7 @@ function App() {
   const [entraAccessManagementOpen, setEntraAccessManagementOpen] = useState(false)
   const [organizationAdminOpen, setOrganizationAdminOpen] = useState(false)
   const [extractionInstructionAdminOpen, setExtractionInstructionAdminOpen] = useState(false)
+  const [optionalUploadSettingsOpen, setOptionalUploadSettingsOpen] = useState(false)
 
   const handleLogin = async (username: string, password: string): Promise<boolean> => {
     const user = await signIn({ username, password })
@@ -149,6 +152,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-background">
+      <UploadStatusSurface />
       {currentView === 'dashboard' && (
         <div className="container mx-auto px-8 py-6">
           <div className="flex justify-between items-center mb-6">
@@ -180,6 +184,7 @@ function App() {
                 onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
                 onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
                 onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
+                onManageUploadSettings={currentUser.role === 'admin' ? () => setOptionalUploadSettingsOpen(true) : undefined}
                 onLogout={handleLogout}
               />
             </div>
@@ -212,6 +217,7 @@ function App() {
               onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
               onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
               onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
+              onManageUploadSettings={currentUser.role === 'admin' ? () => setOptionalUploadSettingsOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -231,6 +237,7 @@ function App() {
               onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
               onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
               onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
+              onManageUploadSettings={currentUser.role === 'admin' ? () => setOptionalUploadSettingsOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -259,6 +266,7 @@ function App() {
               onManageExtractionInstructions={currentUser.role === 'admin' ? () => setExtractionInstructionAdminOpen(true) : undefined}
               onManageEntraAccess={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setEntraAccessManagementOpen(true) : undefined}
               onManageOrganization={authMode === 'entra' && (currentUser.role === 'admin' || currentUser.role === 'organization_admin') ? () => setOrganizationAdminOpen(true) : undefined}
+              onManageUploadSettings={currentUser.role === 'admin' ? () => setOptionalUploadSettingsOpen(true) : undefined}
               onLogout={handleLogout}
             />
           </div>
@@ -318,6 +326,13 @@ function App() {
         <ExtractionInstructionAdmin
           open={extractionInstructionAdminOpen}
           onClose={() => setExtractionInstructionAdminOpen(false)}
+        />
+      )}
+
+      {currentUser.role === 'admin' && (
+        <OptionalUploadSettings
+          open={optionalUploadSettingsOpen}
+          onClose={() => setOptionalUploadSettingsOpen(false)}
         />
       )}
 

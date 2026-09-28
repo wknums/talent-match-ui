@@ -6,6 +6,7 @@ import App from './App.tsx'
 import { ErrorFallback } from './ErrorFallback.tsx'
 import { AuthProvider } from './hooks/useAuth.ts'
 import { appAuthMode, createMsalInstance } from './lib/msal-config.ts'
+import { UploadCoordinatorProvider } from './providers/UploadCoordinatorProvider.tsx'
 
 import "./main.css"
 import "./styles/theme.css"
@@ -46,7 +47,9 @@ void logBuildStamp()
 async function renderApp() {
   const app = (
     <AuthProvider>
-      <App />
+      <UploadCoordinatorProvider>
+        <App />
+      </UploadCoordinatorProvider>
     </AuthProvider>
   )
   const content = appAuthMode === 'entra'

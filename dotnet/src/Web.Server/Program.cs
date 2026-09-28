@@ -1090,6 +1090,8 @@ else
 app.MapJobsEndpoints();
 app.MapExtractionInstructionEndpoints();
 app.MapApplicationsEndpoints();
+app.MapUploadEndpoints();
+app.MapUploadSettingsEndpoints();
 app.MapStatsEndpoints();
 app.MapDlqEndpoints();
 app.MapPromptEndpoints();

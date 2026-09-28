@@ -47,5 +47,5 @@
         => ModelIdChanged.InvokeAsync(args.Value?.ToString() ?? "");
 
     private Task OnReasoningChanged(ChangeEventArgs args)
-        => ReasoningLevelChanged.InvokeAsync(args.Value?.ToString() ?? "high");
+        => ReasoningLevelChanged.InvokeAsync(args.Value?.ToString() ?? ReasoningLevel);
 }

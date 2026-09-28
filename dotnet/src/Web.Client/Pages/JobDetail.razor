@@ -1,9 +1,11 @@
 @page "/jobs/{JobId}"
 @using TalentMatch.Web.Client.Services
 @using System.Text.Json
+@using Microsoft.JSInterop
 @implements IDisposable
 @inject ApiClient Api
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <h3>Job Detail</h3>
 
@@ -52,7 +54,7 @@
 
     <section class="pipeline-section">
         <h5>Pipeline Status</h5>
-        <PipelineVisualizer Applications="allApps" />
+        <PipelineVisualizer ApplicationCounts="applicationCounts" JobId="@JobId" />
 
     @if (processingErrors.Any() && HasFailedApps)
     {
@@ -74,12 +76,13 @@
     }
 
     <details class="job-collapsible pipeline-results" open>
-        <summary>Longlist, Shortlist and Excluded Applications (@allApps.Count)</summary>
+        <summary>Longlist, Shortlist, Review and Excluded Applications (@(applicationCounts?.Total ?? 0))</summary>
         <div class="job-collapsible-content">
     <div class="tab-row">
-        <button @onclick="@(() => activeTab = "longlist")" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F3") (@longlist.Count)</button>
-        <button @onclick="@(() => activeTab = "shortlist")" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F3") (@shortlist.Count)</button>
-        <button @onclick="@(() => activeTab = "excluded")" style="@TabStyle("excluded")">Excluded (@excluded.Count)</button>
+        <button @onclick="@(() => SelectTab("shortlist"))" style="@TabStyle("shortlist")">Shortlist ≥ @EffectiveShortlistThreshold.ToString("F3") (@(applicationCounts?.Shortlist ?? 0))</button>
+        <button @onclick="@(() => SelectTab("longlist"))" style="@TabStyle("longlist")">Longlist ≥ @EffectiveLonglistThreshold.ToString("F3") (@(applicationCounts?.Longlist ?? 0))</button>
+        <button @onclick="@(() => SelectTab("review"))" style="@TabStyle("review")">Review (@(applicationCounts?.Review ?? 0))</button>
+        <button @onclick="@(() => SelectTab("excluded"))" style="@TabStyle("excluded")">Excluded (@(applicationCounts?.Excluded ?? 0))</button>
     </div>
 
     <div class="filter-row">
@@ -93,7 +96,28 @@
         {
             <button @onclick="() => applicantSearch = string.Empty" style="padding: 0.4rem 0.75rem;">Clear</button>
         }
+        <div class="application-export-menu">
+            <button class="application-export-trigger"
+                    @onclick="() => showExportMenu = !showExportMenu"
+                    aria-label="@($"Export {activeTab} applications")"
+                    aria-expanded="@showExportMenu"
+                    title="Export applications">
+                …
+            </button>
+            @if (showExportMenu)
+            {
+                <div class="application-export-options" role="menu" aria-label="Export to Excel">
+                    <strong>Export to Excel</strong>
+                    <button role="menuitem" @onclick="() => ExportCurrentList(ApplicationExportFormat.Csv)">Export as CSV</button>
+                    <button role="menuitem" @onclick="() => ExportCurrentList(ApplicationExportFormat.Xlsx)">Export as XLSX</button>
+                </div>
+            }
+        </div>
     </div>
+    @if (!string.IsNullOrWhiteSpace(exportError))
+    {
+        <div role="alert" class="application-export-error">@exportError</div>
+    }
 
     <div class="table-scroll">
     <table style="width: 100%; border-collapse: collapse;">
@@ -126,9 +150,13 @@
                     <td style="padding: 0.5rem; font-size: 0.85rem; color: #718096;">@app.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
                     <td style="padding: 0.5rem;">
                         <button @onclick="@(() => Navigation.NavigateTo($"/applications/{app.Id}"))">View</button>
-                        @if (app.FinalDecision == "NeedsManualReview" || app.FinalDecision == "Excluded")
+                        @if (CanReview(app))
                         {
                             <button @onclick="@(() => Navigation.NavigateTo($"/manual-review/{app.Id}"))">Review</button>
+                        }
+                        else if (CanOverride(app))
+                        {
+                            <button @onclick="@(() => Navigation.NavigateTo($"/manual-review/{app.Id}"))">Review decision</button>
                         }
                     </td>
                 </tr>
@@ -185,6 +213,8 @@
             </div>
         </details>
     }
+
+    <UploadStatusSurface />
 }
 else
 {
@@ -194,7 +224,9 @@ else
 @if (showUpload)
 {
     <FloatingPanel Title="Upload Applications" InitialWidth="760" InitialHeight="620" OnClose="() => showUpload = false">
-        <UploadApplications JobId="@JobId" OnUploaded="OnUploadCompleted" />
+        <UploadApplications JobId="@JobId"
+                            OnUploaded="OnUploadCompleted"
+                            OnOptionalUploadStarted="() => showUpload = false" />
     </FloatingPanel>
 }
 
@@ -205,11 +237,6 @@ else
                           HasApprovedRubric="hasApprovedRubric"
                           ProductionPromptId="@productionPromptId"
                           OnPromptStatusChange="OnPromptStatusChanged" />
-        <hr style="margin: 1rem 0;" />
-        <PromptTestRunner JobId="@JobId"
-                          ActivePrompt="activePrompt"
-                          Prompts="promptVersions"
-                          OnPromptStatusChange="OnPromptStatusChanged" />
     </FloatingPanel>
 }
 
@@ -217,7 +244,7 @@ else
 {
     <ConfirmDeleteJobDialog Visible="true"
                             JobTitle="@(job?.Title ?? "")"
-                            ApplicationCount="@(allApps.Count)"
+                            ApplicationCount="@(applicationCounts?.Total ?? 0)"
                             OnConfirm="ConfirmDelete"
                             OnCancel="CancelDelete" />
 }
@@ -249,8 +276,14 @@ else
     [Parameter] public string JobId { get; set; } = "";
 
     private JobDto? job;
-    private List<ApplicationDto> allApps = new();
-    private string activeTab = "longlist";
+    private JobApplicationCountsDto? applicationCounts;
+    private List<ApplicationDto> shortlistApps = new();
+    private List<ApplicationDto> longlistApps = new();
+    private List<ApplicationDto> excludedApps = new();
+    private List<ApplicationDto> reviewApps = new();
+    private List<ApplicationDto> failedApps = new();
+    private readonly HashSet<string> loadedTabs = [];
+    private string activeTab = "shortlist";
     private bool showUpload;
     private bool showPrompts;
     private bool showHelp;
@@ -268,7 +301,8 @@ else
     private string? deleteError;
     private string? editError;
     private string applicantSearch = string.Empty;
-    private ScoringPromptDto? activePrompt;
+    private bool showExportMenu;
+    private string? exportError;
     private List<ScoringPromptDto> promptVersions = new();
     private string? productionPromptId;
     private JobConfigDto? jobConfig;
@@ -288,34 +322,38 @@ else
             ? "Blocked until the production prompt is retested and approved with the current backend model and reasoning level."
             : "Available after the job rubric and scoring prompt are production-approved.";
 
-    // Longlist is inclusive by threshold, so shortlist is naturally a subset
-    // when shortlist threshold >= longlist threshold.
-    private List<ApplicationDto> longlist => allApps
-        .Where(a => a.FinalScore.HasValue && a.FinalScore.Value >= EffectiveLonglistThreshold)
-        .ToList();
-
-    private List<ApplicationDto> shortlist => allApps
-        .Where(a => a.FinalScore.HasValue && a.FinalScore.Value >= EffectiveShortlistThreshold)
-        .ToList();
-
-    private List<ApplicationDto> excluded => allApps.Where(a => a.FinalDecision == "Excluded").ToList();
-
     private List<ApplicationDto> currentList
     {
         get
         {
             var source = activeTab switch
             {
-                "shortlist" => shortlist,
-                "excluded" => excluded,
-                _ => longlist
+                "longlist" => longlistApps,
+                "excluded" => excludedApps,
+                "review" => reviewApps,
+                _ => shortlistApps
             };
 
-            if (string.IsNullOrWhiteSpace(applicantSearch))
-                return source;
+            IEnumerable<ApplicationDto> filtered = source;
+            if (!string.IsNullOrWhiteSpace(applicantSearch))
+            {
+                var searchTerm = applicantSearch.Trim();
+                filtered = filtered.Where(application =>
+                    MatchesApplicantSearch(application, searchTerm));
+            }
 
-            var searchTerm = applicantSearch.Trim();
-            return allApps.Where(a => MatchesApplicantSearch(a, searchTerm)).ToList();
+            return (sortField, sortAscending) switch
+            {
+                ("score", true) => filtered.OrderBy(application =>
+                    Math.Round(application.FinalScore ?? 0, 3)).ToList(),
+                ("score", false) => filtered.OrderByDescending(application =>
+                    Math.Round(application.FinalScore ?? 0, 3)).ToList(),
+                ("date", true) => filtered.OrderBy(application =>
+                    application.CreatedAt).ToList(),
+                ("date", false) => filtered.OrderByDescending(application =>
+                    application.CreatedAt).ToList(),
+                _ => filtered.ToList(),
+            };
         }
     }
 
@@ -327,9 +365,48 @@ else
                    && application.CandidateRef.Contains(searchTerm, StringComparison.OrdinalIgnoreCase));
     }
 
+    private static bool CanReview(ApplicationDto application) =>
+        application.Status == "NeedsManualReview"
+        || application.FinalDecision == "NeedsManualReview";
+
+    private static bool CanOverride(ApplicationDto application) =>
+        application.FinalDecision == "Excluded";
+
     private string TabStyle(string tab) => activeTab == tab
         ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;"
         : "padding: 0.5rem 1rem;";
+
+    private async Task SelectTab(string tab)
+    {
+        activeTab = tab;
+        showExportMenu = false;
+        exportError = null;
+        await LoadTabAsync(tab);
+    }
+
+    private async Task ExportCurrentList(ApplicationExportFormat format)
+    {
+        showExportMenu = false;
+        exportError = null;
+        var export = ApplicationExportBuilder.Create(
+            currentList,
+            job?.Title ?? "job",
+            activeTab,
+            format);
+
+        try
+        {
+            await JS.InvokeVoidAsync(
+                "talentMatchDownloadBase64",
+                export.FileName,
+                export.ContentType,
+                Convert.ToBase64String(export.Content));
+        }
+        catch (JSException exception)
+        {
+            exportError = $"Unable to export {activeTab}: {exception.Message}";
+        }
+    }
 
     private static RubricEnvelopeDto? TryParseRubricEnvelope(string? rubricJson)
     {
@@ -353,8 +430,7 @@ else
         isAdmin = currentUser?.Role == "admin";
 
         job = await Api.GetJobAsync(JobId);
-        allApps = await Api.GetApplicationsAsync(JobId);
-        ApplySort();
+        await RefreshApplicationDataAsync();
         await LoadPromptStatus();
 
         ReconcileProcessingErrors();
@@ -380,8 +456,6 @@ else
         var productionPrompt = promptVersions.FirstOrDefault(p => p.Status == "production-approved");
         hasProductionApprovedPrompt = productionPrompt is not null;
         productionPromptId = productionPrompt?.Id;
-        activePrompt = promptVersions.FirstOrDefault(p => p.Status == "active")
-            ?? productionPrompt;
         if (productionPrompt is null)
         {
             productionProfileStatus = null;
@@ -421,26 +495,44 @@ else
     {
         if (sortField == "score") sortAscending = !sortAscending;
         else { sortField = "score"; sortAscending = false; }
-        ApplySort();
     }
 
     private void SortByDate()
     {
         if (sortField == "date") sortAscending = !sortAscending;
         else { sortField = "date"; sortAscending = false; }
-        ApplySort();
     }
 
-    private void ApplySort()
+    private async Task LoadTabAsync(string tab, bool force = false)
     {
-        allApps = (sortField, sortAscending) switch
+        if (!force && loadedTabs.Contains(tab))
+            return;
+        var applications = await Api.GetApplicationsAsync(JobId, tab);
+        switch (tab)
         {
-            ("score", true) => allApps.OrderBy(a => Math.Round(a.FinalScore ?? 0, 3)).ToList(),
-            ("score", false) => allApps.OrderByDescending(a => Math.Round(a.FinalScore ?? 0, 3)).ToList(),
-            ("date", true) => allApps.OrderBy(a => a.CreatedAt).ToList(),
-            ("date", false) => allApps.OrderByDescending(a => a.CreatedAt).ToList(),
-            _ => allApps
-        };
+            case "longlist":
+                longlistApps = applications;
+                break;
+            case "excluded":
+                excludedApps = applications;
+                break;
+            case "review":
+                reviewApps = applications;
+                break;
+            default:
+                shortlistApps = applications;
+                break;
+        }
+        loadedTabs.Add(tab);
+    }
+
+    private async Task RefreshApplicationDataAsync()
+    {
+        applicationCounts = await Api.GetJobApplicationCountsAsync(JobId);
+        await LoadTabAsync(activeTab, force: true);
+        failedApps = applicationCounts.Failed > 0
+            ? await Api.GetApplicationsAsync(JobId, "failed")
+            : [];
     }
 
     private async Task OnUploadCompleted()
@@ -470,8 +562,7 @@ else
             isProcessRequestInFlight = false;
         }
 
-        allApps = await Api.GetApplicationsAsync(JobId);
-        ApplySort();
+        await RefreshApplicationDataAsync();
         ReconcileProcessingErrors();
         StartJobPolling();
     }
@@ -495,22 +586,20 @@ else
         {
             reAggregateMessage = $"Failed: {ex.Message}";
         }
-        allApps = await Api.GetApplicationsAsync(JobId);
-        ApplySort();
+        await RefreshApplicationDataAsync();
         ReconcileProcessingErrors();
         isReAggregating = false;
     }
 
-    private bool HasPendingApps => allApps.Any(a => a.Status is "Queued" or "Extracting" or "Scoring" or "Aggregating");
-    private bool HasFailedApps => allApps.Any(a => a.Status is "Failed" or "ScoringFailed" or "ExtractionFailed");
+    private bool HasPendingApps => applicationCounts?.Pending > 0;
+    private bool HasFailedApps => applicationCounts?.Failed > 0;
 
     private void ReconcileProcessingErrors()
     {
         if (!HasFailedApps)
             processingErrors.Clear();
         else
-            processingErrors = allApps
-                .Where(application => application.Status is "Failed" or "ScoringFailed" or "ExtractionFailed")
+            processingErrors = failedApps
                 .Select(application => $"Application {application.CandidateName ?? application.Id}: {application.LastError ?? "Scoring failed. See Failure Queue for details."}")
                 .ToList();
     }
@@ -523,11 +612,9 @@ else
             if (_jobDisposed) return;
             try
             {
-                var updated = await Api.GetApplicationsAsync(JobId);
-                await InvokeAsync(() =>
+                await InvokeAsync(async () =>
                 {
-                    allApps = updated;
-                    ApplySort();
+                    await RefreshApplicationDataAsync();
                     ReconcileProcessingErrors();
                     StateHasChanged();
                     if (!HasPendingApps)
@@ -553,11 +640,9 @@ else
             if (_jobDisposed) return;
             try
             {
-                var updated = await Api.GetApplicationsAsync(JobId);
-                await InvokeAsync(() =>
+                await InvokeAsync(async () =>
                 {
-                    allApps = updated;
-                    ApplySort();
+                    await RefreshApplicationDataAsync();
                     ReconcileProcessingErrors();
                     // If fast poll isn't running but there are now pending apps, start it
                     if (HasPendingApps && _jobPollTimer == null)
@@ -652,8 +737,7 @@ else
     {
         showEditDialog = false;
         job = await Api.GetJobAsync(JobId);
-        allApps = await Api.GetApplicationsAsync(JobId);
-        ApplySort();
+        await RefreshApplicationDataAsync();
         await LoadPromptStatus();
         StateHasChanged();
     }
@@ -674,6 +758,59 @@ else
         border: 1px solid #93c5fd;
         border-radius: 0.5rem;
         background: #eff6ff;
+    }
+
+    .application-export-menu {
+        position: relative;
+    }
+
+    .application-export-trigger {
+        min-width: 2.25rem;
+        min-height: 2.25rem;
+        border: 1px solid #cbd5e0;
+        border-radius: 0.375rem;
+        background: white;
+        font-size: 1.25rem;
+        line-height: 1;
+    }
+
+    .application-export-options {
+        position: absolute;
+        z-index: 10;
+        top: calc(100% + 0.25rem);
+        right: 0;
+        display: grid;
+        min-width: 11rem;
+        padding: 0.5rem;
+        border: 1px solid #cbd5e0;
+        border-radius: 0.375rem;
+        background: white;
+        box-shadow: 0 0.5rem 1rem rgb(15 23 42 / 15%);
+    }
+
+    .application-export-options strong {
+        padding: 0.35rem 0.5rem;
+        font-size: 0.8rem;
+    }
+
+    .application-export-options button {
+        padding: 0.45rem 0.5rem;
+        border: 0;
+        background: transparent;
+        text-align: left;
+    }
+
+    .application-export-options button:hover {
+        background: #edf2f7;
+    }
+
+    .application-export-error {
+        margin-bottom: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #fca5a5;
+        border-radius: 0.375rem;
+        background: #fef2f2;
+        color: #991b1b;
     }
 
     .job-help h5 {

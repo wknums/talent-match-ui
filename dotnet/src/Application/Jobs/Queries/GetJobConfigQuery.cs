@@ -26,7 +26,9 @@ public class GetJobConfigQueryHandler : IRequestHandler<GetJobConfigQuery, JobCo
 
     public async Task<JobConfigVersion?> Handle(GetJobConfigQuery request, CancellationToken cancellationToken)
     {
-        var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken);
+        var job = await _jobRepository.GetByIdWithoutApplicationsAsync(
+                request.JobId, cancellationToken)
+            ?? await _jobRepository.GetByIdAsync(request.JobId, cancellationToken);
         if (job is null || job.CurrentConfigVersionId is null)
             return null;
 

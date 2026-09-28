@@ -302,4 +302,51 @@ public class ApplicationRepositoryTests
         stored.Should().NotBeNull();
         stored!.HumanEdited.Should().BeTrue();
     }
+
+    [Fact]
+    public async Task ReviewListAndCount_ExcludeOrdinaryAiExclusions()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var context = new AppDbContext(options);
+        await context.Database.EnsureCreatedAsync();
+        context.Jobs.Add(new Job { Id = "job-1", Title = "Test job" });
+        context.Applications.AddRange(
+            new TalentMatch.Domain.Entities.Application
+            {
+                Id = "manual-review",
+                JobId = "job-1",
+                Status = "NeedsManualReview",
+                FinalDecision = "NeedsManualReview",
+            },
+            new TalentMatch.Domain.Entities.Application
+            {
+                Id = "excluded",
+                JobId = "job-1",
+                Status = "Completed",
+                FinalDecision = "Excluded",
+            },
+            new TalentMatch.Domain.Entities.Application
+            {
+                Id = "eligible",
+                JobId = "job-1",
+                Status = "Completed",
+                FinalDecision = "Eligible",
+            });
+        await context.SaveChangesAsync();
+        var repository = new ApplicationRepository(context);
+
+        var review = await repository.GetByJobIdAsync(
+            "job-1", "review", 70, 85);
+        var counts = await repository.GetCountsByJobIdAsync(
+            "job-1", 70, 85);
+
+        review.Select(application => application.Id)
+            .Should().BeEquivalentTo(["manual-review"]);
+        counts.Review.Should().Be(1);
+        counts.Excluded.Should().Be(1);
+    }
 }

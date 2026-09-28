@@ -1,0 +1,778 @@
+openapi: 3.1.0
+info:
+  title: TalentMatch Optional Parallel Upload API
+  version: 0.1.0
+  description: |
+    Shared Stack A / Stack B contract for the opt-in individual-file upload path.
+    All endpoints require the repository's existing authentication.
+
+    Compatibility boundary: the existing
+    POST /api/jobs/{jobId}/applications/upload endpoint is intentionally excluded
+    and remains unchanged. Clients call this contract only after the user explicitly
+    enables optional parallel upload mode.
+servers:
+  - url: /
+security:
+  - applicationAuth: []
+tags:
+  - name: Upload settings
+  - name: Upload sessions
+
+paths:
+  /api/admin/upload-settings:
+    get:
+      tags: [Upload settings]
+      operationId: getUploadSettings
+      summary: Read effective optional-upload settings
+      description: |
+        Global system administrators only. If no settings row exists, returns the
+        default values with persisted=false.
+      responses:
+        "200":
+          description: Effective settings
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Upload settings]
+      operationId: updateUploadSettings
+      summary: Replace optional-upload settings
+      description: |
+        Global system administrators only. Validation is atomic; invalid input does
+        not change the last valid settings.
+      parameters:
+        - in: header
+          name: X-Correlation-ID
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUploadSettingsRequest"
+      responses:
+        "200":
+          description: Saved settings
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Optimistic concurrency version is stale
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "422":
+          description: Field-specific settings validation failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+  /api/jobs/{jobId}/upload-sessions:
+    post:
+      tags: [Upload sessions]
+      operationId: createUploadSession
+      summary: Record a session and all selected occurrences before transfer
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+        - in: header
+          name: X-Correlation-ID
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUploadSessionRequest"
+      responses:
+        "201":
+          description: Durable session and items created; content transfer may begin
+          headers:
+            Location:
+              schema:
+                type: string
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSessionDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: No selected occurrence is eligible; no session was created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+  /api/upload-sessions:
+    get:
+      tags: [Upload sessions]
+      operationId: listOwnedUploadSessions
+      summary: List sessions visible to the authenticated owner
+      parameters:
+        - in: query
+          name: jobId
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: includeTerminal
+          required: false
+          schema:
+            type: boolean
+            default: true
+      responses:
+        "200":
+          description: Owned sessions, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UploadSessionSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/upload-sessions/{sessionId}:
+    get:
+      tags: [Upload sessions]
+      operationId: getUploadSession
+      summary: Retrieve one durable session with item outcomes
+      description: |
+        The server reconciles a stale heartbeat before returning. Nonterminal items
+        whose originating tab lease expired are returned as interrupted.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      responses:
+        "200":
+          description: Session and ordered items
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSessionDetail"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/upload-sessions/{sessionId}/heartbeat:
+    post:
+      tags: [Upload sessions]
+      operationId: heartbeatUploadSession
+      summary: Renew the originating tab's active-session lease
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedConcurrencyVersion]
+              properties:
+                expectedConcurrencyVersion:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: Current aggregate after heartbeat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadSessionSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Session version is stale or session is already complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /api/upload-sessions/{sessionId}/items/{itemId}/status:
+    patch:
+      tags: [Upload sessions]
+      operationId: updateClientUploadItemStatus
+      summary: Persist a client-owned scheduling or interruption transition
+      description: |
+        The client may request waiting, throttled, retrying, or interrupted. It may
+        request failed only to durably record four browser transport attempts that
+        never reached the content endpoint; that transition requires
+        outcomeCode=retry_exhausted and transportAttemptCount=4. The server owns
+        uploading and all other terminal outcomes. Every transition is validated
+        against the state machine and audited.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/ItemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUploadItemStatusRequest"
+      responses:
+        "200":
+          description: Canonical item after transition
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Illegal/stale transition; reload canonical item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "422":
+          description: Status payload is invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationError"
+
+  /api/upload-sessions/{sessionId}/items/{itemId}/content:
+    post:
+      tags: [Upload sessions]
+      operationId: uploadItemContent
+      summary: Submit one selected occurrence idempotently
+      description: |
+        One multipart file only. The server validates actual raw bytes, increments
+        the attempt, recomputes SHA-256, applies duplicate policy, and returns the
+        canonical item. Repeating a terminal occurrence key returns the same outcome
+        and never creates another application.
+      parameters:
+        - $ref: "#/components/parameters/SessionId"
+        - $ref: "#/components/parameters/ItemId"
+        - in: header
+          name: Idempotency-Key
+          description: Stable occurrenceKey returned at session creation
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - in: header
+          name: X-Correlation-ID
+          required: false
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: |
+            Canonical item outcome, including replay of a previously terminal item.
+            Domain outcomes such as duplicate or permanent validation failure are
+            represented by item status rather than a retriable HTTP error.
+          headers:
+            X-Correlation-ID:
+              $ref: "#/components/headers/CorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadItem"
+        "400":
+          description: Multipart request does not contain exactly one file
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Occurrence key does not match or attempt is already in progress
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "408":
+          description: Transient request timeout; client may retry within item budget
+        "429":
+          description: Transient platform throttling; client may retry within item budget
+        "500":
+          description: Transient server failure; client may retry within item budget
+        "503":
+          description: Transient service unavailability; client may retry within item budget
+
+components:
+  securitySchemes:
+    applicationAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Represents the repository's existing authenticated browser session. Stack A
+        simple mode may use its existing secure cookie; Entra modes use bearer tokens.
+
+  headers:
+    CorrelationId:
+      description: Correlation ID used by audit events and structured logs
+      schema:
+        type: string
+
+  parameters:
+    JobId:
+      in: path
+      name: jobId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SessionId:
+      in: path
+      name: sessionId
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ItemId:
+      in: path
+      name: itemId
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Forbidden:
+      description: Existing role/job authorization denied
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    NotFound:
+      description: Resource not found or not visible in the current authorization scope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+
+  schemas:
+    UploadSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - fileConcurrency
+        - maxIndividualFileBytes
+        - maxInFlightBytes
+        - concurrencyVersion
+        - persisted
+      properties:
+        fileConcurrency:
+          type: integer
+          minimum: 1
+          example: 4
+        maxIndividualFileBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 4194304
+        maxInFlightBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 104857600
+        concurrencyVersion:
+          type: integer
+          minimum: 0
+          description: Zero for non-persisted defaults
+        persisted:
+          type: boolean
+        updatedAt:
+          type: [string, "null"]
+          format: date-time
+        updatedBy:
+          type: [string, "null"]
+
+    UpdateUploadSettingsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - fileConcurrency
+        - maxIndividualFileBytes
+        - maxInFlightBytes
+        - expectedConcurrencyVersion
+      properties:
+        fileConcurrency:
+          type: integer
+          minimum: 1
+        maxIndividualFileBytes:
+          type: integer
+          format: int64
+          minimum: 1
+        maxInFlightBytes:
+          type: integer
+          format: int64
+          minimum: 1
+        expectedConcurrencyVersion:
+          type: integer
+          minimum: 0
+
+    CreateUploadSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [allowDuplicates, items]
+      properties:
+        allowDuplicates:
+          type: boolean
+          default: false
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CreateUploadItem"
+
+    CreateUploadItem:
+      type: object
+      additionalProperties: false
+      required:
+        - occurrenceKey
+        - ordinal
+        - fileName
+        - mimeType
+        - rawSizeBytes
+      properties:
+        occurrenceKey:
+          type: string
+          format: uuid
+        ordinal:
+          type: integer
+          minimum: 0
+        fileName:
+          type: string
+          minLength: 1
+          maxLength: 500
+        mimeType:
+          $ref: "#/components/schemas/SupportedMimeType"
+        rawSizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+
+    UploadSessionSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - jobId
+        - status
+        - allowDuplicates
+        - limits
+        - counts
+        - correlationId
+        - createdAt
+        - lastHeartbeatAt
+        - concurrencyVersion
+      properties:
+        id:
+          type: string
+          format: uuid
+        jobId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, completed]
+        allowDuplicates:
+          type: boolean
+        limits:
+          $ref: "#/components/schemas/UploadLimitsSnapshot"
+        counts:
+          $ref: "#/components/schemas/UploadAggregateCounts"
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        correlationId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        startedAt:
+          type: [string, "null"]
+          format: date-time
+        lastHeartbeatAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        concurrencyVersion:
+          type: integer
+          minimum: 1
+
+    UploadSessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/UploadSessionSummary"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/UploadItem"
+
+    UploadLimitsSnapshot:
+      type: object
+      additionalProperties: false
+      required: [fileConcurrency, maxIndividualFileBytes, maxInFlightBytes]
+      properties:
+        fileConcurrency:
+          type: integer
+          minimum: 1
+        maxIndividualFileBytes:
+          type: integer
+          format: int64
+          minimum: 1
+        maxInFlightBytes:
+          type: integer
+          format: int64
+          minimum: 1
+
+    UploadAggregateCounts:
+      type: object
+      additionalProperties: false
+      required:
+        - total
+        - waitingOrThrottled
+        - activeOrRetrying
+        - succeeded
+        - skipped
+        - failed
+        - interrupted
+        - terminal
+      properties:
+        total:
+          type: integer
+          minimum: 1
+        waitingOrThrottled:
+          type: integer
+          minimum: 0
+        activeOrRetrying:
+          type: integer
+          minimum: 0
+        succeeded:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        interrupted:
+          type: integer
+          minimum: 0
+        terminal:
+          type: integer
+          minimum: 0
+
+    UploadItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - sessionId
+        - occurrenceKey
+        - ordinal
+        - fileName
+        - mimeType
+        - rawSizeBytes
+        - status
+        - attemptCount
+        - createdAt
+        - updatedAt
+        - concurrencyVersion
+      properties:
+        id:
+          type: string
+          format: uuid
+        sessionId:
+          type: string
+          format: uuid
+        occurrenceKey:
+          type: string
+          format: uuid
+        ordinal:
+          type: integer
+          minimum: 0
+        fileName:
+          type: string
+        mimeType:
+          $ref: "#/components/schemas/SupportedMimeType"
+        rawSizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          $ref: "#/components/schemas/UploadItemStatus"
+        attemptCount:
+          type: integer
+          minimum: 0
+          maximum: 4
+        contentFingerprint:
+          type: [string, "null"]
+          pattern: "^[a-f0-9]{64}$"
+        applicationId:
+          type: [string, "null"]
+          format: uuid
+        outcomeCode:
+          type: [string, "null"]
+        outcomeMessage:
+          type: [string, "null"]
+        nextRetryAt:
+          type: [string, "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, "null"]
+          format: date-time
+        concurrencyVersion:
+          type: integer
+          minimum: 1
+
+    UpdateUploadItemStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - occurrenceKey
+        - status
+        - expectedConcurrencyVersion
+      properties:
+        occurrenceKey:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [waiting, throttled, retrying, failed, interrupted]
+        expectedConcurrencyVersion:
+          type: integer
+          minimum: 1
+        outcomeCode:
+          type: [string, "null"]
+        outcomeMessage:
+          type: [string, "null"]
+        nextRetryAt:
+          type: [string, "null"]
+          format: date-time
+        transportAttemptCount:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 4
+
+    UploadItemStatus:
+      type: string
+      enum:
+        - waiting
+        - throttled
+        - uploading
+        - retrying
+        - succeeded
+        - skipped_duplicate
+        - failed
+        - interrupted
+
+    SupportedMimeType:
+      type: string
+      enum:
+        - application/pdf
+        - text/markdown
+        - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+        - text/plain
+        - image/jpeg
+        - image/png
+
+    ApiError:
+      type: object
+      additionalProperties: true
+      required: [error, message, correlationId]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        correlationId:
+          type: string
+
+    ValidationError:
+      allOf:
+        - $ref: "#/components/schemas/ApiError"
+        - type: object
+          required: [errors]
+          properties:
+            errors:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string

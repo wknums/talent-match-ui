@@ -2,6 +2,16 @@ using System.Text.Json;
 
 namespace TalentMatch.Web.Client.Services;
 
+public sealed record ScoringGateEntryDto(
+    string Criterion,
+    bool Passed,
+    string? Evidence);
+
+public sealed record ParsedScoringGateDto(
+    bool Passed,
+    IReadOnlyList<string> MissingCriteria,
+    IReadOnlyList<ScoringGateEntryDto> Entries);
+
 public sealed record AggregatedGateEntryDto(
     string Criterion,
     bool Passed,
@@ -17,6 +27,44 @@ public sealed record AggregatedGateSummaryDto(
 
 public static class ScoringGateSummary
 {
+    private static readonly string[] PassedPropertyNames =
+        ["passed", "met", "eligible", "satisfied"];
+    private static readonly string[] CriterionPropertyNames =
+        ["criterion", "requirement", "item", "name", "title"];
+    private static readonly string[] EntryStatusPropertyNames =
+        ["passed", "met", "satisfied", "eligible", "status", "result", "is_met", "isMet"];
+    private static readonly string[] EvidencePropertyNames =
+        ["evidence", "supporting_evidence", "citation", "justification", "reason"];
+    private static readonly string[] MissingCriteriaPropertyNames =
+        ["missing_criteria", "missingCriteria", "missing", "failed_criteria", "unmet_criteria"];
+
+    public static ParsedScoringGateDto? Parse(string? gateJson)
+    {
+        if (string.IsNullOrWhiteSpace(gateJson) || gateJson == "{}")
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(gateJson);
+            var root = document.RootElement;
+            var missingCriteria = ReadMissingCriteria(root);
+            var passedHint = root.ValueKind == JsonValueKind.Object
+                ? TryReadFlexibleBoolean(root, PassedPropertyNames)
+                : null;
+            var entries = ReadEntries(root, missingCriteria, passedHint);
+
+            if (!passedHint.HasValue && entries.Count == 0)
+                return null;
+
+            var passed = passedHint ?? entries.All(entry => entry.Passed);
+            return new ParsedScoringGateDto(passed, missingCriteria, entries);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     public static AggregatedGateSummaryDto? Build(
         IEnumerable<string?> gateJsonValues,
         IEnumerable<string> configuredCriteria)
@@ -32,7 +80,8 @@ public static class ScoringGateSummary
 
         foreach (var gateJson in gateJsonValues)
         {
-            if (!TryParseGate(gateJson, out var gate))
+            var gate = Parse(gateJson);
+            if (gate is null)
                 continue;
 
             if (gate.Passed)
@@ -40,13 +89,12 @@ public static class ScoringGateSummary
             else
                 overallFailed++;
 
-            var explicitEntries = ReadEntries(gate.Root);
-            foreach (var entry in explicitEntries)
+            foreach (var entry in gate.Entries)
                 AddVote(votes, entry.Criterion, entry.Passed, entry.Evidence);
 
             foreach (var criterion in configured)
             {
-                if (explicitEntries.Any(entry => CriteriaMatch(entry.Criterion, criterion)))
+                if (gate.Entries.Any(entry => CriteriaMatch(entry.Criterion, criterion)))
                     continue;
 
                 var missing = gate.MissingCriteria.Any(item => CriteriaMatch(item, criterion));
@@ -84,73 +132,274 @@ public static class ScoringGateSummary
             entries);
     }
 
-    private static bool TryParseGate(string? json, out ParsedGate gate)
+    private static List<ScoringGateEntryDto> ReadEntries(
+        JsonElement root,
+        IReadOnlyList<string> missingCriteria,
+        bool? passedHint)
     {
-        gate = default;
-        if (string.IsNullOrWhiteSpace(json) || json == "{}")
-            return false;
+        if (root.ValueKind == JsonValueKind.Array)
+            return ParseEntryArray(root, missingCriteria, passedHint);
 
-        try
+        if (root.ValueKind != JsonValueKind.Object)
+            return [];
+
+        if (TryGetProperty(root, "entries", out var topLevelEntries)
+            && topLevelEntries.ValueKind == JsonValueKind.Array)
         {
-            using var document = JsonDocument.Parse(json);
-            var root = document.RootElement.Clone();
-            if (!TryReadBoolean(root, "passed", out var passed))
-                return false;
-            gate = new ParsedGate(root, passed, ReadMissingCriteria(root));
-            return true;
+            var parsed = ParseEntryArray(topLevelEntries, missingCriteria, passedHint);
+            if (parsed.Count > 0)
+                return parsed;
         }
-        catch (JsonException)
+
+        if (TryGetProperty(root, "details", out var details)
+            && details.ValueKind == JsonValueKind.Object)
         {
-            return false;
+            if (TryGetProperty(details, "entries", out var detailEntries)
+                && detailEntries.ValueKind == JsonValueKind.Array)
+            {
+                var parsed = ParseEntryArray(detailEntries, missingCriteria, passedHint);
+                if (parsed.Count > 0)
+                    return parsed;
+            }
+
+            var flatEntries = ParseFlatEntries(details);
+            if (flatEntries.Count > 0)
+                return flatEntries;
         }
+
+        foreach (var property in root.EnumerateObject())
+        {
+            if (!IsObjectArray(property.Value))
+                continue;
+
+            var parsed = ParseEntryArray(property.Value, missingCriteria, passedHint);
+            if (parsed.Count > 0)
+                return parsed;
+        }
+
+        return [];
     }
 
-    private static List<ParsedEntry> ReadEntries(JsonElement root)
+    private static List<ScoringGateEntryDto> ParseEntryArray(
+        JsonElement array,
+        IReadOnlyList<string> missingCriteria,
+        bool? passedHint)
     {
-        var entries = new List<ParsedEntry>();
-        if (!TryGetProperty(root, "details", out var details)
-            || details.ValueKind != JsonValueKind.Object)
-            return entries;
+        var entries = new List<ScoringGateEntryDto>();
 
-        if (TryGetProperty(details, "entries", out var array)
-            && array.ValueKind == JsonValueKind.Array)
+        foreach (var item in array.EnumerateArray())
         {
-            foreach (var item in array.EnumerateArray())
+            if (item.ValueKind != JsonValueKind.Object
+                || !TryReadString(item, CriterionPropertyNames, out var criterion))
             {
-                if (item.ValueKind != JsonValueKind.Object
-                    || !TryReadString(item, "criterion", out var criterion)
-                    || !TryReadBoolean(item, "passed", out var passed))
-                    continue;
-                TryReadString(item, "evidence", out var evidence);
-                entries.Add(new ParsedEntry(criterion, passed, evidence));
+                continue;
             }
-            return entries;
+
+            var evidence = TryReadEvidence(item);
+            var passed = TryReadFlexibleBoolean(item, EntryStatusPropertyNames)
+                ?? InferEntryStatus(criterion, evidence, missingCriteria, passedHint);
+            entries.Add(new ScoringGateEntryDto(criterion, passed, evidence));
         }
+
+        return entries;
+    }
+
+    private static List<ScoringGateEntryDto> ParseFlatEntries(JsonElement details)
+    {
+        var entries = new List<ScoringGateEntryDto>();
 
         foreach (var property in details.EnumerateObject())
         {
-            if (property.NameEquals("source") || property.NameEquals("entries"))
+            if (property.NameEquals("source")
+                || property.NameEquals("entries")
+                || property.NameEquals("recommendation"))
+            {
                 continue;
-            if (property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False)
-                entries.Add(new ParsedEntry(
-                    property.Name,
-                    property.Value.ValueKind == JsonValueKind.True,
-                    null));
+            }
+
+            if (TryParseFlexibleBoolean(property.Value, out var passed))
+                entries.Add(new ScoringGateEntryDto(property.Name, passed, null));
         }
+
         return entries;
+    }
+
+    private static bool InferEntryStatus(
+        string criterion,
+        string? evidence,
+        IReadOnlyList<string> missingCriteria,
+        bool? passedHint)
+    {
+        if (missingCriteria.Any(missing => CriteriaMatch(missing, criterion)))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(evidence))
+            return !LooksLikeNegativeEvidence(evidence);
+
+        return passedHint ?? false;
     }
 
     private static List<string> ReadMissingCriteria(JsonElement root)
     {
-        if (!TryGetProperty(root, "missing_criteria", out var missing)
-            || missing.ValueKind != JsonValueKind.Array)
+        if (root.ValueKind != JsonValueKind.Object)
             return [];
-        return missing.EnumerateArray()
-            .Where(item => item.ValueKind == JsonValueKind.String)
-            .Select(item => item.GetString())
-            .Where(item => !string.IsNullOrWhiteSpace(item))
-            .Select(item => item!.Trim())
-            .ToList();
+
+        foreach (var propertyName in MissingCriteriaPropertyNames)
+        {
+            if (!TryGetProperty(root, propertyName, out var missing)
+                || missing.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            return missing.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        return [];
+    }
+
+    private static string? TryReadEvidence(JsonElement item)
+    {
+        foreach (var propertyName in EvidencePropertyNames)
+        {
+            if (!TryGetProperty(item, propertyName, out var evidence))
+                continue;
+
+            if (evidence.ValueKind == JsonValueKind.String)
+            {
+                var text = evidence.GetString()?.Trim();
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+
+            if (evidence.ValueKind == JsonValueKind.Array)
+            {
+                var text = string.Join(
+                    "; ",
+                    evidence.EnumerateArray()
+                        .Where(value => value.ValueKind == JsonValueKind.String)
+                        .Select(value => value.GetString()?.Trim())
+                        .Where(value => !string.IsNullOrWhiteSpace(value)));
+                return string.IsNullOrWhiteSpace(text) ? null : text;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool? TryReadFlexibleBoolean(JsonElement element, IEnumerable<string> names)
+    {
+        foreach (var name in names)
+        {
+            if (TryGetProperty(element, name, out var property)
+                && TryParseFlexibleBoolean(property, out var value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryParseFlexibleBoolean(JsonElement value, out bool parsed)
+    {
+        if (value.ValueKind == JsonValueKind.True)
+        {
+            parsed = true;
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.False)
+        {
+            parsed = false;
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number))
+        {
+            parsed = number != 0;
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            var normalized = Normalize(value.GetString() ?? string.Empty);
+            if (ContainsAny(
+                    normalized,
+                    "not met",
+                    "does not meet",
+                    "failed",
+                    "fail",
+                    "false",
+                    "no",
+                    "ineligible",
+                    "missing",
+                    "unmet",
+                    "unsatisfied"))
+            {
+                parsed = false;
+                return true;
+            }
+
+            if (ContainsAny(
+                    normalized,
+                    "met",
+                    "meets",
+                    "passed",
+                    "pass",
+                    "true",
+                    "yes",
+                    "eligible",
+                    "satisfied",
+                    "success"))
+            {
+                parsed = true;
+                return true;
+            }
+
+            if (normalized == "1")
+            {
+                parsed = true;
+                return true;
+            }
+
+            if (normalized == "0")
+            {
+                parsed = false;
+                return true;
+            }
+        }
+
+        parsed = false;
+        return false;
+    }
+
+    private static bool LooksLikeNegativeEvidence(string evidence)
+    {
+        var normalized = Normalize(evidence);
+        return ContainsAny(
+            normalized,
+            "none found",
+            "not found",
+            "no evidence",
+            "no proof",
+            "not provided",
+            "insufficient evidence",
+            "unable to verify",
+            "cannot verify",
+            "missing evidence",
+            "no supporting evidence",
+            "unknown",
+            "not met",
+            "does not meet",
+            "did not meet",
+            "could not be verified",
+            "without evidence");
     }
 
     private static void AddVote(
@@ -181,6 +430,12 @@ public static class ScoringGateSummary
     {
         var normalizedLeft = Normalize(left);
         var normalizedRight = Normalize(right);
+        if (string.IsNullOrWhiteSpace(normalizedLeft)
+            || string.IsNullOrWhiteSpace(normalizedRight))
+        {
+            return false;
+        }
+
         return normalizedLeft == normalizedRight
             || normalizedLeft.Contains(normalizedRight, StringComparison.Ordinal)
             || normalizedRight.Contains(normalizedLeft, StringComparison.Ordinal);
@@ -196,52 +451,57 @@ public static class ScoringGateSummary
             new string(characters).Split(' ', StringSplitOptions.RemoveEmptyEntries));
     }
 
+    private static bool ContainsAny(string value, params string[] candidates)
+        => candidates.Any(candidate =>
+            value.Contains(candidate, StringComparison.Ordinal));
+
     private static bool TryGetProperty(
         JsonElement element,
         string name,
         out JsonElement value)
     {
-        foreach (var property in element.EnumerateObject())
+        if (element.ValueKind == JsonValueKind.Object)
         {
-            if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            foreach (var property in element.EnumerateObject())
             {
-                value = property.Value;
-                return true;
+                if (string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
             }
         }
+
         value = default;
         return false;
     }
 
-    private static bool TryReadBoolean(
-        JsonElement element,
-        string name,
-        out bool value)
-    {
-        value = false;
-        if (!TryGetProperty(element, name, out var property))
-            return false;
-        if (property.ValueKind == JsonValueKind.True)
-        {
-            value = true;
-            return true;
-        }
-        return property.ValueKind == JsonValueKind.False;
-    }
-
     private static bool TryReadString(
         JsonElement element,
-        string name,
+        IEnumerable<string> names,
         out string value)
     {
+        foreach (var name in names)
+        {
+            if (!TryGetProperty(element, name, out var property)
+                || property.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(property.GetString()))
+            {
+                continue;
+            }
+
+            value = property.GetString()!.Trim();
+            return true;
+        }
+
         value = string.Empty;
-        if (!TryGetProperty(element, name, out var property)
-            || property.ValueKind != JsonValueKind.String
-            || string.IsNullOrWhiteSpace(property.GetString()))
-            return false;
-        value = property.GetString()!.Trim();
-        return true;
+        return false;
     }
+
+    private static bool IsObjectArray(JsonElement value)
+        => value.ValueKind == JsonValueKind.Array
+           && value.GetArrayLength() > 0
+           && value[0].ValueKind == JsonValueKind.Object;
 
     private sealed class EntryVotes
     {
@@ -250,14 +510,4 @@ public static class ScoringGateSummary
         public string? SuccessEvidence { get; set; }
         public string? FailureEvidence { get; set; }
     }
-
-    private readonly record struct ParsedEntry(
-        string Criterion,
-        bool Passed,
-        string? Evidence);
-
-    private readonly record struct ParsedGate(
-        JsonElement Root,
-        bool Passed,
-        List<string> MissingCriteria);
 }

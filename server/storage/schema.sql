@@ -575,3 +575,101 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_Active
     CREATE UNIQUE INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveDelegated')
     CREATE UNIQUE INDEX UX_RoleAssignments_ActiveDelegated ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
+
+-- 19. OPTIONAL PARALLEL UPLOADS
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadSettings' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].UploadSettings (
+    Id                      NVARCHAR(64)  NOT NULL CONSTRAINT PK_UploadSettings PRIMARY KEY,
+    FileConcurrency         INT           NOT NULL,
+    MaxIndividualFileBytes  BIGINT        NOT NULL,
+    MaxInFlightBytes        BIGINT        NOT NULL,
+    ConcurrencyVersion      INT           NOT NULL,
+    CreatedAt               DATETIME2     NOT NULL,
+    CreatedBy               NVARCHAR(128) NOT NULL,
+    UpdatedAt               DATETIME2     NOT NULL,
+    UpdatedBy               NVARCHAR(128) NOT NULL,
+    CONSTRAINT CK_UploadSettings_FileConcurrency CHECK (FileConcurrency > 0),
+    CONSTRAINT CK_UploadSettings_MaxIndividualFileBytes CHECK (MaxIndividualFileBytes > 0),
+    CONSTRAINT CK_UploadSettings_MaxInFlightBytes CHECK (MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload')
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadSessions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].UploadSessions (
+    Id                      NVARCHAR(36)  NOT NULL CONSTRAINT PK_UploadSessions PRIMARY KEY,
+    JobId                   NVARCHAR(36)  NOT NULL,
+    OwnerActorId            NVARCHAR(128) NOT NULL,
+    OwnerDisplayName        NVARCHAR(200) NULL,
+    AllowDuplicates         BIT           NOT NULL,
+    Status                  NVARCHAR(20)  NOT NULL,
+    FileConcurrency         INT           NOT NULL,
+    MaxIndividualFileBytes  BIGINT        NOT NULL,
+    MaxInFlightBytes        BIGINT        NOT NULL,
+    TotalItemCount          INT           NOT NULL,
+    WaitingCount            INT           NOT NULL,
+    ActiveCount             INT           NOT NULL,
+    SucceededCount          INT           NOT NULL,
+    SkippedCount            INT           NOT NULL,
+    FailedCount             INT           NOT NULL,
+    InterruptedCount        INT           NOT NULL,
+    TerminalItemCount       INT           NOT NULL,
+    CorrelationId           NVARCHAR(64)  NOT NULL,
+    LastHeartbeatAt         DATETIME2     NOT NULL,
+    CreatedAt               DATETIME2     NOT NULL,
+    StartedAt               DATETIME2     NULL,
+    CompletedAt             DATETIME2     NULL,
+    ConcurrencyVersion      INT           NOT NULL,
+    CONSTRAINT FK_UploadSessions_Jobs_JobId FOREIGN KEY (JobId) REFERENCES [talentmatch].Jobs(Id),
+    CONSTRAINT CK_UploadSessions_Counts CHECK (TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0),
+    CONSTRAINT CK_UploadSessions_Limits CHECK (FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSessions_Status CHECK (Status IN ('active', 'completed'))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadItems' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].UploadItems (
+    Id                      NVARCHAR(36)   NOT NULL CONSTRAINT PK_UploadItems PRIMARY KEY,
+    SessionId               NVARCHAR(36)   NOT NULL,
+    OccurrenceKey           NVARCHAR(36)   NOT NULL,
+    Ordinal                 INT            NOT NULL,
+    FileName                NVARCHAR(500)  NOT NULL,
+    MimeType                NVARCHAR(200)  NOT NULL,
+    RawSizeBytes            BIGINT         NOT NULL,
+    Status                  NVARCHAR(32)   NOT NULL,
+    AttemptCount            INT            NOT NULL,
+    ContentFingerprint      NVARCHAR(64)   NULL,
+    ApplicationId           NVARCHAR(36)   NULL,
+    OutcomeCode             NVARCHAR(100)  NULL,
+    OutcomeMessage          NVARCHAR(1000) NULL,
+    LastHttpStatus          INT            NULL,
+    LastAttemptAt           DATETIME2      NULL,
+    NextRetryAt             DATETIME2      NULL,
+    CreatedAt               DATETIME2      NOT NULL,
+    UpdatedAt               DATETIME2      NOT NULL,
+    CompletedAt             DATETIME2      NULL,
+    ConcurrencyVersion      INT            NOT NULL,
+    CONSTRAINT FK_UploadItems_Applications_ApplicationId FOREIGN KEY (ApplicationId) REFERENCES [talentmatch].Applications(Id),
+    CONSTRAINT FK_UploadItems_UploadSessions_SessionId FOREIGN KEY (SessionId) REFERENCES [talentmatch].UploadSessions(Id) ON DELETE CASCADE,
+    CONSTRAINT CK_UploadItems_Application CHECK ((Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)),
+    CONSTRAINT CK_UploadItems_Attempts CHECK (AttemptCount >= 0 AND AttemptCount <= 4),
+    CONSTRAINT CK_UploadItems_RawSizeBytes CHECK (RawSizeBytes >= 0),
+    CONSTRAINT CK_UploadItems_Status CHECK (Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted'))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_ApplicationId' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE UNIQUE INDEX IX_UploadItems_ApplicationId ON [talentmatch].UploadItems (ApplicationId) WHERE ApplicationId IS NOT NULL;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_ContentFingerprint' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE INDEX IX_UploadItems_SessionId_ContentFingerprint ON [talentmatch].UploadItems (SessionId, ContentFingerprint);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_OccurrenceKey' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE UNIQUE INDEX IX_UploadItems_SessionId_OccurrenceKey ON [talentmatch].UploadItems (SessionId, OccurrenceKey);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_Ordinal' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE UNIQUE INDEX IX_UploadItems_SessionId_Ordinal ON [talentmatch].UploadItems (SessionId, Ordinal);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_Status_Ordinal' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE INDEX IX_UploadItems_SessionId_Status_Ordinal ON [talentmatch].UploadItems (SessionId, Status, Ordinal);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_Status_UpdatedAt' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE INDEX IX_UploadItems_Status_UpdatedAt ON [talentmatch].UploadItems (Status, UpdatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_JobId_CreatedAt' AND object_id = OBJECT_ID('talentmatch.UploadSessions'))
+    CREATE INDEX IX_UploadSessions_JobId_CreatedAt ON [talentmatch].UploadSessions (JobId, CreatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_OwnerActorId_CreatedAt' AND object_id = OBJECT_ID('talentmatch.UploadSessions'))
+    CREATE INDEX IX_UploadSessions_OwnerActorId_CreatedAt ON [talentmatch].UploadSessions (OwnerActorId, CreatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_Status_LastHeartbeatAt' AND object_id = OBJECT_ID('talentmatch.UploadSessions'))
+    CREATE INDEX IX_UploadSessions_Status_LastHeartbeatAt ON [talentmatch].UploadSessions (Status, LastHeartbeatAt);

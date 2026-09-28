@@ -26,11 +26,28 @@ import type {
   ReasoningEffort,
   ReasoningModelsResponse,
   ManualReviewData,
+  CreateUploadSessionRequest,
+  UploadItem,
+  UploadSessionDetail,
+  UploadSessionSummary,
+  UpdateUploadItemStatusRequest,
+  UploadSettings,
+  UpdateUploadSettingsRequest,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
 import { configureAuthenticatedTransport, realAPI } from '@/lib/api-real'
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+const mockUploadSessions = new Map<string, UploadSessionDetail>()
+let mockUploadSettings: UploadSettings = {
+  fileConcurrency: 4,
+  maxIndividualFileBytes: 4194304,
+  maxInFlightBytes: 104857600,
+  concurrencyVersion: 0,
+  persisted: false,
+  updatedAt: null,
+  updatedBy: null,
+}
 
 // Detect API mode from server config
 let _apiMode: 'mock' | 'real' | null = null
@@ -908,6 +925,164 @@ const mockAPI = {
     return {
       applicationIds: files.map((_, i) => `app-${jobId}-new-${i + 1}`),
     }
+  },
+
+  async createUploadSession(
+    jobId: string,
+    request: CreateUploadSessionRequest,
+  ): Promise<UploadSessionDetail> {
+    const now = new Date().toISOString()
+    const sessionId = crypto.randomUUID()
+    const items: UploadItem[] = request.items.map(item => ({
+      id: crypto.randomUUID(),
+      sessionId,
+      ...item,
+      status: 'waiting',
+      attemptCount: 0,
+      contentFingerprint: null,
+      applicationId: null,
+      outcomeCode: null,
+      outcomeMessage: null,
+      nextRetryAt: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      concurrencyVersion: 1,
+    }))
+    const session: UploadSessionDetail = {
+      id: sessionId,
+      jobId,
+      status: 'active',
+      allowDuplicates: request.allowDuplicates,
+      limits: {
+        fileConcurrency: 4,
+        maxIndividualFileBytes: 4194304,
+        maxInFlightBytes: 104857600,
+      },
+      counts: {
+        total: items.length,
+        waitingOrThrottled: items.length,
+        activeOrRetrying: 0,
+        succeeded: 0,
+        skipped: 0,
+        failed: 0,
+        interrupted: 0,
+        terminal: 0,
+      },
+      progressPercent: 0,
+      correlationId: crypto.randomUUID(),
+      createdAt: now,
+      startedAt: null,
+      lastHeartbeatAt: now,
+      completedAt: null,
+      concurrencyVersion: 1,
+      items,
+    }
+    mockUploadSessions.set(session.id, session)
+    return session
+  },
+
+  async uploadItemContent(
+    sessionId: string,
+    itemId: string,
+    occurrenceKey: string,
+    file: File,
+  ): Promise<UploadItem> {
+    await delay(50)
+    const now = new Date().toISOString()
+    const item: UploadItem = {
+      id: itemId,
+      sessionId,
+      occurrenceKey,
+      ordinal: 0,
+      fileName: file.name,
+      mimeType: (file.type || 'application/pdf') as UploadItem['mimeType'],
+      rawSizeBytes: file.size,
+      status: 'succeeded',
+      attemptCount: 1,
+      contentFingerprint: null,
+      applicationId: crypto.randomUUID(),
+      outcomeCode: null,
+      outcomeMessage: null,
+      nextRetryAt: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+      concurrencyVersion: 2,
+    }
+    const session = mockUploadSessions.get(sessionId)
+    if (session) {
+      session.items = session.items.map(current => current.id === itemId ? item : current)
+    }
+    return item
+  },
+
+  async listUploadSessions(
+    jobId?: string,
+    includeTerminal = true,
+  ): Promise<UploadSessionSummary[]> {
+    return [...mockUploadSessions.values()]
+      .filter(session => (!jobId || session.jobId === jobId) && (includeTerminal || session.status !== 'completed'))
+  },
+
+  async getUploadSession(sessionId: string): Promise<UploadSessionDetail> {
+    const session = mockUploadSessions.get(sessionId)
+    if (!session) throw new Error('Upload session not found')
+    return session
+  },
+
+  async heartbeatUploadSession(
+    sessionId: string,
+    expectedConcurrencyVersion: number,
+  ): Promise<UploadSessionSummary> {
+    const session = await this.getUploadSession(sessionId)
+    session.lastHeartbeatAt = new Date().toISOString()
+    session.concurrencyVersion = expectedConcurrencyVersion + 1
+    return session
+  },
+
+  async updateUploadItemStatus(
+    sessionId: string,
+    itemId: string,
+    request: UpdateUploadItemStatusRequest,
+  ): Promise<UploadItem> {
+    const session = await this.getUploadSession(sessionId)
+    const current = session.items.find(item => item.id === itemId)
+    if (!current) throw new Error('Upload item not found')
+    const updated: UploadItem = {
+      ...current,
+      status: request.status,
+      outcomeCode: request.outcomeCode ?? current.outcomeCode,
+      outcomeMessage: request.outcomeMessage ?? current.outcomeMessage,
+      nextRetryAt: request.nextRetryAt ?? null,
+      updatedAt: new Date().toISOString(),
+      completedAt: request.status === 'interrupted' ? new Date().toISOString() : null,
+      concurrencyVersion: current.concurrencyVersion + 1,
+    }
+    session.items = session.items.map(item => item.id === itemId ? updated : item)
+    return updated
+  },
+
+  async getUploadSettings(): Promise<UploadSettings> {
+    return { ...mockUploadSettings }
+  },
+
+  async updateUploadSettings(
+    request: UpdateUploadSettingsRequest,
+  ): Promise<UploadSettings> {
+    if (request.expectedConcurrencyVersion !== mockUploadSettings.concurrencyVersion) {
+      throw new Error('The upload settings have changed.')
+    }
+    mockUploadSettings = {
+      fileConcurrency: request.fileConcurrency,
+      maxIndividualFileBytes: request.maxIndividualFileBytes,
+      maxInFlightBytes: request.maxInFlightBytes,
+      concurrencyVersion: request.expectedConcurrencyVersion + 1,
+      persisted: true,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'mock-admin',
+    }
+    return { ...mockUploadSettings }
   },
 
   async getManualReview(_applicationId: string): Promise<ManualReviewData | null> {

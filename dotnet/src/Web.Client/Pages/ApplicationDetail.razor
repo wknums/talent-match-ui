@@ -220,8 +220,9 @@
                             @(HasError(run.MustHaveEvaluationJson) ? " ⚠️" : "")
                         </summary>
                         <div style="margin-top: 0.5rem; font-size: 0.85rem;">
+                            <ScoringRunDetails Run="run" />
 
-                            @if (HasError(run.MustHaveEvaluationJson))
+                            @if (false && HasError(run.MustHaveEvaluationJson))
                             {
                                 <div style="padding: 0.5rem; background: #fed7d7; border-radius: 4px; border: 1px solid #feb2b2; margin-bottom: 0.5rem;">
                                     <div style="font-weight: 600; color: #822727; font-size: 0.85rem; margin-bottom: 0.25rem;">⚠️ Scoring Error</div>
@@ -237,7 +238,7 @@
                                 </div>
                             }
                             @{ var catScores = ParseDict(run.CategoryScoresJson); }
-                            @if (catScores?.Any() == true)
+                            @if (false && catScores?.Any() == true)
                             {
                                 <h6 style="margin: 0.5rem 0 0.25rem;">Category Scores</h6>
                                 <div style="display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 1rem;">
@@ -250,7 +251,7 @@
                             }
 
                             @{ var gate = ParseGate(run.MustHaveEvaluationJson); var gateEntries = ParseGateEntries(run.MustHaveEvaluationJson); }
-                            @if (gate != null)
+                            @if (false && gate != null)
                             {
                                 <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
                                 @if (gate.Passed)
@@ -285,7 +286,7 @@
                                     </div>
                                 }
                             }
-                            else if (HasError(run.MustHaveEvaluationJson))
+                            else if (false && HasError(run.MustHaveEvaluationJson))
                             {
                                 <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
                                 <div style="color: #c53030; font-size: 0.8rem;">
@@ -294,7 +295,7 @@
                             }
 
                             @{ var evidence = ParseEvidenceList(run.EvidenceCitationsJson); }
-                            @if (evidence?.Any() == true)
+                            @if (false && evidence?.Any() == true)
                             {
                                 <h6 style="margin: 0.75rem 0 0.25rem;">Evidence Citations</h6>
                                 @foreach (var ev in evidence)
@@ -307,7 +308,7 @@
                             }
 
                             @{ var tips = ParseList(run.ImprovementTipsJson); }
-                            @if (tips?.Any() == true)
+                            @if (false && tips?.Any() == true)
                             {
                                 <h6 style="margin: 0.75rem 0 0.25rem;">Improvement Tips</h6>
                                 <ul style="margin: 0; padding-left: 1.25rem;">

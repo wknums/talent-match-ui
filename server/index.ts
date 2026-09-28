@@ -18,6 +18,8 @@ import { createAuditRouter } from './routes/audit.js'
 import { createDLQRouter } from './routes/dlq.js'
 import { createPromptsRouter } from './routes/prompts.js'
 import { createReasoningModelsRouter } from './routes/reasoning-models.js'
+import { createUploadsRouter } from './routes/uploads.js'
+import { createUploadSettingsRouter } from './routes/upload-settings.js'
 import { createAuthMiddleware } from './middleware/auth.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { buildHealthReport } from './services/health.js'
@@ -229,7 +231,9 @@ async function main() {
   app.use('/api/reasoning-models', authMiddleware, createReasoningModelsRouter())
   app.use('/api/admin/extraction-instructions', authMiddleware, createExtractionInstructionsRouter())
   app.use('/api/admin/prompt-generation-instructions', authMiddleware, createPromptGenerationInstructionsRouter())
+  app.use('/api/admin/upload-settings', authMiddleware, createUploadSettingsRouter())
   app.use('/api', authMiddleware, applicationsRouter)
+  app.use('/api', authMiddleware, createUploadsRouter())
   app.use('/api/stats', authMiddleware, createStatsRouter())
   app.use('/api/audit', authMiddleware, createAuditRouter())
   app.use('/api/dlq', authMiddleware, createDLQRouter())

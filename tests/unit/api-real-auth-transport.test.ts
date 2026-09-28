@@ -93,9 +93,51 @@ describe('Entra API transport', () => {
     await realAPI.uploadApplications('job-1', [file], true)
 
     expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/jobs/job-1/applications/upload')
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
       allowDuplicates: true,
       files: [expect.objectContaining({ fileName: 'candidate.pdf' })],
+    })
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('upload-sessions'))).toBe(false)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('upload-settings'))).toBe(false)
+  })
+
+  it('preserves the default legacy base64 JSON batch as one request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      applicationIds: ['application-1', 'application-2'],
+      warnings: [],
+    }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const files = [
+      new File(['first'], 'first.pdf', { type: 'application/pdf' }),
+      new File(['second'], 'second.txt', { type: 'text/plain' }),
+    ]
+
+    await realAPI.uploadApplications('job-1', files)
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/jobs/job-1/applications/upload')
+    expect(options).toMatchObject({ method: 'POST' })
+    expect(JSON.parse(String(options?.body))).toEqual({
+      allowDuplicates: false,
+      files: [
+        {
+          fileName: 'first.pdf',
+          content: btoa('first'),
+          mimeType: 'application/pdf',
+          sizeBytes: 5,
+        },
+        {
+          fileName: 'second.txt',
+          content: btoa('second'),
+          mimeType: 'text/plain',
+          sizeBytes: 6,
+        },
+      ],
     })
   })
 

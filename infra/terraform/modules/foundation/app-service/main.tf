@@ -23,6 +23,7 @@ resource "azurerm_linux_web_app" "main" {
   site_config {
     app_command_line              = var.app_command_line != "" ? var.app_command_line : null
     always_on                     = var.always_on
+    http2_enabled                 = true
     vnet_route_all_enabled        = var.virtual_network_subnet_id != null ? true : null
     ip_restriction_default_action = length(var.allowed_ips) > 0 ? "Deny" : null
 

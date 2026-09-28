@@ -1,0 +1,105 @@
+@page "/settings"
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<PageTitle>Upload Settings</PageTitle>
+<section class="upload-settings" aria-labelledby="upload-settings-title">
+<h3 id="upload-settings-title">Optional upload settings</h3>
+
+@if (loading)
+{
+    <p>Loading settings…</p>
+}
+else if (settings is not null)
+{
+    <EditForm class="upload-settings-form" Model="model" OnValidSubmit="SaveAsync">
+        <div class="upload-settings-field">
+            <label for="file-concurrency">Concurrent file uploads</label>
+            <InputNumber id="file-concurrency" @bind-Value="model.FileConcurrency" />
+        </div>
+        <div class="upload-settings-field">
+            <label for="individual-bytes">Maximum individual file bytes</label>
+            <InputNumber id="individual-bytes" @bind-Value="model.MaxIndividualFileBytes" />
+        </div>
+        <div class="upload-settings-field">
+            <label for="inflight-bytes">Maximum raw bytes in flight</label>
+            <InputNumber id="inflight-bytes" @bind-Value="model.MaxInFlightBytes" />
+        </div>
+        <button type="submit" disabled="@saving">@(saving ? "Saving…" : "Save")</button>
+    </EditForm>
+}
+
+@if (!string.IsNullOrWhiteSpace(message))
+{
+    <p role="alert">@message</p>
+}
+</section>
+
+@code {
+    private UploadSettingsDto? settings;
+    private SettingsModel model = new();
+    private bool loading = true;
+    private bool saving;
+    private string? message;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            settings = await Api.GetUploadSettingsAsync();
+            model = new()
+            {
+                FileConcurrency = settings.FileConcurrency,
+                MaxIndividualFileBytes = settings.MaxIndividualFileBytes,
+                MaxInFlightBytes = settings.MaxInFlightBytes,
+            };
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (settings is null)
+            return;
+        if (model.FileConcurrency <= 0
+            || model.MaxIndividualFileBytes <= 0
+            || model.MaxInFlightBytes < model.MaxIndividualFileBytes)
+        {
+            message = "Enter positive limits; total in-flight bytes must be at least the individual file limit.";
+            return;
+        }
+        saving = true;
+        message = null;
+        try
+        {
+            settings = await Api.UpdateUploadSettingsAsync(new(
+                model.FileConcurrency,
+                model.MaxIndividualFileBytes,
+                model.MaxInFlightBytes,
+                settings.ConcurrencyVersion));
+            message = "Upload settings saved.";
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private sealed class SettingsModel
+    {
+        public int FileConcurrency { get; set; }
+        public long MaxIndividualFileBytes { get; set; }
+        public long MaxInFlightBytes { get; set; }
+    }
+}

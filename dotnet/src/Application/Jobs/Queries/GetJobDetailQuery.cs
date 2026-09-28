@@ -26,7 +26,9 @@ public class GetJobDetailQueryHandler : IRequestHandler<GetJobDetailQuery, Job?>
 
     public async Task<Job?> Handle(GetJobDetailQuery request, CancellationToken cancellationToken)
     {
-        var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken);
+        var job = await _jobRepository.GetByIdWithoutApplicationsAsync(
+                request.JobId, cancellationToken)
+            ?? await _jobRepository.GetByIdAsync(request.JobId, cancellationToken);
         if (job is not null)
             await JobAuthorization.EnsureCanReadAsync(
                 job, _currentUser, _organizationRepository, cancellationToken);

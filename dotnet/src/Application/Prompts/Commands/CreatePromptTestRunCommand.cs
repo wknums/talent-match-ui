@@ -69,6 +69,11 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
         if (prompt.JobId != request.JobId)
             throw new InvalidOperationException("Prompt does not belong to the specified job");
 
+        if (!string.Equals(prompt.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(prompt.Status, "production-approved", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"Prompt v{prompt.VersionNumber} is {prompt.Status}. Activate or approve it before creating a test run.");
+
         if (string.IsNullOrWhiteSpace(prompt.ModelId)
             || string.IsNullOrWhiteSpace(prompt.ReasoningLevel))
             throw new ScoringProfileMismatchException(

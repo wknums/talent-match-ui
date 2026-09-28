@@ -1,6 +1,7 @@
 @page "/"
 @using TalentMatch.Web.Client.Services
 @inject ApiClient Api
+@inject UploadCoordinator UploadCoordinator
 @inject NavigationManager Navigation
 @implements IDisposable
 
@@ -17,6 +18,12 @@
             <div style="font-size: 2rem; font-weight: bold;">@stats.TotalApplications</div>
             <div>Applications</div>
         </div>
+        <div data-testid="active-uploads-tile"
+             title="@ActiveUploadsTitle"
+             style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 120px;">
+            <div style="font-size: 2rem; font-weight: bold;">@(uploadStatsLoadError is null ? ActiveUploadCount : "—")</div>
+            <div>Active Uploads</div>
+        </div>
         <div style="padding: 1rem; border: 1px solid #ccc; border-radius: 8px; min-width: 120px;">
             <div style="font-size: 2rem; font-weight: bold;">@stats.Queued</div>
             <div>Queued</div>
@@ -31,6 +38,12 @@
         </div>
     </div>
     <p style="font-size: 0.8rem; color: #595959;">Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
+    @if (!string.IsNullOrWhiteSpace(uploadStatsLoadError))
+    {
+        <p role="status" style="font-size: 0.8rem; color: #991b1b;">
+            Active upload statistics are unavailable: @uploadStatsLoadError
+        </p>
+    }
 }
 else if (!string.IsNullOrEmpty(statsLoadError))
 {
@@ -144,6 +157,13 @@ else if (string.IsNullOrEmpty(jobLoadError))
     private bool canViewAnalytics;
     private bool showDeleteDialog;
     private JobSummaryDto? jobToDelete;
+    private string? uploadStatsLoadError;
+
+    private int ActiveUploadCount => UploadCoordinator.Sessions.Sum(session =>
+        Math.Max(0, session.Counts.Total - session.Counts.Terminal));
+    private string ActiveUploadsTitle => uploadStatsLoadError is null
+        ? "Files waiting, uploading, or retrying across your upload sessions"
+        : "Active upload statistics are currently unavailable";
 
     private List<string> organisations => jobs
         .Select(j => j.Organisation).Distinct().OrderBy(o => o).ToList();
@@ -167,6 +187,7 @@ else if (string.IsNullOrEmpty(jobLoadError))
 
     protected override async Task OnInitializedAsync()
     {
+        UploadCoordinator.Changed += OnUploadActivityChanged;
         var currentUser = await Api.GetCurrentUserAsync();
         isAdmin = currentUser?.Role == "admin";
         canViewAnalytics = currentUser?.Role == "admin" || currentUser?.Role == "recruiter";
@@ -175,6 +196,7 @@ else if (string.IsNullOrEmpty(jobLoadError))
         refreshTimer = new System.Threading.Timer(async _ =>
         {
             await LoadStats();
+            await LoadUploadActivity();
             await InvokeAsync(StateHasChanged);
         }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
     }
@@ -183,6 +205,7 @@ else if (string.IsNullOrEmpty(jobLoadError))
     {
         await LoadJobs();
         await LoadStats();
+        await LoadUploadActivity();
     }
 
     private async Task LoadJobs()
@@ -213,6 +236,21 @@ else if (string.IsNullOrEmpty(jobLoadError))
             statsLoadError = ex.Message;
         }
     }
+
+    private async Task LoadUploadActivity()
+    {
+        try
+        {
+            await UploadCoordinator.RefreshAsync();
+            uploadStatsLoadError = null;
+        }
+        catch (Exception ex)
+        {
+            uploadStatsLoadError = ex.Message;
+        }
+    }
+
+    private void OnUploadActivityChanged() => InvokeAsync(StateHasChanged);
 
     private void ViewJob(string jobId)
     {
@@ -258,7 +296,11 @@ else if (string.IsNullOrEmpty(jobLoadError))
         jobToDelete = null;
     }
 
-    public void Dispose() => refreshTimer?.Dispose();
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+        UploadCoordinator.Changed -= OnUploadActivityChanged;
+    }
 
     private async Task OnJobCreated()
     {

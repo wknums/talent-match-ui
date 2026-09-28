@@ -66,6 +66,13 @@ No separate worker host, broker, or platform batch API is required.
   budget. Prompt tests and extraction retain their separate execution paths.
   Keep the existing app running/Always On where required; this is not an
   independent compute service.
+- `AWR_MAX_PARALLEL` controls scoring slots; it does **not** control browser
+  upload concurrency. Scale-out multiplies the effective scoring concurrency:
+  for example, 24 slots on three App Service instances can claim up to 72
+  applications. Size the value against the App Service plan, Azure SQL
+  connection capacity, and AWR backend capacity rather than using the upload
+  batch size. Increase it gradually while monitoring SQL login failures,
+  request latency, and Failure Queue growth.
 
 Example acceptance check: with ten slots, upload seven documents and wait until
 they are scoring. Upload seven more before the first seven finish. Expect ten
@@ -79,6 +86,31 @@ The app-only ZIP deployment script does not apply environment settings.
 Scope: Stack A scheduling and the platform-mode batch reconciler are unchanged.
 Do not run the legacy Stack A scheduler against the same production queue as
 this Stack B pool; Stack A does not yet participate in its ownership protocol.
+
+### Stack B large-upload reliability and large-job reads
+
+Optional uploads create all durable item records before transfer, stage the
+selected browser bytes before the upload dialog closes, and renew the upload
+heartbeat before any reconciliation-prone status read. Heartbeat writes are
+independent from concurrent item-version changes. The stale-session lease is
+two minutes so short network, scale-out, or database delays do not incorrectly
+terminalize live items as `interrupted`. App Service HTTP/2 is enabled by the
+Terraform module to avoid starving heartbeat/status requests behind file
+transfers.
+
+`GET /api/jobs/{jobId}/applications/summary` returns aggregate application and
+candidate-list counts without materializing every application. Job Details
+loads that summary and `list=shortlist` initially. It loads `list=longlist`,
+`list=review`, or `list=excluded` only when the corresponding tab is selected.
+The `review` list contains only applications whose status or final decision is
+`NeedsManualReview`. Ordinary AI exclusions remain in Excluded; they may be
+opened through a separately labelled **Review decision** action but are not counted
+as requiring review.
+
+Failure Queue is backed by durable `FailureQueueItems`, not merely an
+application's `ScoringFailed` status. The client preserves the last successful
+queue result and shows authentication, transport, or deserialization failures
+explicitly instead of presenting a false empty state.
 
 ### Live scoring throughput dashboard (Stack B)
 

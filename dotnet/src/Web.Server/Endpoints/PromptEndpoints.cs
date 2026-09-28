@@ -256,14 +256,21 @@ public static class PromptEndpoints
 
         testRunGroup.MapPost("/", async (string jobId, string promptId, CreateTestRunRequest request, ISender mediator) =>
         {
-            var files = request.Files.Select(f =>
+            try
             {
-                var bytes = Convert.FromBase64String(f.Content);
-                var fingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
-                return new TestRunFile(f.FileName, f.MimeType, f.SizeBytes, f.Content, fingerprint);
-            }).ToList();
-            var testRun = await mediator.Send(new CreatePromptTestRunCommand(jobId, promptId, files));
-            return Results.Created($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRun.Id}", testRun);
+                var files = request.Files.Select(f =>
+                {
+                    var bytes = Convert.FromBase64String(f.Content);
+                    var fingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+                    return new TestRunFile(f.FileName, f.MimeType, f.SizeBytes, f.Content, fingerprint);
+                }).ToList();
+                var testRun = await mediator.Send(new CreatePromptTestRunCommand(jobId, promptId, files));
+                return Results.Created($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRun.Id}", testRun);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return Results.BadRequest(new { error = ex.Message });
+            }
         });
 
         testRunGroup.MapPost("/{testRunId}/approve", async (string jobId, string promptId, string testRunId,
@@ -322,7 +329,7 @@ public record EditPromptRequest(
 public sealed record GeneratePromptRequest(
     string ModelId = "o3",
     string ReasoningLevel = "high");
-public record RatePromptRequest(int Rating, string? Comments);
+public record RatePromptRequest(int? Rating, string? Comments);
 public record ApproveTestRunRequest(string? ReviewNotes);
 public record CreateTestRunFileRequest(string FileName, string Content, string MimeType, long SizeBytes);
 public record CreateTestRunRequest(List<CreateTestRunFileRequest> Files);

@@ -475,3 +475,86 @@ CREATE TABLE IF NOT EXISTS RoleAssignments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveGroup ON RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveDelegated ON RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
+
+-- 19. OPTIONAL PARALLEL UPLOADS
+CREATE TABLE IF NOT EXISTS UploadSettings (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    FileConcurrency         INTEGER NOT NULL,
+    MaxIndividualFileBytes  INTEGER NOT NULL,
+    MaxInFlightBytes        INTEGER NOT NULL,
+    ConcurrencyVersion      INTEGER NOT NULL,
+    CreatedAt               TEXT    NOT NULL,
+    CreatedBy               TEXT    NOT NULL,
+    UpdatedAt               TEXT    NOT NULL,
+    UpdatedBy               TEXT    NOT NULL,
+    CONSTRAINT CK_UploadSettings_FileConcurrency CHECK (FileConcurrency > 0),
+    CONSTRAINT CK_UploadSettings_MaxIndividualFileBytes CHECK (MaxIndividualFileBytes > 0),
+    CONSTRAINT CK_UploadSettings_MaxInFlightBytes CHECK (MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload')
+);
+
+CREATE TABLE IF NOT EXISTS UploadSessions (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    JobId                   TEXT    NOT NULL REFERENCES Jobs(Id) ON DELETE RESTRICT,
+    OwnerActorId            TEXT    NOT NULL,
+    OwnerDisplayName        TEXT    NULL,
+    AllowDuplicates         INTEGER NOT NULL,
+    Status                  TEXT    NOT NULL,
+    FileConcurrency         INTEGER NOT NULL,
+    MaxIndividualFileBytes  INTEGER NOT NULL,
+    MaxInFlightBytes        INTEGER NOT NULL,
+    TotalItemCount          INTEGER NOT NULL,
+    WaitingCount            INTEGER NOT NULL,
+    ActiveCount             INTEGER NOT NULL,
+    SucceededCount          INTEGER NOT NULL,
+    SkippedCount            INTEGER NOT NULL,
+    FailedCount             INTEGER NOT NULL,
+    InterruptedCount        INTEGER NOT NULL,
+    TerminalItemCount       INTEGER NOT NULL,
+    CorrelationId           TEXT    NOT NULL,
+    LastHeartbeatAt         TEXT    NOT NULL,
+    CreatedAt               TEXT    NOT NULL,
+    StartedAt               TEXT    NULL,
+    CompletedAt             TEXT    NULL,
+    ConcurrencyVersion      INTEGER NOT NULL,
+    CONSTRAINT CK_UploadSessions_Counts CHECK (TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0),
+    CONSTRAINT CK_UploadSessions_Limits CHECK (FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSessions_Status CHECK (Status IN ('active', 'completed'))
+);
+
+CREATE TABLE IF NOT EXISTS UploadItems (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    SessionId               TEXT    NOT NULL REFERENCES UploadSessions(Id) ON DELETE CASCADE,
+    OccurrenceKey           TEXT    NOT NULL,
+    Ordinal                 INTEGER NOT NULL,
+    FileName                TEXT    NOT NULL,
+    MimeType                TEXT    NOT NULL,
+    RawSizeBytes            INTEGER NOT NULL,
+    Status                  TEXT    NOT NULL,
+    AttemptCount            INTEGER NOT NULL,
+    ContentFingerprint      TEXT    NULL,
+    ApplicationId           TEXT    NULL REFERENCES Applications(Id) ON DELETE RESTRICT,
+    OutcomeCode             TEXT    NULL,
+    OutcomeMessage          TEXT    NULL,
+    LastHttpStatus          INTEGER NULL,
+    LastAttemptAt           TEXT    NULL,
+    NextRetryAt             TEXT    NULL,
+    CreatedAt               TEXT    NOT NULL,
+    UpdatedAt               TEXT    NOT NULL,
+    CompletedAt             TEXT    NULL,
+    ConcurrencyVersion      INTEGER NOT NULL,
+    CONSTRAINT CK_UploadItems_Application CHECK ((Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)),
+    CONSTRAINT CK_UploadItems_Attempts CHECK (AttemptCount >= 0 AND AttemptCount <= 4),
+    CONSTRAINT CK_UploadItems_RawSizeBytes CHECK (RawSizeBytes >= 0),
+    CONSTRAINT CK_UploadItems_Status CHECK (Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS IX_UploadItems_ApplicationId ON UploadItems (ApplicationId) WHERE ApplicationId IS NOT NULL;
+CREATE INDEX IF NOT EXISTS IX_UploadItems_SessionId_ContentFingerprint ON UploadItems (SessionId, ContentFingerprint);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_UploadItems_SessionId_OccurrenceKey ON UploadItems (SessionId, OccurrenceKey);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_UploadItems_SessionId_Ordinal ON UploadItems (SessionId, Ordinal);
+CREATE INDEX IF NOT EXISTS IX_UploadItems_SessionId_Status_Ordinal ON UploadItems (SessionId, Status, Ordinal);
+CREATE INDEX IF NOT EXISTS IX_UploadItems_Status_UpdatedAt ON UploadItems (Status, UpdatedAt);
+CREATE INDEX IF NOT EXISTS IX_UploadSessions_JobId_CreatedAt ON UploadSessions (JobId, CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_UploadSessions_OwnerActorId_CreatedAt ON UploadSessions (OwnerActorId, CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_UploadSessions_Status_LastHeartbeatAt ON UploadSessions (Status, LastHeartbeatAt);

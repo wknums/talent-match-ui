@@ -1409,6 +1409,263 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.ToTable("ScoringRuns");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadItem", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApplicationId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastAttemptAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("LastHttpStatus")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("NextRetryAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OccurrenceKey")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Ordinal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OutcomeCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OutcomeMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("RawSizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApplicationId")
+                        .IsUnique()
+                        .HasFilter("[ApplicationId] IS NOT NULL");
+
+                    b.HasIndex("SessionId", "ContentFingerprint");
+
+                    b.HasIndex("SessionId", "OccurrenceKey")
+                        .IsUnique();
+
+                    b.HasIndex("SessionId", "Ordinal")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "UpdatedAt");
+
+                    b.HasIndex("SessionId", "Status", "Ordinal");
+
+                    b.ToTable("UploadItems", t =>
+                        {
+                            t.HasCheckConstraint("CK_UploadItems_Application", "(Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)");
+
+                            t.HasCheckConstraint("CK_UploadItems_Attempts", "AttemptCount >= 0 AND AttemptCount <= 4");
+
+                            t.HasCheckConstraint("CK_UploadItems_RawSizeBytes", "RawSizeBytes >= 0");
+
+                            t.HasCheckConstraint("CK_UploadItems_Status", "Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSession", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActiveCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowDuplicates")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FailedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("FileConcurrency")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("InterruptedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("JobId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastHeartbeatAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("MaxInFlightBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxIndividualFileBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OwnerActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OwnerDisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SkippedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SucceededCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TerminalItemCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TotalItemCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("WaitingCount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId", "CreatedAt");
+
+                    b.HasIndex("OwnerActorId", "CreatedAt");
+
+                    b.HasIndex("Status", "LastHeartbeatAt");
+
+                    b.ToTable("UploadSessions", t =>
+                        {
+                            t.HasCheckConstraint("CK_UploadSessions_Counts", "TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0");
+
+                            t.HasCheckConstraint("CK_UploadSessions_Limits", "FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes");
+
+                            t.HasCheckConstraint("CK_UploadSessions_Status", "Status IN ('active', 'completed')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSettings", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FileConcurrency")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxInFlightBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxIndividualFileBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("UploadSettings", t =>
+                        {
+                            t.HasCheckConstraint("CK_UploadSettings_FileConcurrency", "FileConcurrency > 0");
+
+                            t.HasCheckConstraint("CK_UploadSettings_MaxInFlightBytes", "MaxInFlightBytes >= MaxIndividualFileBytes");
+
+                            t.HasCheckConstraint("CK_UploadSettings_MaxIndividualFileBytes", "MaxIndividualFileBytes > 0");
+
+                            t.HasCheckConstraint("CK_UploadSettings_Singleton", "Id = 'optional-file-upload'");
+                        });
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.User", b =>
                 {
                     b.Property<string>("Id")
@@ -1727,6 +1984,35 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Application");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadItem", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
+                        .WithOne()
+                        .HasForeignKey("TalentMatch.Domain.Entities.UploadItem", "ApplicationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TalentMatch.Domain.Entities.UploadSession", "Session")
+                        .WithMany("Items")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Application");
+
+                    b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSession", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.Application", b =>
                 {
                     b.Navigation("AggregatedResult");
@@ -1767,6 +2053,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
                 {
                     b.Navigation("TestRuns");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSession", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.User", b =>

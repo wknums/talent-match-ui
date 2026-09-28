@@ -1,0 +1,109 @@
+@using TalentMatch.Web.Client.Services
+@inject UploadCoordinator Coordinator
+@implements IDisposable
+
+<details id="upload-activity"
+         class="job-collapsible upload-status-surface"
+         open="@isExpanded">
+    <summary @ref="uploadActivitySummary"
+             aria-expanded="@isExpanded"
+             aria-controls="upload-activity-content"
+             @onclick="ToggleExpanded"
+             @onclick:preventDefault>
+        Upload activity (@Coordinator.Sessions.Count)
+    </summary>
+    <div id="upload-activity-content"
+         class="job-collapsible-content"
+         aria-live="polite">
+        @if (Coordinator.Sessions.Count == 0)
+        {
+            <p>No upload sessions.</p>
+        }
+        else
+        {
+            @foreach (var session in Coordinator.Sessions)
+            {
+                <details class="upload-session"
+                         data-session-id="@session.Id"
+                         open="@(session.Status == "active" || requestedSessionId == session.Id)">
+                    <summary>
+                        @session.Counts.Terminal of @session.Counts.Total complete
+                        (@session.ProgressPercent%)
+                    </summary>
+                    <p>
+                        Waiting @session.Counts.WaitingOrThrottled ·
+                        Active @session.Counts.ActiveOrRetrying ·
+                        Succeeded @session.Counts.Succeeded ·
+                        Skipped @session.Counts.Skipped ·
+                        Failed @session.Counts.Failed ·
+                        Interrupted @session.Counts.Interrupted
+                    </p>
+                    <ul>
+                        @foreach (var item in session.Items.OrderBy(x => x.Ordinal))
+                        {
+                            <li>
+                                <strong>@item.FileName</strong>
+                                <span>@item.RawSizeBytes bytes</span>
+                                <span>@DisplayStatus(item.Status)</span>
+                                <span>attempt @item.AttemptCount of 4</span>
+                                @if (!string.IsNullOrWhiteSpace(item.OutcomeMessage))
+                                {
+                                    <span>@item.OutcomeMessage</span>
+                                }
+                            </li>
+                        }
+                    </ul>
+                </details>
+            }
+        }
+    </div>
+</details>
+
+@code {
+    private bool isExpanded;
+    private string? requestedSessionId;
+    private ElementReference uploadActivitySummary;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Coordinator.Changed += OnChanged;
+        Coordinator.DetailsRequested += OnDetailsRequested;
+        try
+        {
+            await Coordinator.RefreshAsync();
+        }
+        catch
+        {
+            // The shell remains usable when durable status is temporarily unavailable.
+        }
+    }
+
+    private void ToggleExpanded()
+    {
+        isExpanded = !isExpanded;
+        if (!isExpanded)
+            requestedSessionId = null;
+    }
+
+    private void OnDetailsRequested(string? sessionId)
+        => _ = ExpandAndFocusAsync(sessionId);
+
+    private async Task ExpandAndFocusAsync(string? sessionId)
+    {
+        isExpanded = true;
+        requestedSessionId = sessionId;
+        await InvokeAsync(StateHasChanged);
+        await Task.Yield();
+        await uploadActivitySummary.FocusAsync();
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+    private static string DisplayStatus(string status) =>
+        status == "skipped_duplicate" ? "Skipped as duplicate" : status.Replace('_', ' ');
+
+    public void Dispose()
+    {
+        Coordinator.Changed -= OnChanged;
+        Coordinator.DetailsRequested -= OnDetailsRequested;
+    }
+}

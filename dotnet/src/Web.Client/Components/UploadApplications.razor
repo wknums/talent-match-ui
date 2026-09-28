@@ -1,10 +1,14 @@
 @using TalentMatch.Web.Client.Services
 @using Microsoft.AspNetCore.Components.Forms
 @inject ApiClient Api
+@inject UploadCoordinator UploadCoordinator
 
 <div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; background: white; min-width: 400px;">
     <h4>Upload Applications</h4>
-    <p>Select PDF, MD, DOCX, TXT, JPG, or PNG files to upload (max 15 MB each).</p>
+    <p>
+        Select PDF, MD, DOCX, TXT, JPG, or PNG files to upload
+        (@(useParallelUpload ? "configured per-file limit" : "max 15 MB each")).
+    </p>
 
     <div style="border: 2px dashed @(isDragOver ? "#2b6cb0" : "#ccc"); border-radius: 8px; padding: 2rem; text-align: center; margin-bottom: 1rem; background: @(isDragOver ? "#ebf8ff" : "transparent"); transition: all 0.2s;"
          @ondragenter="() => isDragOver = true"
@@ -39,7 +43,7 @@
                 </div>
             }
         </div>
-        <button @onclick="UploadFiles" disabled="@(isUploading || !ValidFiles.Any())">
+        <button @onclick="SubmitFiles" disabled="@(isUploading || !ValidFiles.Any())">
             @(isUploading ? "Uploading..." : $"Upload {ValidFiles.Count()} file(s)")
         </button>
     }
@@ -54,6 +58,16 @@
         </span>
     </label>
 
+    <label style="display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 1rem; cursor: pointer;">
+        <input type="checkbox" checked="@useParallelUpload" @onchange="HandleUploadModeChanged" disabled="@isUploading" />
+        <span>
+            <strong>Upload files individually in the background</strong>
+            <span style="display: block; color: #666; font-size: 0.8rem;">
+                Continue uploading while you navigate elsewhere in this browser tab.
+            </span>
+        </span>
+    </label>
+
     @if (!string.IsNullOrEmpty(statusMessage))
     {
         <p style="color: @(uploadSuccess ? "green" : "red"); margin-top: 1rem;">@statusMessage</p>
@@ -63,6 +77,7 @@
 @code {
     [Parameter] public string JobId { get; set; } = "";
     [Parameter] public EventCallback OnUploaded { get; set; }
+    [Parameter] public EventCallback OnOptionalUploadStarted { get; set; }
 
     private List<FileEntry> fileEntries = new();
     private bool isUploading;
@@ -70,6 +85,7 @@
     private string? statusMessage;
     private bool uploadSuccess;
     private bool allowDuplicates;
+    private bool useParallelUpload;
 
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".md", ".docx", ".txt", ".jpg", ".png" };
     private const long MaxFileSize = 15 * 1024 * 1024;
@@ -82,12 +98,58 @@
         foreach (var file in e.GetMultipleFiles(100))
         {
             var entry = new FileEntry { File = file };
-            var ext = Path.GetExtension(file.Name);
-            if (!AllowedExtensions.Contains(ext))
-                entry.Error = $"Invalid type: {ext}";
-            else if (file.Size > MaxFileSize)
-                entry.Error = "File exceeds 15 MB limit";
+            ValidateEntry(entry);
             fileEntries.Add(entry);
+        }
+    }
+
+    private void HandleUploadModeChanged(ChangeEventArgs args)
+    {
+        useParallelUpload = args.Value is true
+            || string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        foreach (var entry in fileEntries)
+            ValidateEntry(entry);
+    }
+
+    private void ValidateEntry(FileEntry entry)
+    {
+        var ext = Path.GetExtension(entry.File.Name);
+        entry.Error = !AllowedExtensions.Contains(ext)
+            ? $"Invalid type: {ext}"
+            : !useParallelUpload && entry.File.Size > MaxFileSize
+                ? "File exceeds 15 MB limit"
+                : null;
+    }
+
+    private Task SubmitFiles() => useParallelUpload ? StartOptionalUpload() : UploadFiles();
+
+    private async Task StartOptionalUpload()
+    {
+        if (isUploading)
+            return;
+        isUploading = true;
+        statusMessage = null;
+        try
+        {
+            await UploadCoordinator.StartAsync(
+                JobId,
+                allowDuplicates,
+                ValidFiles.Select(x => x.File).ToArray());
+            uploadSuccess = true;
+            statusMessage = "Background upload started. Progress remains available while you navigate.";
+            fileEntries.Clear();
+            allowDuplicates = false;
+            useParallelUpload = false;
+            await OnOptionalUploadStarted.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            uploadSuccess = false;
+            statusMessage = ex.Message;
+        }
+        finally
+        {
+            isUploading = false;
         }
     }
 

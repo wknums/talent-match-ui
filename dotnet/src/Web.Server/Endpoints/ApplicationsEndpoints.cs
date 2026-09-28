@@ -52,6 +52,12 @@ public static class ApplicationsEndpoints
             return Results.Ok(apps);
         });
 
+        jobAppsGroup.MapGet("/summary", async (string jobId, ISender mediator) =>
+        {
+            var counts = await mediator.Send(new GetApplicationCountsQuery(jobId));
+            return Results.Ok(counts);
+        });
+
         var appGroup = app.MapGroup("/api/applications/{applicationId}").WithTags("Applications").RequireAuthorization();
         appGroup.AddEndpointFilter(async (context, next) =>
         {

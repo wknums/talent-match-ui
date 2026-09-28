@@ -11,69 +11,77 @@
 
     @if (CurrentPrompt == null)
     {
-        <p style="color: #888;">Create a prompt revision to enable testing.</p>
+        <p style="color: #888;">Activate or approve a prompt revision to enable testing.</p>
     }
     else
     {
-        <div style="margin-bottom: 1rem;">
-            <label style="display:block; margin-bottom:0.75rem;">
-                <span style="display:block; font-weight:600; margin-bottom:0.25rem;">Prompt revision for new tests</span>
-                <select value="@CurrentPrompt.Id"
-                        @onchange="SelectPrompt"
-                        aria-label="Prompt revision for test results"
-                        style="min-width:22rem; max-width:100%;">
-                    @foreach (var prompt in AvailablePrompts)
-                    {
-                        <option value="@prompt.Id">@($"v{prompt.VersionNumber} · {prompt.Status} · {prompt.ModelId} / {prompt.ReasoningLevel}")</option>
-                    }
-                </select>
-            </label>
-            <p>New tests will use prompt: v@(CurrentPrompt.VersionNumber) (@CurrentPrompt.Status)</p>
-            <p style="font-size:0.85rem;">
-                Current backend profile: <strong>@profileStatus?.CurrentModelId / @profileStatus?.CurrentReasoningLevel</strong>
-            </p>
-            @if (profileStatus is { IsMatch: false } && CurrentPrompt.Status == "production-approved")
-            {
-                <div role="alert" style="padding:0.85rem; margin-bottom:0.75rem; background:#fee2e2; border:2px solid #dc2626; border-radius:6px; color:#7f1d1d;">
-                    <strong>Profile mismatch. Production scoring is blocked.</strong>
-                    <div>@profileStatus.MismatchMessage</div>
-                    @if (testRuns.FirstOrDefault(run =>
-                        run.PromptId == CurrentPrompt.Id && run.Status == "approved") is { } approvedRun)
-                    {
-                        <button @onclick="() => RetestPrompt(approvedRun.Id)" style="margin-top:0.5rem;">Retest with current profile</button>
-                    }
+        <div style="margin-bottom:1rem; padding:0.75rem; border:1px solid #cbd5e1; border-radius:6px; background:#f8fafc;">
+            <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;">
+                <div>
+                    <strong>Prompt v@(CurrentPrompt.VersionNumber)</strong>
+                    <span style="margin-left:0.5rem;">@CurrentPrompt.Status</span>
                 </div>
-            }
-            @if (!string.IsNullOrWhiteSpace(workflowMessage))
-            {
-                <div style="margin-bottom: 0.75rem; padding: 0.75rem; background: #ebf8ff; color: #2a4365; border: 1px solid #90cdf4; border-radius: 4px; white-space: pre-wrap; word-break: break-word;">
-                    @workflowMessage
-                </div>
-            }
+                <span style="font-size:0.85rem; color:#475569;">@CurrentPrompt.ModelId / @CurrentPrompt.ReasoningLevel</span>
+            </div>
+            <pre style="margin:0.75rem 0 0; max-height:14rem; overflow:auto; white-space:pre-wrap; padding:0.65rem; background:white; border:1px solid #e2e8f0; border-radius:4px;">@CurrentPrompt.PromptText</pre>
+        </div>
 
-            @if (!showUpload)
+        <div style="margin-bottom: 1rem;">
+            @if (CanRunTests)
             {
-                <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
-                    📤 Upload Test Applications
-                </button>
-                <button @onclick="ReconcileRuns" disabled="@isReconciling" style="margin-left: 0.5rem; padding: 0.5rem 1rem; background: #2f855a; color: white; border: none; border-radius: 4px;">
-                    @(isReconciling ? "Reconciling..." : "🩹 Reconcile Stuck Runs")
-                </button>
+                <div style="display:block; font-weight:600; margin-bottom:0.25rem;">Current prompt for new tests</div>
+                <p>New tests will use prompt: v@(CurrentPrompt.VersionNumber) (@CurrentPrompt.Status)</p>
+                <p style="font-size:0.85rem;">
+                    Current backend profile: <strong>@profileStatus?.CurrentModelId / @profileStatus?.CurrentReasoningLevel</strong>
+                </p>
+                @if (profileStatus is { IsMatch: false } && CurrentPrompt.Status == "production-approved")
+                {
+                    <div role="alert" style="padding:0.85rem; margin-bottom:0.75rem; background:#fee2e2; border:2px solid #dc2626; border-radius:6px; color:#7f1d1d;">
+                        <strong>Profile mismatch. Production scoring is blocked.</strong>
+                        <div>@profileStatus.MismatchMessage</div>
+                        @if (testRuns.FirstOrDefault(run =>
+                            run.PromptId == CurrentPrompt.Id && run.Status == "approved") is { } approvedRun)
+                        {
+                            <button @onclick="() => RetestPrompt(approvedRun.Id)" style="margin-top:0.5rem;">Retest with current profile</button>
+                        }
+                    </div>
+                }
+
+                @if (!showUpload)
+                {
+                    <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
+                        📤 Upload Test Applications
+                    </button>
+                    <button @onclick="ReconcileRuns" disabled="@isReconciling" style="margin-left: 0.5rem; padding: 0.5rem 1rem; background: #2f855a; color: white; border: none; border-radius: 4px;">
+                        @(isReconciling ? "Reconciling..." : "🩹 Reconcile Stuck Runs")
+                    </button>
+                }
+                else
+                {
+                    <div style="border: 2px dashed #ccc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+                        <InputFile OnChange="OnFilesSelected" multiple />
+                        @if (!string.IsNullOrWhiteSpace(uploadError))
+                        {
+                            <div style="margin-top: 0.75rem; padding: 0.75rem; background: #fed7d7; color: #822727; border: 1px solid #feb2b2; border-radius: 4px; white-space: pre-wrap; word-break: break-word;">
+                                @uploadError
+                            </div>
+                        }
+                        <button @onclick="SubmitTestFiles" disabled="@isUploading" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
+                            @(isUploading ? "Uploading..." : "Start Test Run")
+                        </button>
+                        <button @onclick="() => showUpload = false" style="margin-left: 0.5rem; padding: 0.5rem 1rem;">Cancel</button>
+                    </div>
+                }
             }
             else
             {
-                <div style="border: 2px dashed #ccc; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-                    <InputFile OnChange="OnFilesSelected" multiple />
-                    @if (!string.IsNullOrWhiteSpace(uploadError))
-                    {
-                        <div style="margin-top: 0.75rem; padding: 0.75rem; background: #fed7d7; color: #822727; border: 1px solid #feb2b2; border-radius: 4px; white-space: pre-wrap; word-break: break-word;">
-                            @uploadError
-                        </div>
-                    }
-                    <button @onclick="SubmitTestFiles" disabled="@isUploading" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
-                        @(isUploading ? "Uploading..." : "Start Test Run")
-                    </button>
-                    <button @onclick="() => showUpload = false" style="margin-left: 0.5rem; padding: 0.5rem 1rem;">Cancel</button>
+                <p style="color:#718096;">This historical prompt is read-only. Activate it to create a new test run.</p>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(workflowMessage))
+            {
+                <div style="margin-top: 0.75rem; padding: 0.75rem; background: #ebf8ff; color: #2a4365; border: 1px solid #90cdf4; border-radius: 4px; white-space: pre-wrap; word-break: break-word;">
+                    @workflowMessage
                 </div>
             }
         </div>
@@ -81,67 +89,49 @@
         <!-- Test runs list -->
         @if (testRuns.Any())
         {
-            <h6>Test Runs — All Prompt Revisions</h6>
-            @foreach (var prompt in AvailablePrompts)
+            <h6>Test Runs — Prompt v@(CurrentPrompt.VersionNumber)</h6>
+            @foreach (var run in testRuns.OrderByDescending(run => run.CreatedAt))
             {
-                var promptRuns = testRuns
-                    .Where(run => run.PromptId == prompt.Id)
-                    .OrderByDescending(run => run.CreatedAt)
-                    .ToList();
-                @if (promptRuns.Count > 0)
-                {
-                    <details class="prompt-test-history-group"
-                             open
-                             style="margin-bottom:1rem; border:1px solid #cbd5e1; border-radius:6px; padding:0.6rem 0.75rem;">
-                        <summary style="font-weight:600; cursor:pointer; margin-bottom:0.4rem;">
-                            @($"Prompt v{prompt.VersionNumber} · {prompt.Status} · {prompt.ModelId} / {prompt.ReasoningLevel}")
-                            <span style="font-weight:400; color:#64748b;"> · @promptRuns.Count test run(s)</span>
-                        </summary>
-                        @foreach (var run in promptRuns)
+                <div style="border: 1px solid #eee; padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Test Run: @run.Id[..Math.Min(8, run.Id.Length)]... | Apps: @GetAppCount(run.ApplicationIdsJson)</span>
+                        <span style="@TestRunStatusStyle(run.Status)">@run.Status</span>
+                    </div>
+                    <div style="font-size:0.8rem; color:#4a5568;">Profile: @run.ModelId / @run.ReasoningLevel</div>
+                    <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        @if (run.Status is "pending_review" or "approved" or "rejected" or "scoring_failed")
                         {
-                            <div style="border: 1px solid #eee; padding: 0.75rem; margin-bottom: 0.5rem; border-radius: 4px;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span>Test Run: @run.Id[..Math.Min(8, run.Id.Length)]... | Apps: @GetAppCount(run.ApplicationIdsJson)</span>
-                                    <span style="@TestRunStatusStyle(run.Status)">@run.Status</span>
-                                </div>
-                                <div style="font-size:0.8rem; color:#4a5568;">Profile: @run.ModelId / @run.ReasoningLevel</div>
-                                <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                                    @if (run.Status is "pending_review" or "approved" or "rejected" or "scoring_failed")
-                                    {
-                                        <button @onclick="() => ViewResults(run)" style="padding: 0.4rem 0.8rem; background: #4a5568; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                                            🔍 View Results
-                                        </button>
-                                    }
-                                    @if (run.Status == "pending_review")
-                                    {
-                                        <button @onclick="() => ApproveTestRun(run.PromptId, run.Id)" style="padding: 0.4rem 0.8rem; background: #276749; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                                            ✅ Approve Test Run
-                                        </button>
-                                    }
-                                    @if (run.Status is "scoring_failed" or "pending_scoring" or "scoring" or "pending_review")
-                                    {
-                                        <button @onclick="() => RetryTestRun(run.PromptId, run.Id)" style="padding: 0.4rem 0.8rem; background: #dd6b20; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                                            🔄 @(run.Status == "scoring_failed" ? "Retry Failed Scoring" : "Re-trigger Scoring")
-                                        </button>
-                                    }
-                                    @if (run.Status == "approved"
-                                        && (prompt.Status != "production-approved"
-                                            || prompt.ApprovedTestRunId != run.Id))
-                                    {
-                                        <button @onclick="() => ApproveForProduction(prompt.Id)" style="padding: 0.4rem 0.8rem; background: #805ad5; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                                            🚀 Approve for Production
-                                        </button>
-                                    }
-                                </div>
-                            </div>
+                            <button @onclick="() => ViewResults(run)" style="padding: 0.4rem 0.8rem; background: #4a5568; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                🔍 View Results
+                            </button>
                         }
-                    </details>
-                }
+                        @if (run.Status == "pending_review")
+                        {
+                            <button @onclick="() => ApproveTestRun(run.PromptId, run.Id)" style="padding: 0.4rem 0.8rem; background: #276749; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                ✅ Approve Test Run
+                            </button>
+                        }
+                        @if (run.Status is "scoring_failed" or "pending_scoring" or "scoring" or "pending_review")
+                        {
+                            <button @onclick="() => RetryTestRun(run.PromptId, run.Id)" style="padding: 0.4rem 0.8rem; background: #dd6b20; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                🔄 @(run.Status == "scoring_failed" ? "Retry Failed Scoring" : "Re-trigger Scoring")
+                            </button>
+                        }
+                        @if (run.Status == "approved"
+                            && (CurrentPrompt.Status != "production-approved"
+                                || CurrentPrompt.ApprovedTestRunId != run.Id))
+                        {
+                            <button @onclick="() => ApproveForProduction(CurrentPrompt.Id)" style="padding: 0.4rem 0.8rem; background: #805ad5; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                🚀 Approve for Production
+                            </button>
+                        }
+                    </div>
+                </div>
             }
         }
         else
         {
-            <p style="color:#718096;">No test runs have been created for any prompt revision.</p>
+            <p style="color:#718096;">No test runs have been created for this prompt version.</p>
         }
 
         <!-- Results detail panel -->
@@ -225,8 +215,9 @@
                                                     </button>
                                                 </span>
                                             </div>
+                                            <ScoringRunDetails Run="run" />
 
-                                            @if (HasError(run.MustHaveEvaluationJson))
+                                            @if (false && HasError(run.MustHaveEvaluationJson))
                                             {
                                                 <div style="margin: 0.25rem 0; padding: 0.5rem; background: #fed7d7; border-radius: 4px; border: 1px solid #feb2b2;">
                                                     <div style="font-weight: 600; color: #822727; font-size: 0.8rem; margin-bottom: 0.25rem;">⚠️ Scoring Error</div>
@@ -250,7 +241,7 @@
                                                 var mustHaveEntries = ParseMustHaveEntries(run.MustHaveEvaluationJson);
                                                 var categoryBreakdown = BuildCategoryBreakdown(subScores, evidence, _jobConfig, tips, mustHaveEntries);
                                             }
-                                            @if (categoryBreakdown.Any())
+                                            @if (false && categoryBreakdown.Any())
                                             {
                                                 <div style="margin: 0.35rem 0; padding: 0.4rem 0.55rem; background: #edf2f7; border-radius: 4px; border: 1px solid #cbd5e0;">
                                                     <div style="font-weight: 600; font-size: 0.8rem; color: #2d3748; margin-bottom: 0.35rem;">Category Score Breakdown (scored JSON)</div>
@@ -291,7 +282,7 @@
                                                                         <li style="color: @(req.Found ? "#2f855a" : "#c53030"); margin-bottom: 0.2rem;">
                                                                             @(req.Found ? "✅" : "❌") <span style="color: #2d3748;">@req.Requirement</span>
                                                                             <div style="color: @(req.Found ? "#4a5568" : "#c53030"); font-size: 0.75rem; margin-top: 0.08rem; font-style: italic;">
-                                                                                @(req.Found ? req.Evidence : "None found")
+                                                                                @(string.IsNullOrWhiteSpace(req.Evidence) ? "None found" : req.Evidence)
                                                                             </div>
                                                                         </li>
                                                                     }
@@ -342,7 +333,7 @@
                                                     inferredEligibilityPassed = mustHaveEntries.All(e => e.Passed);
                                                 }
                                             }
-                                            @if (mustHave != null || mustHaveEntries.Any())
+                                            @if (false && (mustHave != null || mustHaveEntries.Any()))
                                             {
                                                 <div style="margin-top: 0.25rem;">
                                                     <span style="font-weight: 600; font-size: 0.8rem; color: #4a5568;">Eligibility: </span>
@@ -385,14 +376,14 @@
                                                     }
                                                 </div>
                                             }
-                                            else if (HasError(run.MustHaveEvaluationJson))
+                                            else if (false && HasError(run.MustHaveEvaluationJson))
                                             {
                                                 <div style="margin-top: 0.25rem; color: #c53030; font-size: 0.8rem;">
                                                     <span style="font-weight: 600;">Eligibility: </span>⚠️ @GetErrorMessage(run.MustHaveEvaluationJson)
                                                 </div>
                                             }
 
-                                            @if (desiredChecklist.Any())
+                                            @if (false && desiredChecklist.Any())
                                             {
                                                 <div style="margin-top: 0.35rem; padding: 0.35rem 0.5rem; background: #f0fff4; border-radius: 4px; border: 1px solid #9ae6b4;">
                                                     <div style="font-weight: 600; font-size: 0.8rem; color: #276749; margin-bottom: 0.15rem;">
@@ -417,7 +408,7 @@
                                                 </div>
                                             }
 
-                                            @if (evidence.Any())
+                                            @if (false && evidence.Any())
                                             {
                                                 <details style="margin-top: 0.25rem;">
                                                     <summary style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #4a5568;">Evidence Citations (@evidence.Count)</summary>
@@ -437,7 +428,7 @@
                                                 var gateFailedCriteria = GetFailedCriteria(run.MustHaveEvaluationJson);
                                                 var gateFailed = mustHave?.Passed == false;
                                             }
-                                            @if (tips.Any())
+                                            @if (false && tips.Any())
                                             {
                                                 <details style="margin-top: 0.25rem;">
                                                     <summary style="cursor: pointer; font-weight: 600; font-size: 0.8rem; color: #4a5568;">Improvement Tips (@tips.Count)</summary>
@@ -473,7 +464,6 @@
 @code {
     [Parameter] public string JobId { get; set; } = "";
     [Parameter] public ScoringPromptDto? ActivePrompt { get; set; }
-    [Parameter] public IReadOnlyList<ScoringPromptDto> Prompts { get; set; } = [];
     [Parameter] public EventCallback OnPromptStatusChange { get; set; }
 
     private List<PromptTestRunDto> testRuns = new();
@@ -486,54 +476,59 @@
     private List<IBrowserFile> selectedFiles = new();
     private System.Threading.Timer? _pollTimer;
     private bool _disposed;
+    private bool _isLoadingContext;
+    private int _pollRefreshInProgress;
+    private string? _loadedContextKey;
     private string? uploadError;
     private string? workflowMessage;
     private PromptProfileStatusDto? profileStatus;
-    private string? selectedPromptId;
-    private ScoringPromptDto? CurrentPrompt
-        => AvailablePrompts.FirstOrDefault(prompt => prompt.Id == selectedPromptId)
-           ?? ActivePrompt;
-    private IReadOnlyList<ScoringPromptDto> AvailablePrompts
-        => Prompts.Count > 0
-            ? Prompts.OrderByDescending(prompt => prompt.VersionNumber).ToList()
-            : ActivePrompt is null
-                ? []
-                : [ActivePrompt];
+    private ScoringPromptDto? CurrentPrompt => ActivePrompt;
+    private bool CanRunTests => CurrentPrompt is not null
+        && (string.Equals(CurrentPrompt.Status, "active", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(CurrentPrompt.Status, "production-approved", StringComparison.OrdinalIgnoreCase));
 
     protected override async Task OnParametersSetAsync()
     {
-        if (CurrentPrompt is null
-            || !AvailablePrompts.Any(prompt => prompt.Id == selectedPromptId))
-            selectedPromptId = ActivePrompt?.Id ?? AvailablePrompts.FirstOrDefault()?.Id;
+        var contextKey = BuildContextKey();
+        if (_isLoadingContext || string.Equals(_loadedContextKey, contextKey, StringComparison.Ordinal))
+            return;
 
-        if (CurrentPrompt != null)
+        if (CurrentPrompt is null)
+        {
+            ClearSelectedPrompt();
+            _loadedContextKey = contextKey;
+            return;
+        }
+
+        _isLoadingContext = true;
+        try
         {
             _jobConfig = await Api.GetJobConfigAsync(JobId);
             await LoadSelectedPromptAsync();
+            _loadedContextKey = contextKey;
         }
-        else
+        catch (ApiException ex)
         {
-            ClearSelectedPrompt();
+            StopPolling();
+            workflowMessage = ex.StatusCode == 401
+                ? "Your session is no longer authorized. Sign in again, then reopen prompt management."
+                : ex.Message;
+        }
+        catch (HttpRequestException)
+        {
+            StopPolling();
+            workflowMessage = "Prompt test data could not be loaded. Check the connection and try again.";
+        }
+        finally
+        {
+            _isLoadingContext = false;
         }
     }
 
-    private async Task SelectPrompt(ChangeEventArgs eventArgs)
-    {
-        var promptId = eventArgs.Value?.ToString();
-        if (string.IsNullOrWhiteSpace(promptId)
-            || !AvailablePrompts.Any(prompt => prompt.Id == promptId))
-            return;
-
-        selectedPromptId = promptId;
-        selectedDetail = null;
-        _selectedDetailRunId = null;
-        _selectedDetailPromptId = null;
-        workflowMessage = null;
-        uploadError = null;
-        showUpload = false;
-        StopPolling();
-        await LoadSelectedPromptAsync();
-    }
+    private string BuildContextKey()
+        => CurrentPrompt is null
+            ? $"{JobId}|none"
+            : $"{JobId}|{CurrentPrompt.Id}:{CurrentPrompt.Status}:{CurrentPrompt.VersionNumber}:{CurrentPrompt.ModelId}:{CurrentPrompt.ReasoningLevel}";
 
     private async Task LoadSelectedPromptAsync()
     {
@@ -544,7 +539,7 @@
             return;
         }
 
-        testRuns = await FetchAllTestRunsAsync();
+        testRuns = await FetchSelectedPromptTestRunsAsync();
         await LoadProfileStatus();
         Console.WriteLine($"[PromptTestRunner] Loaded {testRuns.Count} test runs for prompt {prompt.Id}");
         foreach (var run in testRuns)
@@ -554,12 +549,19 @@
         StartOrStopPolling();
     }
 
-    private async Task<List<PromptTestRunDto>> FetchAllTestRunsAsync()
+    private async Task<List<PromptTestRunDto>> FetchSelectedPromptTestRunsAsync()
+        => CurrentPrompt is null
+            ? []
+            : (await Api.GetTestRunsAsync(JobId, CurrentPrompt.Id))
+                .OrderByDescending(run => run.CreatedAt)
+                .ToList();
+
+    private async Task<List<PromptTestRunDto>> FetchPollingTestRunsAsync()
     {
-        var results = await Task.WhenAll(AvailablePrompts.Select(prompt =>
-            Api.GetTestRunsAsync(JobId, prompt.Id)));
-        return results
-            .SelectMany(runs => runs)
+        if (CurrentPrompt is null)
+            return testRuns;
+
+        return (await Api.GetTestRunsAsync(JobId, CurrentPrompt.Id))
             .OrderByDescending(run => run.CreatedAt)
             .ToList();
     }
@@ -601,7 +603,7 @@
     {
         workflowMessage = null;
         await Api.RetryTestRunAsync(JobId, promptId, testRunId);
-        testRuns = await FetchAllTestRunsAsync();
+        testRuns = await FetchSelectedPromptTestRunsAsync();
         StartPolling();
     }
 
@@ -612,7 +614,7 @@
         try
         {
             await Api.RetestPromptAsync(JobId, CurrentPrompt.Id, testRunId);
-            testRuns = await FetchAllTestRunsAsync();
+            testRuns = await FetchSelectedPromptTestRunsAsync();
             await LoadProfileStatus();
             StartPolling();
         }
@@ -633,7 +635,7 @@
         try
         {
             var response = await Api.ReconcileTestRunsAsync(JobId, CurrentPrompt.Id);
-            testRuns = await FetchAllTestRunsAsync();
+            testRuns = await FetchSelectedPromptTestRunsAsync();
             var healedCount = response?.HealedCount ?? 0;
             workflowMessage = healedCount > 0
                 ? $"Reconciled {healedCount} test run(s)."
@@ -660,9 +662,10 @@
         _pollTimer = new System.Threading.Timer(async _ =>
         {
             if (_disposed || CurrentPrompt == null) return;
+            if (Interlocked.Exchange(ref _pollRefreshInProgress, 1) != 0) return;
             try
             {
-                var updated = await FetchAllTestRunsAsync();
+                var updated = await FetchPollingTestRunsAsync();
                 await InvokeAsync(async () =>
                 {
                     testRuns = updated;
@@ -689,6 +692,10 @@
                 });
             }
             catch { /* ignore transient errors during polling */ }
+            finally
+            {
+                Volatile.Write(ref _pollRefreshInProgress, 0);
+            }
         }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
     }
 
@@ -710,6 +717,7 @@
     {
         _disposed = true;
         StopPolling();
+        Volatile.Write(ref _pollRefreshInProgress, 0);
     }
 
     private void OnFilesSelected(InputFileChangeEventArgs e)
@@ -720,7 +728,7 @@
 
     private async Task SubmitTestFiles()
     {
-        if (CurrentPrompt == null || !selectedFiles.Any()) return;
+        if (!CanRunTests || CurrentPrompt == null || !selectedFiles.Any()) return;
         isUploading = true;
         uploadError = null;
         workflowMessage = null;
@@ -744,7 +752,7 @@
             await Api.CreateTestRunAsync(JobId, CurrentPrompt.Id, files);
             showUpload = false;
             selectedFiles.Clear();
-            testRuns = await FetchAllTestRunsAsync();
+            testRuns = await FetchSelectedPromptTestRunsAsync();
             StartPolling();
         }
         catch (ApiException ex)
@@ -772,7 +780,7 @@
     {
         workflowMessage = null;
         await Api.ApproveTestRunAsync(JobId, promptId, testRunId);
-        testRuns = await FetchAllTestRunsAsync();
+        testRuns = await FetchSelectedPromptTestRunsAsync();
         await LoadProfileStatus();
         selectedDetail = null;
         _selectedDetailRunId = null;
@@ -877,148 +885,16 @@
 
     private List<MustHaveEntry> ParseMustHaveEntries(string? json)
     {
-        var entries = new List<MustHaveEntry>();
-        if (string.IsNullOrWhiteSpace(json)) return entries;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            var missingCriteria = ExtractMissingCriteria(root);
-            var gatePassedHint = TryGetFlexibleBoolProperty(root, "passed", "met", "eligible", "satisfied");
-
-            static bool IsObjectArray(JsonElement element)
-                => element.ValueKind == JsonValueKind.Array
-                   && element.GetArrayLength() > 0
-                   && element[0].ValueKind == JsonValueKind.Object;
-
-            static string? ExtractCriterion(JsonElement item)
-                => item.TryGetProperty("criterion", out var criterionElement)
-                    ? criterionElement.GetString()
-                    : item.TryGetProperty("requirement", out var requirementElement)
-                        ? requirementElement.GetString()
-                        : item.TryGetProperty("item", out var itemElement)
-                            ? itemElement.GetString()
-                            : item.TryGetProperty("name", out var nameElement)
-                                ? nameElement.GetString()
-                                : null;
-
-            static string? ExtractEvidence(JsonElement item)
-                => item.TryGetProperty("evidence", out var evidenceElement)
-                    ? evidenceElement.GetString()
-                    : item.TryGetProperty("reason", out var reasonElement)
-                        ? reasonElement.GetString()
-                        : null;
-
-            bool AppendFromArray(JsonElement entryArray)
+        var parsed = ScoringGateSummary.Parse(json);
+        return parsed?.Entries
+            .Select(entry => new MustHaveEntry
             {
-                var startCount = entries.Count;
-                foreach (var item in entryArray.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object) continue;
-
-                    var criterion = ExtractCriterion(item);
-                    if (string.IsNullOrWhiteSpace(criterion)) continue;
-
-                    var passed = false;
-                    var hasPassed = false;
-
-                    if (item.TryGetProperty("passed", out var passedElement) && TryParseFlexibleBool(passedElement, out var parsedPassed))
-                    {
-                        passed = parsedPassed;
-                        hasPassed = true;
-                    }
-                    else if (item.TryGetProperty("met", out var metElement) && TryParseFlexibleBool(metElement, out var parsedMet))
-                    {
-                        passed = parsedMet;
-                        hasPassed = true;
-                    }
-                    else if (item.TryGetProperty("satisfied", out var satisfiedElement) && TryParseFlexibleBool(satisfiedElement, out var parsedSatisfied))
-                    {
-                        passed = parsedSatisfied;
-                        hasPassed = true;
-                    }
-
-                    var evidence = ExtractEvidence(item);
-
-                    if (!hasPassed)
-                    {
-                        if (IsCriterionInMissingCriteria(criterion, missingCriteria))
-                            passed = false;
-                        else if (!string.IsNullOrWhiteSpace(evidence))
-                            passed = !LooksLikeNegativeEvidence(evidence) && !EvidenceContradictsCriterion(criterion, evidence);
-                        else if (gatePassedHint.HasValue)
-                            passed = gatePassedHint.Value;
-                        else
-                            passed = false;
-                    }
-
-                    entries.Add(new MustHaveEntry
-                    {
-                        Criterion = criterion,
-                        Passed = passed,
-                        Evidence = evidence
-                    });
-                }
-
-                return entries.Count > startCount;
-            }
-
-            if (root.ValueKind == JsonValueKind.Array)
-            {
-                if (AppendFromArray(root)) return entries;
-            }
-
-            if (root.ValueKind == JsonValueKind.Object)
-            {
-                if (root.TryGetProperty("entries", out var topEntries) && topEntries.ValueKind == JsonValueKind.Array)
-                {
-                    if (AppendFromArray(topEntries)) return entries;
-                }
-
-                if (root.TryGetProperty("details", out var details))
-                {
-                    if (details.ValueKind == JsonValueKind.Object
-                        && details.TryGetProperty("entries", out var entryArray)
-                        && entryArray.ValueKind == JsonValueKind.Array)
-                    {
-                        if (AppendFromArray(entryArray)) return entries;
-                    }
-
-                    if (details.ValueKind == JsonValueKind.Object)
-                    {
-                        foreach (var prop in details.EnumerateObject())
-                        {
-                            if (prop.Name is "source" or "entries" or "recommendation") continue;
-                            if (!TryParseFlexibleBool(prop.Value, out var passed)) continue;
-
-                            entries.Add(new MustHaveEntry
-                            {
-                                Criterion = prop.Name,
-                                Passed = passed,
-                                Evidence = null
-                            });
-                        }
-
-                        if (entries.Any()) return entries;
-                    }
-                }
-
-                // Last fallback: scan for any object-array children and parse them as entries.
-                foreach (var prop in root.EnumerateObject())
-                {
-                    if (IsObjectArray(prop.Value) && AppendFromArray(prop.Value))
-                        return entries;
-                }
-            }
-        }
-        catch
-        {
-            return new List<MustHaveEntry>();
-        }
-
-        return entries;
+                Criterion = entry.Criterion,
+                Passed = entry.Passed,
+                Evidence = entry.Evidence
+            })
+            .ToList()
+            ?? [];
     }
 
     private static List<string> ExtractMissingCriteria(JsonElement root)
@@ -1390,27 +1266,6 @@
     {
         var requirements = new List<CategoryRequirementItem>();
 
-        if (IsMustHaveCategory(categoryName) && mustHaveEntries.Any())
-        {
-            foreach (var entry in mustHaveEntries)
-            {
-                var criterion = entry.Criterion?.Trim();
-                if (string.IsNullOrWhiteSpace(criterion))
-                    continue;
-
-                requirements.Add(new CategoryRequirementItem
-                {
-                    Requirement = criterion,
-                    Found = entry.Passed,
-                    Evidence = string.IsNullOrWhiteSpace(entry.Evidence)
-                        ? "None found"
-                        : entry.Evidence.Trim()
-                });
-            }
-
-            return requirements;
-        }
-
         var sourceRequirements = ResolveRequirementsForCategory(
             categoryName,
             rubricRequirements,
@@ -1419,6 +1274,18 @@
 
         foreach (var requirement in sourceRequirements)
         {
+            var gateEntry = FindMatchingMustHaveEntry(requirement, mustHaveEntries);
+            if (gateEntry is not null)
+            {
+                requirements.Add(new CategoryRequirementItem
+                {
+                    Requirement = requirement,
+                    Found = gateEntry.Passed,
+                    Evidence = gateEntry.Evidence?.Trim() ?? string.Empty
+                });
+                continue;
+            }
+
             var evidence = FindMatchingEvidence(requirement, categoryEvidence);
 
             var found = HasUsableEvidence(evidence);
@@ -1431,6 +1298,33 @@
         }
 
         return requirements;
+    }
+
+    private static MustHaveEntry? FindMatchingMustHaveEntry(
+        string requirement,
+        IEnumerable<MustHaveEntry> entries)
+    {
+        var normalizedRequirement = NormalizeForMatch(requirement);
+        if (string.IsNullOrWhiteSpace(normalizedRequirement))
+            return null;
+
+        var candidates = entries
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Criterion))
+            .Select(entry => new
+            {
+                Entry = entry,
+                NormalizedCriterion = NormalizeForMatch(entry.Criterion!)
+            })
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate.NormalizedCriterion))
+            .ToList();
+
+        return candidates.FirstOrDefault(candidate =>
+                candidate.NormalizedCriterion == normalizedRequirement)
+            ?.Entry
+            ?? candidates.FirstOrDefault(candidate =>
+                candidate.NormalizedCriterion.Contains(normalizedRequirement, StringComparison.Ordinal)
+                || normalizedRequirement.Contains(candidate.NormalizedCriterion, StringComparison.Ordinal))
+            ?.Entry;
     }
 
     private static List<string> ResolveRequirementsForCategory(

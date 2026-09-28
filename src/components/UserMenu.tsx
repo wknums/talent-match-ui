@@ -1,4 +1,4 @@
-import { Buildings, User, Key, ShieldCheck, SignOut, Users } from '@phosphor-icons/react'
+import { Buildings, Gear, User, Key, ShieldCheck, SignOut, Users } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -20,6 +20,7 @@ interface UserMenuProps {
   onManageExtractionInstructions?: () => void
   onManageEntraAccess?: () => void
   onManageOrganization?: () => void
+  onManageUploadSettings?: () => void
   onLogout: () => void
 }
 
@@ -32,6 +33,7 @@ export function UserMenu({
   onManageExtractionInstructions,
   onManageEntraAccess,
   onManageOrganization,
+  onManageUploadSettings,
   onLogout,
 }: UserMenuProps) {
   return (
@@ -85,6 +87,16 @@ export function UserMenu({
                 Extraction Instructions
               </DropdownMenuItem>
             )}
+          </>
+        )}
+        {user.role === 'admin' && onManageUploadSettings && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>System Configuration</DropdownMenuLabel>
+            <DropdownMenuItem onClick={onManageUploadSettings}>
+              <Gear size={16} className="mr-2" />
+              Settings
+            </DropdownMenuItem>
           </>
         )}
         {authMode === 'entra'

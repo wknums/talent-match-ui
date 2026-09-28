@@ -46,5 +46,33 @@ public sealed class UploadedApplicationPublicationTests
         applications.Should().HaveCount(2).And.OnlyContain(application =>
             application.Status == (includeMissingApplication ? "Uploading" : "Queued"));
         (await db.DocumentBlobs.CountAsync()).Should().Be(2);
+        (await db.UploadSessions.CountAsync()).Should().Be(0);
+        (await db.UploadItems.CountAsync()).Should().Be(0);
+        (await db.UploadSettings.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PublishUploadedAsync_TerminalReplayIsIdempotent()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        await using var db = new AppDbContext(
+            new DbContextOptionsBuilder<AppDbContext>().UseSqlite(connection).Options);
+        await db.Database.EnsureCreatedAsync();
+        db.Jobs.Add(new Job { Id = "job-1", Title = "Test job" });
+        db.Applications.Add(new Domain.Entities.Application
+        {
+            Id = "app-1",
+            JobId = "job-1",
+            Status = "Uploading",
+        });
+        await db.SaveChangesAsync();
+        var repo = new ApplicationRepository(db);
+
+        await repo.PublishUploadedAsync(["app-1"]);
+        await repo.PublishUploadedAsync(["app-1"]);
+
+        (await db.Applications.AsNoTracking().SingleAsync())
+            .Status.Should().Be("Queued");
     }
 }

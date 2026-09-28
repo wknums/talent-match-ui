@@ -6,7 +6,7 @@ namespace TalentMatch.Application.Prompts.Commands;
 
 public record RatePromptCommand(
     string PromptId,
-    int Rating,
+    int? Rating,
     string? Comments
 ) : IRequest<ScoringPrompt>;
 
@@ -22,13 +22,14 @@ public class RatePromptCommandHandler : IRequestHandler<RatePromptCommand, Scori
     public async Task<ScoringPrompt> Handle(RatePromptCommand request, CancellationToken ct)
     {
         // FR-037: Validate rating 0-5
-        if (request.Rating < 0 || request.Rating > 5)
+        if (request.Rating is < 0 or > 5)
             throw new InvalidOperationException("Rating must be between 0 and 5");
 
         var prompt = await _promptRepo.GetByIdAsync(request.PromptId, ct)
             ?? throw new InvalidOperationException("Prompt not found");
 
-        prompt.Rating = request.Rating;
+        if (request.Rating.HasValue)
+            prompt.Rating = request.Rating.Value;
         prompt.Comments = request.Comments;
         prompt.LastModifiedAt = DateTime.UtcNow;
 

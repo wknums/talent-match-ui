@@ -10,6 +10,46 @@ namespace TalentMatch.Infrastructure.Tests;
 public sealed class LlmProxyProfileForwardingTests
 {
     [Fact]
+    public async Task Reasoning_catalog_accepts_all_efforts_discovered_from_backend()
+    {
+        var previous = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
+        var endpoint = $"https://awr-{Guid.NewGuid():N}.example/api";
+        Environment.SetEnvironmentVariable("AWR_SEQ_API_ENDPOINT", endpoint);
+        try
+        {
+            var handler = new StaticResponseHandler(
+                """
+                {
+                  "defaultModel": "reasoning-model",
+                  "defaultReasoningEffort": "very high",
+                  "supportedReasoningEfforts": ["low", "very high", "maximum"],
+                  "models": [
+                    {
+                      "slot": "reason01",
+                      "deployment": "reasoning-model",
+                      "isDefault": true
+                    }
+                  ]
+                }
+                """);
+            var catalog = new AwrReasoningModelCatalog(new HttpClient(handler));
+
+            var discovered = await catalog.GetAsync();
+            var veryHigh = await catalog.ValidateAsync("reasoning-model", "very high");
+            var maximum = await catalog.ValidateAsync("reasoning-model", "maximum");
+
+            discovered.SupportedReasoningEfforts.Should()
+                .Equal("low", "very high", "maximum");
+            veryHigh.ReasoningLevel.Should().Be("very high");
+            maximum.ReasoningLevel.Should().Be("maximum");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AWR_SEQ_API_ENDPOINT", previous);
+        }
+    }
+
+    [Fact]
     public void Profile_provider_uses_conventional_names_and_defaults()
     {
         ConfigurationScoringProfileProvider.DefaultModelId.Should().Be("passthrough-llm");
@@ -169,5 +209,16 @@ public sealed class LlmProxyProfileForwardingTests
                 Content = new StringContent("{}"),
             };
         }
+    }
+
+    private sealed class StaticResponseHandler(string json) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json),
+            });
     }
 }

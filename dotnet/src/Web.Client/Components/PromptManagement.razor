@@ -117,13 +117,29 @@
                         </td>
                         <td style="padding: 0.5rem;">@prompt.Source</td>
                         <td style="padding: 0.5rem; font-size:0.85rem;">@prompt.ModelId / @prompt.ReasoningLevel</td>
-                        <td style="padding: 0.5rem;">@(prompt.Rating.HasValue ? $"⭐ {prompt.Rating}/5" : "—")</td>
+                        <td style="padding: 0.5rem;">
+                            <div>@(prompt.Rating.HasValue ? $"⭐ {prompt.Rating}/5" : "—")</div>
+                            @if (!string.IsNullOrWhiteSpace(prompt.Comments))
+                            {
+                                <div title="@prompt.Comments" style="max-width:14rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#4a5568; font-size:0.75rem;">
+                                    💬 @prompt.Comments
+                                </div>
+                            }
+                        </td>
                         <td style="padding: 0.5rem;">@prompt.CreatedAt.ToString("g")</td>
                         <td style="padding: 0.5rem; display: flex; gap: 0.25rem; flex-wrap: wrap;">
                             <button @onclick="() => EditPrompt(prompt)" title="Edit">✏️</button>
+                            <button @onclick="() => ShowComment(prompt)" title="Add or edit comment">💬</button>
+                            <button @onclick="() => ViewPrompt(prompt)"
+                                    title="View prompt test details and history"
+                                    aria-label="@($"View prompt v{prompt.VersionNumber} test details and history")">🔍</button>
                             @if (prompt.Status != "active" && prompt.Status != "production-approved")
                             {
-                                <button @onclick="() => ActivatePrompt(prompt)" title="Activate">▶️</button>
+                                <button @onclick="() => ActivatePrompt(prompt)"
+                                        disabled="@(activatingPromptId is not null)"
+                                        title="Activate">
+                                    @(activatingPromptId == prompt.Id ? "⏳" : "▶️")
+                                </button>
                             }
                             @if (prompt.Status == "active")
                             {
@@ -139,6 +155,19 @@
             </tbody>
         </table>
 
+        @if (ViewedPrompt is not null)
+        {
+            <section class="prompt-test-on-demand" style="margin-top:1rem; padding-top:1rem; border-top:1px solid #cbd5e1;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+                    <h5 style="margin:0;">Prompt v@(ViewedPrompt.VersionNumber) test details and history</h5>
+                    <button @onclick="ClosePromptView" title="Close prompt test details">✕ Close</button>
+                </div>
+                <PromptTestRunner JobId="@JobId"
+                                  ActivePrompt="ViewedPrompt"
+                                  OnPromptStatusChange="HandlePromptTestStatusChange" />
+            </section>
+        }
+
         <!-- Rating dialog -->
         @if (ratingPrompt != null)
         {
@@ -152,6 +181,23 @@
                 </div>
                 <button @onclick="SubmitRating" style="padding: 0.5rem 1rem;">Save Rating</button>
                 <button @onclick="() => ratingPrompt = null" style="padding: 0.5rem 1rem;">Cancel</button>
+            </div>
+        }
+
+        @if (commentPrompt != null)
+        {
+            <div style="margin-top: 1rem; padding: 1rem; border: 1px solid #ccc; border-radius: 4px;">
+                <h5>Comment on Prompt v@(commentPrompt.VersionNumber)</h5>
+                <textarea @bind="promptComment"
+                          rows="3"
+                          aria-label="@($"Comment for prompt v{commentPrompt.VersionNumber}")"
+                          style="width: 100%;"></textarea>
+                <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+                    <button @onclick="SaveComment" disabled="@isSavingComment" style="padding: 0.5rem 1rem;">
+                        @(isSavingComment ? "Saving..." : "Save Comment")
+                    </button>
+                    <button @onclick="() => commentPrompt = null" disabled="@isSavingComment" style="padding: 0.5rem 1rem;">Cancel</button>
+                </div>
             </div>
         }
     }
@@ -174,6 +220,9 @@
     private ScoringPromptDto? ratingPrompt;
     private int ratingValue;
     private string ratingComments = "";
+    private ScoringPromptDto? commentPrompt;
+    private string promptComment = "";
+    private bool isSavingComment;
     private List<PromptGenerationInstructionDto> instructions = new();
     private PromptProfileStatusDto? productionProfileStatus;
     private string instructionText = "";
@@ -184,6 +233,10 @@
     private string instructionReasoningLevel = "high";
     private string editorModelId = "";
     private string editorReasoningLevel = "high";
+    private string? activatingPromptId;
+    private string? viewedPromptId;
+    private ScoringPromptDto? ViewedPrompt
+        => prompts.FirstOrDefault(prompt => prompt.Id == viewedPromptId);
 
     protected override async Task OnInitializedAsync()
     {
@@ -196,6 +249,8 @@
         {
             var promptsTask = Api.GetPromptsAsync(JobId);
             prompts = await promptsTask;
+            if (viewedPromptId is not null && ViewedPrompt is null)
+                viewedPromptId = null;
             try
             {
                 reasoningCatalog = await Api.GetReasoningModelsAsync();
@@ -399,9 +454,46 @@
         showEditor = true;
     }
 
+    private void ViewPrompt(ScoringPromptDto prompt)
+    {
+        viewedPromptId = prompt.Id;
+        generationError = null;
+    }
+
+    private void ClosePromptView()
+        => viewedPromptId = null;
+
     private async Task ActivatePrompt(ScoringPromptDto prompt)
     {
-        await Api.ActivatePromptAsync(JobId, prompt.Id);
+        if (activatingPromptId is not null)
+            return;
+
+        activatingPromptId = prompt.Id;
+        generationError = null;
+        try
+        {
+            var activated = await Api.ActivatePromptAsync(JobId, prompt.Id);
+            prompts = prompts
+                .Select(existing => existing.Id == activated.Id
+                    ? activated
+                    : string.Equals(existing.Status, "active", StringComparison.OrdinalIgnoreCase)
+                        ? existing with { Status = "inactive" }
+                        : existing)
+                .ToList();
+            await OnPromptStatusChange.InvokeAsync();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
+        finally
+        {
+            activatingPromptId = null;
+        }
+    }
+
+    private async Task HandlePromptTestStatusChange()
+    {
         await LoadPrompts();
         await OnPromptStatusChange.InvokeAsync();
     }
@@ -434,6 +526,41 @@
             await Api.RatePromptAsync(JobId, ratingPrompt.Id, ratingValue, ratingComments);
             ratingPrompt = null;
             await LoadPrompts();
+        }
+    }
+
+    private void ShowComment(ScoringPromptDto prompt)
+    {
+        commentPrompt = prompt;
+        promptComment = prompt.Comments ?? "";
+        generationError = null;
+    }
+
+    private async Task SaveComment()
+    {
+        if (commentPrompt is null)
+            return;
+
+        isSavingComment = true;
+        generationError = null;
+        try
+        {
+            var updated = await Api.UpdatePromptCommentAsync(
+                JobId,
+                commentPrompt.Id,
+                string.IsNullOrWhiteSpace(promptComment) ? null : promptComment.Trim());
+            prompts = prompts
+                .Select(prompt => prompt.Id == updated.Id ? updated : prompt)
+                .ToList();
+            commentPrompt = null;
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
+        finally
+        {
+            isSavingComment = false;
         }
     }
 

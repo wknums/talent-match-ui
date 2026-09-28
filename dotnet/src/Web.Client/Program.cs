@@ -55,6 +55,7 @@ else if (authConfiguration.IsEntra)
 
 builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("API"));
 builder.Services.AddScoped<ApiClient>();
+builder.Services.AddScoped<UploadCoordinator>();
 builder.Services.AddScoped<INavigationAuditClient>(sp => sp.GetRequiredService<ApiClient>());
 builder.Services.AddScoped<INavigationShellBrowser, NavigationShellBrowser>();
 builder.Services.AddScoped<NavigationShellState>();

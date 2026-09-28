@@ -587,6 +587,39 @@ public class ApiClient : INavigationAuditClient
         return await response.Content.ReadFromJsonAsync<List<ApplicationDto>>() ?? new();
     }
 
+    public async Task<JobApplicationCountsDto> GetJobApplicationCountsAsync(string jobId)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/jobs/{jobId}/applications/summary");
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            var applications = await GetApplicationsAsync(jobId);
+            return new(
+                applications.Count,
+                applications.Count(application =>
+                    application.Status is "Queued" or "Extracting" or "Scoring" or "Aggregating"),
+                applications.Count(application => application.Status == "Uploading"),
+                applications.Count(application =>
+                    application.FinalScore is >= 85),
+                applications.Count(application =>
+                    application.FinalScore is >= 70),
+                applications.Count(application =>
+                    application.FinalDecision == "Excluded"),
+                applications.Count(application =>
+                    application.Status == "NeedsManualReview"
+                    || application.FinalDecision == "NeedsManualReview"),
+                applications.Count(application => application.Status == "Queued"),
+                applications.Count(application => application.Status == "Scoring"),
+                applications.Count(application =>
+                    application.Status is "Completed" or "NeedsManualReview"),
+                applications.Count(application =>
+                    application.Status is "Failed" or "ScoringFailed" or "ExtractionFailed"));
+        }
+        await EnsureSuccessOrThrowAsync(response, "Failed to load job application totals.");
+        return await response.Content.ReadFromJsonAsync<JobApplicationCountsDto>()
+            ?? throw new JsonException("The job application totals response was empty.");
+    }
+
     public async Task<ApplicationDto?> GetApplicationAsync(string applicationId)
         => await _http.GetFromJsonAsync<ApplicationDto>($"/api/applications/{applicationId}");
 
@@ -603,6 +636,123 @@ public class ApiClient : INavigationAuditClient
 
         var result = await response.Content.ReadFromJsonAsync<JsonElement>();
         return result.ValueKind == JsonValueKind.Array ? result.GetArrayLength() : 0;
+    }
+
+    public async Task<UploadSessionDetailDto> CreateUploadSessionAsync(
+        string jobId,
+        CreateUploadSessionRequest request,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/jobs/{jobId}/upload-sessions")
+        {
+            Content = JsonContent.Create(request),
+        };
+        message.Headers.TryAddWithoutValidation("X-Correlation-ID", correlationId);
+        using var response = await _http.SendAsync(message, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to create the upload session.");
+        return await response.Content.ReadFromJsonAsync<UploadSessionDetailDto>(
+            JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload session response was empty.");
+    }
+
+    public async Task<UploadItemDto> UploadItemContentAsync(
+        string sessionId,
+        UploadItemDto item,
+        Stream content,
+        CancellationToken cancellationToken = default)
+    {
+        using var form = new MultipartFormDataContent();
+        using var streamContent = new StreamContent(content);
+        streamContent.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue(item.MimeType);
+        form.Add(streamContent, "file", item.FileName);
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/upload-sessions/{sessionId}/items/{item.Id}/content")
+        {
+            Content = form,
+        };
+        message.Headers.TryAddWithoutValidation("Idempotency-Key", item.OccurrenceKey.ToString());
+        using var response = await _http.SendAsync(message, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(
+                $"Upload attempt failed with HTTP {(int)response.StatusCode}.",
+                null,
+                response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<UploadItemDto>(
+            JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload item response was empty.");
+    }
+
+    public async Task<IReadOnlyList<UploadSessionSummaryDto>> ListUploadSessionsAsync(
+        string? jobId = null,
+        bool includeTerminal = true,
+        CancellationToken cancellationToken = default)
+    {
+        var uri = $"/api/upload-sessions?includeTerminal={includeTerminal.ToString().ToLowerInvariant()}";
+        if (!string.IsNullOrWhiteSpace(jobId))
+            uri += $"&jobId={Uri.EscapeDataString(jobId)}";
+        return await _http.GetFromJsonAsync<List<UploadSessionSummaryDto>>(uri, JsonOptions, cancellationToken)
+            ?? [];
+    }
+
+    public async Task<UploadSessionDetailDto?> GetUploadSessionAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default) =>
+        await _http.GetFromJsonAsync<UploadSessionDetailDto>(
+            $"/api/upload-sessions/{sessionId}", JsonOptions, cancellationToken);
+
+    public async Task<UploadItemDto> UpdateUploadItemStatusAsync(
+        string sessionId,
+        string itemId,
+        UpdateUploadItemStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Patch, $"/api/upload-sessions/{sessionId}/items/{itemId}/status")
+        {
+            Content = JsonContent.Create(request),
+        };
+        using var response = await _http.SendAsync(message, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to update upload item status.");
+        return await response.Content.ReadFromJsonAsync<UploadItemDto>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload item response was empty.");
+    }
+
+    public async Task<UploadSessionSummaryDto> HeartbeatUploadSessionAsync(
+        string sessionId,
+        int expectedConcurrencyVersion,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/upload-sessions/{sessionId}/heartbeat",
+            new { expectedConcurrencyVersion },
+            cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to renew the upload session.");
+        return await response.Content.ReadFromJsonAsync<UploadSessionSummaryDto>(
+            JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload session response was empty.");
+    }
+
+    public async Task<UploadSettingsDto> GetUploadSettingsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync("/api/admin/upload-settings", cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to load upload settings.");
+        return await response.Content.ReadFromJsonAsync<UploadSettingsDto>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload settings response was empty.");
+    }
+
+    public async Task<UploadSettingsDto> UpdateUploadSettingsAsync(
+        UpdateUploadSettingsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PutAsJsonAsync(
+            "/api/admin/upload-settings", request, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to save upload settings.");
+        return await response.Content.ReadFromJsonAsync<UploadSettingsDto>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload settings response was empty.");
     }
 
     // Scoring
@@ -701,7 +851,11 @@ public class ApiClient : INavigationAuditClient
     }
 
     public async Task<List<DlqItemDto>> GetDlqItemsAsync()
-        => await _http.GetFromJsonAsync<List<DlqItemDto>>("/api/dlq") ?? new();
+    {
+        using var response = await _http.GetAsync("/api/dlq");
+        await EnsureSuccessOrThrowAsync(response, "Failed to load failure queue.");
+        return await response.Content.ReadFromJsonAsync<List<DlqItemDto>>() ?? new();
+    }
 
     public async Task<bool> RetryDlqItemAsync(string itemId)
     {
@@ -762,16 +916,35 @@ public class ApiClient : INavigationAuditClient
         return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
     }
 
-    public async Task<bool> ActivatePromptAsync(string jobId, string promptId)
+    public async Task<ScoringPromptDto> ActivatePromptAsync(string jobId, string promptId)
     {
-        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/activate", null);
-        return response.IsSuccessStatusCode;
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/jobs/{jobId}/prompts/{promptId}/activate");
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+        var response = await _http.SendAsync(request);
+        return await ReadRequiredResponseAsync<ScoringPromptDto>(
+            response,
+            "Failed to activate the prompt.");
     }
 
     public async Task<bool> RatePromptAsync(string jobId, string promptId, int rating, string? comments = null)
     {
         var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/rate", new { Rating = rating, Comments = comments });
         return response.IsSuccessStatusCode;
+    }
+
+    public async Task<ScoringPromptDto> UpdatePromptCommentAsync(
+        string jobId,
+        string promptId,
+        string? comments)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts/{promptId}/rate",
+            new { Rating = (int?)null, Comments = comments });
+        return await ReadRequiredResponseAsync<ScoringPromptDto>(
+            response,
+            "Failed to save the prompt comment.");
     }
 
     public async Task<GeneratePromptResult?> GeneratePromptAsync(
@@ -1157,6 +1330,17 @@ public record JobSummaryDto(string Id, string JobCode, string Title, string Depa
 public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? OrganizationId = null, string? DepartmentId = null);
 public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? ExpectedConfigVersionId = null, string? RubricApprovalStatus = null);
 public record ApplicationDto(string Id, string JobId, string CandidateRef, string? CandidateName, string? CandidateEmail, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
+public sealed record JobApplicationCountsDto(int Total, int Pending, int Uploading, int Shortlist, int Longlist, int Excluded, int Review, int Queued, int Scoring, int Complete, int Failed);
+public sealed record CreateUploadItemRequest(Guid OccurrenceKey, int Ordinal, string FileName, string MimeType, long RawSizeBytes);
+public sealed record CreateUploadSessionRequest(bool AllowDuplicates, IReadOnlyList<CreateUploadItemRequest> Items);
+public sealed record UploadLimitsSnapshotDto(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes);
+public sealed record UploadAggregateCountsDto(int Total, int WaitingOrThrottled, int ActiveOrRetrying, int Succeeded, int Skipped, int Failed, int Interrupted, int Terminal);
+public sealed record UploadItemDto(string Id, string SessionId, Guid OccurrenceKey, int Ordinal, string FileName, string MimeType, long RawSizeBytes, string Status, int AttemptCount, string? ContentFingerprint, string? ApplicationId, string? OutcomeCode, string? OutcomeMessage, DateTime? NextRetryAt, DateTime CreatedAt, DateTime UpdatedAt, DateTime? CompletedAt, int ConcurrencyVersion);
+public sealed record UploadSessionSummaryDto(string Id, string JobId, string Status, bool AllowDuplicates, UploadLimitsSnapshotDto Limits, UploadAggregateCountsDto Counts, int ProgressPercent, string CorrelationId, DateTime CreatedAt, DateTime? StartedAt, DateTime LastHeartbeatAt, DateTime? CompletedAt, int ConcurrencyVersion);
+public sealed record UploadSessionDetailDto(string Id, string JobId, string Status, bool AllowDuplicates, UploadLimitsSnapshotDto Limits, UploadAggregateCountsDto Counts, int ProgressPercent, string CorrelationId, DateTime CreatedAt, DateTime? StartedAt, DateTime LastHeartbeatAt, DateTime? CompletedAt, int ConcurrencyVersion, IReadOnlyList<UploadItemDto> Items);
+public sealed record UpdateUploadItemStatusRequest(Guid OccurrenceKey, string Status, int ExpectedConcurrencyVersion, string? OutcomeCode = null, string? OutcomeMessage = null, DateTime? NextRetryAt = null, int? TransportAttemptCount = null);
+public sealed record UploadSettingsDto(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ConcurrencyVersion, bool Persisted, DateTime? UpdatedAt, string? UpdatedBy);
+public sealed record UpdateUploadSettingsRequest(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ExpectedConcurrencyVersion);
 public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default, string ReasoningLevel = "");
 public record ReparseScoringRunResultDto(ScoringRunDto ScoringRun, bool FallbackParsingActivated, bool EligibilityFallbackActivated, bool TotalScoreFallbackActivated, bool GateDetected, string EligibilityPath, string Source);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);

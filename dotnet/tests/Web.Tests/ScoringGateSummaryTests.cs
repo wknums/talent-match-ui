@@ -65,4 +65,33 @@ public sealed class ScoringGateSummaryTests
         result.Entries.Single(entry => entry.Criterion == "Degree")
             .PassedVotes.Should().Be(2);
     }
+
+    [Fact]
+    public void Parse_UsesCaseInsensitiveFieldsAndFlexibleStatuses()
+    {
+        var result = ScoringGateSummary.Parse(
+            """
+            {
+              "Passed": true,
+              "MissingCriteria": [],
+              "Details": {
+                "Entries": [
+                  {
+                    "Requirement": "Basic literacy",
+                    "Status": "Met",
+                    "Supporting_Evidence": "Completed written qualifications"
+                  }
+                ]
+              }
+            }
+            """);
+
+        result.Should().NotBeNull();
+        result!.Passed.Should().BeTrue();
+        result.Entries.Should().ContainSingle()
+            .Which.Should().BeEquivalentTo(new ScoringGateEntryDto(
+                "Basic literacy",
+                true,
+                "Completed written qualifications"));
+    }
 }

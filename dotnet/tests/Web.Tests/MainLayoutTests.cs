@@ -35,6 +35,16 @@ public sealed class MainLayoutTests : BunitContext
     }
 
     [Fact]
+    public void Layout_DoesNotRenderUploadActivityOutsideJobPages()
+    {
+        var browser = new StubNavigationShellBrowser(new(DesktopCollapsed: false, IsCompact: false));
+        var cut = RenderLayout(browser, new StubNavigationAuditClient());
+
+        cut.FindAll("#upload-activity").Should().BeEmpty();
+        cut.Markup.Should().NotContain("Upload activity");
+    }
+
+    [Fact]
     public async Task Toggle_AnnouncesStateThroughAriaExpandedAndItsAccessibleName()
     {
         var browser = new StubNavigationShellBrowser(new(DesktopCollapsed: false, IsCompact: false));
@@ -138,6 +148,20 @@ public sealed class MainLayoutTests : BunitContext
         cut.WaitForAssertion(() => cut.Markup.Should().Contain("Access management"));
         cut.Markup.Should().Contain("Organizations");
         cut.Markup.Should().NotContain("Failure Queue");
+        cut.Markup.Should().NotContain(">Settings<");
+    }
+
+    [Fact]
+    public void Navigation_GlobalAdminSeesOptionalUploadSettings()
+    {
+        var browser = new StubNavigationShellBrowser(new(DesktopCollapsed: false, IsCompact: false));
+        var cut = RenderLayout(browser, new StubNavigationAuditClient(), role: "admin");
+        cut.WaitForAssertion(() =>
+        {
+            cut.Markup.Should().Contain("Settings");
+            cut.Find(".navbar-brand-logo").GetAttribute("src")
+                .Should().Be("images/logo_1_puzzle.png");
+        });
     }
 
     private static string AccessibleName(IRenderedComponent<MainLayout> cut)
@@ -164,7 +188,9 @@ public sealed class MainLayoutTests : BunitContext
             BaseAddress = new Uri("http://localhost"),
         };
         Services.AddSingleton(configuration);
-        Services.AddSingleton(new ApiClient(client, configuration));
+        var api = new ApiClient(client, configuration);
+        Services.AddSingleton(api);
+        Services.AddSingleton(new UploadCoordinator(api));
         Services.AddSingleton<INavigationShellBrowser>(browser);
         Services.AddSingleton<INavigationAuditClient>(audit);
         Services.AddScoped(provider => new NavigationShellState(

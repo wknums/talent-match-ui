@@ -12,6 +12,135 @@ export type RubricItemReviewStatus = 'confirmed' | 'needs_review'
 export type RubricItemCreatedFrom = 'extracted' | 'manual' | 'legacy_conversion'
 export type ReasoningEffort = 'low' | 'medium' | 'high'
 
+export const OPTIONAL_UPLOAD_DEFAULTS = {
+  fileConcurrency: 4,
+  maxIndividualFileBytes: 4194304,
+  maxInFlightBytes: 104857600,
+} as const
+
+export const SUPPORTED_UPLOAD_MIME_TYPES = [
+  'application/pdf',
+  'text/markdown',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'image/jpeg',
+  'image/png',
+] as const
+
+export type SupportedUploadMimeType = typeof SUPPORTED_UPLOAD_MIME_TYPES[number]
+export type UploadItemStatus =
+  | 'waiting'
+  | 'throttled'
+  | 'uploading'
+  | 'retrying'
+  | 'succeeded'
+  | 'skipped_duplicate'
+  | 'failed'
+  | 'interrupted'
+export type UploadSessionStatus = 'active' | 'completed'
+
+export interface UploadSettings {
+  fileConcurrency: number
+  maxIndividualFileBytes: number
+  maxInFlightBytes: number
+  concurrencyVersion: number
+  persisted: boolean
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
+export interface UpdateUploadSettingsRequest {
+  fileConcurrency: number
+  maxIndividualFileBytes: number
+  maxInFlightBytes: number
+  expectedConcurrencyVersion: number
+}
+
+export interface CreateUploadItem {
+  occurrenceKey: string
+  ordinal: number
+  fileName: string
+  mimeType: SupportedUploadMimeType
+  rawSizeBytes: number
+}
+
+export interface CreateUploadSessionRequest {
+  allowDuplicates: boolean
+  items: CreateUploadItem[]
+}
+
+export interface UploadLimitsSnapshot {
+  fileConcurrency: number
+  maxIndividualFileBytes: number
+  maxInFlightBytes: number
+}
+
+export interface UploadAggregateCounts {
+  total: number
+  waitingOrThrottled: number
+  activeOrRetrying: number
+  succeeded: number
+  skipped: number
+  failed: number
+  interrupted: number
+  terminal: number
+}
+
+export interface UploadItem {
+  id: string
+  sessionId: string
+  occurrenceKey: string
+  ordinal: number
+  fileName: string
+  mimeType: SupportedUploadMimeType
+  rawSizeBytes: number
+  status: UploadItemStatus
+  attemptCount: number
+  contentFingerprint: string | null
+  applicationId: string | null
+  outcomeCode: string | null
+  outcomeMessage: string | null
+  nextRetryAt: string | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+  concurrencyVersion: number
+}
+
+export interface UploadSessionSummary {
+  id: string
+  jobId: string
+  status: UploadSessionStatus
+  allowDuplicates: boolean
+  limits: UploadLimitsSnapshot
+  counts: UploadAggregateCounts
+  progressPercent: number
+  correlationId: string
+  createdAt: string
+  startedAt: string | null
+  lastHeartbeatAt: string
+  completedAt: string | null
+  concurrencyVersion: number
+}
+
+export interface UploadSessionDetail extends UploadSessionSummary {
+  items: UploadItem[]
+}
+
+export interface UpdateUploadItemStatusRequest {
+  occurrenceKey: string
+  status: Extract<UploadItemStatus, 'waiting' | 'throttled' | 'retrying' | 'failed' | 'interrupted'>
+  expectedConcurrencyVersion: number
+  outcomeCode?: string | null
+  outcomeMessage?: string | null
+  nextRetryAt?: string | null
+  transportAttemptCount?: number | null
+}
+
+export interface UploadValidationError extends CanonicalApiError {
+  errors: Record<string, string[]>
+}
+
 export interface ReasoningModelOption {
   slot: string
   deployment: string

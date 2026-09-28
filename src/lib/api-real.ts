@@ -38,6 +38,13 @@ import type {
   OrganizationAdminRoleAssignment,
   RegisterOrganizationMembershipRequest,
   UpdateOrganizationDepartmentRequest,
+  CreateUploadSessionRequest,
+  UploadItem,
+  UploadSessionDetail,
+  UploadSessionSummary,
+  UpdateUploadItemStatusRequest,
+  UploadSettings,
+  UpdateUploadSettingsRequest,
 } from '@/types'
 
 function normalizeMustHaveResult(raw: any) {
@@ -209,6 +216,7 @@ export class TalentMatchApiError extends Error {
     public readonly status: number,
     public readonly errorCode?: CanonicalApiError['error'],
     public readonly correlationId?: string,
+    public readonly validationErrors?: Record<string, string[]>,
   ) {
     super(message)
     this.name = 'TalentMatchApiError'
@@ -251,6 +259,7 @@ async function readApiError(response: Response): Promise<TalentMatchApiError> {
     error?: CanonicalApiError['error']
     message?: string
     correlationId?: string
+    errors?: Record<string, string[]>
   }
 
   return new TalentMatchApiError(
@@ -258,6 +267,7 @@ async function readApiError(response: Response): Promise<TalentMatchApiError> {
     response.status,
     body.error,
     body.correlationId,
+    body.errors,
   )
 }
 
@@ -749,6 +759,89 @@ export const realAPI = {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/applications/upload`, {
       method: 'POST',
       body: JSON.stringify({ files: fileData, allowDuplicates }),
+    })
+  },
+
+  async createUploadSession(
+    jobId: string,
+    request: CreateUploadSessionRequest,
+    correlationId = crypto.randomUUID(),
+  ): Promise<UploadSessionDetail> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/upload-sessions`, {
+      method: 'POST',
+      headers: { 'X-Correlation-ID': correlationId },
+      body: JSON.stringify(request),
+    })
+  },
+
+  async uploadItemContent(
+    sessionId: string,
+    itemId: string,
+    occurrenceKey: string,
+    file: File,
+    correlationId: string,
+  ): Promise<UploadItem> {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    const response = await fetchWithAuthentication(
+      `${API_BASE}/upload-sessions/${sessionId}/items/${itemId}/content`,
+      {
+        method: 'POST',
+        headers: {
+          'Idempotency-Key': occurrenceKey,
+          'X-Correlation-ID': correlationId,
+        },
+        body: form,
+      },
+    )
+    if (!response.ok) throw await readApiError(response)
+    return response.json()
+  },
+
+  async listUploadSessions(
+    jobId?: string,
+    includeTerminal = true,
+  ): Promise<UploadSessionSummary[]> {
+    const query = new URLSearchParams({ includeTerminal: String(includeTerminal) })
+    if (jobId) query.set('jobId', jobId)
+    return fetchJSON(`${API_BASE}/upload-sessions?${query}`)
+  },
+
+  async getUploadSession(sessionId: string): Promise<UploadSessionDetail> {
+    return fetchJSON(`${API_BASE}/upload-sessions/${sessionId}`)
+  },
+
+  async heartbeatUploadSession(
+    sessionId: string,
+    expectedConcurrencyVersion: number,
+  ): Promise<UploadSessionSummary> {
+    return fetchJSON(`${API_BASE}/upload-sessions/${sessionId}/heartbeat`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedConcurrencyVersion }),
+    })
+  },
+
+  async updateUploadItemStatus(
+    sessionId: string,
+    itemId: string,
+    request: UpdateUploadItemStatusRequest,
+  ): Promise<UploadItem> {
+    return fetchJSON(`${API_BASE}/upload-sessions/${sessionId}/items/${itemId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async getUploadSettings(): Promise<UploadSettings> {
+    return fetchJSON(`${API_BASE}/admin/upload-settings`)
+  },
+
+  async updateUploadSettings(
+    request: UpdateUploadSettingsRequest,
+  ): Promise<UploadSettings> {
+    return fetchJSON(`${API_BASE}/admin/upload-settings`, {
+      method: 'PUT',
+      body: JSON.stringify(request),
     })
   },
 

@@ -7,7 +7,26 @@
 
 <p style="font-size: 0.8rem; color: #595959;">Auto-refreshes every 30 seconds. Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
 
-@if (items.Any())
+@if (!string.IsNullOrWhiteSpace(loadError))
+{
+    <div role="alert" style="padding: 0.75rem 1rem; margin-bottom: 1rem; border: 1px solid #fca5a5; border-radius: 6px; background: #fef2f2; color: #991b1b;">
+        <strong>Failed to refresh the failure queue.</strong>
+        <span>@loadError</span>
+        <button type="button" @onclick="LoadItems" style="margin-left: 0.75rem;">Retry</button>
+    </div>
+}
+
+@if (isLoading && items.Count == 0)
+{
+    <div style="text-align: center; padding: 2rem; color: #666;">
+        <p>Loading failure queue...</p>
+    </div>
+}
+else if (!string.IsNullOrWhiteSpace(loadError) && items.Count == 0)
+{
+    <p class="visually-hidden">Failure queue data is unavailable.</p>
+}
+else if (items.Any())
 {
     @if (selectedIds.Count > 0)
     {
@@ -75,6 +94,8 @@ else
     private HashSet<string> selectedIds = new();
     private HashSet<string> retryingIds = new();
     private bool isBulkProcessing;
+    private bool isLoading = true;
+    private string? loadError;
     private DateTime lastUpdated;
     private System.Threading.Timer? refreshTimer;
 
@@ -92,10 +113,24 @@ else
 
     private async Task LoadItems()
     {
-        items = await Api.GetDlqItemsAsync();
-        // Remove selections for items no longer in the list
-        selectedIds.IntersectWith(items.Select(i => i.Id));
-        lastUpdated = DateTime.Now;
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            var refreshedItems = await Api.GetDlqItemsAsync();
+            items = refreshedItems;
+            // Remove selections for items no longer in the list
+            selectedIds.IntersectWith(items.Select(i => i.Id));
+            lastUpdated = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
     }
 
     private void ToggleSelectAll()

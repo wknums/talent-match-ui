@@ -13,6 +13,10 @@ const repoMocks = vi.hoisted(() => ({
     createDocument: vi.fn(),
     storeBlob: vi.fn(),
   },
+  uploadRepo: {
+    createSession: vi.fn(),
+    updateItem: vi.fn(),
+  },
 }))
 
 const auditMock = vi.hoisted(() => ({
@@ -88,5 +92,34 @@ describe('application duplicate uploads', () => {
     expect(body.applicationIds).toHaveLength(1)
     expect(repoMocks.applicationRepo.findDuplicateFingerprint).not.toHaveBeenCalled()
     expect(repoMocks.applicationRepo.create).toHaveBeenCalledOnce()
+    expect(repoMocks.applicationRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'Queued' }),
+    )
+    expect(repoMocks.uploadRepo.createSession).not.toHaveBeenCalled()
+    expect(repoMocks.uploadRepo.updateItem).not.toHaveBeenCalled()
+  })
+
+  it('keeps validation warnings and the legacy response shape without optional writes', async () => {
+    const request = await createServer()
+
+    const response = await request({
+      files: [
+        { ...file, fileName: 'unsupported.jpg', mimeType: 'image/jpeg' },
+        file,
+      ],
+      allowDuplicates: true,
+    })
+
+    expect(response.status).toBe(201)
+    await expect(response.json()).resolves.toEqual({
+      applicationIds: [expect.any(String)],
+      warnings: ['unsupported.jpg: invalid file type image/jpeg'],
+    })
+    expect(repoMocks.applicationRepo.create).toHaveBeenCalledOnce()
+    expect(repoMocks.applicationRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'Queued' }),
+    )
+    expect(repoMocks.uploadRepo.createSession).not.toHaveBeenCalled()
+    expect(repoMocks.uploadRepo.updateItem).not.toHaveBeenCalled()
   })
 })

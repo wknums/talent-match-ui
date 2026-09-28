@@ -1,0 +1,48 @@
+.job-collapsible {
+    margin: 1rem 0;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.5rem;
+    background: #ffffff;
+    scroll-margin-top: 4.5rem;
+}
+
+.job-collapsible > summary {
+    padding: 0.75rem 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    background: #f8fafc;
+}
+
+.job-collapsible-content {
+    padding: 1rem;
+}
+
+.job-collapsible-content > p {
+    margin: 0;
+}
+
+.upload-session + .upload-session {
+    margin-top: 0.75rem;
+}
+
+.upload-session > summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.upload-session p {
+    margin: 0.75rem 0;
+}
+
+.upload-session ul {
+    display: grid;
+    gap: 0.5rem;
+    margin-bottom: 0;
+    padding-left: 1.25rem;
+}
+
+.upload-session li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.75rem;
+}

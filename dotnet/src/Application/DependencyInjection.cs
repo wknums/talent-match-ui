@@ -7,6 +7,7 @@ using TalentMatch.Application.Common.Behaviours;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Common.Services;
 using TalentMatch.Application.Prompts.Services;
+using TalentMatch.Application.Uploads.Services;
 
 namespace TalentMatch.Application;
 
@@ -25,6 +26,7 @@ public static class DependencyInjection
         services.AddScoped<IApplicationScoringFinalizer, ApplicationScoringFinalizer>();
         services.AddScoped<ISequentialApplicationScorer, SequentialApplicationScorer>();
         services.AddScoped<IPromptProfileGuard, PromptProfileGuard>();
+        services.AddScoped<UploadItemLifecycleService>();
         services.TryAddSingleton(TimeProvider.System);
 
         return services;

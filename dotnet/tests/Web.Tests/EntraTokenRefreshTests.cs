@@ -57,6 +57,24 @@ public class EntraTokenRefreshTests
     }
 
     [Fact]
+    public async Task ExplicitlyRetryableBodylessPostRecoversFromStaleToken()
+    {
+        var invalidator = new RecordingInvalidator();
+        var inner = new ScriptedHandler(
+            StaleTokenResponse(),
+            new HttpResponseMessage(HttpStatusCode.OK));
+        using var client = CreateClient(invalidator, inner);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/jobs/job-1/prompts/prompt-1/activate");
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        inner.Attempts.Should().Be(2);
+        invalidator.InvalidationCount.Should().Be(1);
+    }
+
+    [Fact]
     public async Task UnauthorizedForAnotherReason_IsNotRetriedAndKeepsItsBody()
     {
         var invalidator = new RecordingInvalidator();

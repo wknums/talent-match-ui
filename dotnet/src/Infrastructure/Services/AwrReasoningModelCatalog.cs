@@ -6,8 +6,6 @@ namespace TalentMatch.Infrastructure.Services;
 
 public sealed class AwrReasoningModelCatalog(HttpClient httpClient) : IReasoningModelCatalog
 {
-    private static readonly HashSet<string> AllowedEfforts =
-        new(["low", "medium", "high"], StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<string, CachedCatalog> Cache =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
@@ -36,10 +34,13 @@ public sealed class AwrReasoningModelCatalog(HttpClient httpClient) : IReasoning
             ?? throw new InvalidOperationException(
                 "Reasoning model discovery returned an empty response.");
         if (string.IsNullOrWhiteSpace(catalog.DefaultModel)
-            || !AllowedEfforts.Contains(catalog.DefaultReasoningEffort)
+            || string.IsNullOrWhiteSpace(catalog.DefaultReasoningEffort)
             || catalog.Models.Count == 0
             || catalog.SupportedReasoningEfforts.Count == 0
-            || catalog.SupportedReasoningEfforts.Any(effort => !AllowedEfforts.Contains(effort)))
+            || catalog.SupportedReasoningEfforts.Any(string.IsNullOrWhiteSpace)
+            || !catalog.SupportedReasoningEfforts.Contains(
+                catalog.DefaultReasoningEffort,
+                StringComparer.Ordinal))
         {
             throw new InvalidOperationException(
                 "Reasoning model discovery returned an invalid contract.");
@@ -58,12 +59,12 @@ public sealed class AwrReasoningModelCatalog(HttpClient httpClient) : IReasoning
     {
         if (string.IsNullOrWhiteSpace(modelId))
             throw new InvalidOperationException("Model is required.");
-        if (!AllowedEfforts.Contains(reasoningEffort))
-            throw new InvalidOperationException(
-                "Reasoning effort must be low, medium, or high.");
+        if (string.IsNullOrWhiteSpace(reasoningEffort))
+            throw new InvalidOperationException("Reasoning effort is required.");
 
         var catalog = await GetAsync(cancellationToken);
         var normalizedModel = modelId.Trim();
+        var normalizedReasoningEffort = reasoningEffort.Trim();
         if (!catalog.Models.Any(model =>
                 string.Equals(
                     model.Deployment,
@@ -74,14 +75,14 @@ public sealed class AwrReasoningModelCatalog(HttpClient httpClient) : IReasoning
                 $"Model '{normalizedModel}' is not supported by the AWReason HTTP service.");
         }
         if (!catalog.SupportedReasoningEfforts.Contains(
-                reasoningEffort,
+                normalizedReasoningEffort,
                 StringComparer.Ordinal))
         {
             throw new InvalidOperationException(
-                $"Reasoning effort '{reasoningEffort}' is not supported by the AWReason HTTP service.");
+                $"Reasoning effort '{normalizedReasoningEffort}' is not supported by the AWReason HTTP service.");
         }
 
-        return new ScoringProfile(normalizedModel, reasoningEffort);
+        return new ScoringProfile(normalizedModel, normalizedReasoningEffort);
     }
 
     public async Task<ScoringProfile> ResolveForExecutionAsync(

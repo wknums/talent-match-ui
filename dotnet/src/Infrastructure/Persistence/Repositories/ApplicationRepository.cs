@@ -27,6 +27,98 @@ public class ApplicationRepository : IApplicationRepository
             .AsNoTracking()
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<TalentMatch.Domain.Entities.Application>> GetByJobIdAsync(
+        string jobId,
+        string? list,
+        double longlistThreshold,
+        double shortlistThreshold,
+        bool includeTestCases = false,
+        CancellationToken ct = default)
+    {
+        var query = BaseJobApplications(jobId, includeTestCases);
+        query = list?.ToLowerInvariant() switch
+        {
+            "shortlist" => query.Where(application =>
+                application.FinalScore != null
+                && application.FinalScore >= shortlistThreshold),
+            "longlist" => query.Where(application =>
+                application.FinalScore != null
+                && application.FinalScore >= longlistThreshold),
+            "excluded" => query.Where(application =>
+                application.FinalDecision == "Excluded"),
+            "review" => query.Where(application =>
+                application.Status == "NeedsManualReview"
+                || application.FinalDecision == "NeedsManualReview"),
+            "failed" => query.Where(application =>
+                application.Status == "Failed"
+                || application.Status == "ScoringFailed"
+                || application.Status == "ExtractionFailed"),
+            _ => query,
+        };
+        return await query.ToListAsync(ct);
+    }
+
+    public async Task<ApplicationCounts> GetCountsByJobIdAsync(
+        string jobId,
+        double longlistThreshold,
+        double shortlistThreshold,
+        bool includeTestCases = false,
+        CancellationToken ct = default)
+    {
+        var countsQuery = _context.Applications
+            .AsNoTracking()
+            .Where(application => application.JobId == jobId);
+        if (!includeTestCases)
+            countsQuery = countsQuery.Where(application =>
+                application.TestRunId == null);
+
+        var counts = await countsQuery
+            .GroupBy(_ => 1)
+            .Select(group => new ApplicationCounts(
+                group.Count(),
+                group.Count(application =>
+                    application.Status == "Queued"
+                    || application.Status == "Extracting"
+                    || application.Status == "Scoring"
+                    || application.Status == "Aggregating"),
+                group.Count(application => application.Status == "Uploading"),
+                group.Count(application =>
+                    application.FinalScore != null
+                    && application.FinalScore >= shortlistThreshold),
+                group.Count(application =>
+                    application.FinalScore != null
+                    && application.FinalScore >= longlistThreshold),
+                group.Count(application => application.FinalDecision == "Excluded"),
+                group.Count(application =>
+                    application.Status == "NeedsManualReview"
+                    || application.FinalDecision == "NeedsManualReview"),
+                group.Count(application => application.Status == "Queued"),
+                group.Count(application => application.Status == "Scoring"),
+                group.Count(application =>
+                    application.Status == "Completed"
+                    || application.Status == "NeedsManualReview"),
+                group.Count(application =>
+                    application.Status == "Failed"
+                    || application.Status == "ScoringFailed"
+                    || application.Status == "ExtractionFailed")))
+            .SingleOrDefaultAsync(ct);
+        return counts ?? new ApplicationCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    private IQueryable<TalentMatch.Domain.Entities.Application> BaseJobApplications(
+        string jobId,
+        bool includeTestCases)
+    {
+        var query = _context.Applications
+            .AsNoTracking()
+            .Where(application =>
+                application.JobId == jobId
+                && application.Status != "Uploading");
+        return includeTestCases
+            ? query
+            : query.Where(application => application.TestRunId == null);
+    }
+
     public async Task<TalentMatch.Domain.Entities.Application?> GetByIdAsync(string id, CancellationToken ct = default)
         => await _context.Applications
             .AsNoTracking()
@@ -67,12 +159,16 @@ public class ApplicationRepository : IApplicationRepository
         await _context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             await using var transaction = await _context.Database.BeginTransactionAsync(ct);
-            var updated = await _context.Applications
+            await _context.Applications
                 .Where(application => applicationIds.Contains(application.Id) && application.Status == "Uploading")
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(application => application.Status, "Queued")
                     .SetProperty(application => application.UpdatedAt, now), ct);
-            if (updated != applicationIds.Count)
+            var ready = await _context.Applications
+                .CountAsync(application =>
+                    applicationIds.Contains(application.Id)
+                    && application.Status == "Queued", ct);
+            if (ready != applicationIds.Distinct(StringComparer.Ordinal).Count())
                 throw new InvalidOperationException("Some uploaded applications could not be made ready for scoring.");
             await transaction.CommitAsync(ct);
         });

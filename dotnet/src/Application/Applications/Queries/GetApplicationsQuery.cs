@@ -19,6 +19,10 @@ public record GetApplicationsQuery(
     bool IncludeTestCases = false
 ) : IRequest<IReadOnlyList<Domain.Entities.Application>>;
 
+public sealed record GetApplicationCountsQuery(
+    string JobId,
+    bool IncludeTestCases = false) : IRequest<ApplicationCounts>;
+
 public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery, IReadOnlyList<Domain.Entities.Application>>
 {
     private readonly IApplicationRepository _applicationRepository;
@@ -40,18 +44,49 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
 
     public async Task<IReadOnlyList<Domain.Entities.Application>> Handle(GetApplicationsQuery request, CancellationToken cancellationToken)
     {
-        var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
+        var job = await _jobRepository.GetByIdWithoutApplicationsAsync(
+                request.JobId, cancellationToken)
+            ?? await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
             ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
         await JobAuthorization.EnsureCanReadAsync(job, _currentUser, _organizations, cancellationToken);
 
-        var apps = await _applicationRepository.GetByJobIdAsync(request.JobId, cancellationToken);
-        apps = apps.Where(application => application.Status != "Uploading").ToList();
+        var config = job.CurrentConfigVersionId is null
+            ? null
+            : job.ConfigVersions.FirstOrDefault(version =>
+                version.Id == job.CurrentConfigVersionId);
+        var apps = await _applicationRepository.GetByJobIdAsync(
+            request.JobId,
+            request.List,
+            config?.LonglistThreshold ?? 70,
+            config?.ShortlistThreshold ?? 85,
+            request.IncludeTestCases,
+            cancellationToken)
+            ?? await _applicationRepository.GetByJobIdAsync(
+                request.JobId, cancellationToken);
 
-        // FR-038: Filter out test run applications from production results unless explicitly requested
+        apps = apps.Where(application => application.Status != "Uploading").ToList();
         if (!request.IncludeTestCases)
+            apps = apps.Where(application => application.TestRunId == null).ToList();
+
+        apps = request.List?.ToLowerInvariant() switch
         {
-            apps = apps.Where(a => a.TestRunId == null).ToList();
-        }
+            "shortlist" => apps.Where(application =>
+                application.FinalScore != null
+                && application.FinalScore >= (config?.ShortlistThreshold ?? 85)).ToList(),
+            "longlist" => apps.Where(application =>
+                application.FinalScore != null
+                && application.FinalScore >= (config?.LonglistThreshold ?? 70)).ToList(),
+            "excluded" => apps.Where(application =>
+                application.FinalDecision == "Excluded").ToList(),
+            "review" => apps.Where(application =>
+                application.Status == "NeedsManualReview"
+                || application.FinalDecision == "NeedsManualReview").ToList(),
+            "failed" => apps.Where(application =>
+                application.Status == "Failed"
+                || application.Status == "ScoringFailed"
+                || application.Status == "ExtractionFailed").ToList(),
+            _ => apps,
+        };
 
         if (!string.IsNullOrWhiteSpace(request.ApplicantName))
         {
@@ -78,5 +113,48 @@ public class GetApplicationsQueryHandler : IRequestHandler<GetApplicationsQuery,
         }
 
         return apps;
+    }
+}
+
+public sealed class GetApplicationCountsQueryHandler
+    : IRequestHandler<GetApplicationCountsQuery, ApplicationCounts>
+{
+    private readonly IApplicationRepository _applicationRepository;
+    private readonly IJobRepository _jobRepository;
+    private readonly ICurrentUserService? _currentUser;
+    private readonly IOrganizationRepository? _organizations;
+
+    public GetApplicationCountsQueryHandler(
+        IApplicationRepository applicationRepository,
+        IJobRepository jobRepository,
+        ICurrentUserService? currentUser = null,
+        IOrganizationRepository? organizations = null)
+    {
+        _applicationRepository = applicationRepository;
+        _jobRepository = jobRepository;
+        _currentUser = currentUser;
+        _organizations = organizations;
+    }
+
+    public async Task<ApplicationCounts> Handle(
+        GetApplicationCountsQuery request,
+        CancellationToken cancellationToken)
+    {
+        var job = await _jobRepository.GetByIdWithoutApplicationsAsync(
+                request.JobId, cancellationToken)
+            ?? await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
+            ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
+        await JobAuthorization.EnsureCanReadAsync(
+            job, _currentUser, _organizations, cancellationToken);
+        var config = job.CurrentConfigVersionId is null
+            ? null
+            : job.ConfigVersions.FirstOrDefault(version =>
+                version.Id == job.CurrentConfigVersionId);
+        return await _applicationRepository.GetCountsByJobIdAsync(
+            request.JobId,
+            config?.LonglistThreshold ?? 70,
+            config?.ShortlistThreshold ?? 85,
+            request.IncludeTestCases,
+            cancellationToken);
     }
 }

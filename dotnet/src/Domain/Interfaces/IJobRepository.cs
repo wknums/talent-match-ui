@@ -8,6 +8,7 @@ public interface IJobRepository
     Task<IReadOnlyList<Job>> GetByDepartmentAsync(string department, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<Job>> GetByDepartmentsOrCreatorAsync(IEnumerable<string> departments, string creatorId, CancellationToken cancellationToken = default);
     Task<Job?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
+    Task<Job?> GetByIdWithoutApplicationsAsync(string id, CancellationToken cancellationToken = default);
     Task AddAsync(Job job, CancellationToken cancellationToken = default);
     Task UpdateAsync(Job job, CancellationToken cancellationToken = default);
     Task DeleteAsync(string id, CancellationToken cancellationToken = default);

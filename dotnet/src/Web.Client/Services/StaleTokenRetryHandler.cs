@@ -30,6 +30,8 @@ public sealed class MsalAccessTokenCacheInvalidator(IJSRuntime jsRuntime) : IAcc
 public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalidator) : DelegatingHandler
 {
     private const string StaleTokenErrorCode = "token_stale";
+    public static readonly HttpRequestOptionsKey<bool> RetryOnStaleToken =
+        new("TalentMatch.RetryOnStaleToken");
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
@@ -37,7 +39,7 @@ public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalida
     {
         var response = await base.SendAsync(request, cancellationToken);
 
-        if (response.StatusCode != HttpStatusCode.Unauthorized || !IsIdempotent(request.Method))
+        if (response.StatusCode != HttpStatusCode.Unauthorized || !CanRetry(request))
             return response;
 
         if (!await IsStaleTokenAsync(response, cancellationToken))
@@ -62,6 +64,12 @@ public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalida
 
     private static bool IsIdempotent(HttpMethod method)
         => method == HttpMethod.Get || method == HttpMethod.Head || method == HttpMethod.Options;
+
+    private static bool CanRetry(HttpRequestMessage request)
+        => IsIdempotent(request.Method)
+           || (request.Content is null
+               && request.Options.TryGetValue(RetryOnStaleToken, out var enabled)
+               && enabled);
 
     private static async Task<bool> IsStaleTokenAsync(
         HttpResponseMessage response,
