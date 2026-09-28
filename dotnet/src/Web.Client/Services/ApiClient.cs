@@ -1,45 +1,68 @@
 using System.Net.Http.Json;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 
 namespace TalentMatch.Web.Client.Services;
 
 public class ApiException : Exception
 {
     public int StatusCode { get; }
+    public string? ErrorCode { get; }
+    public string? CorrelationId { get; }
 
-    public ApiException(string message, int statusCode) : base(message)
+    public ApiException(
+        string message,
+        int statusCode,
+        string? errorCode = null,
+        string? correlationId = null) : base(message)
     {
         StatusCode = statusCode;
+        ErrorCode = errorCode;
+        CorrelationId = correlationId;
     }
 }
 
-public class ApiClient
+public class ApiClient : INavigationAuditClient
 {
     private readonly HttpClient _http;
+    private readonly PublicAuthConfiguration _authConfiguration;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public ApiClient(HttpClient http)
+        : this(http, PublicAuthConfiguration.Simple(http.BaseAddress?.ToString() ?? "http://localhost/"))
+    {
+    }
+
+    public ApiClient(HttpClient http, PublicAuthConfiguration authConfiguration)
     {
         _http = http;
+        _authConfiguration = authConfiguration;
     }
 
     private static async Task EnsureSuccessOrThrowAsync(HttpResponseMessage response, string fallbackMessage)
     {
         if (response.IsSuccessStatusCode) return;
 
-        string errorMessage = fallbackMessage;
+        var correlationId = response.Headers.TryGetValues("X-Correlation-ID", out var values)
+            ? values.FirstOrDefault()
+            : null;
+        var details = new ApiErrorDetails(fallbackMessage, null, correlationId);
         try
         {
             var body = await response.Content.ReadAsStringAsync();
             if (!string.IsNullOrWhiteSpace(body))
-                errorMessage = ExtractErrorMessage(body, fallbackMessage);
+                details = ExtractErrorDetails(body, fallbackMessage, correlationId);
         }
         catch { /* use fallback */ }
 
-        throw new ApiException(errorMessage, (int)response.StatusCode);
+        throw new ApiException(details.Message, (int)response.StatusCode, details.ErrorCode, details.CorrelationId);
     }
 
-    private static string ExtractErrorMessage(string body, string fallbackMessage)
+    private static ApiErrorDetails ExtractErrorDetails(
+        string body,
+        string fallbackMessage,
+        string? headerCorrelationId = null)
     {
         try
         {
@@ -47,10 +70,28 @@ public class ApiClient
             var root = document.RootElement;
 
             if (root.ValueKind == JsonValueKind.String)
-                return root.GetString() ?? fallbackMessage;
+                return new(root.GetString() ?? fallbackMessage, null, headerCorrelationId);
 
             if (root.ValueKind == JsonValueKind.Object)
             {
+                var correlationId = root.TryGetProperty("correlationId", out var correlation)
+                    && correlation.ValueKind == JsonValueKind.String
+                        ? correlation.GetString()
+                        : headerCorrelationId;
+                var errorCode = root.TryGetProperty("error", out var error)
+                    && error.ValueKind == JsonValueKind.String
+                        ? error.GetString()
+                        : null;
+
+                if (root.TryGetProperty("message", out var canonicalMessage)
+                    && canonicalMessage.ValueKind == JsonValueKind.String)
+                {
+                    return new(
+                        canonicalMessage.GetString() ?? fallbackMessage,
+                        errorCode,
+                        correlationId);
+                }
+
                 if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Object)
                 {
                     var messages = errors.EnumerateObject()
@@ -64,17 +105,14 @@ public class ApiClient
                         .ToList();
 
                     if (messages.Count > 0)
-                        return string.Join(" ", messages);
+                        return new(string.Join(" ", messages), errorCode, correlationId);
                 }
 
-                if (root.TryGetProperty("message", out var message) && message.ValueKind == JsonValueKind.String)
-                    return message.GetString() ?? fallbackMessage;
-
-                if (root.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String)
-                    return error.GetString() ?? fallbackMessage;
-
                 if (root.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
-                    return title.GetString() ?? fallbackMessage;
+                    return new(title.GetString() ?? fallbackMessage, errorCode, correlationId);
+
+                if (!string.IsNullOrWhiteSpace(errorCode))
+                    return new(errorCode, errorCode, correlationId);
             }
         }
         catch
@@ -82,7 +120,7 @@ public class ApiClient
             // Fall back to the raw response body when it is not valid JSON.
         }
 
-        return body.Trim().Trim('"');
+        return new(body.Trim().Trim('"'), null, headerCorrelationId);
     }
 
     // Auth
@@ -94,15 +132,94 @@ public class ApiClient
     }
 
     public async Task LogoutAsync()
-        => await _http.PostAsync("/api/auth/logout", null);
+    {
+        var response = await _http.PostAsync("/api/auth/logout", null);
+        if (_authConfiguration.IsEntra)
+            await EnsureSuccessOrThrowAsync(response, "Failed to record logout.");
+    }
 
     public async Task<UserInfo?> GetCurrentUserAsync()
     {
         try
         {
-            return await _http.GetFromJsonAsync<UserInfo>("/api/auth/me");
+            return (await GetCurrentUserResultAsync()).User;
         }
-        catch { return null; }
+        catch (AccessTokenNotAvailableException) when (_authConfiguration.IsEntra)
+        {
+            return null;
+        }
+        catch when (_authConfiguration.IsSimple)
+        {
+            return null;
+        }
+    }
+
+    public async Task<CurrentUserResult> GetCurrentUserResultAsync()
+    {
+        var response = await _http.GetAsync("/api/auth/me");
+        var headerCorrelationId = response.Headers.TryGetValues("X-Correlation-ID", out var values)
+            ? values.FirstOrDefault()
+            : null;
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync();
+            var details = string.IsNullOrWhiteSpace(body)
+                ? new ApiErrorDetails("Sign in is required.", null, headerCorrelationId)
+                : ExtractErrorDetails(body, "Sign in is required.", headerCorrelationId);
+            return new(null, (int)response.StatusCode, details.ErrorCode, details.Message, details.CorrelationId);
+        }
+
+        if (_authConfiguration.IsEntra)
+        {
+            var context = await response.Content.ReadFromJsonAsync<AuthorizationContextResponse>(JsonOptions);
+            if (context is null)
+                throw new ApiException("The authorization context response was empty.", 200, correlationId: headerCorrelationId);
+
+            return new(context.ToUserInfo(), 200, null, null, headerCorrelationId);
+        }
+
+        var user = await response.Content.ReadFromJsonAsync<UserInfo>(JsonOptions);
+        return new(user, 200, null, null, headerCorrelationId);
+    }
+
+    public async Task<IReadOnlyList<OrganizationAdministrationOrganization>> ListJobScopeOrganizationsAsync()
+    {
+        var response = await _http.GetAsync("/api/auth/me");
+        var context = await ReadRequiredResponseAsync<AuthorizationContextResponse>(
+            response, "Failed to load authorized job scopes.");
+        var recruiterScopes = context.Authorizations
+            .Where(authorization =>
+                authorization.Role == "recruiter"
+                && authorization.OrganizationId is not null
+                && authorization.DepartmentId is not null)
+            .Select(authorization => (authorization.OrganizationId!, authorization.DepartmentId!))
+            .ToHashSet();
+        var organizations = context.Memberships
+            .Where(membership => recruiterScopes.Any(scope => scope.Item1 == membership.OrganizationId))
+            .Select(membership => new OrganizationAdministrationOrganization(
+                membership.OrganizationId,
+                membership.OrganizationName,
+                "active",
+                membership.Departments
+                    .Where(department => recruiterScopes.Contains((membership.OrganizationId, department.DepartmentId)))
+                    .Select(department => new OrganizationAdministrationDepartment(
+                        department.DepartmentId,
+                        membership.OrganizationId,
+                        department.DepartmentName,
+                        "active"))
+                    .ToArray()))
+            .ToDictionary(organization => organization.Id, StringComparer.OrdinalIgnoreCase);
+
+        var hasAdministrativeScope = context.GlobalRole == "admin"
+            || context.Authorizations.Any(authorization => authorization.Role == "organization_admin");
+        if (hasAdministrativeScope)
+        {
+            foreach (var organization in await ListOrganizationsAsync())
+                organizations[organization.Id] = organization;
+        }
+
+        return organizations.Values.OrderBy(organization => organization.Name).ToArray();
     }
 
     public async Task<bool> ChangePasswordAsync(string currentPassword, string newPassword)
@@ -145,6 +262,157 @@ public class ApiClient
         await EnsureSuccessOrThrowAsync(response, "Failed to update user.");
     }
 
+    // Entra access management
+    public async Task<EntraAccessUserPage> ListEntraAccessUsersAsync(
+        string? search = null,
+        string? organizationId = null,
+        string? status = null,
+        string? cursor = null,
+        int limit = 25)
+    {
+        var query = new List<string> { $"limit={limit}" };
+        AddQueryValue(query, "search", search);
+        AddQueryValue(query, "organizationId", organizationId);
+        AddQueryValue(query, "status", status);
+        AddQueryValue(query, "cursor", cursor);
+
+        var response = await _http.GetAsync($"/api/access-management/users?{string.Join("&", query)}");
+        return await ReadRequiredResponseAsync<EntraAccessUserPage>(response, "Failed to load Entra access profiles.");
+    }
+
+    public async Task<EntraAccessUser> GetEntraAccessUserAsync(string objectId)
+    {
+        var response = await _http.GetAsync($"/api/access-management/users/{Uri.EscapeDataString(objectId)}");
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to load the Entra access profile.");
+    }
+
+    public async Task<EntraAccessUser> PutEntraOrganizationAccessAsync(
+        string objectId,
+        string organizationId,
+        PutEntraOrganizationAccessRequest request)
+    {
+        var response = await _http.PutAsJsonAsync(
+            $"/api/access-management/users/{Uri.EscapeDataString(objectId)}/organizations/{Uri.EscapeDataString(organizationId)}",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to update organization access.");
+    }
+
+    public async Task<EntraAccessUser> UpdateEntraAccessUserAsync(
+        string objectId,
+        UpdateEntraAccessUserRequest request)
+    {
+        var response = await _http.PatchAsJsonAsync(
+            $"/api/access-management/users/{Uri.EscapeDataString(objectId)}",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to update the Entra identity.");
+    }
+
+    public async Task<EntraAccessUser> RevokeEntraRoleAssignmentAsync(
+        string objectId,
+        string organizationId,
+        string assignmentId,
+        int expectedVersion)
+    {
+        var response = await _http.DeleteAsync(
+            $"/api/access-management/users/{Uri.EscapeDataString(objectId)}/organizations/{Uri.EscapeDataString(organizationId)}/role-assignments/{Uri.EscapeDataString(assignmentId)}?expectedVersion={expectedVersion}");
+        return await ReadRequiredResponseAsync<EntraAccessUser>(response, "Failed to revoke the delegated role.");
+    }
+
+    // Organization administration
+    public async Task<IReadOnlyList<OrganizationAdministrationOrganization>> ListOrganizationsAsync()
+    {
+        var response = await _http.GetAsync("/api/organizations");
+        return await ReadRequiredResponseAsync<IReadOnlyList<OrganizationAdministrationOrganization>>(
+            response, "Failed to load organizations.");
+    }
+
+    public async Task<OrganizationAdministrationOrganization> CreateOrganizationAsync(
+        CreateOrganizationRequest request)
+    {
+        var response = await _http.PostAsJsonAsync("/api/organizations", request, JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationOrganization>(
+            response, "Failed to create the organization.");
+    }
+
+    public async Task<OrganizationAdministrationDepartment> CreateDepartmentAsync(
+        string organizationId,
+        CreateDepartmentRequest request)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/departments",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationDepartment>(
+            response, "Failed to create the department.");
+    }
+
+    public async Task<OrganizationAdministrationDepartment> UpdateDepartmentAsync(
+        string organizationId,
+        string departmentId,
+        UpdateDepartmentRequest request)
+    {
+        var response = await _http.PatchAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/departments/{Uri.EscapeDataString(departmentId)}",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationDepartment>(
+            response, "Failed to update the department.");
+    }
+
+    public async Task<OrganizationAdministrationMembership> RegisterOrganizationMembershipAsync(
+        string organizationId,
+        RegisterOrganizationMembershipRequest request)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/memberships",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationMembership>(
+            response, "Failed to update organization membership.");
+    }
+
+    public async Task<OrganizationAdministrationRoleAssignment> GrantOrganizationRoleAsync(
+        string organizationId,
+        GrantOrganizationRoleRequest request)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/role-assignments",
+            request,
+            JsonOptions);
+        return await ReadRequiredResponseAsync<OrganizationAdministrationRoleAssignment>(
+            response, "Failed to grant the delegated role.");
+    }
+
+    public async Task RevokeOrganizationRoleAsync(string organizationId, string assignmentId)
+    {
+        var response = await _http.DeleteAsync(
+            $"/api/organizations/{Uri.EscapeDataString(organizationId)}/role-assignments/{Uri.EscapeDataString(assignmentId)}");
+        await EnsureSuccessOrThrowAsync(response, "Failed to revoke the delegated role.");
+    }
+
+    private static void AddQueryValue(List<string> query, string name, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            query.Add($"{name}={Uri.EscapeDataString(value)}");
+    }
+
+    private static async Task<T> ReadRequiredResponseAsync<T>(
+        HttpResponseMessage response,
+        string fallbackMessage)
+    {
+        await EnsureSuccessOrThrowAsync(response, fallbackMessage);
+        var result = await response.Content.ReadFromJsonAsync<T>(JsonOptions);
+        if (result is not null)
+            return result;
+
+        var correlationId = response.Headers.TryGetValues("X-Correlation-ID", out var values)
+            ? values.FirstOrDefault()
+            : null;
+        throw new ApiException("The server returned an empty response.", (int)response.StatusCode, correlationId: correlationId);
+    }
+
     // Password Reset Requests
     public async Task<List<ResetRequestDto>> GetResetRequestsAsync()
         => await _http.GetFromJsonAsync<List<ResetRequestDto>>("/api/users/reset-requests") ?? new();
@@ -181,6 +449,28 @@ public class ApiClient
         await EnsureSuccessOrThrowAsync(response, "Failed to update job configuration.");
     }
 
+    public async Task<RubricEnvelopeDto?> PreviewLegacyRubricConversionAsync(string jobId, string expectedConfigVersionId)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/rubric/convert", new
+        {
+            mode = "preview",
+            expectedConfigVersionId
+        });
+        await EnsureSuccessOrThrowAsync(response, "Failed to preview legacy rubric conversion.");
+        return await response.Content.ReadFromJsonAsync<RubricEnvelopeDto>();
+    }
+
+    public async Task ConfirmLegacyRubricConversionAsync(string jobId, string expectedConfigVersionId, RubricEnvelopeDto reviewedRubric)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/rubric/convert", new
+        {
+            mode = "confirm",
+            expectedConfigVersionId,
+            reviewedRubric
+        });
+        await EnsureSuccessOrThrowAsync(response, "Failed to convert the legacy rubric.");
+    }
+
     public async Task<ProcessJobResponse> ProcessJobAsync(string jobId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/process", null);
@@ -210,7 +500,7 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<ExtractSpecResult?> ExtractJobSpecAsync(string fileName, string content, string mimeType)
+    public async Task<ExtractionResultDto?> ExtractJobSpecAsync(string fileName, string content, string mimeType)
     {
         var response = await _http.PostAsJsonAsync("/api/jobs/extract-spec", new { FileName = fileName, Content = content, MimeType = mimeType });
         if (!response.IsSuccessStatusCode)
@@ -218,10 +508,10 @@ public class ApiClient
             var errorBody = await response.Content.ReadAsStringAsync();
             throw new HttpRequestException($"Extraction failed ({(int)response.StatusCode}): {errorBody}");
         }
-        return await response.Content.ReadFromJsonAsync<ExtractSpecResult>();
+        return await response.Content.ReadFromJsonAsync<ExtractionResultDto>();
     }
 
-    public async Task<ExtractRubricResult?> ExtractRubricAsync(string fileName, string content, string mimeType)
+    public async Task<RubricEnvelopeDto?> ExtractRubricAsync(string fileName, string content, string mimeType)
     {
         var response = await _http.PostAsJsonAsync("/api/jobs/extract-rubric", new { FileName = fileName, Content = content, MimeType = mimeType });
         if (!response.IsSuccessStatusCode)
@@ -229,13 +519,54 @@ public class ApiClient
             var errorBody = await response.Content.ReadAsStringAsync();
             throw new HttpRequestException($"Rubric extraction failed ({(int)response.StatusCode}): {errorBody}");
         }
-        return await response.Content.ReadFromJsonAsync<ExtractRubricResult>();
+        return await response.Content.ReadFromJsonAsync<RubricEnvelopeDto>();
     }
 
     public async Task<JobConfigDto?> GetJobConfigAsync(string jobId)
     {
         try { return await _http.GetFromJsonAsync<JobConfigDto>($"/api/jobs/{jobId}/config"); }
         catch { return null; }
+    }
+
+    public async Task<List<ExtractionInstructionVersionDto>> GetExtractionInstructionsAsync()
+        => await _http.GetFromJsonAsync<List<ExtractionInstructionVersionDto>>("/api/admin/extraction-instructions", JsonOptions) ?? new();
+
+    public async Task<ReasoningModelsResponseDto> GetReasoningModelsAsync()
+    {
+        var response = await _http.GetAsync("/api/reasoning-models");
+        return await ReadRequiredResponseAsync<ReasoningModelsResponseDto>(
+            response,
+            "Failed to load supported reasoning models.");
+    }
+
+    public async Task<ExtractionInstructionVersionDetailDto?> GetExtractionInstructionAsync(string versionId)
+        => await _http.GetFromJsonAsync<ExtractionInstructionVersionDetailDto>($"/api/admin/extraction-instructions/{versionId}", JsonOptions);
+
+    public async Task<ExtractionInstructionVersionDto?> CreateExtractionInstructionDraftAsync(
+        string instructionText,
+        string? changeNote,
+        string modelId,
+        string reasoningLevel)
+    {
+        var response = await _http.PostAsJsonAsync(
+            "/api/admin/extraction-instructions",
+            new { instructionText, changeNote, modelId, reasoningLevel });
+        await EnsureSuccessOrThrowAsync(response, "Failed to create extraction instruction draft.");
+        return await response.Content.ReadFromJsonAsync<ExtractionInstructionVersionDto>(JsonOptions);
+    }
+
+    public async Task<JsonElement?> ValidateExtractionInstructionAsync(string versionId, string fileName, string content, string mimeType)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/admin/extraction-instructions/{versionId}/validate", new { fileName, content, mimeType });
+        await EnsureSuccessOrThrowAsync(response, "Failed to validate extraction instruction.");
+        return await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+    }
+
+    public async Task<ExtractionInstructionVersionDto?> ActivateExtractionInstructionAsync(string versionId, int expectedConcurrencyVersion)
+    {
+        var response = await _http.PostAsJsonAsync($"/api/admin/extraction-instructions/{versionId}/activate", new { expectedConcurrencyVersion });
+        await EnsureSuccessOrThrowAsync(response, "Failed to activate extraction instruction.");
+        return await response.Content.ReadFromJsonAsync<ExtractionInstructionVersionDto>(JsonOptions);
     }
 
     // Applications
@@ -256,13 +587,172 @@ public class ApiClient
         return await response.Content.ReadFromJsonAsync<List<ApplicationDto>>() ?? new();
     }
 
+    public async Task<JobApplicationCountsDto> GetJobApplicationCountsAsync(string jobId)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/jobs/{jobId}/applications/summary");
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            var applications = await GetApplicationsAsync(jobId);
+            return new(
+                applications.Count,
+                applications.Count(application =>
+                    application.Status is "Queued" or "Extracting" or "Scoring" or "Aggregating"),
+                applications.Count(application => application.Status == "Uploading"),
+                applications.Count(application =>
+                    application.FinalScore is >= 85),
+                applications.Count(application =>
+                    application.FinalScore is >= 70),
+                applications.Count(application =>
+                    application.FinalDecision == "Excluded"),
+                applications.Count(application =>
+                    application.Status == "NeedsManualReview"
+                    || application.FinalDecision == "NeedsManualReview"),
+                applications.Count(application => application.Status == "Queued"),
+                applications.Count(application => application.Status == "Scoring"),
+                applications.Count(application =>
+                    application.Status is "Completed" or "NeedsManualReview"),
+                applications.Count(application =>
+                    application.Status is "Failed" or "ScoringFailed" or "ExtractionFailed"));
+        }
+        await EnsureSuccessOrThrowAsync(response, "Failed to load job application totals.");
+        return await response.Content.ReadFromJsonAsync<JobApplicationCountsDto>()
+            ?? throw new JsonException("The job application totals response was empty.");
+    }
+
     public async Task<ApplicationDto?> GetApplicationAsync(string applicationId)
         => await _http.GetFromJsonAsync<ApplicationDto>($"/api/applications/{applicationId}");
 
-    public async Task<bool> UploadApplicationsAsync(string jobId, MultipartFormDataContent content)
+    public async Task<int?> UploadApplicationsAsync(
+        string jobId,
+        MultipartFormDataContent content,
+        bool allowDuplicates = false)
     {
-        var response = await _http.PostAsync($"/api/jobs/{jobId}/applications/upload", content);
-        return response.IsSuccessStatusCode;
+        var response = await _http.PostAsync(
+            $"/api/jobs/{jobId}/applications/upload?allowDuplicates={allowDuplicates.ToString().ToLowerInvariant()}",
+            content);
+        if (!response.IsSuccessStatusCode)
+            return null;
+
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return result.ValueKind == JsonValueKind.Array ? result.GetArrayLength() : 0;
+    }
+
+    public async Task<UploadSessionDetailDto> CreateUploadSessionAsync(
+        string jobId,
+        CreateUploadSessionRequest request,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/jobs/{jobId}/upload-sessions")
+        {
+            Content = JsonContent.Create(request),
+        };
+        message.Headers.TryAddWithoutValidation("X-Correlation-ID", correlationId);
+        using var response = await _http.SendAsync(message, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to create the upload session.");
+        return await response.Content.ReadFromJsonAsync<UploadSessionDetailDto>(
+            JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload session response was empty.");
+    }
+
+    public async Task<UploadItemDto> UploadItemContentAsync(
+        string sessionId,
+        UploadItemDto item,
+        Stream content,
+        CancellationToken cancellationToken = default)
+    {
+        using var form = new MultipartFormDataContent();
+        using var streamContent = new StreamContent(content);
+        streamContent.Headers.ContentType =
+            new System.Net.Http.Headers.MediaTypeHeaderValue(item.MimeType);
+        form.Add(streamContent, "file", item.FileName);
+        using var message = new HttpRequestMessage(
+            HttpMethod.Post, $"/api/upload-sessions/{sessionId}/items/{item.Id}/content")
+        {
+            Content = form,
+        };
+        message.Headers.TryAddWithoutValidation("Idempotency-Key", item.OccurrenceKey.ToString());
+        using var response = await _http.SendAsync(message, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException(
+                $"Upload attempt failed with HTTP {(int)response.StatusCode}.",
+                null,
+                response.StatusCode);
+        return await response.Content.ReadFromJsonAsync<UploadItemDto>(
+            JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload item response was empty.");
+    }
+
+    public async Task<IReadOnlyList<UploadSessionSummaryDto>> ListUploadSessionsAsync(
+        string? jobId = null,
+        bool includeTerminal = true,
+        CancellationToken cancellationToken = default)
+    {
+        var uri = $"/api/upload-sessions?includeTerminal={includeTerminal.ToString().ToLowerInvariant()}";
+        if (!string.IsNullOrWhiteSpace(jobId))
+            uri += $"&jobId={Uri.EscapeDataString(jobId)}";
+        return await _http.GetFromJsonAsync<List<UploadSessionSummaryDto>>(uri, JsonOptions, cancellationToken)
+            ?? [];
+    }
+
+    public async Task<UploadSessionDetailDto?> GetUploadSessionAsync(
+        string sessionId,
+        CancellationToken cancellationToken = default) =>
+        await _http.GetFromJsonAsync<UploadSessionDetailDto>(
+            $"/api/upload-sessions/{sessionId}", JsonOptions, cancellationToken);
+
+    public async Task<UploadItemDto> UpdateUploadItemStatusAsync(
+        string sessionId,
+        string itemId,
+        UpdateUploadItemStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var message = new HttpRequestMessage(
+            HttpMethod.Patch, $"/api/upload-sessions/{sessionId}/items/{itemId}/status")
+        {
+            Content = JsonContent.Create(request),
+        };
+        using var response = await _http.SendAsync(message, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to update upload item status.");
+        return await response.Content.ReadFromJsonAsync<UploadItemDto>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload item response was empty.");
+    }
+
+    public async Task<UploadSessionSummaryDto> HeartbeatUploadSessionAsync(
+        string sessionId,
+        int expectedConcurrencyVersion,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PostAsJsonAsync(
+            $"/api/upload-sessions/{sessionId}/heartbeat",
+            new { expectedConcurrencyVersion },
+            cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to renew the upload session.");
+        return await response.Content.ReadFromJsonAsync<UploadSessionSummaryDto>(
+            JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload session response was empty.");
+    }
+
+    public async Task<UploadSettingsDto> GetUploadSettingsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync("/api/admin/upload-settings", cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to load upload settings.");
+        return await response.Content.ReadFromJsonAsync<UploadSettingsDto>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload settings response was empty.");
+    }
+
+    public async Task<UploadSettingsDto> UpdateUploadSettingsAsync(
+        UpdateUploadSettingsRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.PutAsJsonAsync(
+            "/api/admin/upload-settings", request, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to save upload settings.");
+        return await response.Content.ReadFromJsonAsync<UploadSettingsDto>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The upload settings response was empty.");
     }
 
     // Scoring
@@ -304,14 +794,68 @@ public class ApiClient
     public async Task<SystemStatsDto?> GetSystemStatsAsync()
         => await _http.GetFromJsonAsync<SystemStatsDto>("/api/stats");
 
+    public async Task<ScoringThroughputDto> GetScoringThroughputAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync("/api/stats/scoring-throughput", cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to load scoring throughput.");
+        var result = await response.Content.ReadFromJsonAsync<ScoringThroughputDto>(
+            new JsonSerializerOptions(JsonOptions) { RespectRequiredConstructorParameters = true },
+            cancellationToken)
+            ?? throw new JsonException("The scoring throughput response was empty.");
+
+        if (result.AsOfUtc.Offset != TimeSpan.Zero
+            || result.AsOfUtc < DateTimeOffset.MinValue.AddHours(24)
+            || result.ScoredLastHour < 0
+            || result.ScoredLast24Hours < 0
+            || result.Hours is null
+            || result.Hours.Count != 24)
+        {
+            throw new JsonException("The scoring throughput response must contain 24 rolling hourly buckets and non-negative counts.");
+        }
+
+        long total = 0;
+        for (var index = 0; index < result.Hours.Count; index++)
+        {
+            var bucket = result.Hours[index];
+            if (bucket is null
+                || bucket.Count < 0
+                || bucket.StartUtc.Offset != TimeSpan.Zero
+                || bucket.EndUtc.Offset != TimeSpan.Zero
+                || bucket.StartUtc != result.AsOfUtc.AddHours(index - 24)
+                || bucket.EndUtc != result.AsOfUtc.AddHours(index - 23))
+            {
+                throw new JsonException("The scoring throughput buckets must cover the rolling last 24 hours in chronological order.");
+            }
+
+            total += bucket.Count;
+        }
+
+        if (total != result.ScoredLast24Hours || result.Hours[^1].Count != result.ScoredLastHour)
+            throw new JsonException("The scoring throughput totals do not match the hourly buckets.");
+
+        return result;
+    }
+
     public async Task<List<RecruiterAnalyticsDto>> GetRecruiterAnalyticsAsync()
-        => await _http.GetFromJsonAsync<List<RecruiterAnalyticsDto>>("/api/stats/recruiters") ?? new();
+    {
+        var response = await _http.GetAsync("/api/stats/recruiters");
+        return await ReadRequiredResponseAsync<List<RecruiterAnalyticsDto>>(
+            response, "Failed to load recruiter analytics.");
+    }
 
     public async Task<List<DepartmentAnalyticsDto>> GetDepartmentAnalyticsAsync()
-        => await _http.GetFromJsonAsync<List<DepartmentAnalyticsDto>>("/api/stats/departments") ?? new();
+    {
+        var response = await _http.GetAsync("/api/stats/departments");
+        return await ReadRequiredResponseAsync<List<DepartmentAnalyticsDto>>(
+            response, "Failed to load department analytics.");
+    }
 
     public async Task<List<DlqItemDto>> GetDlqItemsAsync()
-        => await _http.GetFromJsonAsync<List<DlqItemDto>>("/api/dlq") ?? new();
+    {
+        using var response = await _http.GetAsync("/api/dlq");
+        await EnsureSuccessOrThrowAsync(response, "Failed to load failure queue.");
+        return await response.Content.ReadFromJsonAsync<List<DlqItemDto>>() ?? new();
+    }
 
     public async Task<bool> RetryDlqItemAsync(string itemId)
     {
@@ -338,24 +882,50 @@ public class ApiClient
     public async Task<List<ScoringPromptDto>> GetPromptsAsync(string jobId)
         => await _http.GetFromJsonAsync<List<ScoringPromptDto>>($"/api/jobs/{jobId}/prompts") ?? new();
 
-    public async Task<ScoringPromptDto?> CreatePromptAsync(string jobId, string promptText, string source, string? generationMetadataJson = null)
+    public async Task<ScoringPromptDto?> CreatePromptAsync(
+        string jobId,
+        string promptText,
+        string source,
+        string modelId,
+        string reasoningLevel,
+        string? generationMetadataJson = null)
     {
-        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts", new CreatePromptRequest(promptText, source, generationMetadataJson));
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts",
+            new CreatePromptRequest(
+                promptText,
+                source,
+                generationMetadataJson,
+                modelId,
+                reasoningLevel));
         if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
     }
 
-    public async Task<ScoringPromptDto?> EditPromptAsync(string jobId, string promptId, string promptText)
+    public async Task<ScoringPromptDto?> EditPromptAsync(
+        string jobId,
+        string promptId,
+        string promptText,
+        string modelId,
+        string reasoningLevel)
     {
-        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/edit", new { PromptText = promptText });
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts/{promptId}/edit",
+            new { PromptText = promptText, ModelId = modelId, ReasoningLevel = reasoningLevel });
         if (!response.IsSuccessStatusCode) return null;
         return await response.Content.ReadFromJsonAsync<ScoringPromptDto>();
     }
 
-    public async Task<bool> ActivatePromptAsync(string jobId, string promptId)
+    public async Task<ScoringPromptDto> ActivatePromptAsync(string jobId, string promptId)
     {
-        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/activate", null);
-        return response.IsSuccessStatusCode;
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/jobs/{jobId}/prompts/{promptId}/activate");
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+        var response = await _http.SendAsync(request);
+        return await ReadRequiredResponseAsync<ScoringPromptDto>(
+            response,
+            "Failed to activate the prompt.");
     }
 
     public async Task<bool> RatePromptAsync(string jobId, string promptId, int rating, string? comments = null)
@@ -364,9 +934,27 @@ public class ApiClient
         return response.IsSuccessStatusCode;
     }
 
-    public async Task<GeneratePromptResult?> GeneratePromptAsync(string jobId)
+    public async Task<ScoringPromptDto> UpdatePromptCommentAsync(
+        string jobId,
+        string promptId,
+        string? comments)
     {
-        var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/generate", null);
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts/{promptId}/rate",
+            new { Rating = (int?)null, Comments = comments });
+        return await ReadRequiredResponseAsync<ScoringPromptDto>(
+            response,
+            "Failed to save the prompt comment.");
+    }
+
+    public async Task<GeneratePromptResult?> GeneratePromptAsync(
+        string jobId,
+        string modelId,
+        string reasoningLevel)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompts/generate",
+            new { ModelId = modelId, ReasoningLevel = reasoningLevel });
         await EnsureSuccessOrThrowAsync(response, "Failed to generate prompt.");
 
         var payload = await response.Content.ReadAsStringAsync();
@@ -386,13 +974,89 @@ public class ApiClient
     public async Task<bool> ApprovePromptForProductionAsync(string jobId, string promptId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/approve-production", null);
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to approve the prompt for production.");
+        return true;
     }
 
     public async Task<bool> SetProductionPromptAsync(string jobId, string promptId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/set-production", null);
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to set the production prompt.");
+        return true;
+    }
+
+    public async Task<PromptProfileStatusDto> GetPromptProfileStatusAsync(
+        string jobId, string promptId)
+    {
+        var response = await _http.GetAsync($"/api/jobs/{jobId}/prompts/{promptId}/profile");
+        return await ReadRequiredResponseAsync<PromptProfileStatusDto>(
+            response, "Failed to load the scoring profile status.");
+    }
+
+    public async Task<List<PromptGenerationInstructionDto>> GetPromptGenerationInstructionsAsync(
+        string jobId)
+        => await _http.GetFromJsonAsync<List<PromptGenerationInstructionDto>>(
+            $"/api/jobs/{jobId}/prompt-generation-instructions") ?? new();
+
+    public async Task<PromptGenerationInstructionDto> CreatePromptGenerationInstructionAsync(
+        string jobId,
+        string instructionText,
+        string? changeNote,
+        string modelId,
+        string reasoningLevel)
+    {
+        var response = await _http.PostAsJsonAsync(
+            $"/api/jobs/{jobId}/prompt-generation-instructions",
+            new
+            {
+                InstructionText = instructionText,
+                ChangeNote = changeNote,
+                ModelId = modelId,
+                ReasoningLevel = reasoningLevel
+            });
+        return await ReadRequiredResponseAsync<PromptGenerationInstructionDto>(
+            response, "Failed to create the generation instruction.");
+    }
+
+    public async Task ActivatePromptGenerationInstructionAsync(
+        string jobId, string instructionId)
+    {
+        var response = await _http.PostAsync(
+            $"/api/jobs/{jobId}/prompt-generation-instructions/{instructionId}/activate",
+            null);
+        await EnsureSuccessOrThrowAsync(response, "Failed to activate the generation instruction.");
+    }
+
+    public async Task<List<PromptGenerationInstructionDto>> GetSystemPromptGenerationInstructionsAsync()
+        => await _http.GetFromJsonAsync<List<PromptGenerationInstructionDto>>(
+            "/api/admin/prompt-generation-instructions") ?? new();
+
+    public async Task<PromptGenerationInstructionDto> CreateSystemPromptGenerationInstructionAsync(
+        string instructionText,
+        string? changeNote,
+        string modelId,
+        string reasoningLevel)
+    {
+        var response = await _http.PostAsJsonAsync(
+            "/api/admin/prompt-generation-instructions",
+            new
+            {
+                InstructionText = instructionText,
+                ChangeNote = changeNote,
+                ModelId = modelId,
+                ReasoningLevel = reasoningLevel
+            });
+        return await ReadRequiredResponseAsync<PromptGenerationInstructionDto>(
+            response, "Failed to create the system scoring generation instruction.");
+    }
+
+    public async Task ActivateSystemPromptGenerationInstructionAsync(string instructionId)
+    {
+        var response = await _http.PostAsync(
+            $"/api/admin/prompt-generation-instructions/{instructionId}/activate",
+            null);
+        await EnsureSuccessOrThrowAsync(
+            response, "Failed to activate the system scoring generation instruction.");
     }
 
     public async Task<PromptTestRunDto?> CreateTestRunAsync(string jobId, string promptId, object files)
@@ -421,13 +1085,39 @@ public class ApiClient
     public async Task<bool> ApproveTestRunAsync(string jobId, string promptId, string testRunId)
     {
         var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/approve", new { ReviewNotes = (string?)null });
-        return response.IsSuccessStatusCode;
+        await EnsureSuccessOrThrowAsync(response, "Failed to approve the test run.");
+        return true;
     }
 
     public async Task<bool> RetryTestRunAsync(string jobId, string promptId, string testRunId)
     {
         var response = await _http.PostAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/retry", null);
         return response.IsSuccessStatusCode;
+    }
+
+    public async Task RetestPromptAsync(string jobId, string promptId, string testRunId)
+    {
+        var response = await _http.PostAsync(
+            $"/api/jobs/{jobId}/prompts/{promptId}/test-runs/{testRunId}/retest", null);
+        await EnsureSuccessOrThrowAsync(response, "Failed to retest the prompt.");
+    }
+
+    public async Task<NavigationAuditResult> RecordNavigationAsync(
+        NavigationAuditRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await _http.PostAsJsonAsync("/api/navigation/audit", new
+        {
+            action = request.Action.ToString().ToLowerInvariant(),
+            correlationId = request.CorrelationId,
+            requestedAt = request.RequestedAt,
+        }, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Navigation change could not be recorded.");
+
+        var result = await response.Content.ReadFromJsonAsync<NavigationAuditResponse>(
+            JsonOptions, cancellationToken);
+        return new NavigationAuditResult(
+            Guid.TryParse(result?.CorrelationId, out var correlationId) ? correlationId : request.CorrelationId);
     }
 
     public async Task<List<DocumentDto>> GetDocumentsAsync(string applicationId)
@@ -437,37 +1127,279 @@ public class ApiClient
     }
 }
 
+public sealed record NavigationAuditResponse(string? CorrelationId);
+
 // DTOs
+public sealed record PublicAuthConfiguration(
+    string AuthMode,
+    string? TenantId = null,
+    string? ClientId = null,
+    string? Authority = null,
+    string? ApiScope = null,
+    string ApiBaseAddress = "",
+    string? ProviderError = null)
+{
+    public bool IsSimple => string.Equals(AuthMode, "simple", StringComparison.OrdinalIgnoreCase);
+    public bool IsEntra => string.Equals(AuthMode, "entra", StringComparison.OrdinalIgnoreCase);
+    public bool IsValid => ProviderError is null && (IsSimple || IsEntra);
+    public string ApiOrigin => new Uri(ApiBaseAddress).GetLeftPart(UriPartial.Authority);
+    public string ApiAuthorizationUrl => $"{ApiOrigin}/api";
+
+    public PublicAuthConfiguration WithBaseAddress(string baseAddress) => this with { ApiBaseAddress = baseAddress };
+
+    public PublicAuthConfiguration Validate()
+    {
+        if (IsSimple)
+            return this;
+
+        if (!IsEntra)
+            return this with { ProviderError = $"Unsupported authentication mode '{AuthMode}'." };
+
+        if (string.IsNullOrWhiteSpace(TenantId)
+            || string.IsNullOrWhiteSpace(ClientId)
+            || string.IsNullOrWhiteSpace(Authority)
+            || string.IsNullOrWhiteSpace(ApiScope))
+        {
+            return this with { ProviderError = "Microsoft Entra authentication configuration is incomplete." };
+        }
+
+        return this;
+    }
+
+    public static PublicAuthConfiguration Simple(string baseAddress)
+        => new("simple", ApiBaseAddress: baseAddress);
+
+    public static PublicAuthConfiguration Failed(string baseAddress, string message)
+        => new("unavailable", ApiBaseAddress: baseAddress, ProviderError: message);
+}
+
+public sealed record CurrentUserResult(
+    UserInfo? User,
+    int StatusCode,
+    string? ErrorCode,
+    string? Message,
+    string? CorrelationId);
+
+public sealed record AuthorizationContextResponse(
+    string UserId,
+    string TenantId,
+    string ObjectId,
+    string Username,
+    string FullName,
+    string? Email,
+    string? GlobalRole,
+    int AuthorizationVersion,
+    IReadOnlyList<OrganizationMembershipResponse> Memberships,
+    IReadOnlyList<ScopedAuthorizationResponse> Authorizations,
+    DateTimeOffset TokenIssuedAt,
+    DateTimeOffset RefreshRequiredAt)
+{
+    public UserInfo ToUserInfo()
+    {
+        var primaryAuthorization = Authorizations
+            .OrderByDescending(authorization => GetRoleRank(authorization.Role))
+            .FirstOrDefault();
+        var role = GlobalRole ?? primaryAuthorization?.Role ?? "business_panel";
+        var department = Memberships
+            .Select(membership => membership.Departments.FirstOrDefault(candidate =>
+                candidate.DepartmentId == membership.DefaultDepartmentId))
+            .FirstOrDefault(candidate => candidate is not null)
+            ?.DepartmentName
+            ?? string.Empty;
+
+        return new UserInfo(UserId, Username, role, department, FullName, Email ?? string.Empty);
+    }
+
+    private static int GetRoleRank(string role) => role switch
+    {
+        "admin" => 4,
+        "organization_admin" => 3,
+        "recruiter" => 2,
+        "business_panel" => 1,
+        _ => 0,
+    };
+}
+
+public sealed record OrganizationMembershipResponse(
+    string OrganizationId,
+    string OrganizationName,
+    string DefaultDepartmentId,
+    IReadOnlyList<DepartmentMembershipResponse> Departments);
+
+public sealed record DepartmentMembershipResponse(string DepartmentId, string DepartmentName);
+
+public sealed record ScopedAuthorizationResponse(
+    string Role,
+    string RoleLabel,
+    string? OrganizationId,
+    string? DepartmentId,
+    string AssignmentSource);
+
+public sealed record EntraAccessProfile(string Username, string FullName, string? Email);
+
+public sealed record EntraAccessMembership(
+    string Status,
+    IReadOnlyList<string> DepartmentIds,
+    string? DefaultDepartmentId);
+
+public sealed record EntraDesiredRole(string Role, string? DepartmentId);
+
+public sealed record PutEntraOrganizationAccessRequest(
+    int ExpectedVersion,
+    EntraAccessProfile Profile,
+    EntraAccessMembership Membership,
+    IReadOnlyList<EntraDesiredRole> RoleAssignments);
+
+public sealed record UpdateEntraAccessUserRequest(
+    int ExpectedVersion,
+    EntraAccessProfile? Profile = null,
+    bool? IsActive = null);
+
+public sealed record EntraAccessUserPage(
+    IReadOnlyList<EntraAccessUser> Items,
+    string? NextCursor);
+
+public sealed record EntraAccessUser(
+    string ObjectId,
+    string Username,
+    string FullName,
+    string? Email,
+    bool IsActive,
+    int AuthorizationVersion,
+    IReadOnlyList<EntraOrganizationAccess> Organizations);
+
+public sealed record EntraOrganizationAccess(
+    string OrganizationId,
+    string Status,
+    IReadOnlyList<string> DepartmentIds,
+    string? DefaultDepartmentId,
+    IReadOnlyList<EntraAccessRoleAssignment> RoleAssignments);
+
+public sealed record EntraAccessRoleAssignment(
+    string Id,
+    string Role,
+    string OrganizationId,
+    string? DepartmentId,
+    string Source,
+    string Status);
+
+public sealed record OrganizationAdministrationOrganization(
+    string Id,
+    string Name,
+    string Status,
+    IReadOnlyList<OrganizationAdministrationDepartment> Departments);
+
+public sealed record OrganizationAdministrationDepartment(
+    string Id,
+    string OrganizationId,
+    string Name,
+    string Status);
+
+public sealed record OrganizationAdministrationMembership(
+    string UserObjectId,
+    string OrganizationId,
+    IReadOnlyList<string> DepartmentIds,
+    string DefaultDepartmentId);
+
+public sealed record OrganizationAdministrationRoleAssignment(
+    string Id,
+    string UserObjectId,
+    string Role,
+    string OrganizationId,
+    string? DepartmentId,
+    string Source,
+    string Status);
+
+public sealed record CreateOrganizationRequest(string Name, string InitialDepartmentName);
+public sealed record CreateDepartmentRequest(string Name);
+public sealed record UpdateDepartmentRequest(string? Name = null, string? Status = null);
+public sealed record RegisterOrganizationMembershipRequest(
+    string UserObjectId,
+    IReadOnlyList<string> DepartmentIds,
+    string DefaultDepartmentId);
+public sealed record GrantOrganizationRoleRequest(
+    string UserObjectId,
+    string Role,
+    string? DepartmentId);
+
+internal sealed record ApiErrorDetails(string Message, string? ErrorCode, string? CorrelationId);
+
 public record UserInfo(string Id, string Username, string Role, string Department, string FullName, string Email, DateTime? LastLogin = null);
 public record JobDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt);
 public record JobSummaryDto(string Id, string JobCode, string Title, string Department, string Organisation, DateTime PostingDate, string Status, string? CurrentConfigVersionId, string? JobDescription, string? CreatedBy, DateTime CreatedAt, string CreatedByName, int TotalApplications, int CompletedApplications);
-public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription);
-public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null);
+public record CreateJobDto(string Title, string Department, string Organisation, DateTime PostingDate, string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? JobDescription, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? OrganizationId = null, string? DepartmentId = null);
+public record UpdateConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? ExpectedConfigVersionId = null, string? RubricApprovalStatus = null);
 public record ApplicationDto(string Id, string JobId, string CandidateRef, string? CandidateName, string? CandidateEmail, string Status, double? FinalScore, string? FinalDecision, double? Variance, DateTime CreatedAt, string? LastError = null, string? TestRunId = null);
-public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default);
+public sealed record JobApplicationCountsDto(int Total, int Pending, int Uploading, int Shortlist, int Longlist, int Excluded, int Review, int Queued, int Scoring, int Complete, int Failed);
+public sealed record CreateUploadItemRequest(Guid OccurrenceKey, int Ordinal, string FileName, string MimeType, long RawSizeBytes);
+public sealed record CreateUploadSessionRequest(bool AllowDuplicates, IReadOnlyList<CreateUploadItemRequest> Items);
+public sealed record UploadLimitsSnapshotDto(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes);
+public sealed record UploadAggregateCountsDto(int Total, int WaitingOrThrottled, int ActiveOrRetrying, int Succeeded, int Skipped, int Failed, int Interrupted, int Terminal);
+public sealed record UploadItemDto(string Id, string SessionId, Guid OccurrenceKey, int Ordinal, string FileName, string MimeType, long RawSizeBytes, string Status, int AttemptCount, string? ContentFingerprint, string? ApplicationId, string? OutcomeCode, string? OutcomeMessage, DateTime? NextRetryAt, DateTime CreatedAt, DateTime UpdatedAt, DateTime? CompletedAt, int ConcurrencyVersion);
+public sealed record UploadSessionSummaryDto(string Id, string JobId, string Status, bool AllowDuplicates, UploadLimitsSnapshotDto Limits, UploadAggregateCountsDto Counts, int ProgressPercent, string CorrelationId, DateTime CreatedAt, DateTime? StartedAt, DateTime LastHeartbeatAt, DateTime? CompletedAt, int ConcurrencyVersion);
+public sealed record UploadSessionDetailDto(string Id, string JobId, string Status, bool AllowDuplicates, UploadLimitsSnapshotDto Limits, UploadAggregateCountsDto Counts, int ProgressPercent, string CorrelationId, DateTime CreatedAt, DateTime? StartedAt, DateTime LastHeartbeatAt, DateTime? CompletedAt, int ConcurrencyVersion, IReadOnlyList<UploadItemDto> Items);
+public sealed record UpdateUploadItemStatusRequest(Guid OccurrenceKey, string Status, int ExpectedConcurrencyVersion, string? OutcomeCode = null, string? OutcomeMessage = null, DateTime? NextRetryAt = null, int? TransportAttemptCount = null);
+public sealed record UploadSettingsDto(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ConcurrencyVersion, bool Persisted, DateTime? UpdatedAt, string? UpdatedBy);
+public sealed record UpdateUploadSettingsRequest(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ExpectedConcurrencyVersion);
+public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default, string ReasoningLevel = "");
 public record ReparseScoringRunResultDto(ScoringRunDto ScoringRun, bool FallbackParsingActivated, bool EligibilityFallbackActivated, bool TotalScoreFallbackActivated, bool GateDetected, string EligibilityPath, string Source);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);
 public record DocumentDto(string Id, string FileName, string FileType, long FileSize, string? ContentBase64);
 public record ExtractionDto(string Id, string NormalisedText, double ConfidenceScore, string Status);
 public record ManualReviewDto(string RubricScoresJson, string OverallComment, double? AdjustedFinalScore, string AuditTrailJson, bool HumanEdited = false, string? FinalDecision = null);
 public record SystemStatsDto(int Queued, int Extracting, int Scoring, int Aggregating, int Completed, int NeedsManualReview, int Failed, int TotalJobs, int TotalApplications);
+public record ScoringThroughputDto(DateTimeOffset AsOfUtc, int ScoredLastHour, int ScoredLast24Hours, List<ScoringThroughputBucketDto> Hours);
+public record ScoringThroughputBucketDto(DateTimeOffset StartUtc, DateTimeOffset EndUtc, int Count);
 public record DlqItemDto(string Id, string EntityType, string EntityId, string FailureReason, int RetryCount, DateTime CreatedAt);
 public record AuditEventDto(string Id, string Actor, string EventType, string EntityType, string EntityId, DateTime Timestamp, string CorrelationId);
 public record ResetRequestDto(string Id, string UserId, string Username, string Reason, string Status, DateTime CreatedAt);
-public record JobConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null, string? RubricSource = null);
+public record JobConfigDto(string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson, int ScoringRunCount, string AggregationStrategy, double LonglistThreshold, double ShortlistThreshold, double VarianceThreshold, string? RubricApprovalStatus = null, string? RubricSource = null, string? ExtractionId = null, string? ExtractionInstructionVersionId = null, string? Id = null, int VersionNumber = 0, ExtractionSummaryDto? Extraction = null);
+public record ExtractionValidationFindingDto(string Code, string Severity, string Path, string Message);
+public record ExtractionSummaryDto(string Id, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string SourceFileName, string SourceMimeType, DateTime CompletedAt, string CorrelationId);
+public record ReasoningModelOptionDto(string Slot, string Deployment, bool IsDefault);
+public record ReasoningModelsResponseDto(string DefaultModel, string DefaultReasoningEffort, List<string> SupportedReasoningEfforts, List<ReasoningModelOptionDto> Models);
+public record ExtractionInstructionVersionDto(string Id, int VersionNumber, string InstructionText, string ModelId, string ReasoningLevel, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
+public record ExtractionInstructionVersionDetailDto(string Id, int VersionNumber, string InstructionText, string ModelId, string ReasoningLevel, string ProtectedContractVersion, string Status, string ValidationStatus, string? ChangeNote, List<ExtractionValidationFindingDto> ValidationFindings, JsonElement ProtectedContract, DateTime CreatedAt, string CreatedBy, DateTime? ValidatedAt, string? ValidatedBy, DateTime? ActivatedAt, string? ActivatedBy, int ConcurrencyVersion);
+public record RubricCategoryV2Dto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("weight")] double Weight,
+    [property: JsonPropertyName("description")] string? Description,
+    [property: JsonPropertyName("order")] int Order);
+public record RubricItemDto(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("categoryId")] string CategoryId,
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("requirementType")] string RequirementType,
+    [property: JsonPropertyName("order")] int Order,
+    [property: JsonPropertyName("sourceText")] string? SourceText,
+    [property: JsonPropertyName("sourceLocation")] string? SourceLocation,
+    [property: JsonPropertyName("sourceRequirementId")] string? SourceRequirementId,
+    [property: JsonPropertyName("reviewStatus")] string ReviewStatus,
+    [property: JsonPropertyName("createdFrom")] string CreatedFrom);
+public record RubricEnvelopeDto(
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("legacySourceVersionId")] string? LegacySourceVersionId,
+    [property: JsonPropertyName("categories")] List<RubricCategoryV2Dto> Categories,
+    [property: JsonPropertyName("items")] List<RubricItemDto> Items);
+public record JobSpecExtractionRecordDto(string Id, string Purpose, string InstructionVersionId, string ProtectedContractVersion, string SourceFileName, string SourceMimeType, string SourceSha256, string RawResponse, string? NormalizedResponseJson, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string? JobId, string? JobConfigVersionId, DateTime CreatedAt, string CreatedBy, DateTime CompletedAt, string CorrelationId);
+public record ExtractionResultDto(string ExtractionId, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings, string? Title, string? JobDescription, string? Department, string? Organization, RubricEnvelopeDto Rubric);
+public record ExtractionFailureDto(string ExtractionId, string InstructionVersionId, string ProtectedContractVersion, string ValidationStatus, List<ExtractionValidationFindingDto> ValidationFindings);
 public record ExtractSpecResult(string? Title, string? Department, string? Organisation, string? JobDescription, List<MustHaveItem>? MustHaves, List<DesiredCriterionItem>? DesiredCriteria, List<RubricCategoryItem>? Rubric);
 public record ExtractRubricResult(string? Title, List<RubricCategoryItem>? Categories);
 public record MustHaveItem(string Criterion, string? Description);
 public record DesiredCriterionItem(string Qualification, string? Description);
 public record RubricCategoryItem(string Name, double Weight, string? Description);
-public record ProcessJobResponse(int Processed, int Total, List<string> Errors);
+public record ProcessJobResponse(int Processed, int Total, List<string> Errors, int Queued = 0);
 public record ReAggregateResponse(int Updated, int Total, string? Error);
-public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson);
-public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes);
+public record ScoringPromptDto(string Id, string JobId, int VersionNumber, string PromptText, string Status, DateTime CreatedAt, DateTime LastModifiedAt, string Author, int? Rating, string? Comments, string Source, string? GenerationMetadataJson, string? GenerationInstructionVersionId = null, string ModelId = "", string ReasoningLevel = "", string? ApprovedTestRunId = null, string? ApprovedModelId = null, string? ApprovedReasoningLevel = null);
+public record PromptTestRunDto(string Id, string JobId, string PromptId, string Status, string ApplicationIdsJson, DateTime CreatedAt, DateTime? CompletedAt, string? ReviewedBy, string? ReviewNotes, string ModelId = "", string ReasoningLevel = "", string? ApprovedModelId = null, string? ApprovedReasoningLevel = null);
+public sealed record PromptProfileStatusDto(string PromptId, string ModelId, string ReasoningLevel, string CurrentModelId, string CurrentReasoningLevel, bool IsMatch, bool HasExactProfileApprovedTest, string? ApprovedTestRunId, string? MismatchMessage);
+public sealed record PromptGenerationInstructionDto(string Id, string? JobId, int VersionNumber, string InstructionText, string ModelId, string ReasoningLevel, string Status, string? ChangeNote, DateTime CreatedAt, string CreatedBy, DateTime? ActivatedAt, string? ActivatedBy);
 public record TestRunApplicationDetailDto(ApplicationDto Application, List<ScoringRunDto> ScoringRuns);
 public record PromptTestRunDetailDto(PromptTestRunDto TestRun, List<TestRunApplicationDetailDto> Applications);
 public record ReconcilePromptTestRunsResponseDto(int HealedCount, List<PromptTestRunDto> Runs);
-public record CreatePromptRequest(string PromptText, string Source, string? GenerationMetadataJson);
+public record CreatePromptRequest(string PromptText, string Source, string? GenerationMetadataJson, string ModelId, string ReasoningLevel);
 public record GeneratePromptResult(string PromptText, string? GenerationMetadataJson);
 public record RecruiterAnalyticsDto(string RecruiterId, string RecruiterName, string Department, int ApplicationsInQueue, int ManualReviewsPerformed, int ShortlistRecommendations, double? AverageProcessingTime, int ActiveJobs);
 public record DepartmentAnalyticsDto(string Department, int TotalRecruiters, int ApplicationsInQueue, int ManualReviewsPerformed, int ShortlistRecommendations, int ActiveJobs, List<RecruiterAnalyticsDto> Recruiters);

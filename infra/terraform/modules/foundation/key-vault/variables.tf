@@ -1,3 +1,9 @@
+variable "enabled" {
+  description = "Whether Key Vault is part of this deployment"
+  type        = bool
+  default     = false
+}
+
 variable "reuse" {
   description = "Whether to look up an existing Key Vault instead of creating one"
   type        = bool

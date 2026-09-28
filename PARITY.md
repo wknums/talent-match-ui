@@ -8,8 +8,21 @@
 
 ## Overview
 
+**Sequential scoring update (2026-09-16):** Stack B now fills a shared
+`AWR_MAX_PARALLEL`-sized document pool from SQL independently of upload boundaries.
+Stack A retains its existing per-request scheduling; this behavior is not yet
+cross-stack parity. Platform-mode scheduling is unchanged. See
+[continuous sequential scoring](INTEGRATION.md#stack-b-continuous-sequential-scoring)
+for scope, recovery, and capacity limitations.
+
+**Throughput dashboard (2026-09-17):** Stack B adds a scoped rolling-hour count
+and a 24-hour chart refreshed every 10 seconds, using first aggregate-result
+timestamps. Stack A's existing throughput card has not been converted to this
+new metric; the visualization and time-window semantics are not yet at parity.
+
 | Feature | Stack B (.NET) | Stack A (React/Express) | Parity Status | Checklist |
 | ------- | ------------- | ---------------------- | ------------- | --------- |
+| 001 — Dynamic Rubric Editor | ✅ Implemented + targeted tests | ✅ Implemented + targeted tests | 🔶 Feature parity verified; repo-wide Stack A full test suite still blocked by unrelated failures and env-backed E2E prerequisites | [parity.md](specs/001-dynamic-rubric-editor/checklists/parity.md) |
 | 001 — Talent Matching Platform | 🔶 Mostly complete | ✅ Complete | 🔶 Re-review required | [parity.md](specs/001-talent-matching-platform/checklists/parity.md) |
 | 002 — Edit User Departments | ✅ Implemented | ✅ Complete | 🔶 Re-review required | [parity.md](specs/002-edit-user-departments/checklists/parity.md) |
 | 003 — Delete Jobs + Enhanced Cards | ✅ Implemented | ✅ Implemented | 🔶 Re-review required | [parity.md](specs/003-delete-jobs-enhanced-cards/checklists/parity.md) |
@@ -25,6 +38,20 @@
 ---
 
 ## Feature Details
+
+### 001 — Dynamic Rubric Editor
+
+- **Status**: 🔶 **Feature work is parity-complete; remaining blockers are outside the feature or environment-backed**
+- **Stack B**: Shared instruction lifecycle, contract-safe extraction, `rubric-v2` persistence, legacy conversion preview/confirm, diagnostics, authorization parity, and Blazor editor affordances are implemented and covered by targeted application/infrastructure/web tests plus a full `dotnet test`.
+- **Stack A**: Shared extraction contract, persisted extraction diagnostics, instruction lifecycle routes/UI, correlated stale-write errors, explicit legacy-conversion confirmation, and React itemized rubric editing helpers are implemented and covered by targeted unit/integration tests plus a production build.
+- **Known remaining parity gap**: environment-backed Playwright checks require `E2E_STACK_B_BASE_URL`, `E2E_STACK_B_AUTH_STATE`, and job-spec fixtures. The authored E2E specs currently skip cleanly when those prerequisites are absent, so live cross-stack runtime parity is not yet fully re-executed.
+- **Known repository-wide Stack A blocker**: `npm test` still fails outside this feature (234 passed, 7 skipped, 3 failed, 3 worker-start errors) because `tests/integration/azure-context.test.ts` expects a temp-file command log that is never created in this environment, and the existing jsdom suites (`entra-auth-ui`, `entra-access-management-ui`, `organization-admin-ui`) hit an `ERR_REQUIRE_ESM` worker-start failure in `html-encoding-sniffer`.
+- **Validation snapshot**:
+  - `dotnet test` targeted feature suites: 52/52 passed
+  - `npm test` targeted feature suites: 25/25 passed
+  - `dotnet test dotnet/TalentMatch.slnx`: 311/311 passed
+  - `npm run build`: passed (with Vite Node 20.12.2 recommendation warning)
+  - Playwright targeted feature specs: implemented, 10 skipped without required auth/base-URL fixtures
 
 ### 001 — Talent Matching Platform
 

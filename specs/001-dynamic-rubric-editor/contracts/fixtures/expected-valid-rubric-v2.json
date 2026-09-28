@@ -1,0 +1,192 @@
+{
+  "schemaVersion": "rubric-v2",
+  "legacySourceVersionId": null,
+  "categories": [
+    {
+      "id": "cat-platform",
+      "name": "Technical Platform Skills",
+      "weight": 0.5,
+      "description": "Deep engineering capability for platform, distributed systems, data tooling, and related technical requirements.",
+      "order": 0
+    },
+    {
+      "id": "cat-delivery",
+      "name": "Delivery and Quality",
+      "weight": 0.2,
+      "description": "Ability to deliver compliant, reliable, and auditable data solutions.",
+      "order": 1
+    },
+    {
+      "id": "cat-collaboration",
+      "name": "Collaboration and Communication",
+      "weight": 0.2,
+      "description": "Communication and partnership across technical and business audiences.",
+      "order": 2
+    },
+    {
+      "id": "cat-leadership",
+      "name": "Leadership and Growth",
+      "weight": 0.1,
+      "description": "Mentorship, leadership, and growth-oriented contributions.",
+      "order": 3
+    }
+  ],
+  "items": [
+    {
+      "id": "req-001",
+      "categoryId": "cat-platform",
+      "text": "5+ years of backend or platform engineering experience",
+      "requirementType": "experience",
+      "order": 0,
+      "sourceText": "Must have 5+ years of backend or platform engineering experience and proven experience with distributed systems.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-001",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-002",
+      "categoryId": "cat-platform",
+      "text": "Proven experience with distributed systems",
+      "requirementType": "must_have",
+      "order": 1,
+      "sourceText": "Must have 5+ years of backend or platform engineering experience and proven experience with distributed systems.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-002",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-003",
+      "categoryId": "cat-platform",
+      "text": "Expert SQL experience",
+      "requirementType": "must_have",
+      "order": 2,
+      "sourceText": "Must have expert SQL, Python, and Azure Data Factory experience.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-003",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-004",
+      "categoryId": "cat-platform",
+      "text": "Expert Python experience",
+      "requirementType": "must_have",
+      "order": 3,
+      "sourceText": "Must have expert SQL, Python, and Azure Data Factory experience.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-004",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-005",
+      "categoryId": "cat-platform",
+      "text": "Expert Azure Data Factory experience",
+      "requirementType": "must_have",
+      "order": 4,
+      "sourceText": "Must have expert SQL, Python, and Azure Data Factory experience.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-005",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-009",
+      "categoryId": "cat-platform",
+      "text": "Experience with Spark, Databricks, or Synapse analytics",
+      "requirementType": "desired",
+      "order": 5,
+      "sourceText": "Nice to have experience with Spark, Databricks, or Synapse analytics.",
+      "sourceLocation": "Preferred Qualifications",
+      "sourceRequirementId": "req-009",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-013",
+      "categoryId": "cat-platform",
+      "text": "5+ years of backend or platform engineering experience",
+      "requirementType": "experience",
+      "order": 6,
+      "sourceText": "Must have 5+ years of backend or platform engineering experience.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-013",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-006",
+      "categoryId": "cat-delivery",
+      "text": "Azure Data Engineer Associate certification",
+      "requirementType": "experience",
+      "order": 0,
+      "sourceText": "Must hold an Azure Data Engineer Associate certification.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-006",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-007",
+      "categoryId": "cat-delivery",
+      "text": "Experience implementing CI/CD for data workloads",
+      "requirementType": "responsibility",
+      "order": 1,
+      "sourceText": "Must have experience implementing CI/CD for data workloads.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-007",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-010",
+      "categoryId": "cat-delivery",
+      "text": "Experience in regulated industries",
+      "requirementType": "desired",
+      "order": 2,
+      "sourceText": "Preferred experience in regulated industries and creating audit-ready diagnostics.",
+      "sourceLocation": "Preferred Qualifications",
+      "sourceRequirementId": "req-010",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-011",
+      "categoryId": "cat-delivery",
+      "text": "Creating audit-ready diagnostics",
+      "requirementType": "desired",
+      "order": 3,
+      "sourceText": "Preferred experience in regulated industries and creating audit-ready diagnostics.",
+      "sourceLocation": "Preferred Qualifications",
+      "sourceRequirementId": "req-011",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-008",
+      "categoryId": "cat-collaboration",
+      "text": "Excellent written and verbal communication skills",
+      "requirementType": "must_have",
+      "order": 0,
+      "sourceText": "Must have excellent written and verbal communication skills.",
+      "sourceLocation": "Required Qualifications",
+      "sourceRequirementId": "req-008",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-012",
+      "categoryId": "cat-leadership",
+      "text": "Leading architecture reviews",
+      "requirementType": "desired",
+      "order": 0,
+      "sourceText": "Bonus points for leading architecture reviews.",
+      "sourceLocation": "Preferred Qualifications",
+      "sourceRequirementId": "req-012",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import type { AggregatedResult, EvidenceCitation, ManualReviewData, ManualReviewRubricEntry, ScoringRun } from '@/types'
+import type { AggregatedResult, EvidenceCitation, JobConfigVersion, ManualReviewData, ManualReviewRubricEntry, ScoringRun } from '@/types'
 
 export interface StackBCompatibleAggregatedResult {
   finalScore: number
@@ -50,6 +50,10 @@ function toPercentageScore(points: number | undefined, maxPoints: number): numbe
 
 export function normalizeCategoryName(name: string): string {
   return name.toLowerCase().replace(/[_\-()&/,;:]/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export function getRubricCategoryNames(config: Pick<JobConfigVersion, 'rubric' | 'rubricEnvelope'>): string[] {
+  return config.rubricEnvelope?.categories.map(category => category.name) ?? config.rubric.map(category => category.name)
 }
 
 function normalizeCandidateName(rawName: string | null | undefined): string | null {
@@ -420,7 +424,7 @@ export function buildStackBManualReviewPrepopulation(args: {
       continue
     }
 
-    const parts = [`AI Score\n${aiScore.toFixed(1)} / 100`]
+    const parts = [`AI Score\n${aiScore.toFixed(3)} / 100`]
     const evidence = evidenceByCategory[category.name]
     if (evidence?.length) {
       parts.push(`\nEvidence\n${evidence.map(item => `- ${item}`).join('\n')}`)
@@ -438,7 +442,7 @@ export function buildStackBManualReviewPrepopulation(args: {
   const stackBCompatibleAggregated = toStackBCompatibleAggregatedResult(aggregatedResult)
   if (!overallComment && stackBCompatibleAggregated) {
     const parts = [
-      `Pre-populated from AI scoring (score: ${stackBCompatibleAggregated.finalScore.toFixed(1)}, variance: ${stackBCompatibleAggregated.variance.toFixed(2)}). Please verify and adjust.`,
+      `Pre-populated from AI scoring (score: ${stackBCompatibleAggregated.finalScore.toFixed(3)}, variance: ${stackBCompatibleAggregated.variance.toFixed(3)}). Please verify and adjust.`,
     ]
 
     if (stackBCompatibleAggregated.consolidatedRationale) {

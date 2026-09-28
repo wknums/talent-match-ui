@@ -1,6 +1,10 @@
 import type {
   Job,
   JobConfigVersion,
+  ExtractionInstructionVersion,
+  ExtractionInstructionVersionDetail,
+  ExtractionResult,
+  RubricEnvelope,
   Application,
   ScoringRun,
   AggregatedResult,
@@ -14,6 +18,33 @@ import type {
   ScoringPrompt,
   PromptTestRun,
   PromptTestRunDetail,
+  PromptGenerationInstruction,
+  PromptProfileStatus,
+  ReasoningEffort,
+  ReasoningModelsResponse,
+  AuthenticationProvider,
+  AuthorizationContext,
+  CanonicalApiError,
+  EntraAccessUser,
+  EntraAccessUserPage,
+  PutOrganizationAccessRequest,
+  UpdateEntraAccessUserRequest,
+  CreateOrganizationAdminRequest,
+  CreateOrganizationDepartmentRequest,
+  GrantOrganizationRoleRequest,
+  OrganizationAdminDepartment,
+  OrganizationAdminMembership,
+  OrganizationAdminOrganization,
+  OrganizationAdminRoleAssignment,
+  RegisterOrganizationMembershipRequest,
+  UpdateOrganizationDepartmentRequest,
+  CreateUploadSessionRequest,
+  UploadItem,
+  UploadSessionDetail,
+  UploadSessionSummary,
+  UpdateUploadItemStatusRequest,
+  UploadSettings,
+  UpdateUploadSettingsRequest,
 } from '@/types'
 
 function normalizeMustHaveResult(raw: any) {
@@ -37,6 +68,10 @@ function mapTestRun(raw: any): PromptTestRun {
     completedAt: raw.completedAt,
     reviewedBy: raw.reviewedBy,
     reviewNotes: raw.reviewNotes,
+    modelId: raw.modelId ?? '',
+    reasoningLevel: raw.reasoningLevel ?? '',
+    approvedModelId: raw.approvedModelId,
+    approvedReasoningLevel: raw.approvedReasoningLevel,
   }
 }
 
@@ -47,6 +82,7 @@ function mapScoringRun(raw: any): ScoringRun {
     versionId: raw.versionId ?? raw.aiModelId ?? '',
     runIndex: raw.runIndex ?? 0,
     modelDeploymentId: raw.modelDeploymentId ?? raw.aiModelId ?? '',
+    reasoningLevel: raw.reasoningLevel,
     promptVersionId: raw.promptVersionId ?? raw.promptVersion ?? '',
     overallScore: raw.overallScore ?? raw.totalScore ?? 0,
     subScores: typeof raw.categoryScoresJson === 'string'
@@ -163,8 +199,117 @@ function mapApplication(raw: any): Application {
 
 const API_BASE = '/api'
 
+type AccessTokenRequest = { forceRefresh: boolean }
+type AccessTokenProvider = (request: AccessTokenRequest) => Promise<string>
+
+interface AuthenticatedTransportConfig {
+  authMode: AuthenticationProvider
+  acquireAccessToken?: AccessTokenProvider
+  apiOrigin?: string
+}
+
+let authenticatedTransport: AuthenticatedTransportConfig = { authMode: 'simple' }
+
+export class TalentMatchApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly errorCode?: CanonicalApiError['error'],
+    public readonly correlationId?: string,
+    public readonly validationErrors?: Record<string, string[]>,
+  ) {
+    super(message)
+    this.name = 'TalentMatchApiError'
+  }
+}
+
+export function configureAuthenticatedTransport(config: AuthenticatedTransportConfig): void {
+  authenticatedTransport = { ...config }
+}
+
+export function resetAuthenticatedTransport(): void {
+  authenticatedTransport = { authMode: 'simple' }
+}
+
+function isTalentMatchApiUrl(url: string): boolean {
+  if (url === API_BASE || url.startsWith(`${API_BASE}/`)) {
+    return true
+  }
+
+  if (!authenticatedTransport.apiOrigin) {
+    return false
+  }
+
+  try {
+    const configuredOrigin = new URL(authenticatedTransport.apiOrigin).origin
+    const target = new URL(url)
+    return target.origin === configuredOrigin
+      && (target.pathname === API_BASE || target.pathname.startsWith(`${API_BASE}/`))
+  } catch {
+    return false
+  }
+}
+
+function isIdempotent(method: string): boolean {
+  return method === 'GET' || method === 'HEAD' || method === 'OPTIONS'
+}
+
+async function readApiError(response: Response): Promise<TalentMatchApiError> {
+  const body = await response.json().catch(() => ({ message: response.statusText })) as {
+    error?: CanonicalApiError['error']
+    message?: string
+    correlationId?: string
+    errors?: Record<string, string[]>
+  }
+
+  return new TalentMatchApiError(
+    body.message || `Request failed: ${response.status}`,
+    response.status,
+    body.error,
+    body.correlationId,
+    body.errors,
+  )
+}
+
+export async function fetchWithAuthentication(
+  url: string,
+  options: RequestInit = {},
+  hasRetried = false,
+): Promise<Response> {
+  const method = (options.method ?? 'GET').toUpperCase()
+  const headers = new Headers(options.headers)
+
+  if (
+    authenticatedTransport.authMode === 'entra'
+    && authenticatedTransport.acquireAccessToken
+    && isTalentMatchApiUrl(url)
+  ) {
+    const accessToken = await authenticatedTransport.acquireAccessToken({
+      forceRefresh: hasRetried,
+    })
+    headers.set('Authorization', `Bearer ${accessToken}`)
+  }
+
+  const response = await fetch(url, { ...options, headers })
+  if (
+    response.status === 401
+    && !hasRetried
+    && isIdempotent(method)
+    && authenticatedTransport.authMode === 'entra'
+    && authenticatedTransport.acquireAccessToken
+    && isTalentMatchApiUrl(url)
+  ) {
+    const body = await response.clone().json().catch(() => null) as { error?: string } | null
+    if (body?.error === 'token_stale') {
+      return fetchWithAuthentication(url, options, true)
+    }
+  }
+
+  return response
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
+  const res = await fetchWithAuthentication(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -172,14 +317,13 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
     },
   })
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }))
-    throw new Error(err.message || `Request failed: ${res.status}`)
+    throw await readApiError(res)
   }
   return res.json()
 }
 
 async function fetchVoid(url: string, options?: RequestInit): Promise<void> {
-  const res = await fetch(url, {
+  const res = await fetchWithAuthentication(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -188,12 +332,14 @@ async function fetchVoid(url: string, options?: RequestInit): Promise<void> {
   })
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }))
-    throw new Error(err.message || `Request failed: ${res.status}`)
+    throw await readApiError(res)
   }
 }
 
 export const realAPI = {
+  async getReasoningModels(): Promise<ReasoningModelsResponse> {
+    return fetchJSON(`${API_BASE}/reasoning-models`)
+  },
   // Auth
   async login(username: string, password: string): Promise<User> {
     return fetchJSON(`${API_BASE}/auth/login`, {
@@ -203,7 +349,7 @@ export const realAPI = {
   },
 
   async logout(): Promise<void> {
-    await fetchJSON(`${API_BASE}/auth/logout`, { method: 'POST' })
+    await fetchVoid(`${API_BASE}/auth/logout`, { method: 'POST' })
   },
 
   async getCurrentUser(): Promise<User | null> {
@@ -212,6 +358,10 @@ export const realAPI = {
     } catch {
       return null
     }
+  },
+
+  async getAuthorizationContext(): Promise<AuthorizationContext> {
+    return fetchJSON(`${API_BASE}/auth/me`)
   },
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
@@ -276,6 +426,121 @@ export const realAPI = {
     })
   },
 
+  // Entra access management
+  async listEntraAccessUsers(options: {
+    search?: string
+    organizationId?: string
+    status?: 'pending' | 'active' | 'disabled'
+    cursor?: string
+    limit?: number
+  } = {}): Promise<EntraAccessUserPage> {
+    const query = new URLSearchParams()
+    if (options.search) query.set('search', options.search)
+    if (options.organizationId) query.set('organizationId', options.organizationId)
+    if (options.status) query.set('status', options.status)
+    if (options.cursor) query.set('cursor', options.cursor)
+    if (options.limit !== undefined) query.set('limit', String(options.limit))
+    const suffix = query.size > 0 ? `?${query}` : ''
+    return fetchJSON(`${API_BASE}/access-management/users${suffix}`)
+  },
+
+  async getEntraAccessUser(objectId: string): Promise<EntraAccessUser> {
+    return fetchJSON(`${API_BASE}/access-management/users/${encodeURIComponent(objectId)}`)
+  },
+
+  async updateEntraAccessUser(
+    objectId: string,
+    request: UpdateEntraAccessUserRequest,
+  ): Promise<EntraAccessUser> {
+    return fetchJSON(`${API_BASE}/access-management/users/${encodeURIComponent(objectId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async putEntraOrganizationAccess(
+    objectId: string,
+    organizationId: string,
+    request: PutOrganizationAccessRequest,
+  ): Promise<EntraAccessUser> {
+    return fetchJSON(
+      `${API_BASE}/access-management/users/${encodeURIComponent(objectId)}/organizations/${encodeURIComponent(organizationId)}`,
+      { method: 'PUT', body: JSON.stringify(request) },
+    )
+  },
+
+  async revokeEntraRoleAssignment(
+    objectId: string,
+    organizationId: string,
+    assignmentId: string,
+    expectedVersion: number,
+  ): Promise<EntraAccessUser> {
+    return fetchJSON(
+      `${API_BASE}/access-management/users/${encodeURIComponent(objectId)}/organizations/${encodeURIComponent(organizationId)}/role-assignments/${encodeURIComponent(assignmentId)}?expectedVersion=${expectedVersion}`,
+      { method: 'DELETE' },
+    )
+  },
+
+  // Organization administration
+  async listOrganizations(): Promise<OrganizationAdminOrganization[]> {
+    return fetchJSON(`${API_BASE}/organizations`)
+  },
+
+  async createOrganization(request: CreateOrganizationAdminRequest): Promise<OrganizationAdminOrganization> {
+    return fetchJSON(`${API_BASE}/organizations`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async createOrganizationDepartment(
+    organizationId: string,
+    request: CreateOrganizationDepartmentRequest,
+  ): Promise<OrganizationAdminDepartment> {
+    return fetchJSON(`${API_BASE}/organizations/${encodeURIComponent(organizationId)}/departments`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async updateOrganizationDepartment(
+    organizationId: string,
+    departmentId: string,
+    request: UpdateOrganizationDepartmentRequest,
+  ): Promise<OrganizationAdminDepartment> {
+    return fetchJSON(
+      `${API_BASE}/organizations/${encodeURIComponent(organizationId)}/departments/${encodeURIComponent(departmentId)}`,
+      { method: 'PATCH', body: JSON.stringify(request) },
+    )
+  },
+
+  async registerOrganizationMembership(
+    organizationId: string,
+    request: RegisterOrganizationMembershipRequest,
+  ): Promise<OrganizationAdminMembership> {
+    return fetchJSON(`${API_BASE}/organizations/${encodeURIComponent(organizationId)}/memberships`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async grantOrganizationRole(
+    organizationId: string,
+    request: GrantOrganizationRoleRequest,
+  ): Promise<OrganizationAdminRoleAssignment> {
+    return fetchJSON(`${API_BASE}/organizations/${encodeURIComponent(organizationId)}/role-assignments`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async revokeOrganizationRole(organizationId: string, assignmentId: string): Promise<void> {
+    await fetchVoid(
+      `${API_BASE}/organizations/${encodeURIComponent(organizationId)}/role-assignments/${encodeURIComponent(assignmentId)}`,
+      { method: 'DELETE' },
+    )
+  },
+
   // Jobs
   async getJobs(): Promise<Job[]> {
     return fetchJSON(`${API_BASE}/jobs`)
@@ -293,14 +558,14 @@ export const realAPI = {
     await fetchVoid(`${API_BASE}/jobs/${jobId}`, { method: 'DELETE' })
   },
 
-  async extractJobSpec(fileName: string, content: string, mimeType: string): Promise<any> {
+  async extractJobSpec(fileName: string, content: string, mimeType: string): Promise<ExtractionResult> {
     return fetchJSON(`${API_BASE}/jobs/extract-spec`, {
       method: 'POST',
       body: JSON.stringify({ fileName, content, mimeType }),
     })
   },
 
-  async extractRubric(fileName: string, content: string, mimeType: string): Promise<any> {
+  async extractRubric(fileName: string, content: string, mimeType: string): Promise<RubricEnvelope> {
     return fetchJSON(`${API_BASE}/jobs/extract-rubric`, {
       method: 'POST',
       body: JSON.stringify({ fileName, content, mimeType }),
@@ -312,7 +577,7 @@ export const realAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: import('@/types').RubricCategory[]
+    rubric: import('@/types').RubricCategory[] | RubricEnvelope
     mustHaves: import('@/types').MustHave[]
     desiredCriteria?: import('@/types').DesiredCriteria[]
     jobDescription?: string
@@ -325,6 +590,8 @@ export const realAPI = {
     jobCode?: string
     rubricSource?: import('@/types').RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
   }): Promise<Job> {
     return fetchJSON(`${API_BASE}/jobs`, {
       method: 'POST',
@@ -337,7 +604,7 @@ export const realAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: import('@/types').RubricCategory[]
+    rubric: import('@/types').RubricCategory[] | RubricEnvelope
     mustHaves: import('@/types').MustHave[]
     desiredCriteria?: import('@/types').DesiredCriteria[]
     jobDescription?: string
@@ -350,6 +617,9 @@ export const realAPI = {
     jobCode?: string
     rubricSource?: import('@/types').RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
+    expectedConfigVersionId?: string
     rubricApprovalStatus?: import('@/types').RubricApprovalStatus
   }): Promise<Job> {
     // Update job config creates a new version
@@ -369,7 +639,55 @@ export const realAPI = {
     })
   },
 
-  async updateJobRubric(jobId: string, rubricDocumentId: string): Promise<void> {
+  async previewLegacyRubricConversion(jobId: string, expectedConfigVersionId: string): Promise<RubricEnvelope> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/rubric/convert`, {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'preview', expectedConfigVersionId }),
+    })
+  },
+
+  async confirmLegacyRubricConversion(jobId: string, expectedConfigVersionId: string, reviewedRubric: RubricEnvelope): Promise<RubricEnvelope> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/rubric/convert`, {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'confirm', expectedConfigVersionId, reviewedRubric }),
+    })
+  },
+
+  async listExtractionInstructions(): Promise<ExtractionInstructionVersion[]> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions`)
+  },
+
+  async getExtractionInstruction(versionId: string): Promise<ExtractionInstructionVersionDetail> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions/${versionId}`)
+  },
+
+  async createExtractionInstructionDraft(
+    instructionText: string,
+    changeNote: string | undefined,
+    modelId: string,
+    reasoningLevel: ReasoningEffort,
+  ): Promise<ExtractionInstructionVersion> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions`, {
+      method: 'POST',
+      body: JSON.stringify({ instructionText, changeNote, modelId, reasoningLevel }),
+    })
+  },
+
+  async validateExtractionInstruction(versionId: string, fileName: string, content: string, mimeType: string): Promise<ExtractionResult | import('@/types').ExtractionFailure> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions/${versionId}/validate`, {
+      method: 'POST',
+      body: JSON.stringify({ fileName, content, mimeType }),
+    })
+  },
+
+  async activateExtractionInstruction(versionId: string, expectedConcurrencyVersion: number): Promise<ExtractionInstructionVersion> {
+    return fetchJSON(`${API_BASE}/admin/extraction-instructions/${versionId}/activate`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedConcurrencyVersion }),
+    })
+  },
+
+  async updateJobRubric(_jobId: string, _rubricDocumentId: string): Promise<void> {
     // No-op for now; rubric is updated via config
   },
 
@@ -417,7 +735,11 @@ export const realAPI = {
     }
   },
 
-  async uploadApplications(jobId: string, files: File[]): Promise<{ applicationIds: string[] }> {
+  async uploadApplications(
+    jobId: string,
+    files: File[],
+    allowDuplicates = false,
+  ): Promise<{ applicationIds: string[]; warnings?: string[] }> {
     // Convert files to base64 JSON payload for binary-safe transport
     const fileData = await Promise.all(files.map(async (file) => {
       const arrayBuffer = await file.arrayBuffer()
@@ -436,7 +758,90 @@ export const realAPI = {
 
     return fetchJSON(`${API_BASE}/jobs/${jobId}/applications/upload`, {
       method: 'POST',
-      body: JSON.stringify({ files: fileData }),
+      body: JSON.stringify({ files: fileData, allowDuplicates }),
+    })
+  },
+
+  async createUploadSession(
+    jobId: string,
+    request: CreateUploadSessionRequest,
+    correlationId = crypto.randomUUID(),
+  ): Promise<UploadSessionDetail> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/upload-sessions`, {
+      method: 'POST',
+      headers: { 'X-Correlation-ID': correlationId },
+      body: JSON.stringify(request),
+    })
+  },
+
+  async uploadItemContent(
+    sessionId: string,
+    itemId: string,
+    occurrenceKey: string,
+    file: File,
+    correlationId: string,
+  ): Promise<UploadItem> {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    const response = await fetchWithAuthentication(
+      `${API_BASE}/upload-sessions/${sessionId}/items/${itemId}/content`,
+      {
+        method: 'POST',
+        headers: {
+          'Idempotency-Key': occurrenceKey,
+          'X-Correlation-ID': correlationId,
+        },
+        body: form,
+      },
+    )
+    if (!response.ok) throw await readApiError(response)
+    return response.json()
+  },
+
+  async listUploadSessions(
+    jobId?: string,
+    includeTerminal = true,
+  ): Promise<UploadSessionSummary[]> {
+    const query = new URLSearchParams({ includeTerminal: String(includeTerminal) })
+    if (jobId) query.set('jobId', jobId)
+    return fetchJSON(`${API_BASE}/upload-sessions?${query}`)
+  },
+
+  async getUploadSession(sessionId: string): Promise<UploadSessionDetail> {
+    return fetchJSON(`${API_BASE}/upload-sessions/${sessionId}`)
+  },
+
+  async heartbeatUploadSession(
+    sessionId: string,
+    expectedConcurrencyVersion: number,
+  ): Promise<UploadSessionSummary> {
+    return fetchJSON(`${API_BASE}/upload-sessions/${sessionId}/heartbeat`, {
+      method: 'POST',
+      body: JSON.stringify({ expectedConcurrencyVersion }),
+    })
+  },
+
+  async updateUploadItemStatus(
+    sessionId: string,
+    itemId: string,
+    request: UpdateUploadItemStatusRequest,
+  ): Promise<UploadItem> {
+    return fetchJSON(`${API_BASE}/upload-sessions/${sessionId}/items/${itemId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(request),
+    })
+  },
+
+  async getUploadSettings(): Promise<UploadSettings> {
+    return fetchJSON(`${API_BASE}/admin/upload-settings`)
+  },
+
+  async updateUploadSettings(
+    request: UpdateUploadSettingsRequest,
+  ): Promise<UploadSettings> {
+    return fetchJSON(`${API_BASE}/admin/upload-settings`, {
+      method: 'PUT',
+      body: JSON.stringify(request),
     })
   },
 
@@ -468,8 +873,12 @@ export const realAPI = {
   },
 
   async getDocumentContent(applicationId: string, documentId: string): Promise<ArrayBuffer> {
-    const res = await fetch(`${API_BASE}/applications/${applicationId}/documents/${documentId}/content`)
-    if (!res.ok) throw new Error(`Failed to fetch document content: ${res.status}`)
+    const res = await fetchWithAuthentication(
+      `${API_BASE}/applications/${applicationId}/documents/${documentId}/content`,
+    )
+    if (!res.ok) {
+      throw await readApiError(res)
+    }
     return res.arrayBuffer()
   },
 
@@ -572,7 +981,67 @@ export const realAPI = {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts`)
   },
 
-  async createPrompt(jobId: string, data: { promptText: string; source: string; generationMetadata?: Record<string, any> }): Promise<ScoringPrompt> {
+  async getPromptProfileStatus(jobId: string, promptId: string): Promise<PromptProfileStatus> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}/profile`)
+  },
+
+  async getPromptGenerationInstructions(jobId: string): Promise<PromptGenerationInstruction[]> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompt-generation-instructions`)
+  },
+
+  async createPromptGenerationInstruction(
+    jobId: string,
+    instructionText: string,
+    changeNote?: string,
+    modelId?: string,
+    reasoningLevel?: ReasoningEffort,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompt-generation-instructions`, {
+      method: 'POST',
+      body: JSON.stringify({ instructionText, changeNote, modelId, reasoningLevel }),
+    })
+  },
+
+  async activatePromptGenerationInstruction(
+    jobId: string,
+    instructionId: string,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/jobs/${jobId}/prompt-generation-instructions/${instructionId}/activate`, {
+      method: 'POST',
+    })
+  },
+
+  async getSystemPromptGenerationInstructions(): Promise<PromptGenerationInstruction[]> {
+    return fetchJSON(`${API_BASE}/admin/prompt-generation-instructions`)
+  },
+
+  async createSystemPromptGenerationInstruction(
+    instructionText: string,
+    changeNote?: string,
+    modelId?: string,
+    reasoningLevel?: ReasoningEffort,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/admin/prompt-generation-instructions`, {
+      method: 'POST',
+      body: JSON.stringify({ instructionText, changeNote, modelId, reasoningLevel }),
+    })
+  },
+
+  async activateSystemPromptGenerationInstruction(
+    instructionId: string,
+  ): Promise<PromptGenerationInstruction> {
+    return fetchJSON(`${API_BASE}/admin/prompt-generation-instructions/${instructionId}/activate`, {
+      method: 'POST',
+    })
+  },
+
+  async createPrompt(jobId: string, data: {
+    promptText: string
+    source: string
+    generationMetadata?: Record<string, any>
+    modelId: string
+    reasoningLevel: ReasoningEffort
+  }): Promise<ScoringPrompt> {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -583,7 +1052,11 @@ export const realAPI = {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}`)
   },
 
-  async editPrompt(jobId: string, promptId: string, data: { promptText: string }): Promise<ScoringPrompt> {
+  async editPrompt(jobId: string, promptId: string, data: {
+    promptText: string
+    modelId: string
+    reasoningLevel: ReasoningEffort
+  }): Promise<ScoringPrompt> {
     return fetchJSON(`${API_BASE}/jobs/${jobId}/prompts/${promptId}`, {
       method: 'PUT',
       body: JSON.stringify(data),

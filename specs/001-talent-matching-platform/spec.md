@@ -455,6 +455,50 @@ simulate a failure and verify it appears in the failure queue with a retry optio
 
 ---
 
+### User Story 9 — Authorized user views and searches scoped audit information (Priority: P2)
+
+An authorized user can open a read-only audit information view for job and application activity,
+search and filter the records relevant to their assigned scope, move through large result sets, and
+inspect the details of an individual audit entry. A global admin (the application-wide `admin` role)
+can view all job and application audit records across every organization and department.
+
+**Why this priority**: Users need accessible evidence of job and application decisions and changes
+to support operational investigation, accountability, and compliance without exposing records
+outside their authority.
+
+**Independent Test**: Sign in as users assigned to different organizations and departments and as a
+global admin. Verify that each scoped user can search, filter, paginate, and inspect only audit
+records for jobs and applications within their authorized scope, while the global admin can retrieve
+and inspect all audit records.
+
+**Acceptance Scenarios**:
+
+1. **Given** an authorized non-global user opens the audit information view, **When** records load,
+   **Then** only job and application audit records within that user's authorized organization and
+   department scope are displayed.
+2. **Given** a global admin opens the audit information view, **When** records load, **Then** job and
+   application audit records from all organizations and departments are available.
+3. **Given** an authorized user enters a search term, **When** the search is applied, **Then** matching
+   records are returned for job title, job identifier, application or candidate reference, actor,
+   event type, or correlation identifier without including records outside the user's scope.
+4. **Given** an authorized user applies one or more filters, **When** results are refreshed, **Then**
+   the records match the selected entity type, event type, actor, organization, department, job,
+   application, and date range within the user's scope.
+5. **Given** the matching result set exceeds one page, **When** the user moves between pages or
+   changes the page size, **Then** records remain in deterministic newest-first order without
+   duplicates or omissions.
+6. **Given** an authorized user selects an audit record, **When** its details are opened, **Then** the
+   user can view its timestamp, actor, action, entity, job or application context, correlation
+   identifier, event outcome, and previous and new values when present.
+7. **Given** a user attempts to retrieve an audit record outside their scope, including by direct
+   request using a known identifier, **When** authorization is evaluated, **Then** access is denied
+   without revealing whether the record exists.
+8. **Given** no records match the current search and filters, or retrieval fails, **When** the view
+   responds, **Then** it presents an explicit no-results or error state and does not display stale
+   audit information.
+
+---
+
 ### Edge Cases
 
 - Document format failures: scoring API returns error; application marked for manual review;
@@ -476,6 +520,12 @@ simulate a failure and verify it appears in the failure queue with a retry optio
    descriptive parity error.
 - Entra role mapping gaps: authenticated users with no mapped app role groups are denied access and
    shown a clear authorization message.
+- An audit record references a job or application that was later deleted; authorized users can still
+  inspect the immutable record and its retained identifying context.
+- A user's organization or department assignment changes while browsing audit results; the next
+  request re-evaluates scope and does not return records that are no longer authorized.
+- New audit records are appended while a user pages through results; deterministic ordering prevents
+  duplicates or omissions within the requested result window.
 
 ---
 
@@ -554,6 +604,15 @@ If one or more test runs result in rejected status, the user must be returned to
 - **FR-069**: In `entra` mode, both stacks MUST use identical role-mapping configuration keys for application-specific Entra security groups (`ENTRA_GROUP_ADMIN`, `ENTRA_GROUP_RECRUITER`, `ENTRA_GROUP_ANALYTICS_VIEWER`) and MUST fail startup with a descriptive error if any required group mapping is missing.
 - **FR-070**: In `entra` mode, user/password management features (create local user, reset local password, request password reset, change local password) MUST be hidden or disabled in both stacks and replaced by guidance that identity lifecycle is managed in Entra.
 - **FR-071**: Authorization outcomes for identical user claims/groups MUST be equivalent across Stack A and Stack B, including role resolution, organization/department scoping, analytics_viewer read-only constraints, and unauthorized responses.
+- **FR-074**: Both Stack A and Stack B MUST provide a read-only audit information view where authenticated users can list, search, filter, paginate, and inspect audit records for jobs and applications they are otherwise authorized to view.
+- **FR-075**: Audit record authorization MUST be enforced on the server for every list, search, filter, pagination, and detail request. Non-global users MUST only receive records for jobs and applications within their authorized organization and department scope.
+- **FR-076**: A global admin with the application-wide `admin` role MUST have read access to all job and application audit records across every organization and department.
+- **FR-077**: Audit search MUST support job title, job identifier, application or candidate reference, actor, event type, and correlation identifier. Audit filters MUST support entity type, event type, actor, organization, department, job, application, and inclusive start and end dates, and MUST be combinable.
+- **FR-078**: Audit results MUST use server-side pagination with a default page size of 50 records and a maximum page size of 100 records. Results MUST use deterministic newest-first ordering so paging does not duplicate or omit records.
+- **FR-079**: Audit list entries MUST show timestamp, actor, action, entity type, job or application context, and outcome. Audit details MUST additionally show the correlation identifier, event payload, and previous and new values when those values were recorded.
+- **FR-080**: Requests for audit records outside the authenticated user's scope MUST be denied with an authorization response that does not reveal whether a requested record exists.
+- **FR-081**: The audit information view MUST provide explicit loading, empty, no-results, unauthorized, and retrieval-failure states. A failed refresh MUST NOT present stale records as current results.
+- **FR-082**: Audit viewing, searching, filtering, pagination, and detail inspection MUST be read-only and MUST NOT modify or delete immutable audit records.
 
 ### Key Entities
 
@@ -588,6 +647,10 @@ If one or more test runs result in rejected status, the user must be returned to
 - **SC-008**: Manual review scores persist across page reloads, and every point allocation change is recorded in an immutable per-application audit trail.
 - **SC-009**: Switching `CLIENT_AUTH_MODE` between `simple` and `entra` changes the authentication entry flow without changing role-based authorization outcomes for equivalent admin/recruiter/analytics_viewer personas.
 - **SC-010**: In `entra` mode, 100% of users without mapped application role groups are denied access with an explicit authorization error, and 0 unauthorized mutating actions are permitted for analytics_viewer.
+- **SC-011**: In authorization testing, 100% of scoped users receive only job and application audit records within their current organization and department scope, and 100% of out-of-scope list and detail requests are denied without record-existence disclosure.
+- **SC-012**: A global admin can locate any retained job or application audit record using search or filters and open its details within two minutes.
+- **SC-013**: For result sets of at least 1,000 audit records, users can traverse every page in deterministic newest-first order with zero duplicated or omitted records.
+- **SC-014**: At least 95% of audit searches and filter changes display the first page of authorized results or a clear no-results state within two seconds under normal operating conditions.
 
 ---
 
@@ -602,6 +665,7 @@ If one or more test runs result in rejected status, the user must be returned to
 - AI model availability and rate limits are managed externally; the platform handles transient failures through retry mechanisms.
 - The AWReason engine API (`AWR_SEQ_API_ENDPOINT`) requires authentication configured via `AWR_AUTH_MODE`. Local development uses `none`; staging uses `apikey` with a shared secret; production uses `entra` (Entra ID JWT). See FR-049–FR-051.
 - The system supports two scoring modes: sequential (using `AWR_SEQ_API_ENDPOINT`) and platform (using `AWR_PLATFORM_API_ENDPOINT`). The mode is determined by comparing the two endpoint values at startup. When both point to the same URL (or `AWR_PLATFORM_API_ENDPOINT` is unset), sequential mode is used. See FR-061–FR-067.
+- A user's existing authorization to view a job or application defines that user's audit-record scope; audit access does not grant access to an otherwise unauthorized job or application.
 - Scoring rubrics are defined per job; there is no global rubric library in the initial release.
 - The platform handles English-language documents and job specifications; multi-language support is a future consideration.
 
@@ -619,6 +683,7 @@ If one or more test runs result in rejected status, the user must be returned to
 - Three-pane manual review interface with audit trail
 - Operational dashboard with pipeline monitoring and failure retry
 - Immutable audit ledger for all decisions and actions
+- Read-only, scope-authorized audit information viewing, searching, filtering, pagination, and detail inspection
 
 ### Out of Scope
 

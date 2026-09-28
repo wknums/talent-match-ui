@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Text;
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Common.Services;
+using TalentMatch.Application.Rubrics.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -13,12 +15,14 @@ public record ScoreApplicationCommand(
     int RunCount,
     string PromptVersionId,
     string JobDescriptionText,
-    string? RubricJson = null
+    string? RubricJson = null,
+    bool PersistResults = true
 ) : IRequest<ScoreApplicationResult>;
 
 public record ScoreApplicationResult(
     IReadOnlyList<ScoringRun> Runs,
-    EngineAggregatedResult? Aggregated
+    EngineAggregatedResult? Aggregated,
+    string? CandidateName = null
 );
 
 public record EngineAggregatedResult(
@@ -49,17 +53,27 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     private readonly IApplicationRepository _applicationRepo;
     private readonly IScoringPromptRepository _promptRepo;
     private readonly IBlobStore _blobStore;
+    private readonly Func<int, CancellationToken, Task> _retryDelay;
+    private readonly IScoringProfileProvider? _profileProvider;
+    private readonly IReasoningModelCatalog? _reasoningModels;
 
     public ScoreApplicationCommandHandler(
         ILlmProxyService llmService,
         IApplicationRepository applicationRepo,
         IScoringPromptRepository promptRepo,
-        IBlobStore blobStore)
+        IBlobStore blobStore,
+        Func<int, CancellationToken, Task>? retryDelay = null,
+        IScoringProfileProvider? profileProvider = null,
+        IReasoningModelCatalog? reasoningModels = null)
     {
         _llmService = llmService;
         _applicationRepo = applicationRepo;
         _promptRepo = promptRepo;
         _blobStore = blobStore;
+        _retryDelay = retryDelay
+            ?? ((failureCount, token) => Task.Delay(ScoringRetryPolicy.GetBackoff(failureCount), token));
+        _profileProvider = profileProvider;
+        _reasoningModels = reasoningModels;
     }
 
     private async Task<byte[]?> ResolveDocumentBytesAsync(ApplicationDocument doc, CancellationToken ct)
@@ -92,62 +106,18 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         // Resolve placeholders — job description passed in to avoid loading Job with tracked Applications
         var resolvedPrompt = prompt.PromptText
             .Replace("{{JOB_SPEC_TEXT}}", request.JobDescriptionText);
+        var executionProfile = await ResolveExecutionProfileAsync(prompt, ct);
 
-        // Passthrough returns one response per run — loop over all responses
-        var responses = await _llmService.ScoreWithDocumentAsync(
-            resolvedPrompt, docBytes, primaryDoc.FileName, primaryDoc.FileType, request.RunCount, ct);
-
-        var runs = new List<ScoringRun>();
-        string? extractedCandidateName = null;
+        var (runs, extractedCandidateName) = await ScoreAndParseWithRetryAsync(
+            request, prompt, primaryDoc, docBytes, resolvedPrompt, executionProfile, ct);
         EngineAggregatedResult? aggregated = null;
 
-        int runIndex = 0;
-        foreach (var responseText in responses)
-        {
-            runIndex++;
-            try
-            {
-                var jsonText = ExtractJson(responseText);
-                using var doc = JsonDocument.Parse(jsonText);
-                var root = doc.RootElement;
+        if (!request.PersistResults)
+            return new ScoreApplicationResult(runs, aggregated, extractedCandidateName);
 
-                extractedCandidateName ??= ExtractCandidateName(root);
-                var parsed = ParseSingleRunWithDiagnostics(root, request.ApplicationId, prompt.Id, runIndex);
-                var run = parsed.Run;
-                run.RawResponseText = responseText;
-                run.RawParsedResponseJson = jsonText;
-                run.ParserWarningsJson = BuildParserWarningsJson(parsed.Diagnostics);
-                run.ParserConfidence = parsed.Diagnostics.FallbackParsingActivated ? 0.7 : 1.0;
-                RemapToRubric(run, request.RubricJson);
-                await _applicationRepo.AddScoringRunAsync(run, ct);
-                runs.Add(run);
-            }
-            catch (JsonException)
-            {
-                // Non-JSON response: store raw output and flag as error so user can fix the prompt
-                var run = new ScoringRun
-                {
-                    ApplicationId = request.ApplicationId,
-                    RunIndex = runIndex,
-                    TotalScore = 0,
-                    CategoryScoresJson = "{}",
-                    MustHaveEvaluationJson = JsonSerializer.Serialize(new
-                    {
-                        error = "LLM response is not valid JSON. Edit the scoring prompt to ensure JSON output.",
-                        rawResponse = responseText
-                    }),
-                    EvidenceCitationsJson = "[]",
-                    ImprovementTipsJson = "[]",
-                    AiModelId = "passthrough-llm",
-                    PromptVersion = prompt.Id,
-                    RawResponseText = responseText,
-                    RawParsedResponseJson = null,
-                    ParserWarningsJson = JsonSerializer.Serialize(new[] { "invalid_json_response" }),
-                    ParserConfidence = 0,
-                };
-                await _applicationRepo.AddScoringRunAsync(run, ct);
-                runs.Add(run);
-            }
+        foreach (var run in runs)
+        {
+            await _applicationRepo.AddScoringRunAsync(run, ct);
         }
 
         if (!string.IsNullOrWhiteSpace(extractedCandidateName))
@@ -163,6 +133,105 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
 
         return new ScoreApplicationResult(runs, aggregated);
     }
+
+    private async Task<(List<ScoringRun> Runs, string? CandidateName)> ScoreAndParseWithRetryAsync(
+        ScoreApplicationCommand request,
+        ScoringPrompt prompt,
+        ApplicationDocument primaryDoc,
+        byte[] docBytes,
+        string resolvedPrompt,
+        ScoringProfile executionProfile,
+        CancellationToken ct)
+    {
+        var failureCount = 0;
+
+        while (true)
+        {
+            try
+            {
+                var responses = await _llmService.ScoreWithDocumentAsync(
+                    resolvedPrompt,
+                    docBytes,
+                    primaryDoc.FileName,
+                    primaryDoc.FileType,
+                    executionProfile,
+                    request.RunCount,
+                    ct);
+                responses ??= await _llmService.ScoreWithDocumentAsync(
+                    resolvedPrompt,
+                    docBytes,
+                    primaryDoc.FileName,
+                    primaryDoc.FileType,
+                    request.RunCount,
+                    ct);
+
+                if (responses.Count < request.RunCount)
+                {
+                    throw new InvalidDataException(
+                        $"Scoring returned {responses.Count} response(s); expected {request.RunCount}.");
+                }
+
+                var runs = new List<ScoringRun>(responses.Count);
+                string? extractedCandidateName = null;
+                var runIndex = 0;
+
+                foreach (var responseText in responses)
+                {
+                    runIndex++;
+                    var jsonText = ExtractJson(responseText);
+                    using var doc = JsonDocument.Parse(jsonText);
+                    var root = doc.RootElement;
+
+                    extractedCandidateName ??= ExtractCandidateName(root);
+                    var parsed = ParseSingleRunWithDiagnostics(
+                        root, request.ApplicationId, prompt.Id, runIndex,
+                        executionProfile.ModelId, executionProfile.ReasoningLevel);
+                    var run = parsed.Run;
+                    run.RawResponseText = responseText;
+                    run.RawParsedResponseJson = jsonText;
+                    run.ParserWarningsJson = BuildParserWarningsJson(parsed.Diagnostics);
+                    run.ParserConfidence = parsed.Diagnostics.FallbackParsingActivated ? 0.7 : 1.0;
+                    RemapToRubric(run, request.RubricJson);
+                    runs.Add(run);
+                }
+
+                return (runs, extractedCandidateName);
+            }
+            catch (Exception ex) when (IsRetryableScoringFailure(ex, ct))
+            {
+                failureCount++;
+                if (!ScoringRetryPolicy.CanRetry(failureCount))
+                {
+                    throw new ScoringRetriesExhaustedException(failureCount, ex);
+                }
+
+                await _retryDelay(failureCount, ct);
+            }
+        }
+    }
+
+    private async Task<ScoringProfile> ResolveExecutionProfileAsync(
+        ScoringPrompt prompt,
+        CancellationToken cancellationToken)
+    {
+        var storedModel = prompt.ModelId?.Trim() ?? string.Empty;
+        var storedEffort = prompt.ReasoningLevel?.Trim() ?? string.Empty;
+        if (_reasoningModels is null)
+            return new ScoringProfile(storedModel, storedEffort);
+
+        return await _reasoningModels.ResolveForExecutionAsync(
+            storedModel,
+            storedEffort,
+            cancellationToken);
+    }
+
+    private static bool IsRetryableScoringFailure(Exception ex, CancellationToken ct)
+        => !ct.IsCancellationRequested
+           && ex is JsonException
+               or InvalidDataException
+               or HttpRequestException
+               or TimeoutException
+               or TaskCanceledException;
 
     /// <summary>
     /// Schema-agnostic parser: walks the JSON structure and extracts scores, evidence,
@@ -183,10 +252,23 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
     /// Platform-mode reuses the same parsing logic without instantiating the handler.
     /// Kept logically identical to the instance method body.
     /// </summary>
-    public static ScoringRun ParseSingleRunStatic(JsonElement root, string applicationId, string promptId, int runIndex)
-        => ParseSingleRunWithDiagnostics(root, applicationId, promptId, runIndex).Run;
+    public static ScoringRun ParseSingleRunStatic(
+        JsonElement root,
+        string applicationId,
+        string promptId,
+        int runIndex,
+        string modelId = "passthrough-llm",
+        string reasoningLevel = "medium")
+        => ParseSingleRunWithDiagnostics(
+            root, applicationId, promptId, runIndex, modelId, reasoningLevel).Run;
 
-    public static ScoreRunParseResult ParseSingleRunWithDiagnostics(JsonElement root, string applicationId, string promptId, int runIndex)
+    public static ScoreRunParseResult ParseSingleRunWithDiagnostics(
+        JsonElement root,
+        string applicationId,
+        string promptId,
+        int runIndex,
+        string modelId = "passthrough-llm",
+        string reasoningLevel = "medium")
     {
         var categoryScores = new Dictionary<string, double>();
         var evidenceCitations = new List<object>();
@@ -211,7 +293,6 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             {
                 gateElement = val;
                 gateDetected = true;
-                Console.WriteLine($"[GATE DEBUG] Key='{name}' Kind={val.ValueKind} Raw={val.GetRawText()[..Math.Min(500, val.GetRawText().Length)]}");
                 continue;
             }
 
@@ -360,7 +441,6 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
                     var met = TryExtractGateEntryStatus(item, out var explicitStatus)
                         ? explicitStatus
                         : InferGateEntryStatus(criterion, ev, gateMissingCriteria, gatePassedHint);
-                    Console.WriteLine($"[GATE ENTRY] criterion='{criterion}' met={met} raw_keys=[{string.Join(",", item.EnumerateObject().Select(p => $"{p.Name}:{p.Value.ValueKind}"))}]");
                     entries.Add(new { criterion, passed = met, evidence = ev });
                     if (!met)
                     {
@@ -454,12 +534,14 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         {
             ApplicationId = applicationId,
             RunIndex = runIndex,
-            TotalScore = totalScore,
-            CategoryScoresJson = JsonSerializer.Serialize(categoryScores),
+            TotalScore = ScorePrecision.Round(totalScore),
+            CategoryScoresJson = JsonSerializer.Serialize(
+                categoryScores.ToDictionary(item => item.Key, item => ScorePrecision.Round(item.Value))),
             MustHaveEvaluationJson = mustHaveJson,
             EvidenceCitationsJson = JsonSerializer.Serialize(evidenceCitations),
             ImprovementTipsJson = JsonSerializer.Serialize(tips),
-            AiModelId = "passthrough-llm",
+            AiModelId = modelId,
+            ReasoningLevel = reasoningLevel,
             PromptVersion = promptId,
             InputTokens = 0,
             OutputTokens = 0,
@@ -506,13 +588,7 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         if (string.IsNullOrEmpty(rubricJson) || rubricJson == "[]")
             return;
 
-        List<RubricCategoryInfo>? rubric;
-        try
-        {
-            rubric = JsonSerializer.Deserialize<List<RubricCategoryInfo>>(rubricJson,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        }
-        catch { return; }
+        var rubric = ReadRubricCategories(rubricJson);
 
         if (rubric == null || rubric.Count == 0)
             return;
@@ -544,6 +620,32 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
 
         if (remapped.Count > 0)
             run.CategoryScoresJson = JsonSerializer.Serialize(remapped);
+    }
+
+    private static List<RubricCategoryInfo> ReadRubricCategories(string rubricJson)
+    {
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rubricJson);
+            if (RubricJsonReader.TryGetCategories(doc.RootElement, out var categoriesElement))
+            {
+                return JsonSerializer.Deserialize<List<RubricCategoryInfo>>(categoriesElement.GetRawText(), options) ?? [];
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<RubricCategoryInfo>>(rubricJson, options) ?? [];
+        }
+        catch
+        {
+            return [];
+        }
     }
 
     private static string? FindBestRubricMatch(string rubricName, List<string> llmKeys)

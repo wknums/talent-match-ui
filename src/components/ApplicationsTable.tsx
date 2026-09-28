@@ -10,20 +10,46 @@ import {
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
-import { ArrowRight, Warning, Pencil } from '@phosphor-icons/react'
+import { ArrowRight, DotsThree, Warning, Pencil } from '@phosphor-icons/react'
 import type { Application } from '@/types'
 import { cn } from '@/lib/utils'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  downloadApplicationExport,
+  type ApplicationExportFormat,
+} from '@/lib/application-export'
+import { toast } from 'sonner'
+
+interface ApplicationExportContext {
+  jobTitle: string
+  viewName: 'Longlist' | 'Shortlist' | 'Excluded'
+}
 
 interface ApplicationsTableProps {
   applications: Application[]
   onApplicationClick: (applicationId: string) => void
   onStartManualReview?: (applicationId: string, jobId: string) => void
+  exportContext?: ApplicationExportContext
   className?: string
 }
 
-export function ApplicationsTable({ applications, onApplicationClick, onStartManualReview, className }: ApplicationsTableProps) {
+export function ApplicationsTable({
+  applications,
+  onApplicationClick,
+  onStartManualReview,
+  exportContext,
+  className,
+}: ApplicationsTableProps) {
   const [sortField, setSortField] = useState<'finalScore' | 'createdAt'>('createdAt')
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+  const [exporting, setExporting] = useState<ApplicationExportFormat | null>(null)
 
   const sortedApplications = [...applications].sort((a, b) => {
     if (sortField === 'finalScore') {
@@ -57,8 +83,54 @@ export function ApplicationsTable({ applications, onApplicationClick, onStartMan
     return 'text-muted-foreground'
   }
 
+  const exportApplications = async (format: ApplicationExportFormat) => {
+    if (!exportContext) return
+
+    setExporting(format)
+    try {
+      await downloadApplicationExport(
+        sortedApplications,
+        exportContext.jobTitle,
+        exportContext.viewName,
+        format,
+      )
+      toast.success(`${exportContext.viewName} exported as ${format.toUpperCase()}`)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown export error'
+      toast.error(`Unable to export ${exportContext.viewName.toLowerCase()}: ${message}`)
+    } finally {
+      setExporting(null)
+    }
+  }
+
   return (
     <div className={cn('border rounded-lg', className)}>
+      {exportContext && (
+        <div className="flex justify-end border-b px-2 py-1">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Export ${exportContext.viewName.toLowerCase()} applications`}
+                disabled={applications.length === 0 || exporting !== null}
+              >
+                <DotsThree size={20} weight="bold" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Export to Excel</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => void exportApplications('csv')}>
+                Export as CSV
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void exportApplications('xlsx')}>
+                Export as XLSX
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      )}
       <Table>
         <TableHeader>
           <TableRow>
@@ -108,7 +180,7 @@ export function ApplicationsTable({ applications, onApplicationClick, onStartMan
               <TableCell>
                 {app.finalScore !== undefined ? (
                   <span className={cn('font-mono font-semibold text-lg', getScoreColor(app.finalScore))}>
-                    {app.finalScore.toFixed(1)}
+                    {app.finalScore.toFixed(3)}
                   </span>
                 ) : (
                   <span className="text-muted-foreground">—</span>
@@ -117,7 +189,7 @@ export function ApplicationsTable({ applications, onApplicationClick, onStartMan
               <TableCell>
                 {app.variance !== undefined ? (
                   <span className={cn('font-mono text-sm', app.variance > 15 && 'text-destructive font-semibold')}>
-                    ±{app.variance.toFixed(1)}
+                    ±{app.variance.toFixed(3)}
                   </span>
                 ) : (
                   <span className="text-muted-foreground">—</span>

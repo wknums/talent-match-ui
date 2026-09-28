@@ -4,6 +4,7 @@ using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Prompts.Services;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
@@ -38,6 +39,7 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
     private readonly ILlmProxyService _llmService;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<CreatePromptTestRunCommandHandler> _logger;
+    private readonly IScoringProfileProvider? _profileProvider;
 
     public CreatePromptTestRunCommandHandler(
         IPromptTestRunRepository testRunRepo,
@@ -46,7 +48,8 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
         IJobRepository jobRepo,
         ILlmProxyService llmService,
         IServiceScopeFactory scopeFactory,
-        ILogger<CreatePromptTestRunCommandHandler> logger)
+        ILogger<CreatePromptTestRunCommandHandler> logger,
+        IScoringProfileProvider? profileProvider = null)
     {
         _testRunRepo = testRunRepo;
         _promptRepo = promptRepo;
@@ -55,6 +58,7 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
         _llmService = llmService;
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _profileProvider = profileProvider;
     }
 
     public async Task<PromptTestRun> Handle(CreatePromptTestRunCommand request, CancellationToken ct)
@@ -65,11 +69,25 @@ public class CreatePromptTestRunCommandHandler : IRequestHandler<CreatePromptTes
         if (prompt.JobId != request.JobId)
             throw new InvalidOperationException("Prompt does not belong to the specified job");
 
+        if (!string.Equals(prompt.Status, "active", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(prompt.Status, "production-approved", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                $"Prompt v{prompt.VersionNumber} is {prompt.Status}. Activate or approve it before creating a test run.");
+
+        if (string.IsNullOrWhiteSpace(prompt.ModelId)
+            || string.IsNullOrWhiteSpace(prompt.ReasoningLevel))
+            throw new ScoringProfileMismatchException(
+                $"Prompt v{prompt.VersionNumber} does not have a model and reasoning effort. "
+                + "Create a new prompt version before testing.");
+        var profile = new ScoringProfile(prompt.ModelId, prompt.ReasoningLevel);
+
         var testRun = new PromptTestRun
         {
             JobId = request.JobId,
             PromptId = request.PromptId,
-            Status = "pending_scoring"
+            Status = "pending_scoring",
+            ModelId = profile.ModelId,
+            ReasoningLevel = profile.ReasoningLevel
         };
 
         var applicationIds = new List<string>();

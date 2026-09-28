@@ -12,9 +12,55 @@
     }
     else
     {
+        <details style="margin-bottom:1rem; border:1px solid #cbd5e1; border-radius:6px; padding:0.75rem;">
+            <summary style="font-weight:600; cursor:pointer;">Prompt generation instructions</summary>
+            <p style="color:#4a5568; margin-bottom:0.5rem;">
+                An active job instruction overrides the active system default. Creating or editing always makes a new immutable version.
+            </p>
+            <textarea @bind="instructionText" rows="5" placeholder="Job-specific generation instruction" style="width:100%;"></textarea>
+            <input @bind="instructionChangeNote" placeholder="Change note (optional)" style="width:100%; margin-top:0.35rem;" />
+            <div style="margin-top:0.5rem;">
+                <ReasoningProfileFields Catalog="reasoningCatalog"
+                                        @bind-ModelId="instructionModelId"
+                                        @bind-ReasoningLevel="instructionReasoningLevel"
+                                        Disabled="isSavingInstruction" />
+            </div>
+            <button @onclick="CreateInstruction" disabled="@isSavingInstruction" style="margin-top:0.5rem;">
+                @(isSavingInstruction ? "Creating..." : "Create instruction draft")
+            </button>
+            @foreach (var instruction in instructions)
+            {
+                <div style="display:flex; justify-content:space-between; gap:0.5rem; margin-top:0.5rem; padding:0.5rem; background:#f8fafc;">
+                    <span>v@instruction.VersionNumber — @instruction.Status — @instruction.CreatedBy</span>
+                    <span style="font-size:0.8rem; color:#475569;">
+                        @instruction.ModelId / @instruction.ReasoningLevel
+                    </span>
+                    @if (instruction.Status != "active")
+                    {
+                        <button @onclick="() => ActivateInstruction(instruction.Id)">Activate</button>
+                    }
+                </div>
+            }
+        </details>
+
+        @if (productionProfileStatus is { IsMatch: false })
+        {
+            <div role="alert" style="padding:0.85rem; margin-bottom:1rem; background:#fee2e2; border:2px solid #dc2626; border-radius:6px; color:#7f1d1d;">
+                <strong>Scoring profile mismatch — production scoring is blocked.</strong>
+                <div>@productionProfileStatus.MismatchMessage</div>
+            </div>
+        }
+
         <!-- Creation controls -->
+        <div style="margin-bottom:1rem;">
+            <strong>New scoring prompt profile</strong>
+            <ReasoningProfileFields Catalog="reasoningCatalog"
+                                    @bind-ModelId="editorModelId"
+                                    @bind-ReasoningLevel="editorReasoningLevel"
+                                    Disabled="@(isSaving || isGenerating)" />
+        </div>
         <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-            <button @onclick="StartManualCreate" style="padding: 0.5rem 1rem; background: #3182ce; color: white; border: none; border-radius: 4px;">✏️ Write Manually</button>
+            <button @onclick="StartManualCreate" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">✏️ Write Manually</button>
             <button @onclick="StartFileImport" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">📄 Import File</button>
             <button @onclick="GenerateFromRubric" disabled="@isGenerating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;">
                 @(isGenerating ? "Generating..." : "⚡ Generate from Rubric")
@@ -32,9 +78,9 @@
         @if (showEditor)
         {
             <div style="margin-bottom: 1rem;">
-                <textarea @bind="editorText" rows="10" style="width: 100%; padding: 0.5rem; font-family: monospace;"></textarea>
+                <textarea @bind="editorText" rows="10" style="width: 100%; padding: 0.5rem; font-family: var(--app-font-mono);"></textarea>
                 <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
-                    <button @onclick="SavePrompt" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #38a169; color: white; border: none; border-radius: 4px;">
+                    <button @onclick="SavePrompt" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #276749; color: white; border: none; border-radius: 4px;">
                         @(isSaving ? "Saving..." : "Save Prompt")
                     </button>
                     <button @onclick="() => showEditor = false" style="padding: 0.5rem 1rem;">Cancel</button>
@@ -49,6 +95,7 @@
                     <th style="padding: 0.5rem;">Version</th>
                     <th style="padding: 0.5rem;">Status</th>
                     <th style="padding: 0.5rem;">Source</th>
+                    <th style="padding: 0.5rem;">Profile snapshot</th>
                     <th style="padding: 0.5rem;">Rating</th>
                     <th style="padding: 0.5rem;">Created</th>
                     <th style="padding: 0.5rem;">Actions</th>
@@ -61,33 +108,65 @@
                         <td style="padding: 0.5rem;">v@(prompt.VersionNumber)</td>
                         <td style="padding: 0.5rem;">
                             <span style="@StatusStyle(prompt.Status)">@prompt.Status</span>
+                            @if (IsProductionPrompt(prompt))
+                            {
+                                <span style="display: inline-block; margin-left: 0.35rem; padding: 2px 6px; font-size: 0.75rem; background: #c6f6d5; color: #22543d; border-radius: 4px; font-weight: bold;">
+                                    Current production prompt
+                                </span>
+                            }
                         </td>
                         <td style="padding: 0.5rem;">@prompt.Source</td>
-                        <td style="padding: 0.5rem;">@(prompt.Rating.HasValue ? $"⭐ {prompt.Rating}/5" : "—")</td>
+                        <td style="padding: 0.5rem; font-size:0.85rem;">@prompt.ModelId / @prompt.ReasoningLevel</td>
+                        <td style="padding: 0.5rem;">
+                            <div>@(prompt.Rating.HasValue ? $"⭐ {prompt.Rating}/5" : "—")</div>
+                            @if (!string.IsNullOrWhiteSpace(prompt.Comments))
+                            {
+                                <div title="@prompt.Comments" style="max-width:14rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#4a5568; font-size:0.75rem;">
+                                    💬 @prompt.Comments
+                                </div>
+                            }
+                        </td>
                         <td style="padding: 0.5rem;">@prompt.CreatedAt.ToString("g")</td>
                         <td style="padding: 0.5rem; display: flex; gap: 0.25rem; flex-wrap: wrap;">
                             <button @onclick="() => EditPrompt(prompt)" title="Edit">✏️</button>
+                            <button @onclick="() => ShowComment(prompt)" title="Add or edit comment">💬</button>
+                            <button @onclick="() => ViewPrompt(prompt)"
+                                    title="View prompt test details and history"
+                                    aria-label="@($"View prompt v{prompt.VersionNumber} test details and history")">🔍</button>
                             @if (prompt.Status != "active" && prompt.Status != "production-approved")
                             {
-                                <button @onclick="() => ActivatePrompt(prompt)" title="Activate">▶️</button>
+                                <button @onclick="() => ActivatePrompt(prompt)"
+                                        disabled="@(activatingPromptId is not null)"
+                                        title="Activate">
+                                    @(activatingPromptId == prompt.Id ? "⏳" : "▶️")
+                                </button>
                             }
                             @if (prompt.Status == "active")
                             {
                                 <button @onclick="() => ShowRating(prompt)" title="Rate">⭐</button>
                             }
-                            @if (prompt.Status == "inactive")
+                            @if (prompt.Status == "inactive" && !IsProductionPrompt(prompt))
                             {
-                                <button @onclick="() => SetAsProduction(prompt)" style="padding: 2px 6px; font-size: 0.8rem; background: #38a169; color: white; border: none; border-radius: 4px;" title="Set as the active production prompt">🚀 Use for Production</button>
-                            }
-                            @if (prompt.Status == "production-approved")
-                            {
-                                <span style="padding: 2px 6px; font-size: 0.75rem; background: #c6f6d5; color: #22543d; border-radius: 4px; font-weight: bold;">✅ Active</span>
+                                <button @onclick="() => SetAsProduction(prompt)" style="padding: 2px 6px; font-size: 0.8rem; background: #276749; color: white; border: none; border-radius: 4px;" title="Set as the active production prompt">🚀 Use for Production</button>
                             }
                         </td>
                     </tr>
                 }
             </tbody>
         </table>
+
+        @if (ViewedPrompt is not null)
+        {
+            <section class="prompt-test-on-demand" style="margin-top:1rem; padding-top:1rem; border-top:1px solid #cbd5e1;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+                    <h5 style="margin:0;">Prompt v@(ViewedPrompt.VersionNumber) test details and history</h5>
+                    <button @onclick="ClosePromptView" title="Close prompt test details">✕ Close</button>
+                </div>
+                <PromptTestRunner JobId="@JobId"
+                                  ActivePrompt="ViewedPrompt"
+                                  OnPromptStatusChange="HandlePromptTestStatusChange" />
+            </section>
+        }
 
         <!-- Rating dialog -->
         @if (ratingPrompt != null)
@@ -104,12 +183,30 @@
                 <button @onclick="() => ratingPrompt = null" style="padding: 0.5rem 1rem;">Cancel</button>
             </div>
         }
+
+        @if (commentPrompt != null)
+        {
+            <div style="margin-top: 1rem; padding: 1rem; border: 1px solid #ccc; border-radius: 4px;">
+                <h5>Comment on Prompt v@(commentPrompt.VersionNumber)</h5>
+                <textarea @bind="promptComment"
+                          rows="3"
+                          aria-label="@($"Comment for prompt v{commentPrompt.VersionNumber}")"
+                          style="width: 100%;"></textarea>
+                <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+                    <button @onclick="SaveComment" disabled="@isSavingComment" style="padding: 0.5rem 1rem;">
+                        @(isSavingComment ? "Saving..." : "Save Comment")
+                    </button>
+                    <button @onclick="() => commentPrompt = null" disabled="@isSavingComment" style="padding: 0.5rem 1rem;">Cancel</button>
+                </div>
+            </div>
+        }
     }
 </div>
 
 @code {
     [Parameter] public string JobId { get; set; } = "";
     [Parameter] public bool HasApprovedRubric { get; set; }
+    [Parameter] public string? ProductionPromptId { get; set; }
     [Parameter] public EventCallback OnPromptStatusChange { get; set; }
 
     private List<ScoringPromptDto> prompts = new();
@@ -123,6 +220,23 @@
     private ScoringPromptDto? ratingPrompt;
     private int ratingValue;
     private string ratingComments = "";
+    private ScoringPromptDto? commentPrompt;
+    private string promptComment = "";
+    private bool isSavingComment;
+    private List<PromptGenerationInstructionDto> instructions = new();
+    private PromptProfileStatusDto? productionProfileStatus;
+    private string instructionText = "";
+    private string? instructionChangeNote;
+    private bool isSavingInstruction;
+    private ReasoningModelsResponseDto? reasoningCatalog;
+    private string instructionModelId = "";
+    private string instructionReasoningLevel = "high";
+    private string editorModelId = "";
+    private string editorReasoningLevel = "high";
+    private string? activatingPromptId;
+    private string? viewedPromptId;
+    private ScoringPromptDto? ViewedPrompt
+        => prompts.FirstOrDefault(prompt => prompt.Id == viewedPromptId);
 
     protected override async Task OnInitializedAsync()
     {
@@ -131,7 +245,103 @@
 
     private async Task LoadPrompts()
     {
-        prompts = await Api.GetPromptsAsync(JobId);
+        try
+        {
+            var promptsTask = Api.GetPromptsAsync(JobId);
+            prompts = await promptsTask;
+            if (viewedPromptId is not null && ViewedPrompt is null)
+                viewedPromptId = null;
+            try
+            {
+                reasoningCatalog = await Api.GetReasoningModelsAsync();
+            }
+            catch (Exception ex)
+            {
+                reasoningCatalog = null;
+                generationError = $"Supported models could not be loaded: {ex.Message}";
+            }
+            if (reasoningCatalog is null)
+                return;
+            if (string.IsNullOrWhiteSpace(instructionModelId))
+                instructionModelId = reasoningCatalog.DefaultModel;
+            if (!reasoningCatalog.SupportedReasoningEfforts.Contains(instructionReasoningLevel))
+                instructionReasoningLevel = reasoningCatalog.DefaultReasoningEffort;
+            if (string.IsNullOrWhiteSpace(editorModelId))
+                editorModelId = reasoningCatalog.DefaultModel;
+            if (!reasoningCatalog.SupportedReasoningEfforts.Contains(editorReasoningLevel))
+                editorReasoningLevel = reasoningCatalog.DefaultReasoningEffort;
+            try
+            {
+                instructions = await Api.GetPromptGenerationInstructionsAsync(JobId);
+            }
+            catch
+            {
+                instructions = new();
+            }
+            var production = prompts.FirstOrDefault(IsProductionPrompt);
+            if (production is null)
+            {
+                productionProfileStatus = null;
+            }
+            else
+            {
+                try
+                {
+                    productionProfileStatus = await Api.GetPromptProfileStatusAsync(
+                        JobId, production.Id);
+                }
+                catch
+                {
+                    productionProfileStatus = null;
+                }
+            }
+        }
+
+        catch (Exception ex)
+        {
+            // A failed refresh must not tear the component down: keep the list that is already on
+            // screen and explain why it is not current.
+            generationError = $"The prompt list could not be refreshed: {ex.Message}";
+        }
+    }
+
+    private async Task CreateInstruction()
+    {
+        if (string.IsNullOrWhiteSpace(instructionText)) return;
+        isSavingInstruction = true;
+        try
+        {
+            await Api.CreatePromptGenerationInstructionAsync(
+                JobId,
+                instructionText,
+                instructionChangeNote,
+                instructionModelId,
+                instructionReasoningLevel);
+            instructionText = "";
+            instructionChangeNote = null;
+            await LoadPrompts();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
+        finally
+        {
+            isSavingInstruction = false;
+        }
+    }
+
+    private async Task ActivateInstruction(string instructionId)
+    {
+        try
+        {
+            await Api.ActivatePromptGenerationInstructionAsync(JobId, instructionId);
+            await LoadPrompts();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
     }
 
     private void StartManualCreate()
@@ -159,7 +369,10 @@
         StateHasChanged();
         try
         {
-            var result = await Api.GeneratePromptAsync(JobId);
+            var result = await Api.GeneratePromptAsync(
+                JobId,
+                editorModelId,
+                editorReasoningLevel);
             if (result != null)
             {
                 editorText = result.PromptText;
@@ -191,20 +404,38 @@
     private async Task SavePrompt()
     {
         isSaving = true;
+        generationError = null;
         StateHasChanged();
         try
         {
-            if (editingPromptId != null)
+            var saved = editingPromptId != null
+                ? await Api.EditPromptAsync(
+                    JobId,
+                    editingPromptId,
+                    editorText,
+                    editorModelId,
+                    editorReasoningLevel)
+                : await Api.CreatePromptAsync(
+                    JobId,
+                    editorText,
+                    editorSource,
+                    editorModelId,
+                    editorReasoningLevel);
+
+            if (saved is null)
             {
-                await Api.EditPromptAsync(JobId, editingPromptId, editorText);
+                // Leave the editor open so a rejected save does not discard what the user wrote.
+                generationError = "The prompt could not be saved. Your text has been kept - please try again.";
+                return;
             }
-            else
-            {
-                await Api.CreatePromptAsync(JobId, editorText, editorSource);
-            }
+
             showEditor = false;
             await LoadPrompts();
             await OnPromptStatusChange.InvokeAsync();
+        }
+        catch (HttpRequestException ex)
+        {
+            generationError = $"The prompt could not be saved: {ex.Message}";
         }
         finally
         {
@@ -218,21 +449,67 @@
         editorText = prompt.PromptText;
         editorSource = prompt.Source;
         editingPromptId = prompt.Id;
+        editorModelId = prompt.ModelId;
+        editorReasoningLevel = prompt.ReasoningLevel;
         showEditor = true;
     }
 
+    private void ViewPrompt(ScoringPromptDto prompt)
+    {
+        viewedPromptId = prompt.Id;
+        generationError = null;
+    }
+
+    private void ClosePromptView()
+        => viewedPromptId = null;
+
     private async Task ActivatePrompt(ScoringPromptDto prompt)
     {
-        await Api.ActivatePromptAsync(JobId, prompt.Id);
+        if (activatingPromptId is not null)
+            return;
+
+        activatingPromptId = prompt.Id;
+        generationError = null;
+        try
+        {
+            var activated = await Api.ActivatePromptAsync(JobId, prompt.Id);
+            prompts = prompts
+                .Select(existing => existing.Id == activated.Id
+                    ? activated
+                    : string.Equals(existing.Status, "active", StringComparison.OrdinalIgnoreCase)
+                        ? existing with { Status = "inactive" }
+                        : existing)
+                .ToList();
+            await OnPromptStatusChange.InvokeAsync();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
+        finally
+        {
+            activatingPromptId = null;
+        }
+    }
+
+    private async Task HandlePromptTestStatusChange()
+    {
         await LoadPrompts();
         await OnPromptStatusChange.InvokeAsync();
     }
 
     private async Task SetAsProduction(ScoringPromptDto prompt)
     {
-        await Api.SetProductionPromptAsync(JobId, prompt.Id);
-        await LoadPrompts();
-        await OnPromptStatusChange.InvokeAsync();
+        try
+        {
+            await Api.SetProductionPromptAsync(JobId, prompt.Id);
+            await LoadPrompts();
+            await OnPromptStatusChange.InvokeAsync();
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
     }
 
     private void ShowRating(ScoringPromptDto prompt)
@@ -252,6 +529,41 @@
         }
     }
 
+    private void ShowComment(ScoringPromptDto prompt)
+    {
+        commentPrompt = prompt;
+        promptComment = prompt.Comments ?? "";
+        generationError = null;
+    }
+
+    private async Task SaveComment()
+    {
+        if (commentPrompt is null)
+            return;
+
+        isSavingComment = true;
+        generationError = null;
+        try
+        {
+            var updated = await Api.UpdatePromptCommentAsync(
+                JobId,
+                commentPrompt.Id,
+                string.IsNullOrWhiteSpace(promptComment) ? null : promptComment.Trim());
+            prompts = prompts
+                .Select(prompt => prompt.Id == updated.Id ? updated : prompt)
+                .ToList();
+            commentPrompt = null;
+        }
+        catch (ApiException ex)
+        {
+            generationError = ex.Message;
+        }
+        finally
+        {
+            isSavingComment = false;
+        }
+    }
+
     private string StatusStyle(string status) => status switch
     {
         "draft" => "padding: 2px 8px; background: #e2e8f0; border-radius: 4px;",
@@ -260,4 +572,8 @@
         "production-approved" => "padding: 2px 8px; background: #c6f6d5; color: #22543d; border-radius: 4px;",
         _ => "padding: 2px 8px; background: #eee; border-radius: 4px;"
     };
+
+    private bool IsProductionPrompt(ScoringPromptDto prompt)
+        => prompt.Status == "production-approved"
+           || (!string.IsNullOrWhiteSpace(ProductionPromptId) && prompt.Id == ProductionPromptId);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, ReactNode, createContext, useContext } from 'react'
-import { Dialog, DialogContent, DialogPortal } from '@/components/ui/dialog'
+import { Dialog, DialogPortal } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { ArrowsOutCardinal, X } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -46,10 +46,15 @@ export function DraggableResizableDialog({
 
   useEffect(() => {
     if (open && !isInitialized) {
-      const centerX = (window.innerWidth - defaultWidth) / 2
-      const centerY = (window.innerHeight - defaultHeight) / 2
+      const viewportPadding = 16
+      const availableWidth = Math.max(1, window.innerWidth - viewportPadding)
+      const availableHeight = Math.max(1, window.innerHeight - viewportPadding)
+      const initialWidth = Math.min(defaultWidth, availableWidth)
+      const initialHeight = Math.min(defaultHeight, availableHeight)
+      const centerX = Math.max(viewportPadding / 2, (window.innerWidth - initialWidth) / 2)
+      const centerY = Math.max(viewportPadding / 2, (window.innerHeight - initialHeight) / 2)
       setPosition({ x: centerX, y: centerY })
-      setSize({ width: defaultWidth, height: defaultHeight })
+      setSize({ width: initialWidth, height: initialHeight })
       setIsInitialized(true)
     }
   }, [open, isInitialized, defaultWidth, defaultHeight])
@@ -89,12 +94,16 @@ export function DraggableResizableDialog({
       const deltaX = e.clientX - resizeStart.x
       const deltaY = e.clientY - resizeStart.y
       
-      const newWidth = Math.max(minWidth, resizeStart.width + deltaX)
-      const newHeight = Math.max(minHeight, resizeStart.height + deltaY)
+      const availableWidth = Math.max(1, window.innerWidth - position.x)
+      const availableHeight = Math.max(1, window.innerHeight - position.y)
+      const effectiveMinWidth = Math.min(minWidth, availableWidth)
+      const effectiveMinHeight = Math.min(minHeight, availableHeight)
+      const newWidth = Math.max(effectiveMinWidth, resizeStart.width + deltaX)
+      const newHeight = Math.max(effectiveMinHeight, resizeStart.height + deltaY)
       
       setSize({
-        width: Math.min(newWidth, window.innerWidth - position.x),
-        height: Math.min(newHeight, window.innerHeight - position.y),
+        width: Math.min(newWidth, availableWidth),
+        height: Math.min(newHeight, availableHeight),
       })
     }
 

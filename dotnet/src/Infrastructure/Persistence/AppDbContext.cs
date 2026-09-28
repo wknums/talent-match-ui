@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TalentMatch.Domain.Entities;
 
@@ -11,6 +12,8 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<Job> Jobs => Set<Job>();
     public DbSet<JobConfigVersion> JobConfigVersions => Set<JobConfigVersion>();
+    public DbSet<ExtractionInstructionVersion> ExtractionInstructionVersions => Set<ExtractionInstructionVersion>();
+    public DbSet<JobSpecExtraction> JobSpecExtractions => Set<JobSpecExtraction>();
     public DbSet<TalentMatch.Domain.Entities.Application> Applications => Set<TalentMatch.Domain.Entities.Application>();
     public DbSet<ApplicationDocument> ApplicationDocuments => Set<ApplicationDocument>();
     public DbSet<DocumentBlob> DocumentBlobs => Set<DocumentBlob>();
@@ -23,8 +26,18 @@ public class AppDbContext : DbContext
     public DbSet<PasswordResetRequest> PasswordResetRequests => Set<PasswordResetRequest>();
     public DbSet<ScoringPrompt> ScoringPrompts => Set<ScoringPrompt>();
     public DbSet<PromptTestRun> PromptTestRuns => Set<PromptTestRun>();
+    public DbSet<PromptGenerationInstruction> PromptGenerationInstructions => Set<PromptGenerationInstruction>();
     public DbSet<ScoringBatch> ScoringBatches => Set<ScoringBatch>();
     public DbSet<ScoringJobProgress> ScoringJobProgress => Set<ScoringJobProgress>();
+    public DbSet<Organization> Organizations => Set<Organization>();
+    public DbSet<Department> Departments => Set<Department>();
+    public DbSet<OrganizationMembership> OrganizationMemberships => Set<OrganizationMembership>();
+    public DbSet<DepartmentMembership> DepartmentMemberships => Set<DepartmentMembership>();
+    public DbSet<RoleGroupMapping> RoleGroupMappings => Set<RoleGroupMapping>();
+    public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
+    public DbSet<UploadSettings> UploadSettings => Set<UploadSettings>();
+    public DbSet<UploadSession> UploadSessions => Set<UploadSession>();
+    public DbSet<UploadItem> UploadItems => Set<UploadItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -39,10 +52,100 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<User>(e =>
         {
             e.HasKey(x => x.Id);
-            e.HasIndex(x => x.Username).IsUnique();
+            e.HasIndex(x => x.Username).IsUnique()
+                .HasFilter("[AuthenticationProvider] = 'simple'");
             e.Property(x => x.Username).HasMaxLength(100).IsRequired();
             e.Property(x => x.Role).HasMaxLength(20).IsRequired();
-            e.Property(x => x.PasswordHash).IsRequired();
+            e.Property(x => x.AuthenticationProvider).HasMaxLength(20).HasDefaultValue("simple").IsRequired();
+            e.Property(x => x.EntraTenantId).HasMaxLength(36);
+            e.Property(x => x.EntraObjectId).HasMaxLength(36);
+            e.Property(x => x.PasswordHash).HasMaxLength(128);
+            e.Property(x => x.IsActive).HasDefaultValue(true);
+            e.Property(x => x.AuthorizationVersion).HasDefaultValue(0).IsConcurrencyToken();
+            e.HasIndex(x => new { x.EntraTenantId, x.EntraObjectId }).IsUnique()
+                .HasFilter("[AuthenticationProvider] = 'entra'");
+            e.ToTable(t => t.HasCheckConstraint("CK_Users_IdentityProvider", "(AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0)"));
+        });
+
+        modelBuilder.Entity<Organization>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => x.Name).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_Organizations_Status", "Status IN ('active', 'retired')"));
+        });
+
+        modelBuilder.Entity<Department>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasAlternateKey(x => new { x.Id, x.OrganizationId });
+            e.Property(x => x.OrganizationId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.Name).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.Organization).WithMany(x => x.Departments).HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.OrganizationId, x.Name }).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_Departments_Status", "Status IN ('active', 'retired')"));
+        });
+
+        modelBuilder.Entity<OrganizationMembership>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.User).WithMany(x => x.OrganizationMemberships).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Organization).WithMany(x => x.Memberships).HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.DefaultDepartmentMembership).WithMany(x => x.DefaultForOrganizationMemberships)
+                .HasForeignKey(x => new { x.DefaultDepartmentMembershipId, x.UserId, x.OrganizationId })
+                .HasPrincipalKey(x => new { x.Id, x.UserId, x.OrganizationId })
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.UserId, x.OrganizationId }).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_OrganizationMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
+        });
+
+        modelBuilder.Entity<DepartmentMembership>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.HasAlternateKey(x => new { x.Id, x.UserId, x.OrganizationId });
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.User).WithMany(x => x.DepartmentMemberships).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Organization).WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Department).WithMany(x => x.Memberships)
+                .HasForeignKey(x => new { x.DepartmentId, x.OrganizationId })
+                .HasPrincipalKey(x => new { x.Id, x.OrganizationId }).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.UserId, x.DepartmentId }).IsUnique().HasFilter("[Status] = 'active'");
+            e.ToTable(t => t.HasCheckConstraint("CK_DepartmentMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
+        });
+
+        modelBuilder.Entity<RoleGroupMapping>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.GroupObjectId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(30).IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.TenantId, x.GroupObjectId }).IsUnique();
+            e.ToTable(t => t.HasCheckConstraint("CK_RoleGroupMappings_Scope", "(Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL)"));
+        });
+
+        modelBuilder.Entity<RoleAssignment>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.TenantId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.UserObjectId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.Role).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Source).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.HasOne(x => x.User).WithMany(x => x.RoleAssignments).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.RoleGroupMapping).WithMany().HasForeignKey(x => x.RoleGroupMappingId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.RoleGroupMappingId }).IsUnique().HasFilter("[Status] = 'active' AND [RoleGroupMappingId] IS NOT NULL");
+            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.Role, x.OrganizationId, x.DepartmentId }).IsUnique()
+                .HasFilter("[Status] = 'active' AND [Source] = 'delegated'");
+            e.ToTable(t => t.HasCheckConstraint("CK_RoleAssignments_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
         });
 
         // Job
@@ -53,8 +156,88 @@ public class AppDbContext : DbContext
             e.Property(x => x.Department).HasMaxLength(100).IsRequired();
             e.Property(x => x.Organisation).HasMaxLength(200);
             e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.OrganizationId).HasMaxLength(36);
+            e.Property(x => x.DepartmentId).HasMaxLength(36);
             e.HasMany(x => x.ConfigVersions).WithOne(x => x.Job).HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.Applications).WithOne(x => x.Job).HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Organization).WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.DepartmentEntity).WithMany()
+                .HasForeignKey(x => new { x.DepartmentId, x.OrganizationId })
+                .HasPrincipalKey(x => new { x.Id, x.OrganizationId }).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.OrganizationId, x.DepartmentId });
+        });
+
+        modelBuilder.Entity<UploadSettings>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(64);
+            e.Property(x => x.CreatedBy).HasMaxLength(128).IsRequired();
+            e.Property(x => x.UpdatedBy).HasMaxLength(128).IsRequired();
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_UploadSettings_FileConcurrency", "FileConcurrency > 0");
+                t.HasCheckConstraint("CK_UploadSettings_MaxIndividualFileBytes", "MaxIndividualFileBytes > 0");
+                t.HasCheckConstraint("CK_UploadSettings_MaxInFlightBytes", "MaxInFlightBytes >= MaxIndividualFileBytes");
+                t.HasCheckConstraint("CK_UploadSettings_Singleton", "Id = 'optional-file-upload'");
+            });
+        });
+
+        modelBuilder.Entity<UploadSession>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(36);
+            e.Property(x => x.JobId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.OwnerActorId).HasMaxLength(128).IsRequired();
+            e.Property(x => x.OwnerDisplayName).HasMaxLength(200);
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CorrelationId).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Restrict);
+            e.HasMany(x => x.Items).WithOne(x => x.Session).HasForeignKey(x => x.SessionId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.OwnerActorId, x.CreatedAt });
+            e.HasIndex(x => new { x.JobId, x.CreatedAt });
+            e.HasIndex(x => new { x.Status, x.LastHeartbeatAt });
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_UploadSessions_Status", "Status IN ('active', 'completed')");
+                t.HasCheckConstraint("CK_UploadSessions_Limits", "FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes");
+                t.HasCheckConstraint("CK_UploadSessions_Counts", "TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0");
+            });
+        });
+
+        modelBuilder.Entity<UploadItem>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Id).HasMaxLength(36);
+            e.Property(x => x.SessionId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.ApplicationId).HasMaxLength(36);
+            e.Property(x => x.OccurrenceKey).HasMaxLength(36).IsRequired();
+            e.Property(x => x.FileName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.MimeType).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Status).HasConversion(
+                value => value.ToWireValue(),
+                value => ParseUploadItemStatus(value))
+                .HasMaxLength(32)
+                .IsRequired();
+            e.Property(x => x.ContentFingerprint).HasMaxLength(64);
+            e.Property(x => x.OutcomeCode).HasMaxLength(100);
+            e.Property(x => x.OutcomeMessage).HasMaxLength(1000);
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.HasOne(x => x.Application).WithOne().HasForeignKey<UploadItem>(x => x.ApplicationId).OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(x => new { x.SessionId, x.OccurrenceKey }).IsUnique();
+            e.HasIndex(x => new { x.SessionId, x.Ordinal }).IsUnique();
+            e.HasIndex(x => x.ApplicationId).IsUnique().HasFilter("[ApplicationId] IS NOT NULL");
+            e.HasIndex(x => new { x.SessionId, x.Status, x.Ordinal });
+            e.HasIndex(x => new { x.Status, x.UpdatedAt });
+            e.HasIndex(x => new { x.SessionId, x.ContentFingerprint });
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_UploadItems_Status", "Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted')");
+                t.HasCheckConstraint("CK_UploadItems_Attempts", "AttemptCount >= 0 AND AttemptCount <= 4");
+                t.HasCheckConstraint("CK_UploadItems_RawSizeBytes", "RawSizeBytes >= 0");
+                t.HasCheckConstraint("CK_UploadItems_Application", "(Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)");
+            });
         });
 
         // JobConfigVersion
@@ -62,8 +245,66 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.AggregationStrategy).HasMaxLength(20);
+            e.Ignore(x => x.MustHaveCriteriaJson);
             e.Property(x => x.MustHavesJson).HasColumnName("MustHavesJson");
             e.Property(x => x.RunsPerApplication).HasColumnName("RunsPerApplication");
+            e.Property(x => x.ExtractionId).HasMaxLength(36);
+            e.Property(x => x.ExtractionInstructionVersionId).HasMaxLength(36);
+        });
+
+        modelBuilder.Entity<ExtractionInstructionVersion>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.InstructionText).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ProtectedContractVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.ValidationStatus).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ValidatedBy).HasMaxLength(100);
+            e.Property(x => x.ActivatedBy).HasMaxLength(100);
+            e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.HasIndex(x => x.VersionNumber).IsUnique();
+            e.HasIndex(x => new { x.Status, x.VersionNumber });
+            e.HasIndex(x => x.Status)
+                .IsUnique()
+                .HasFilter("[Status] = 'active'");
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_ExtractionInstructionVersions_Status", "Status IN ('draft', 'active', 'retired')");
+                t.HasCheckConstraint("CK_ExtractionInstructionVersions_ValidationStatus", "ValidationStatus IN ('unvalidated', 'valid', 'invalid')");
+            });
+        });
+
+        modelBuilder.Entity<JobSpecExtraction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Purpose).HasMaxLength(40).IsRequired();
+            e.Property(x => x.InstructionVersionId).HasMaxLength(36).IsRequired();
+            e.Property(x => x.ProtectedContractVersion).HasMaxLength(50).IsRequired();
+            e.Property(x => x.SourceFileName).HasMaxLength(500).IsRequired();
+            e.Property(x => x.SourceMimeType).HasMaxLength(200).IsRequired();
+            e.Property(x => x.SourceSha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.ValidationStatus).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(100).IsRequired();
+            e.Property(x => x.CorrelationId).HasMaxLength(36).IsRequired();
+            e.HasIndex(x => new { x.InstructionVersionId, x.CreatedAt });
+            e.HasIndex(x => new { x.JobId, x.CreatedAt });
+            e.HasIndex(x => x.JobConfigVersionId);
+            e.HasOne(x => x.InstructionVersion)
+                .WithMany()
+                .HasForeignKey(x => x.InstructionVersionId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Job)
+                .WithMany()
+                .HasForeignKey(x => x.JobId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.ToTable(t =>
+            {
+                t.HasCheckConstraint("CK_JobSpecExtractions_Purpose", "Purpose IN ('job_creation', 'instruction_validation')");
+                t.HasCheckConstraint("CK_JobSpecExtractions_ValidationStatus", "ValidationStatus IN ('valid', 'invalid')");
+            });
         });
 
         // Application
@@ -75,6 +316,11 @@ public class AppDbContext : DbContext
             e.Property(x => x.CandidateEmail).HasMaxLength(320);
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
             e.Property(x => x.FinalDecision).HasMaxLength(30);
+            e.Property(x => x.ScoringOwner).HasMaxLength(128).IsConcurrencyToken()
+                .Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
+            e.Property(x => x.ScoringLeaseUntil).Metadata.SetAfterSaveBehavior(PropertySaveBehavior.Ignore);
+            e.HasIndex(x => new { x.Status, x.TestRunId, x.CreatedAt });
+            e.HasIndex(x => new { x.Status, x.ScoringLeaseUntil });
             e.HasMany(x => x.Documents).WithOne(x => x.Application).HasForeignKey(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.ScoringRuns).WithOne(x => x.Application).HasForeignKey(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.AggregatedResult).WithOne(x => x.Application).HasForeignKey<AggregatedResult>(x => x.ApplicationId).OnDelete(DeleteBehavior.Cascade);
@@ -117,6 +363,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.MustHaveEvaluationJson).HasColumnName("MustHaveResultJson");
             e.Property(x => x.ImprovementTipsJson).HasColumnName("ImprovementRecsJson");
             e.Property(x => x.AiModelId).HasColumnName("ModelDeploymentId").HasMaxLength(100);
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30);
             e.Property(x => x.PromptVersion).HasColumnName("PromptVersionId");
             e.Ignore(x => x.InputTokens);
             e.Ignore(x => x.OutputTokens);
@@ -181,6 +428,10 @@ public class AppDbContext : DbContext
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
             e.Property(x => x.Source).HasMaxLength(20).IsRequired();
             e.Property(x => x.Author).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ApprovedModelId).HasMaxLength(100);
+            e.Property(x => x.ApprovedReasoningLevel).HasMaxLength(30);
             e.HasIndex(x => new { x.JobId, x.Status });
             e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.Cascade);
             e.HasMany(x => x.TestRuns).WithOne(x => x.Prompt).HasForeignKey(x => x.PromptId).OnDelete(DeleteBehavior.Cascade);
@@ -191,8 +442,24 @@ public class AppDbContext : DbContext
         {
             e.HasKey(x => x.Id);
             e.Property(x => x.Status).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
+            e.Property(x => x.ApprovedModelId).HasMaxLength(100);
+            e.Property(x => x.ApprovedReasoningLevel).HasMaxLength(30);
             e.HasIndex(x => x.PromptId);
             e.HasOne(x => x.Job).WithMany().HasForeignKey(x => x.JobId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<PromptGenerationInstruction>(e =>
+        {
+            e.HasKey(x => x.Id);
+            e.Property(x => x.InstructionText).IsRequired();
+            e.Property(x => x.ModelId).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ReasoningLevel).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.Property(x => x.CreatedBy).HasMaxLength(100).IsRequired();
+            e.HasIndex(x => new { x.JobId, x.VersionNumber }).IsUnique();
+            e.HasIndex(x => new { x.JobId, x.Status });
         });
 
         // ScoringBatch
@@ -220,4 +487,17 @@ public class AppDbContext : DbContext
             e.Property(x => x.JobId).HasMaxLength(36);
         });
     }
+
+    private static UploadItemStatus ParseUploadItemStatus(string value) => value switch
+    {
+        "waiting" => UploadItemStatus.Waiting,
+        "throttled" => UploadItemStatus.Throttled,
+        "uploading" => UploadItemStatus.Uploading,
+        "retrying" => UploadItemStatus.Retrying,
+        "succeeded" => UploadItemStatus.Succeeded,
+        "skipped_duplicate" => UploadItemStatus.SkippedDuplicate,
+        "failed" => UploadItemStatus.Failed,
+        "interrupted" => UploadItemStatus.Interrupted,
+        _ => throw new InvalidOperationException($"Unknown upload item status '{value}'."),
+    };
 }

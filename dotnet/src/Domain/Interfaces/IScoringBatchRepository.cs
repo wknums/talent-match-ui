@@ -27,10 +27,12 @@ public interface IScoringBatchRepository
     Task MarkFailedAsync(string batchId, string error, CancellationToken ct = default);
     Task MarkCancelledAsync(string batchId, CancellationToken ct = default);
     Task IncrementAttemptAsync(string batchId, string error, DateTime nextPollAt, CancellationToken ct = default);
+    Task ScheduleResubmissionAsync(string batchId, string error, DateTime nextPollAt, CancellationToken ct = default);
     Task<int> RequestCancelByJobAsync(string jobId, CancellationToken ct = default);
 
     // Progress
     Task InitProgressAsync(string jobId, int totalApps, int batchesPending, CancellationToken ct = default);
+    Task AddProgressAsync(string jobId, int additionalApps, int additionalBatchesPending, CancellationToken ct = default);
     Task<ScoringJobProgress?> GetProgressAsync(string jobId, CancellationToken ct = default);
     Task RequestCancelProgressAsync(string jobId, CancellationToken ct = default);
     Task ApplyTransitionAsync(

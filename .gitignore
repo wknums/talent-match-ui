@@ -61,9 +61,18 @@ deployment_logs.json
 curl_cookies.txt
 deplog.json
 oryxlog.json
+.applogs/
+.applogs.zip
+SECURITY.md
+
+# Short-lived access tokens staged for operator scripts
+.kudu_token
+.sqltoken*
+.kudu-body.json
 
 # Local build/deploy artifacts
 artifacts/
+.azure/
 
 # One-off local SQL probe scripts (environment-specific)
 infra/scripts/sql/SQL4_prompt_gen.sql
@@ -112,7 +121,24 @@ TestResult.xml
 .env_local
 .env_qa
 .env_prod
+.env*
+!.env.example
 !.env_*.example
+
+docs/SAP_Integration_Considerations.md
+specs/archive/
+tests/fixtures/
+!tests/fixtures/
+tests/fixtures/*
+!tests/fixtures/authorization-parity-cases.json
+.npmrc
+
+# Local browser automation and Azure Storage emulator state
+.playwright-mcp/
+AzuriteConfig
+__azurite_db_*.json
+__blobstorage__/
+__queuestorage__/
 
 # Terraform
 .terraform/

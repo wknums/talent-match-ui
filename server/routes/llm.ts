@@ -1,4 +1,8 @@
 import { Router, json } from 'express'
+import { DefaultAzureCredential } from '@azure/identity'
+
+const credential = new DefaultAzureCredential()
+const azureOpenAiScope = 'https://cognitiveservices.azure.com/.default'
 
 export function createLLMRouter(): Router {
   const router = Router()
@@ -12,31 +16,25 @@ export function createLLMRouter(): Router {
       return res.status(400).json({ error: 'prompt is required' })
     }
 
-    const apiKey = process.env.OPENAI_API_KEY || process.env.AZURE_OPENAI_API_KEY
-    if (!apiKey) {
+    const endpoint = process.env.AZURE_OPENAI_ENDPOINT?.replace(/\/$/, '')
+    if (!endpoint) {
       return res.status(501).json({
-        error: 'No LLM API key configured. Set OPENAI_API_KEY or AZURE_OPENAI_API_KEY.',
+        error: 'Azure OpenAI is not configured. Set AZURE_OPENAI_ENDPOINT.',
       })
     }
 
     try {
-      const baseUrl =
-        process.env.AZURE_OPENAI_ENDPOINT
-          ? `${process.env.AZURE_OPENAI_ENDPOINT}/openai/deployments/${model || 'gpt-4o'}/chat/completions?api-version=2024-06-01`
-          : 'https://api.openai.com/v1/chat/completions'
+      const deployment = model || 'gpt-4o'
+      const baseUrl = `${endpoint}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=2024-06-01`
+      const accessToken = await credential.getToken(azureOpenAiScope)
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-      }
-
-      if (process.env.AZURE_OPENAI_ENDPOINT) {
-        headers['api-key'] = apiKey
-      } else {
-        headers['Authorization'] = `Bearer ${apiKey}`
+        'Authorization': `Bearer ${accessToken.token}`,
       }
 
       const body: Record<string, unknown> = {
-        model: model || 'gpt-4o',
+        model: deployment,
         messages: [{ role: 'user', content: prompt }],
       }
 

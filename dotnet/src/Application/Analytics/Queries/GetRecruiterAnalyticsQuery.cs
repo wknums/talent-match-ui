@@ -4,28 +4,46 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.Analytics.Queries;
 
-public record GetRecruiterAnalyticsQuery(string CallerRole, string? CallerDepartment) : IRequest<List<RecruiterAnalytics>>;
+public record GetRecruiterAnalyticsQuery(
+    string CallerRole,
+    string? CallerDepartment,
+    string? CallerUserId = null,
+    string? TenantId = null) : IRequest<List<RecruiterAnalytics>>;
 
 public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAnalyticsQuery, List<RecruiterAnalytics>>
 {
     private readonly IUserRepository _userRepository;
     private readonly IJobRepository _jobRepository;
     private readonly IApplicationRepository _applicationRepository;
+    private readonly IRoleAssignmentRepository? _roleAssignmentRepository;
+    private readonly IOrganizationRepository? _organizationRepository;
 
     public GetRecruiterAnalyticsQueryHandler(
         IUserRepository userRepository,
         IJobRepository jobRepository,
-        IApplicationRepository applicationRepository)
+        IApplicationRepository applicationRepository,
+        IRoleAssignmentRepository? roleAssignmentRepository = null,
+        IOrganizationRepository? organizationRepository = null)
     {
         _userRepository = userRepository;
         _jobRepository = jobRepository;
         _applicationRepository = applicationRepository;
+        _roleAssignmentRepository = roleAssignmentRepository;
+        _organizationRepository = organizationRepository;
     }
 
     public async Task<List<RecruiterAnalytics>> Handle(GetRecruiterAnalyticsQuery request, CancellationToken cancellationToken)
     {
         var allUsers = await _userRepository.GetAllAsync(cancellationToken);
         var allJobs = await _jobRepository.GetAllAsync(cancellationToken);
+
+        if (!string.IsNullOrWhiteSpace(request.CallerUserId)
+            && !string.IsNullOrWhiteSpace(request.TenantId)
+            && _roleAssignmentRepository is not null
+            && _organizationRepository is not null)
+        {
+            return await BuildEntraAnalyticsAsync(request, allUsers, allJobs, cancellationToken);
+        }
 
         var users = allUsers
             .Where(u => (u.Role == "recruiter" || u.Role == "admin")
@@ -114,6 +132,94 @@ public class GetRecruiterAnalyticsQueryHandler : IRequestHandler<GetRecruiterAna
         }
 
         return results;
+    }
+
+    private async Task<List<RecruiterAnalytics>> BuildEntraAnalyticsAsync(
+        GetRecruiterAnalyticsQuery request,
+        IReadOnlyList<User> allUsers,
+        IReadOnlyList<Job> allJobs,
+        CancellationToken cancellationToken)
+    {
+        var assignments = await _roleAssignmentRepository!.GetActiveByRoleAsync(
+            request.TenantId!, "recruiter", cancellationToken);
+        if (request.CallerRole != "admin")
+        {
+            assignments = assignments
+                .Where(assignment => string.Equals(
+                    assignment.UserId, request.CallerUserId, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+        }
+
+        var usersById = allUsers
+            .Where(user => user.IsActive)
+            .ToDictionary(user => user.Id, StringComparer.OrdinalIgnoreCase);
+        var results = new List<RecruiterAnalytics>();
+        foreach (var assignment in assignments
+            .Where(assignment => assignment.OrganizationId is not null && assignment.DepartmentId is not null)
+            .GroupBy(assignment => (assignment.UserId, assignment.OrganizationId, assignment.DepartmentId))
+            .Select(group => group.First()))
+        {
+            if (!usersById.TryGetValue(assignment.UserId, out var user))
+                continue;
+
+            var department = await _organizationRepository!.GetDepartmentAsync(
+                assignment.OrganizationId!, assignment.DepartmentId!, cancellationToken);
+            if (department?.Status != "active")
+                continue;
+
+            var userJobs = allJobs.Where(job =>
+                (string.Equals(job.CreatedBy, user.Id, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(job.CreatedBy, user.Username, StringComparison.OrdinalIgnoreCase))
+                && string.Equals(job.OrganizationId, assignment.OrganizationId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(job.DepartmentId, assignment.DepartmentId, StringComparison.OrdinalIgnoreCase));
+            results.Add(await CalculateAsync(user, department.Name, userJobs, cancellationToken));
+        }
+
+        return results;
+    }
+
+    private async Task<RecruiterAnalytics> CalculateAsync(
+        User user,
+        string department,
+        IEnumerable<Job> jobs,
+        CancellationToken cancellationToken)
+    {
+        var userJobs = jobs.ToArray();
+        var activeJobs = userJobs.Count(job =>
+            string.Equals(job.Status, "Active", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(job.Status, "Processing", StringComparison.OrdinalIgnoreCase));
+        var applicationsInQueue = 0;
+        var manualReviewsPerformed = 0;
+        var shortlistRecommendations = 0;
+        var totalProcessingHours = 0d;
+        var completedCount = 0;
+
+        foreach (var job in userJobs)
+        {
+            var applications = await _applicationRepository.GetByJobIdAsync(job.Id, cancellationToken);
+            foreach (var application in applications.Where(item => item.TestRunId is null))
+            {
+                if (application.Status == "Queued") applicationsInQueue++;
+                if (application.Status == "NeedsManualReview") manualReviewsPerformed++;
+                if (application.FinalDecision == "Eligible") shortlistRecommendations++;
+                var result = await _applicationRepository.GetAggregatedResultAsync(application.Id, cancellationToken);
+                if (result is not null && result.CreatedAt > application.CreatedAt)
+                {
+                    totalProcessingHours += (result.CreatedAt - application.CreatedAt).TotalHours;
+                    completedCount++;
+                }
+            }
+        }
+
+        return new RecruiterAnalytics(
+            user.Id,
+            user.FullName,
+            department,
+            applicationsInQueue,
+            manualReviewsPerformed,
+            shortlistRecommendations,
+            completedCount == 0 ? null : Math.Round(totalProcessingHours / completedCount, 2),
+            activeJobs);
     }
 
     private static string? ResolveRecruiterId(

@@ -32,54 +32,70 @@ function resolveDocumentKind(mimeType: string | undefined, fileName: string | un
 export function DocumentViewer({ applicationId, document: doc, className = '' }: DocumentViewerProps) {
   const [htmlContent, setHtmlContent] = useState<string | null>(null)
   const [textContent, setTextContent] = useState<string | null>(null)
+  const [binaryContentUrl, setBinaryContentUrl] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Build URL directly — api proxy wraps all methods in async, which would return a Promise instead of a string
-  const contentUrl = `/api/applications/${applicationId}/documents/${doc.documentId}/content`
   const kind = resolveDocumentKind(doc.mimeType, doc.fileName)
 
   useEffect(() => {
-    loadContent()
-  }, [applicationId, doc.documentId, doc.mimeType, doc.fileName])
+    let cancelled = false
+    let objectUrl: string | null = null
 
-  const loadContent = async () => {
-    setLoading(true)
-    setError(null)
-    setHtmlContent(null)
-    setTextContent(null)
+    const loadContent = async () => {
+      setLoading(true)
+      setError(null)
+      setHtmlContent(null)
+      setTextContent(null)
+      setBinaryContentUrl(null)
 
-    try {
-      if (kind === 'pdf' || kind === 'image') {
-        // PDF and images handled inline via URL — no fetch needed
-        setLoading(false)
-        return
-      }
+      try {
+        const buffer = await api.getDocumentContent(applicationId, doc.documentId)
+        if (cancelled) return
 
-      const buffer = await api.getDocumentContent(applicationId, doc.documentId)
-
-      if (kind === 'docx') {
-        const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
-        setHtmlContent(result.value)
-      } else if (kind === 'markdown') {
-        const text = new TextDecoder().decode(buffer)
-        const html = await marked(text)
-        setHtmlContent(html)
-      } else if (kind === 'text') {
-        setTextContent(new TextDecoder().decode(buffer))
-      } else {
-        // Last-resort: attempt to decode as text so users can still see something useful.
-        const text = new TextDecoder().decode(buffer)
-        if (text && /[\x09\x0A\x0D\x20-\x7E]/.test(text)) {
-          setTextContent(text)
+        if (kind === 'pdf' || kind === 'image') {
+          objectUrl = URL.createObjectURL(new Blob([buffer], {
+            type: doc.mimeType || 'application/octet-stream',
+          }))
+          setBinaryContentUrl(objectUrl)
+        } else if (kind === 'docx') {
+          const result = await mammoth.convertToHtml({ arrayBuffer: buffer })
+          if (!cancelled) setHtmlContent(result.value)
+        } else if (kind === 'markdown') {
+          const text = new TextDecoder().decode(buffer)
+          const html = await marked(text)
+          if (!cancelled) setHtmlContent(html)
+        } else if (kind === 'text') {
+          setTextContent(new TextDecoder().decode(buffer))
+        } else {
+          const text = new TextDecoder().decode(buffer)
+          // Tab, LF and CR are legitimate printable-text markers here.
+          // eslint-disable-next-line no-control-regex
+          if (text && /[\x09\x0A\x0D\x20-\x7E]/.test(text)) {
+            setTextContent(text)
+          } else {
+            objectUrl = URL.createObjectURL(new Blob([buffer], {
+              type: doc.mimeType || 'application/octet-stream',
+            }))
+            setBinaryContentUrl(objectUrl)
+          }
         }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to load document')
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load document')
-    } finally {
-      setLoading(false)
     }
-  }
+
+    void loadContent()
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [applicationId, doc.documentId, doc.mimeType, doc.fileName, kind])
 
   if (loading) {
     return <div className={`flex items-center justify-center p-8 ${className}`}>Loading document...</div>
@@ -89,20 +105,20 @@ export function DocumentViewer({ applicationId, document: doc, className = '' }:
     return <div className={`text-destructive p-4 ${className}`}>{error}</div>
   }
 
-  if (kind === 'pdf') {
+  if (kind === 'pdf' && binaryContentUrl) {
     return (
       <iframe
-        src={contentUrl}
+        src={binaryContentUrl}
         className={`w-full h-full border-0 ${className}`}
         title={doc.fileName}
       />
     )
   }
 
-  if (kind === 'image') {
+  if (kind === 'image' && binaryContentUrl) {
     return (
       <div className={`flex items-center justify-center p-4 overflow-auto ${className}`}>
-        <img src={contentUrl} alt={doc.fileName} className="max-w-full" />
+        <img src={binaryContentUrl} alt={doc.fileName} className="max-w-full" />
       </div>
     )
   }
@@ -124,12 +140,20 @@ export function DocumentViewer({ applicationId, document: doc, className = '' }:
     )
   }
 
+  if (binaryContentUrl) {
+    return (
+      <div className={`text-muted-foreground p-4 ${className}`}>
+        Preview not available for {doc.fileName || doc.mimeType || 'this document'}.{' '}
+        <a href={binaryContentUrl} download={doc.fileName} className="underline">
+          Download
+        </a>
+      </div>
+    )
+  }
+
   return (
     <div className={`text-muted-foreground p-4 ${className}`}>
-      Preview not available for {doc.fileName || doc.mimeType || 'this document'}.{' '}
-      <a href={contentUrl} target="_blank" rel="noreferrer" className="underline">
-        Download
-      </a>
+      Preview not available for {doc.fileName || doc.mimeType || 'this document'}.
     </div>
   )
 }

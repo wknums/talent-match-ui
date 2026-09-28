@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   DraggableResizableDialog,
   DraggableDialogHeader,
@@ -9,10 +9,15 @@ import { DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Checkbox } from '@/components/ui/checkbox'
 import { UploadSimple, File, CheckCircle, X } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useUploadCoordinator } from '@/providers/UploadCoordinatorProvider'
+
+const ALLOWED_EXTENSIONS = ['.pdf', '.md', '.docx', '.txt', '.jpg', '.png']
+const MAX_FILE_SIZE = 15 * 1024 * 1024
 
 interface UploadApplicationsDialogProps {
   open: boolean
@@ -29,13 +34,17 @@ export function UploadApplicationsDialog({
   onClose,
   onSuccess,
 }: UploadApplicationsDialogProps) {
-  const ALLOWED_EXTENSIONS = ['.pdf', '.md', '.docx', '.txt', '.jpg', '.png']
-  const MAX_FILE_SIZE = 15 * 1024 * 1024
-
   const [files, setFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const [dragActive, setDragActive] = useState(false)
+  const [allowDuplicates, setAllowDuplicates] = useState(false)
+  const [parallelUploads, setParallelUploads] = useState(false)
+  const { startUpload } = useUploadCoordinator()
+
+  useEffect(() => {
+    if (open) setParallelUploads(false)
+  }, [open])
 
   const validateFile = useCallback(
     (file: File): string | null => {
@@ -43,12 +52,12 @@ export function UploadApplicationsDialog({
       if (!ALLOWED_EXTENSIONS.includes(extension)) {
         return `Unsupported file type for ${file.name}`
       }
-      if (file.size > MAX_FILE_SIZE) {
+      if (!parallelUploads && file.size > MAX_FILE_SIZE) {
         return `${file.name} exceeds the 15 MB limit`
       }
       return null
     },
-    [ALLOWED_EXTENSIONS]
+    [parallelUploads]
   )
 
   const addFiles = useCallback(
@@ -109,6 +118,22 @@ export function UploadApplicationsDialog({
   const handleUpload = async () => {
     if (!jobId || files.length === 0) return
 
+    if (parallelUploads) {
+      setUploading(true)
+      try {
+        const session = await startUpload(jobId, files, allowDuplicates)
+        toast.success(`Started optional upload for ${session.counts.total} application(s)`)
+        onSuccess?.()
+        onClose()
+        resetDialog()
+      } catch {
+        toast.error('Failed to start optional uploads')
+      } finally {
+        setUploading(false)
+      }
+      return
+    }
+
     setUploading(true)
     setUploadProgress(0)
 
@@ -117,18 +142,25 @@ export function UploadApplicationsDialog({
         setUploadProgress((prev) => Math.min(prev + 10, 90))
       }, 200)
 
-      await api.uploadApplications(jobId, files)
+      const result = await api.uploadApplications(jobId, files, allowDuplicates)
 
       clearInterval(progressInterval)
       setUploadProgress(100)
 
-      toast.success(`Successfully uploaded ${files.length} application(s)`)
+      const uploadedCount = result.applicationIds.length
+      const skippedCount = files.length - uploadedCount
+      if (uploadedCount > 0) {
+        toast.success(`Successfully uploaded ${uploadedCount} application(s)`)
+      }
+      if (skippedCount > 0) {
+        toast.warning(`${skippedCount} duplicate application(s) skipped`)
+      }
       setTimeout(() => {
         onSuccess?.()
         onClose()
         resetDialog()
       }, 500)
-    } catch (error) {
+    } catch {
       toast.error('Failed to upload applications')
       setUploadProgress(0)
     } finally {
@@ -140,6 +172,8 @@ export function UploadApplicationsDialog({
     setFiles([])
     setUploadProgress(0)
     setDragActive(false)
+    setAllowDuplicates(false)
+    setParallelUploads(false)
   }
 
   const handleClose = () => {
@@ -241,6 +275,43 @@ export function UploadApplicationsDialog({
               </div>
             </div>
           )}
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <label
+              htmlFor="allow-duplicate-applications"
+              className="flex cursor-pointer items-start gap-3 rounded-md border p-3"
+            >
+              <Checkbox
+                id="allow-duplicate-applications"
+                checked={allowDuplicates}
+                onCheckedChange={checked => setAllowDuplicates(checked === true)}
+                disabled={uploading}
+              />
+              <span>
+                <span className="block text-sm font-medium">Allow duplicate documents</span>
+                <span className="block text-xs text-muted-foreground">
+                  Upload and score files even when their contents match an application already added to this job.
+                </span>
+              </span>
+            </label>
+            <label
+              htmlFor="allow-parallel-individual-uploads"
+              className="flex cursor-pointer items-start gap-3 rounded-md border p-3"
+            >
+              <Checkbox
+                id="allow-parallel-individual-uploads"
+                checked={parallelUploads}
+                onCheckedChange={checked => setParallelUploads(checked === true)}
+                disabled={uploading}
+              />
+              <span>
+                <span className="block text-sm font-medium">Allow parallel individual uploads</span>
+                <span className="block text-xs text-muted-foreground">
+                  Upload each file independently in the background while this browser tab remains open.
+                </span>
+              </span>
+            </label>
+          </div>
 
           {uploading && (
             <div className="space-y-2">

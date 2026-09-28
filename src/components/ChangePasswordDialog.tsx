@@ -56,7 +56,7 @@ export function ChangePasswordDialog({ open, onClose, onSuccess, userId }: Chang
       } else {
         toast.error('Current password is incorrect')
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to change password')
     } finally {
       setIsLoading(false)

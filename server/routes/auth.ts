@@ -1,16 +1,69 @@
-import { createHash } from 'node:crypto'
-import { Router } from 'express'
-import type { AuthenticatedRequest } from '../middleware/auth.js'
+import { createHash, randomUUID } from 'node:crypto'
+import { Router, type RequestHandler } from 'express'
+import type { AuthenticatedRequest, AuthorizationAuditWriter } from '../middleware/auth.js'
 import { userRepo } from '../storage/repos/index.js'
 import { auditService } from '../services/audit.js'
+import type { AuthorizationRepositories } from '../services/authorization.js'
 import { setCurrentUser, getCurrentUser } from '../session.js'
 
 function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex')
 }
 
-export function createAuthRouter() {
+export interface AuthRouterOptions {
+  mode?: 'simple' | 'entra'
+  authMiddleware?: RequestHandler
+  audit?: AuthorizationAuditWriter
+  users?: Pick<AuthorizationRepositories['users'], 'update'>
+}
+
+export function createAuthRouter(options: AuthRouterOptions = {}) {
   const router = Router()
+  const mode = options.mode ?? (process.env.APP_AUTH_MODE === 'entra' ? 'entra' : 'simple')
+  const audit = options.audit ?? auditService
+  const profileUsers = options.users ?? userRepo
+
+  router.use((_req, res, next) => {
+    if (!res.getHeader('X-Correlation-ID')) {
+      res.setHeader('X-Correlation-ID', randomUUID())
+    }
+    next()
+  })
+
+  if (mode === 'entra') {
+    if (!options.authMiddleware) throw new Error('Entra auth middleware is required.')
+
+    router.get('/me', options.authMiddleware, async (req: AuthenticatedRequest, res, next) => {
+      try {
+        const context = req.authorizationContext!
+        await profileUsers.update(context.userId, { lastLogin: new Date().toISOString() })
+        await audit.appendAuthorizationEvent(context.objectId, 'auth.login.succeeded', context.userId, {
+          subjectObjectId: context.objectId,
+          tenantId: context.tenantId,
+          result: 'succeeded',
+        }, String(res.getHeader('X-Correlation-ID')))
+        res.json(context)
+      } catch (err) {
+        next(err)
+      }
+    })
+
+    router.post('/logout', options.authMiddleware, async (req: AuthenticatedRequest, res, next) => {
+      try {
+        const context = req.authorizationContext!
+        await audit.appendAuthorizationEvent(context.objectId, 'auth.logout', context.userId, {
+          subjectObjectId: context.objectId,
+          tenantId: context.tenantId,
+          result: 'succeeded',
+        }, String(res.getHeader('X-Correlation-ID')))
+        res.status(204).end()
+      } catch (err) {
+        next(err)
+      }
+    })
+
+    return router
+  }
 
   // POST /api/auth/login
   router.post('/login', async (req, res, next) => {

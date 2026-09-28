@@ -17,6 +17,7 @@ import { PipelineVisualizer } from '@/components/PipelineVisualizer'
 import { StatusBadge } from '@/components/StatusBadge'
 import { UploadRubricDialog } from '@/components/UploadRubricDialog'
 import { PromptManagement } from '@/components/PromptManagement'
+import { RubricEditor } from '@/components/RubricEditor'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ArrowLeft, UploadSimple, Funnel, PencilSimple, FileText, Lightning, Play, SpinnerGap, ArrowClockwise, Trash } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
@@ -322,6 +323,37 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
         </Card>
       )}
 
+      {job.currentVersion.extraction && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Extraction Diagnostics</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <div>Instruction version: {job.currentVersion.extractionInstructionVersionId || job.currentVersion.extraction.instructionVersionId}</div>
+            <div>Completed: {new Date(job.currentVersion.extraction.completedAt).toLocaleString()}</div>
+            <div>Source: {job.currentVersion.extraction.sourceFileName}</div>
+            {job.currentVersion.extraction.validationFindings.length > 0 && (
+              <ul className="list-disc pl-5 text-muted-foreground">
+                {job.currentVersion.extraction.validationFindings.map((finding) => (
+                  <li key={`${finding.code}-${finding.path}`}>{finding.code}: {finding.message}</li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {job.currentVersion.rubricEnvelope && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Itemized Rubric</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <RubricEditor rubric={job.currentVersion.rubricEnvelope} />
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle>Processing Pipeline</CardTitle>
@@ -425,13 +457,28 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
               <ApplicationsTable applications={applications} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
             </TabsContent>
             <TabsContent value="longlist" className="mt-6">
-              <ApplicationsTable applications={longlistApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
+              <ApplicationsTable
+                applications={longlistApps}
+                onApplicationClick={onApplicationClick}
+                onStartManualReview={onStartManualReview}
+                exportContext={{ jobTitle: job.title, viewName: 'Longlist' }}
+              />
             </TabsContent>
             <TabsContent value="shortlist" className="mt-6">
-              <ApplicationsTable applications={shortlistApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
+              <ApplicationsTable
+                applications={shortlistApps}
+                onApplicationClick={onApplicationClick}
+                onStartManualReview={onStartManualReview}
+                exportContext={{ jobTitle: job.title, viewName: 'Shortlist' }}
+              />
             </TabsContent>
             <TabsContent value="excluded" className="mt-6">
-              <ApplicationsTable applications={excludedApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
+              <ApplicationsTable
+                applications={excludedApps}
+                onApplicationClick={onApplicationClick}
+                onStartManualReview={onStartManualReview}
+                exportContext={{ jobTitle: job.title, viewName: 'Excluded' }}
+              />
             </TabsContent>
             <TabsContent value="review" className="mt-6">
               <ApplicationsTable applications={manualReviewApps} onApplicationClick={onApplicationClick} onStartManualReview={onStartManualReview} />
@@ -456,6 +503,11 @@ export function JobDetailView({ jobId, onBack, onApplicationClick, onUploadAppli
                 onStartManualReview(appId, jobId)
                 setDrilldownOpen(false)
               } : undefined}
+              exportContext={drilldownType === 'longlist'
+                ? { jobTitle: job.title, viewName: 'Longlist' }
+                : drilldownType === 'shortlist'
+                  ? { jobTitle: job.title, viewName: 'Shortlist' }
+                  : undefined}
             />
           </div>
         </SheetContent>

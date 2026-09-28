@@ -1,0 +1,420 @@
+openapi: 3.1.0
+info:
+  title: TalentMatch Extraction Instruction and Rubric API
+  version: 1.0.0
+  description: Equivalent contract for Stack A and Stack B.
+servers:
+  - url: /
+security:
+  - applicationAuth: []
+paths:
+  /api/admin/extraction-instructions:
+    get:
+      operationId: listExtractionInstructionVersions
+      summary: List extraction instruction versions
+      description: Requires Admin.
+      responses:
+        "200":
+          description: Versions ordered newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ExtractionInstructionVersion"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createExtractionInstructionDraft
+      summary: Create an immutable draft version
+      description: Requires Admin. The protected response contract is not accepted from the caller.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [instructionText]
+              properties:
+                instructionText:
+                  type: string
+                  minLength: 1
+                changeNote:
+                  type: string
+                  maxLength: 1000
+      responses:
+        "201":
+          description: Draft created and audited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionInstructionVersion"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/admin/extraction-instructions/{versionId}:
+    get:
+      operationId: getExtractionInstructionVersion
+      summary: Get one version and protected contract metadata
+      description: Requires Admin.
+      parameters:
+        - $ref: "#/components/parameters/VersionId"
+      responses:
+        "200":
+          description: Version detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionInstructionVersionDetail"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/admin/extraction-instructions/{versionId}/validate:
+    post:
+      operationId: validateExtractionInstructionVersion
+      summary: Test a draft against a sample specification
+      description: Requires Admin. Validation never activates the version.
+      parameters:
+        - $ref: "#/components/parameters/VersionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractDocumentRequest"
+      responses:
+        "200":
+          description: Validation run completed, including invalid model output.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionResult"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          description: AWReason could not complete the request.
+  /api/admin/extraction-instructions/{versionId}/activate:
+    post:
+      operationId: activateExtractionInstructionVersion
+      summary: Activate a validated version or roll back to it
+      description: Requires Admin. Retires the current active version transactionally.
+      parameters:
+        - $ref: "#/components/parameters/VersionId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedConcurrencyVersion]
+              properties:
+                expectedConcurrencyVersion:
+                  type: integer
+                  minimum: 1
+      responses:
+        "200":
+          description: Selected version is active.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionInstructionVersion"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/jobs/extract-spec:
+    post:
+      operationId: extractJobSpecification
+      summary: Extract an itemized rubric with the active instruction version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractDocumentRequest"
+      responses:
+        "200":
+          description: Valid extraction and normalized rubric.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "422":
+          description: AWReason returned JSON that failed the protected contract.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionFailure"
+        "502":
+          description: AWReason was unavailable or returned a transport error.
+        "503":
+          description: No active extraction instruction or AWReason endpoint is configured.
+  /api/jobs/{jobId}/rubric/convert:
+    post:
+      operationId: convertLegacyRubric
+      summary: Preview or confirm conversion of a legacy rubric
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mode, expectedConfigVersionId]
+              properties:
+                mode:
+                  enum: [preview, confirm]
+                expectedConfigVersionId:
+                  type: string
+                reviewedRubric:
+                  $ref: "#/components/schemas/RubricEnvelope"
+      responses:
+        "200":
+          description: Conversion preview or saved new config version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RubricEnvelope"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/jobs/{jobId}/config:
+    put:
+      operationId: updateJobConfiguration
+      summary: Save a new job configuration version
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              required: [rubric, expectedConfigVersionId]
+              properties:
+                rubric:
+                  $ref: "#/components/schemas/RubricEnvelope"
+                expectedConfigVersionId:
+                  type: string
+      responses:
+        "200":
+          description: New config version with normalized item order.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          $ref: "#/components/responses/Conflict"
+components:
+  securitySchemes:
+    applicationAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    VersionId:
+      name: versionId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    ExtractionInstructionVersion:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - versionNumber
+        - instructionText
+        - protectedContractVersion
+        - status
+        - validationStatus
+        - createdAt
+        - createdBy
+        - concurrencyVersion
+      properties:
+        id:
+          type: string
+          format: uuid
+        versionNumber:
+          type: integer
+          minimum: 1
+        instructionText:
+          type: string
+        protectedContractVersion:
+          type: string
+        status:
+          enum: [draft, active, retired]
+        validationStatus:
+          enum: [unvalidated, valid, invalid]
+        changeNote:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        validatedAt:
+          type: [string, "null"]
+          format: date-time
+        validatedBy:
+          type: [string, "null"]
+        activatedAt:
+          type: [string, "null"]
+          format: date-time
+        activatedBy:
+          type: [string, "null"]
+        concurrencyVersion:
+          type: integer
+          minimum: 1
+    ExtractionInstructionVersionDetail:
+      allOf:
+        - $ref: "#/components/schemas/ExtractionInstructionVersion"
+        - type: object
+          required: [protectedContract, validationFindings]
+          properties:
+            protectedContract:
+              type: object
+            validationFindings:
+              type: array
+              items:
+                $ref: "#/components/schemas/ValidationFinding"
+    ExtractDocumentRequest:
+      type: object
+      additionalProperties: false
+      required: [fileName, content, mimeType]
+      properties:
+        fileName:
+          type: string
+          minLength: 1
+        content:
+          type: string
+          contentEncoding: base64
+        mimeType:
+          type: string
+    ExtractionResult:
+      type: object
+      additionalProperties: false
+      required:
+        - extractionId
+        - instructionVersionId
+        - protectedContractVersion
+        - validationStatus
+        - validationFindings
+        - title
+        - jobDescription
+        - department
+        - organization
+        - rubric
+      properties:
+        extractionId:
+          type: string
+          format: uuid
+        instructionVersionId:
+          type: string
+          format: uuid
+        protectedContractVersion:
+          type: string
+        validationStatus:
+          const: valid
+        validationFindings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationFinding"
+        title:
+          type: [string, "null"]
+        jobDescription:
+          type: [string, "null"]
+        department:
+          type: [string, "null"]
+        organization:
+          type: [string, "null"]
+        rubric:
+          $ref: "#/components/schemas/RubricEnvelope"
+    ExtractionFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - extractionId
+        - instructionVersionId
+        - protectedContractVersion
+        - validationStatus
+        - validationFindings
+      properties:
+        extractionId:
+          type: string
+          format: uuid
+        instructionVersionId:
+          type: string
+          format: uuid
+        protectedContractVersion:
+          type: string
+        validationStatus:
+          const: invalid
+        validationFindings:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ValidationFinding"
+    ValidationFinding:
+      type: object
+      additionalProperties: false
+      required: [code, severity, path, message]
+      properties:
+        code:
+          type: string
+        severity:
+          enum: [error, warning]
+        path:
+          type: string
+        message:
+          type: string
+    RubricEnvelope:
+      type: object
+      description: Must satisfy contracts/rubric-config.schema.json.
+      required: [schemaVersion, categories, items]
+      properties:
+        schemaVersion:
+          const: rubric-v2
+        legacySourceVersionId:
+          type: [string, "null"]
+        categories:
+          type: array
+          minItems: 1
+          items:
+            type: object
+        items:
+          type: array
+          items:
+            type: object
+  responses:
+    Forbidden:
+      description: Authenticated actor is not an application Admin.
+    NotFound:
+      description: Requested resource does not exist or is not visible.
+    Conflict:
+      description: Optimistic version is stale or state transition conflicts.
+    ValidationError:
+      description: Request or business validation failed.

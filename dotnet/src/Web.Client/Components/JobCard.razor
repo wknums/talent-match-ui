@@ -3,7 +3,7 @@
 <div style="border: 1px solid #ccc; border-radius: 8px; padding: 1rem; cursor: pointer;" @onclick="() => OnClick.InvokeAsync()">
     <h5>@Job.Title</h5>
     <p>@Job.Organisation — @Job.Department</p>
-    <p style="font-size: 0.8rem; color: gray;">Posted @((DateTime.UtcNow - Job.PostingDate).Days) days ago</p>
+    <p style="font-size: 0.8rem; color: #595959;">Posted @((DateTime.UtcNow - Job.PostingDate).Days) days ago</p>
     <span style="background: @StatusColor; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">@Job.Status</span>
 </div>
 

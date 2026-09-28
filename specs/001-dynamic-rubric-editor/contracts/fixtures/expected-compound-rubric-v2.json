@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "rubric-v2",
+  "legacySourceVersionId": null,
+  "categories": [
+    {
+      "id": "cat-delivery",
+      "name": "Delivery and Quality",
+      "weight": 0.6,
+      "description": "Operational execution and documentation quality.",
+      "order": 0
+    },
+    {
+      "id": "cat-leadership",
+      "name": "Leadership and Growth",
+      "weight": 0.4,
+      "description": "Mentorship and people leadership.",
+      "order": 1
+    }
+  ],
+  "items": [
+    {
+      "id": "req-001",
+      "categoryId": "cat-delivery",
+      "text": "Design and operate Azure data pipelines",
+      "requirementType": "responsibility",
+      "order": 0,
+      "sourceText": "Design and operate Azure data pipelines, mentor junior engineers, and document production support procedures.",
+      "sourceLocation": "Responsibilities",
+      "sourceRequirementId": "req-001",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-003",
+      "categoryId": "cat-delivery",
+      "text": "Document production support procedures",
+      "requirementType": "responsibility",
+      "order": 1,
+      "sourceText": "Design and operate Azure data pipelines, mentor junior engineers, and document production support procedures.",
+      "sourceLocation": "Responsibilities",
+      "sourceRequirementId": "req-003",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    },
+    {
+      "id": "req-002",
+      "categoryId": "cat-leadership",
+      "text": "Mentor junior engineers",
+      "requirementType": "responsibility",
+      "order": 0,
+      "sourceText": "Design and operate Azure data pipelines, mentor junior engineers, and document production support procedures.",
+      "sourceLocation": "Responsibilities",
+      "sourceRequirementId": "req-002",
+      "reviewStatus": "confirmed",
+      "createdFrom": "extracted"
+    }
+  ]
+}

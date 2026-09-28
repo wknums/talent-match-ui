@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { User, Key, SignOut, Users } from '@phosphor-icons/react'
+import { Buildings, Gear, User, Key, ShieldCheck, SignOut, Users } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -10,17 +9,33 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
-import type { User as UserType } from '@/types'
+import type { AuthenticationProvider, User as UserType } from '@/types'
 
 interface UserMenuProps {
   user: UserType
-  onChangePassword: () => void
-  onRequestPasswordReset: () => void
+  authMode?: AuthenticationProvider
+  onChangePassword?: () => void
+  onRequestPasswordReset?: () => void
   onManageUsers?: () => void
+  onManageExtractionInstructions?: () => void
+  onManageEntraAccess?: () => void
+  onManageOrganization?: () => void
+  onManageUploadSettings?: () => void
   onLogout: () => void
 }
 
-export function UserMenu({ user, onChangePassword, onRequestPasswordReset, onManageUsers, onLogout }: UserMenuProps) {
+export function UserMenu({
+  user,
+  authMode = user.authenticationProvider ?? 'simple',
+  onChangePassword,
+  onRequestPasswordReset,
+  onManageUsers,
+  onManageExtractionInstructions,
+  onManageEntraAccess,
+  onManageOrganization,
+  onManageUploadSettings,
+  onLogout,
+}: UserMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -47,14 +62,18 @@ export function UserMenu({ user, onChangePassword, onRequestPasswordReset, onMan
           </div>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onChangePassword}>
-          <Key size={16} className="mr-2" />
-          Change Password
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={onRequestPasswordReset}>
-          <Key size={16} className="mr-2" />
-          Request Password Reset
-        </DropdownMenuItem>
+        {authMode === 'simple' && onChangePassword && (
+          <DropdownMenuItem onClick={onChangePassword}>
+            <Key size={16} className="mr-2" />
+            Change Password
+          </DropdownMenuItem>
+        )}
+        {authMode === 'simple' && onRequestPasswordReset && (
+          <DropdownMenuItem onClick={onRequestPasswordReset}>
+            <Key size={16} className="mr-2" />
+            Request Password Reset
+          </DropdownMenuItem>
+        )}
         {user.role === 'admin' && onManageUsers && (
           <>
             <DropdownMenuSeparator />
@@ -62,7 +81,42 @@ export function UserMenu({ user, onChangePassword, onRequestPasswordReset, onMan
               <Users size={16} className="mr-2" />
               Manage Users
             </DropdownMenuItem>
+            {onManageExtractionInstructions && (
+              <DropdownMenuItem onClick={onManageExtractionInstructions}>
+                <ShieldCheck size={16} className="mr-2" />
+                Extraction Instructions
+              </DropdownMenuItem>
+            )}
           </>
+        )}
+        {user.role === 'admin' && onManageUploadSettings && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>System Configuration</DropdownMenuLabel>
+            <DropdownMenuItem onClick={onManageUploadSettings}>
+              <Gear size={16} className="mr-2" />
+              Settings
+            </DropdownMenuItem>
+          </>
+        )}
+        {authMode === 'entra'
+          && (user.role === 'admin' || user.role === 'organization_admin')
+          && onManageEntraAccess && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onManageEntraAccess}>
+              <ShieldCheck size={16} className="mr-2" />
+              Manage Entra Access
+            </DropdownMenuItem>
+          </>
+        )}
+        {authMode === 'entra'
+          && (user.role === 'admin' || user.role === 'organization_admin')
+          && onManageOrganization && (
+          <DropdownMenuItem onClick={onManageOrganization}>
+            <Buildings size={16} className="mr-2" />
+            Manage Organization
+          </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={onLogout} className="text-destructive">

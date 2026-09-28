@@ -12,10 +12,10 @@ import { api } from '@/lib/api'
 import { getCurrentUser as authGetCurrentUser } from '@/lib/auth'
 import { buildStackBManualReviewPrepopulation, deriveCandidateNameFromScoringRuns, normalizeManualReviewForRubric } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { DocumentViewer } from '@/components/DocumentViewer'
-import type { Application, Job, AggregatedResult, ManualReviewData, ManualReviewAuditEntry, ScoringRun } from '@/types'
+import { RubricEditor } from '@/components/RubricEditor'
+import type { Application, Job, AggregatedResult, ManualReviewData, ScoringRun } from '@/types'
 
 interface ManualReviewViewProps {
   applicationId: string
@@ -63,7 +63,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       if (user) {
         setCurrentUser({ login: user.username, name: user.fullName })
       }
-    } catch (error) {
+    } catch {
       setCurrentUser({ login: 'reviewer', name: 'Reviewer' })
     }
   }
@@ -308,7 +308,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
       setReviewData(nextReview)
       setBaselineReviewData(nextReview)
       toast.success('Manual review saved successfully')
-    } catch (error) {
+    } catch {
       toast.error('Failed to save review')
     } finally {
       setSaving(false)
@@ -373,7 +373,7 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
               <div className="text-right">
                 <p className="text-sm text-muted-foreground">Total Score</p>
                 <p className="text-2xl font-mono font-bold text-accent">
-                  {totalScore.toFixed(1)}
+                  {totalScore.toFixed(3)}
                 </p>
               </div>
               <Button onClick={handleSave} disabled={saving}>
@@ -427,13 +427,19 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
             <Card className="flex flex-col h-full rounded-none border-0">
               <CardHeader className="shrink-0">
                 <CardTitle className="text-lg">Scoring Rubric</CardTitle>
+              {job.currentVersion.extraction && (
+                <div className="mt-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                  <div>Instruction version: {job.currentVersion.extractionInstructionVersionId || job.currentVersion.extraction.instructionVersionId}</div>
+                  <div>Extracted: {new Date(job.currentVersion.extraction.completedAt).toLocaleString()}</div>
+                </div>
+              )}
               {aiPrePopulated && (
                 <div className="flex items-center gap-2 mt-2 px-3 py-2 rounded-md bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-300">
                   <Robot size={16} />
                   <span>
                     Pre-populated from AI scoring
                     {aggregatedResult && (
-                      <> (score: {aggregatedResult.finalScore.toFixed(1)}, variance: {aggregatedResult.variance.toFixed(2)})</>
+                      <> (score: {aggregatedResult.finalScore.toFixed(3)}, variance: {aggregatedResult.variance.toFixed(3)})</>
                     )}
                     . Please verify and adjust.
                   </span>
@@ -454,6 +460,12 @@ export function ManualReviewView({ applicationId, jobId, onBack }: ManualReviewV
             <CardContent className="flex-1 overflow-hidden p-0">
               <ScrollArea className="h-full w-full">
                 <div className="space-y-4 px-6 pb-6">
+                  {job.currentVersion.rubricEnvelope && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium">Itemized source trace</p>
+                      <RubricEditor rubric={job.currentVersion.rubricEnvelope} />
+                    </div>
+                  )}
                   {job.currentVersion.rubric.map((category) => {
                     const score = reviewData.rubricScores[category.id] || {
                       points: 0,

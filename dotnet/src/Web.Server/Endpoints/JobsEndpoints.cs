@@ -1,8 +1,14 @@
 ﻿using System.Text.Json;
 using FluentValidation;
 using MediatR;
+using TalentMatch.Application.Authorization;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Application.Jobs.Commands;
 using TalentMatch.Application.Jobs.Queries;
+using TalentMatch.Application.JobExtraction.Commands;
+using TalentMatch.Application.JobExtraction.Queries;
+using TalentMatch.Application.Rubrics.Models;
+using TalentMatch.Application.Rubrics.Services;
 
 namespace TalentMatch.Web.Server.Endpoints;
 
@@ -11,6 +17,25 @@ public static class JobsEndpoints
     public static void MapJobsEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/jobs").WithTags("Jobs").RequireAuthorization();
+        group.AddEndpointFilter(async (context, next) =>
+        {
+            try
+            {
+                return await next(context);
+            }
+            catch (InvalidJobScopeException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext,
+                    AuthorizationErrorCodes.InvalidJobScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext,
+                    AuthorizationErrorCodes.Forbidden);
+            }
+        });
 
         group.MapGet("/", async (ISender mediator) =>
         {
@@ -18,7 +43,10 @@ public static class JobsEndpoints
             return Results.Ok(jobs);
         });
 
-        group.MapPost("/", async (CreateJobRequest request, ISender mediator) =>
+        group.MapPost("/", async (
+            CreateJobRequest request,
+            ISender mediator,
+            HttpContext httpContext) =>
         {
             try
             {
@@ -27,7 +55,9 @@ public static class JobsEndpoints
                     request.RubricJson, request.MustHavesJson, request.DesiredCriteriaJson,
                     request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
                     request.ShortlistThreshold, request.VarianceThreshold, request.JobDescription,
-                    request.RubricSource ?? "manual", request.RawExtractionResponse));
+                    request.RubricSource ?? "manual", request.RawExtractionResponse,
+                    request.ExtractionId, request.ExtractionInstructionVersionId,
+                    request.OrganizationId, request.DepartmentId));
                 return Results.Created($"/api/jobs/{job.Id}", new
                 {
                     job.Id, job.JobCode, job.Title, job.Department,
@@ -35,163 +65,117 @@ public static class JobsEndpoints
                     job.JobDescription, job.CreatedBy, job.CreatedAt, job.UpdatedAt
                 });
             }
-            catch (ValidationException ex)
+            catch (ValidationException exception)
             {
-                var errors = ex.Errors
-                    .GroupBy(error => error.PropertyName)
-                    .ToDictionary(
-                        group => group.Key,
-                        group => group.Select(error => error.ErrorMessage).ToArray());
-
-                return Results.ValidationProblem(errors);
+                var errorCode = IsOrganizationAliasValidation(exception, request)
+                    ? AuthorizationErrorCodes.InvalidJobScope
+                    : AuthorizationErrorCodes.InvalidScope;
+                return AuthorizationErrorResults.Create(httpContext, errorCode);
+            }
+            catch (InvalidJobScopeException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.InvalidJobScope);
+            }
+            catch (InvalidOperationException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.InvalidScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.Forbidden);
             }
         });
 
-        group.MapPost("/extract-spec", async (ExtractDocumentRequest request, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        group.MapPost("/extract-spec", async (ExtractDocumentRequest request, ISender mediator, HttpContext httpContext) =>
         {
-            var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
-            if (string.IsNullOrEmpty(endpoint))
-                return Results.Problem("AWR_SEQ_API_ENDPOINT is not configured", statusCode: 503);
-
-            using var client = httpClientFactory.CreateClient("AwrApiClient");
-            using var formData = new MultipartFormDataContent();
-
-            // Add the extraction prompt as promptFile (required by /assess/passthrough)
-            var promptContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(ExtractionPrompts.ExtractSpec));
-            promptContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
-            formData.Add(promptContent, "promptFile", "extract-spec-prompt.md");
-
-            // Add the uploaded document as specFile (decoded from base64)
-            byte[] docBytes;
-            try { docBytes = Convert.FromBase64String(request.Content); }
-            catch (FormatException) { return Results.Problem("Invalid base64 document content", statusCode: 400); }
-
-            var mimeType = string.IsNullOrWhiteSpace(request.MimeType) ? "application/octet-stream" : request.MimeType;
-            var docContent = new ByteArrayContent(docBytes);
-            docContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
-            formData.Add(docContent, "specFile", request.FileName);
-
-            HttpResponseMessage response;
-            try { response = await client.PostAsync($"{endpoint}/assess/passthrough", formData); }
-            catch (Exception ex) { return Results.Problem($"Failed to reach AWR API: {ex.Message}", statusCode: 502); }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorText = await response.Content.ReadAsStringAsync();
-                return Results.Problem(errorText, statusCode: (int)response.StatusCode);
-            }
-
-            // Passthrough returns the raw output file directly (not wrapped in a response object)
-            var responseText = await response.Content.ReadAsStringAsync();
-
-            JsonElement extracted;
             try
             {
-                extracted = JsonSerializer.Deserialize<JsonElement>(responseText ?? "{}");
-            }
-            catch
-            {
-                return Results.Problem("Failed to parse extraction response as JSON", statusCode: 502);
-            }
-
-            // Map the extraction contract to the UI contract
-            var jobTitle = extracted.TryGetProperty("job_title", out var jt) ? jt.GetString() : null;
-            var jobDesc = extracted.TryGetProperty("job_description", out var jd) ? jd.GetString() : null;
-            var dept = extracted.TryGetProperty("department", out var dp) ? dp.GetString() : null;
-            var org = extracted.TryGetProperty("organization", out var o) ? o.GetString() : null;
-
-            var mustHaves = new List<object>();
-            if (extracted.TryGetProperty("must_have_requirements", out var mhr) && mhr.ValueKind == JsonValueKind.Array)
-                foreach (var item in mhr.EnumerateArray())
-                    mustHaves.Add(new { Criterion = item.GetString() ?? "", Description = "" });
-
-            var desiredCriteria = new List<object>();
-            if (extracted.TryGetProperty("recommended_or_desired", out var rd) && rd.ValueKind == JsonValueKind.Array)
-                foreach (var item in rd.EnumerateArray())
-                    desiredCriteria.Add(new { Qualification = item.GetString() ?? "", Description = "" });
-
-            var rubric = new List<object>();
-            if (extracted.TryGetProperty("rubric", out var rub) && rub.TryGetProperty("categories", out var cats) && cats.ValueKind == JsonValueKind.Array)
-                foreach (var cat in cats.EnumerateArray())
+                var result = await mediator.Send(new ExtractJobSpecCommand(request.FileName, request.Content, request.MimeType));
+                if (!result.IsValid)
                 {
-                    var criteria = new List<string>();
-                    if (cat.TryGetProperty("criteria", out var cr) && cr.ValueKind == JsonValueKind.Array)
-                        foreach (var c in cr.EnumerateArray())
-                            criteria.Add(c.GetString() ?? "");
-                    rubric.Add(new
+                    return Results.Json(new
                     {
-                        Name = cat.TryGetProperty("name", out var n) ? n.GetString() : "",
-                        Weight = cat.TryGetProperty("weight", out var w) ? w.GetDouble() : 0.0,
-                        Description = string.Join("; ", criteria)
-                    });
+                        error = "validation_failed",
+                        message = "Extraction response failed contract validation.",
+                        result.ExtractionId,
+                        result.InstructionVersionId,
+                        result.ProtectedContractVersion,
+                        result.ValidationStatus,
+                        result.ValidationFindings,
+                        correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+                    }, statusCode: StatusCodes.Status422UnprocessableEntity);
                 }
 
-            return Results.Ok(new
+                return Results.Ok(new
+                {
+                    result.ExtractionId,
+                    result.InstructionVersionId,
+                    result.ProtectedContractVersion,
+                    result.ValidationStatus,
+                    result.ValidationFindings,
+                    Title = result.Title,
+                    JobDescription = result.JobDescription,
+                    Department = result.Department,
+                    Organization = result.Organization,
+                    Rubric = result.Rubric,
+                });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("AWR_SEQ_API_ENDPOINT", StringComparison.OrdinalIgnoreCase)
+                                                      || ex.Message.Contains("No active extraction instruction", StringComparison.OrdinalIgnoreCase))
             {
-                Title = jobTitle,
-                JobDescription = jobDesc,
-                Department = dept,
-                Organisation = org,
-                MustHaves = mustHaves,
-                DesiredCriteria = desiredCriteria,
-                Rubric = rubric
-            });
+                return Results.Problem(ex.Message, statusCode: 503);
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("base64", StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.Problem(ex.Message, statusCode: 400);
+            }
+            catch (Exception)
+            {
+                return Results.Problem("AWReason extraction request failed.", statusCode: 502);
+            }
         });
 
-        group.MapPost("/extract-rubric", async (ExtractDocumentRequest request, IHttpClientFactory httpClientFactory, HttpContext httpContext) =>
+        group.MapPost("/extract-rubric", async (ExtractDocumentRequest request, ISender mediator, HttpContext httpContext) =>
         {
-            var endpoint = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
-            if (string.IsNullOrEmpty(endpoint))
-                return Results.Problem("AWR_SEQ_API_ENDPOINT is not configured", statusCode: 503);
-
-            using var client = httpClientFactory.CreateClient("AwrApiClient");
-            using var formData = new MultipartFormDataContent();
-
-            // Add the rubric extraction prompt as promptFile (required by /assess/passthrough)
-            var promptContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(ExtractionPrompts.ExtractRubric));
-            promptContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
-            formData.Add(promptContent, "promptFile", "extract-rubric-prompt.md");
-
-            // Add the uploaded document as specFile (decoded from base64)
-            byte[] docBytes;
-            try { docBytes = Convert.FromBase64String(request.Content); }
-            catch (FormatException) { return Results.Problem("Invalid base64 document content", statusCode: 400); }
-
-            var mimeType = string.IsNullOrWhiteSpace(request.MimeType) ? "application/octet-stream" : request.MimeType;
-            var docContent = new ByteArrayContent(docBytes);
-            docContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mimeType);
-            formData.Add(docContent, "specFile", request.FileName);
-
-            HttpResponseMessage response;
-            try { response = await client.PostAsync($"{endpoint}/assess/passthrough", formData); }
-            catch (Exception ex) { return Results.Problem($"Failed to reach AWR API: {ex.Message}", statusCode: 502); }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                var errorText = await response.Content.ReadAsStringAsync();
-                return Results.Problem(errorText, statusCode: (int)response.StatusCode);
-            }
-
-            // Passthrough returns the raw output file directly
-            var responseText = await response.Content.ReadAsStringAsync();
-
-            JsonElement extracted;
             try
             {
-                extracted = JsonSerializer.Deserialize<JsonElement>(responseText ?? "{}");
+                var result = await mediator.Send(new ExtractJobSpecCommand(request.FileName, request.Content, request.MimeType));
+                return result.IsValid
+                    ? Results.Ok(result.Rubric)
+                    : Results.Json(new
+                    {
+                        error = "validation_failed",
+                        message = "Extraction response failed contract validation.",
+                        result.ExtractionId,
+                        result.InstructionVersionId,
+                        result.ProtectedContractVersion,
+                        result.ValidationStatus,
+                        result.ValidationFindings,
+                        correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+                    }, statusCode: StatusCodes.Status422UnprocessableEntity);
             }
-            catch
+            catch (InvalidOperationException ex) when (ex.Message.Contains("AWR_SEQ_API_ENDPOINT", StringComparison.OrdinalIgnoreCase)
+                                                      || ex.Message.Contains("No active extraction instruction", StringComparison.OrdinalIgnoreCase))
             {
-                return Results.Problem("Failed to parse rubric extraction response as JSON", statusCode: 502);
+                return Results.Problem(ex.Message, statusCode: 503);
             }
-
-            return Results.Content(extracted.GetRawText(), "application/json");
+            catch (Exception)
+            {
+                return Results.Problem("AWReason rubric extraction request failed.", statusCode: 502);
+            }
         });
 
-        group.MapGet("/{jobId}", async (string jobId, ISender mediator) =>
+        group.MapGet("/{jobId}", async (string jobId, ISender mediator, HttpContext httpContext) =>
         {
             var job = await mediator.Send(new GetJobDetailQuery(jobId));
-            if (job is null) return Results.NotFound();
+            if (job is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
             return Results.Ok(new
             {
                 job.Id, job.JobCode, job.Title, job.Department,
@@ -200,37 +184,14 @@ public static class JobsEndpoints
             });
         });
 
-        group.MapGet("/{jobId}/config", async (string jobId, ISender mediator) =>
+        group.MapGet("/{jobId}/config", async (string jobId, ISender mediator, HttpContext httpContext) =>
         {
             var config = await mediator.Send(new GetJobConfigQuery(jobId));
-            if (config is null) return Results.NotFound();
+            if (config is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
+            var extraction = await mediator.Send(new GetJobSpecExtractionQuery(jobId));
             return Results.Ok(new
             {
-                config.RubricJson,
-                config.MustHavesJson,
-                config.DesiredCriteriaJson,
-                config.ScoringRunCount,
-                config.AggregationStrategy,
-                config.LonglistThreshold,
-                config.ShortlistThreshold,
-                config.VarianceThreshold,
-                config.RubricApprovalStatus,
-                config.RubricSource
-            });
-        });
-
-        group.MapPut("/{jobId}/config", async (string jobId, UpdateJobConfigRequest request, ISender mediator) =>
-        {
-            var config = await mediator.Send(new UpdateJobConfigCommand(
-                jobId, request.RubricJson, request.MustHavesJson, request.DesiredCriteriaJson,
-                request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
-                request.ShortlistThreshold, request.VarianceThreshold,
-                request.RubricSource ?? "manual", request.RawExtractionResponse, request.RubricApprovalStatus));
-            return Results.Ok(new
-            {
-                config.Id,
-                config.JobId,
-                config.VersionNumber,
                 config.RubricJson,
                 config.MustHavesJson,
                 config.DesiredCriteriaJson,
@@ -241,34 +202,206 @@ public static class JobsEndpoints
                 config.VarianceThreshold,
                 config.RubricApprovalStatus,
                 config.RubricSource,
-                config.CreatedAt
+                config.ExtractionId,
+                config.ExtractionInstructionVersionId,
+                config.Id,
+                config.VersionNumber,
+                Extraction = extraction is null ? null : new
+                {
+                    extraction.Id,
+                    extraction.InstructionVersionId,
+                    extraction.ProtectedContractVersion,
+                    extraction.ValidationStatus,
+                    extraction.ValidationFindings,
+                    extraction.SourceFileName,
+                    extraction.SourceMimeType,
+                    extraction.CompletedAt,
+                    extraction.CorrelationId
+                }
             });
         });
 
-        group.MapPost("/{jobId}/process", async (string jobId, ISender mediator) =>
+        group.MapPut("/{jobId}/config", async (string jobId, UpdateJobConfigRequest request, ISender mediator, HttpContext httpContext) =>
+        {
+            try
+            {
+                var config = await mediator.Send(new UpdateJobConfigCommand(
+                    jobId, request.RubricJson, request.MustHavesJson, request.DesiredCriteriaJson,
+                    request.ScoringRunCount, request.AggregationStrategy, request.LonglistThreshold,
+                    request.ShortlistThreshold, request.VarianceThreshold,
+                    request.RubricSource ?? "manual", request.RawExtractionResponse,
+                    request.ExtractionId, request.ExtractionInstructionVersionId, request.ExpectedConfigVersionId, request.RubricApprovalStatus));
+                return Results.Ok(new
+                {
+                    config.Id,
+                    config.JobId,
+                    config.VersionNumber,
+                    config.RubricJson,
+                    config.MustHavesJson,
+                    config.DesiredCriteriaJson,
+                    config.ScoringRunCount,
+                    config.AggregationStrategy,
+                    config.LonglistThreshold,
+                    config.ShortlistThreshold,
+                    config.VarianceThreshold,
+                    config.RubricApprovalStatus,
+                    config.RubricSource,
+                    config.ExtractionId,
+                    config.ExtractionInstructionVersionId,
+                    config.CreatedAt
+                });
+            }
+            catch (JobConfigVersionConflictException ex)
+            {
+                return Results.Json(new
+                {
+                    error = "stale_version",
+                    message = ex.Message,
+                    correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
+            catch (InvalidJobConfigException ex)
+            {
+                return Results.Json(new
+                {
+                    error = "invalid_job_config",
+                    message = ex.Message,
+                    correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+                }, statusCode: StatusCodes.Status400BadRequest);
+            }
+        });
+
+        group.MapPost("/{jobId}/rubric/convert", async (
+            string jobId,
+            LegacyRubricConversionRequest request,
+            ISender mediator,
+            LegacyRubricAdapter adapter,
+            HttpContext httpContext) =>
+        {
+            var job = await mediator.Send(new GetJobDetailQuery(jobId));
+            if (job is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
+
+            var current = job.ConfigVersions
+                .FirstOrDefault(version => version.Id == job.CurrentConfigVersionId)
+                ?? job.ConfigVersions.OrderByDescending(version => version.VersionNumber).FirstOrDefault();
+            if (current is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
+
+            if (!string.Equals(current.Id, request.ExpectedConfigVersionId, StringComparison.Ordinal))
+                return Results.Json(new
+                {
+                    error = "stale_version",
+                    message = "stale_version: the current configuration has changed and must be reloaded before conversion.",
+                    correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+                }, statusCode: StatusCodes.Status409Conflict);
+
+            if (adapter.IsRubricV2Json(current.RubricJson))
+                return Results.Json(new
+                {
+                    error = "already_converted",
+                    message = "The current rubric already uses rubric-v2.",
+                    correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+                }, statusCode: StatusCodes.Status400BadRequest);
+
+            var preview = adapter.CreateLegacyConversionProposal(
+                current.RubricJson,
+                current.MustHavesJson,
+                current.DesiredCriteriaJson,
+                current.Id);
+
+            if (string.Equals(request.Mode, "preview", StringComparison.OrdinalIgnoreCase))
+                return Results.Ok(preview);
+
+            var reviewed = request.ReviewedRubric.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
+                ? preview
+                : JsonSerializer.Deserialize<RubricEnvelopeModel>(
+                    request.ReviewedRubric.GetRawText(),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? preview;
+
+            try
+            {
+                var saved = await mediator.Send(new UpdateJobConfigCommand(
+                    jobId,
+                    adapter.SerializeEnvelope(reviewed),
+                    adapter.ProjectMustHavesJson(reviewed),
+                    adapter.ProjectDesiredCriteriaJson(reviewed),
+                    current.ScoringRunCount,
+                    current.AggregationStrategy,
+                    current.LonglistThreshold,
+                    current.ShortlistThreshold,
+                    current.VarianceThreshold,
+                    "manual",
+                    current.RawExtractionResponse,
+                    current.ExtractionId,
+                    current.ExtractionInstructionVersionId,
+                    current.Id,
+                    current.RubricApprovalStatus));
+
+                return Results.Ok(new
+                {
+                    saved.Id,
+                    saved.VersionNumber,
+                    saved.RubricJson,
+                    saved.MustHavesJson,
+                    saved.DesiredCriteriaJson,
+                    saved.ExtractionId,
+                    saved.ExtractionInstructionVersionId,
+                });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("stale_version", StringComparison.Ordinal))
+            {
+                return Results.Json(new
+                {
+                    error = "stale_version",
+                    message = ex.Message,
+                    correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+                }, statusCode: StatusCodes.Status409Conflict);
+            }
+        });
+
+        group.MapPost("/{jobId}/process", async (string jobId, ISender mediator, HttpContext httpContext, CancellationToken ct) =>
         {
             // Check for production-approved prompt before allowing scoring pipeline trigger
-            var prompts = await mediator.Send(new TalentMatch.Application.Prompts.Queries.GetPromptsQuery(jobId));
+            var prompts = await mediator.Send(new TalentMatch.Application.Prompts.Queries.GetPromptsQuery(jobId), ct);
             var productionPrompt = prompts.FirstOrDefault(p => p.Status == "production-approved");
             if (productionPrompt == null)
                 return Results.Problem("No production-approved prompt exists for this job. Approve a prompt before processing.", statusCode: 400);
 
             // Load job to get run count from config
-            var job = await mediator.Send(new GetJobDetailQuery(jobId));
+            var job = await mediator.Send(new GetJobDetailQuery(jobId), ct);
             if (job == null)
-                return Results.NotFound();
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
 
             var config = job.ConfigVersions
                 .FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
                 ?? job.ConfigVersions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
             var runCount = config?.ScoringRunCount ?? 3;
+            if (TalentMatch.Application.Jobs.Commands.ProcessJobCommandHandler.ResolveScoringMode() == "sequential"
+                && !string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
+                return Results.Problem("Approve the job rubric before processing applications.", statusCode: 400);
 
-            // Delegate to ProcessJobCommand which properly persists status changes
-            var result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ProcessJobCommand(
-                jobId, productionPrompt.Id, runCount));
+            // Sequential processing wakes the in-process pool; the request does not wait for scoring.
+            TalentMatch.Application.Jobs.Commands.ProcessJobResult result;
+            try
+            {
+                result = await mediator.Send(new TalentMatch.Application.Jobs.Commands.ProcessJobCommand(
+                    jobId, productionPrompt.Id, runCount), ct);
+            }
+            catch (TalentMatch.Application.Prompts.Services.ScoringProfileMismatchException ex)
+            {
+                return Results.Problem(
+                    ex.Message,
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Scoring profile mismatch");
+            }
 
-            return Results.Accepted(null, new { processed = result.Processed, total = result.Total, errors = result.Errors });
-        });
+            return Results.Accepted($"/api/jobs/{jobId}/applications",
+                new { processed = result.Processed, total = result.Total, errors = result.Errors, queued = result.Queued });
+        })
+        .WithSummary("Request processing of queued job applications")
+        .WithDescription("Returns immediately after notifying the sequential scoring pool or enqueueing platform batches. Poll the applications resource for results.")
+        .Produces(StatusCodes.Status202Accepted);
 
         group.MapPost("/{jobId}/reaggregate", async (string jobId, ISender mediator) =>
         {
@@ -289,8 +422,14 @@ public static class JobsEndpoints
         // Platform-mode progress rollup. Returns null progress if no platform run
         // is in flight for this job (caller treats that as sequential / idle).
         group.MapGet("/{jobId}/scoring/progress", async (string jobId,
-            TalentMatch.Domain.Interfaces.IScoringBatchRepository batchRepo) =>
+            ISender mediator,
+            TalentMatch.Domain.Interfaces.IScoringBatchRepository batchRepo,
+            HttpContext httpContext) =>
         {
+            var job = await mediator.Send(new GetJobDetailQuery(jobId));
+            if (job is null)
+                return AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
+
             var progress = await batchRepo.GetProgressAsync(jobId);
             return Results.Ok(new { progress });
         });
@@ -301,12 +440,37 @@ public static class JobsEndpoints
             return Results.Ok(result);
         });
 
-        group.MapDelete("/{jobId}", async (string jobId, ISender mediator) =>
+        group.MapDelete("/{jobId}", async (string jobId, ISender mediator, HttpContext httpContext) =>
         {
-            var result = await mediator.Send(new DeleteJobCommand(jobId));
-            return result ? Results.NoContent() : Results.NotFound();
-        }).RequireAuthorization("AdminOnly");
+            try
+            {
+                var result = await mediator.Send(new DeleteJobCommand(jobId));
+                return result
+                    ? Results.NoContent()
+                    : AuthorizationErrorResults.Create(httpContext, AuthorizationErrorCodes.NotFound);
+            }
+            catch (InvalidOperationException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.InvalidScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    httpContext,
+                    AuthorizationErrorCodes.Forbidden);
+            }
+        });
     }
+
+    private static bool IsOrganizationAliasValidation(
+        ValidationException exception,
+        CreateJobRequest request)
+        => !string.IsNullOrWhiteSpace(request.OrganizationId)
+            && !string.IsNullOrWhiteSpace(request.DepartmentId)
+            && exception.Errors.All(error =>
+                error.PropertyName == nameof(CreateJobCommand.Organisation));
 }
 
 public record CreateJobRequest(
@@ -314,16 +478,24 @@ public record CreateJobRequest(
     string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,
     int ScoringRunCount, string AggregationStrategy, double LonglistThreshold,
     double ShortlistThreshold, double VarianceThreshold, string? JobDescription,
-    string? RubricSource = "manual", string? RawExtractionResponse = null);
+    string? RubricSource = "manual", string? RawExtractionResponse = null,
+    string? ExtractionId = null, string? ExtractionInstructionVersionId = null,
+    string? OrganizationId = null, string? DepartmentId = null);
 
 public record UpdateJobConfigRequest(
     string? RubricJson, string? MustHavesJson, string? DesiredCriteriaJson,
     int ScoringRunCount, string AggregationStrategy, double LonglistThreshold,
     double ShortlistThreshold, double VarianceThreshold,
     string? RubricSource = "manual", string? RawExtractionResponse = null,
-    string? RubricApprovalStatus = null);
+    string? ExtractionId = null, string? ExtractionInstructionVersionId = null,
+    string? ExpectedConfigVersionId = null, string? RubricApprovalStatus = null);
 
 public record UpdateRubricApprovalRequest(string Status);
+
+public record LegacyRubricConversionRequest(
+    string Mode,
+    string ExpectedConfigVersionId,
+    JsonElement ReviewedRubric);
 
 public record ExtractDocumentRequest(
     string FileName, string Content, string MimeType);

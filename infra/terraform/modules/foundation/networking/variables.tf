@@ -42,6 +42,36 @@ variable "subnet_name" {
   default     = "snet-appservice-integration"
 }
 
+variable "reuse_sql_private_endpoint" {
+  description = "Reuse an existing SQL private endpoint and DNS configuration"
+  type        = bool
+  default     = false
+}
+
+variable "sql_private_endpoint_subnet_name" {
+  description = "Name for the dedicated SQL private endpoint subnet"
+  type        = string
+  default     = "snet-sql-private-endpoints"
+}
+
+variable "sql_private_endpoint_subnet_cidr" {
+  description = "CIDR for the dedicated SQL private endpoint subnet"
+  type        = string
+  default     = ""
+}
+
+variable "sql_server_id" {
+  description = "Azure SQL logical server resource ID"
+  type        = string
+  default     = ""
+}
+
+variable "sql_server_name" {
+  description = "Azure SQL logical server name"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Resource tags"
   type        = map(string)

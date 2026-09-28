@@ -1,0 +1,51 @@
+@using TalentMatch.Web.Client.Services
+
+<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:0.75rem;">
+    <label>
+        <span style="display:block; font-weight:600; margin-bottom:0.25rem;">Model</span>
+        <select value="@ModelId"
+                @onchange="OnModelChanged"
+                disabled="@(Disabled || Catalog is null)"
+                style="width:100%;">
+            @if (Catalog is not null)
+            {
+                @foreach (var model in Catalog.Models)
+                {
+                    <option value="@model.Deployment">
+                        @model.Deployment@(model.IsDefault ? " (default)" : "")
+                    </option>
+                }
+            }
+        </select>
+    </label>
+    <label>
+        <span style="display:block; font-weight:600; margin-bottom:0.25rem;">Reasoning effort</span>
+        <select value="@ReasoningLevel"
+                @onchange="OnReasoningChanged"
+                disabled="@(Disabled || Catalog is null)"
+                style="width:100%;">
+            @if (Catalog is not null)
+            {
+                @foreach (var effort in Catalog.SupportedReasoningEfforts)
+                {
+                    <option value="@effort">@effort</option>
+                }
+            }
+        </select>
+    </label>
+</div>
+
+@code {
+    [Parameter] public ReasoningModelsResponseDto? Catalog { get; set; }
+    [Parameter] public string ModelId { get; set; } = "";
+    [Parameter] public EventCallback<string> ModelIdChanged { get; set; }
+    [Parameter] public string ReasoningLevel { get; set; } = "high";
+    [Parameter] public EventCallback<string> ReasoningLevelChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private Task OnModelChanged(ChangeEventArgs args)
+        => ModelIdChanged.InvokeAsync(args.Value?.ToString() ?? "");
+
+    private Task OnReasoningChanged(ChangeEventArgs args)
+        => ReasoningLevelChanged.InvokeAsync(args.Value?.ToString() ?? ReasoningLevel);
+}

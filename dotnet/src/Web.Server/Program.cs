@@ -2,16 +2,25 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
+using Microsoft.Identity.Web;
+using Microsoft.IdentityModel.Tokens;
 using TalentMatch.Application;
+using TalentMatch.Application.Authorization;
+using TalentMatch.Application.JobExtraction.Services;
 using TalentMatch.Domain.Entities;
+using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure;
 using TalentMatch.Infrastructure.Persistence;
 using TalentMatch.Infrastructure.Services;
 using TalentMatch.Web.Server.Endpoints;
+using TalentMatch.Web.Server.Middleware;
+using TalentMatch.Web.Server.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,39 +28,150 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.ContentRootPath);
 
-// Auth - using cookie-based auth for demo, Entra ID for production
-builder.Services.AddAuthentication("cookie")
-    .AddCookie("cookie", options =>
-    {
-        options.LoginPath = "/api/auth/login";
-        options.Cookie.HttpOnly = true;
-        options.Cookie.SameSite = SameSiteMode.Strict;
-        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-        options.Events.OnRedirectToLogin = context =>
-        {
-            context.Response.StatusCode = 401;
-            return Task.CompletedTask;
-        };
-    });
-builder.Services.AddAuthorization(options =>
+var appAuthMode = builder.Configuration["APP_AUTH_MODE"] ?? "simple";
+var useEntraAuthentication = string.Equals(appAuthMode, "entra", StringComparison.OrdinalIgnoreCase);
+
+if (!useEntraAuthentication
+    && !builder.Environment.IsDevelopment()
+    && !builder.Environment.IsEnvironment("Testing"))
 {
-    options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
-});
+    throw new InvalidOperationException(
+        "APP_AUTH_MODE=simple is only supported in Development and Testing environments. "
+        + "Configure APP_AUTH_MODE=entra for shared or production environments.");
+}
+
+if (useEntraAuthentication)
+{
+    var tenantId = RequireConfiguration(builder.Configuration, "AZURE_TENANT_ID");
+    var apiClientId = RequireConfiguration(builder.Configuration, "ENTRA_API_APP_CLIENT_ID");
+    _ = RequireConfiguration(builder.Configuration, "ENTRA_API_IDENTIFIER_URI");
+    var apiScope = builder.Configuration["ENTRA_API_SCOPE"] ?? "access_as_user";
+    var allowedClientIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        RequireConfiguration(builder.Configuration, "ENTRA_STACK_A_CLIENT_ID"),
+        RequireConfiguration(builder.Configuration, "ENTRA_STACK_B_CLIENT_ID"),
+    };
+    var issuer = $"https://login.microsoftonline.com/{tenantId}/v2.0";
+
+    builder.Services
+        .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddMicrosoftIdentityWebApi(
+            jwtOptions =>
+            {
+                jwtOptions.Authority = issuer;
+                jwtOptions.Audience = apiClientId;
+                jwtOptions.MapInboundClaims = false;
+                jwtOptions.TokenValidationParameters.ValidIssuer = issuer;
+                jwtOptions.TokenValidationParameters.ValidAudience = apiClientId;
+                jwtOptions.TokenValidationParameters.NameClaimType = "preferred_username";
+                jwtOptions.TokenValidationParameters.RoleClaimType = "roles";
+                jwtOptions.TokenValidationParameters.ClockSkew = TimeSpan.FromMinutes(2);
+                jwtOptions.Events = new JwtBearerEvents
+                {
+                    OnTokenValidated = context =>
+                    {
+                        context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationActorItemKey] = context.Principal?.FindFirstValue("oid") ?? "unknown";
+                        context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationTenantItemKey] = context.Principal?.FindFirstValue("tid");
+                        var error = ValidateEntraClaims(
+                            context.Principal,
+                            tenantId,
+                            apiScope,
+                            allowedClientIds);
+                        if (error is not null)
+                        {
+                            context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationErrorItemKey] = error.Value.Code;
+                            context.HttpContext.Items["AuthErrorMessage"] = error.Value.Message;
+                            context.Fail(error.Value.Code);
+                        }
+
+                        return Task.CompletedTask;
+                    },
+                    OnAuthenticationFailed = context =>
+                    {
+                        var code = context.Exception switch
+                        {
+                            SecurityTokenInvalidAudienceException => AuthorizationErrorCodes.InvalidAudience,
+                            SecurityTokenInvalidIssuerException => AuthorizationErrorCodes.WrongTenant,
+                            _ => AuthorizationErrorCodes.InvalidToken,
+                        };
+                        context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationErrorItemKey] = code;
+                        return Task.CompletedTask;
+                    },
+                    OnChallenge = WriteEntraChallengeAsync,
+                };
+            },
+            identityOptions =>
+            {
+                identityOptions.Instance = "https://login.microsoftonline.com/";
+                identityOptions.TenantId = tenantId;
+                identityOptions.ClientId = apiClientId;
+            });
+
+    builder.Services.AddAuthorization(options =>
+    {
+        options.AddPolicy("AccessAsUser", policy =>
+        {
+            policy.RequireAuthenticatedUser();
+            policy.RequireAssertion(context =>
+                context.User.FindAll("scp")
+                    .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    .Contains(apiScope, StringComparer.Ordinal)
+                && context.User.FindAll("azp")
+                    .Any(claim => allowedClientIds.Contains(claim.Value)));
+        });
+        options.AddPolicy("AdminOnly", policy => policy.RequireAssertion(context =>
+            context.Resource is HttpContext httpContext
+            && httpContext.Items[EntraApplicationAuthorizationMiddleware.ContextItemKey]
+                is AuthorizationContextResponse authorizationContext
+            && authorizationContext.GlobalRole == "admin"));
+    });
+}
+else
+{
+    builder.Services.AddAuthentication("cookie")
+        .AddCookie("cookie", options =>
+        {
+            options.LoginPath = "/api/auth/login";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.Events.OnRedirectToLogin = context =>
+            {
+                context.Response.StatusCode = 401;
+                return Task.CompletedTask;
+            };
+        });
+    builder.Services.AddAuthorization(options =>
+    {
+        options.AddPolicy("AdminOnly", policy => policy.RequireRole("admin"));
+    });
+}
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<IAzureSqlProbe, EfCoreAzureSqlProbe>();
+builder.Services.AddSingleton<IAzureSqlReadinessService>(serviceProvider =>
+    new AzureSqlReadinessService(
+        serviceProvider.GetRequiredService<IAzureSqlProbe>(),
+        new AzureSqlReadinessOptions()));
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new() { Title = "TalentMatch API", Version = "v1" });
 });
 
+var allowedCorsOrigins = ResolveAllowedCorsOrigins(builder.Configuration);
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(b => b
-        .SetIsOriginAllowed(_ => true)
-        .AllowAnyMethod()
-        .AllowAnyHeader()
-        .AllowCredentials());
+    options.AddDefaultPolicy(policy =>
+    {
+        if (allowedCorsOrigins.Length > 0)
+            policy.WithOrigins(allowedCorsOrigins);
+
+        policy
+            .AllowAnyMethod()
+            .AllowAnyHeader()
+            .AllowCredentials();
+    });
 });
 
 var app = builder.Build();
@@ -70,7 +190,11 @@ if (useBackgroundAzureSqlWarmup)
     {
         try
         {
-            await ExecuteWithSqlWarmupRetryAsync(() => InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment));
+            await ExecuteWithSqlWarmupRetryAsync(() => InitializeApplicationDataAsync(
+                app.Services,
+                app.Environment.ContentRootPath,
+                app.Environment,
+                seedDefaultAdmin: !useEntraAuthentication));
             Console.WriteLine("[startup] Background database initialization complete.");
         }
         catch (Exception ex)
@@ -81,10 +205,18 @@ if (useBackgroundAzureSqlWarmup)
 }
 else
 {
-    await InitializeApplicationDataAsync(app.Services, app.Environment.ContentRootPath, app.Environment);
+    await InitializeApplicationDataAsync(
+        app.Services,
+        app.Environment.ContentRootPath,
+        app.Environment,
+        seedDefaultAdmin: !useEntraAuthentication);
 }
 
-static Task InitializeApplicationDataAsync(IServiceProvider services, string contentRootPath, IHostEnvironment environment)
+static Task InitializeApplicationDataAsync(
+    IServiceProvider services,
+    string contentRootPath,
+    IHostEnvironment environment,
+    bool seedDefaultAdmin)
 {
     using var scope = services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -103,7 +235,7 @@ static Task InitializeApplicationDataAsync(IServiceProvider services, string con
         EnsureSharedAzureSqlSchemaIfNeeded(db, contentRootPath);
     }
 
-    if (!db.Users.Any())
+    if (seedDefaultAdmin && !db.Users.Any())
     {
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("adm1n99")));
         db.Users.Add(new User
@@ -113,6 +245,56 @@ static Task InitializeApplicationDataAsync(IServiceProvider services, string con
             FullName = "Administrator",
             Department = "all",
             PasswordHash = hash
+        });
+        db.SaveChanges();
+    }
+
+    if (!db.ExtractionInstructionVersions.Any())
+    {
+        var seededAt = DateTime.UtcNow;
+        db.ExtractionInstructionVersions.Add(new ExtractionInstructionVersion
+        {
+            VersionNumber = 1,
+            InstructionText = """
+                Extract the hiring organization's job specification into structured data.
+
+                Requirements:
+                - Identify every distinct, independently assessable requirement as its own requirement item.
+                - Split compound requirements into separate items without changing their meaning.
+                - Preserve genuine duplicates using duplicate_of instead of silently dropping them.
+                - Retain ambiguous assignments by keeping the item and marking needs_review=true.
+                - Preserve source wording for every requirement and enough metadata to trace it.
+                - Respect any rubric already present in the document; otherwise produce a thoughtful generated rubric with weights summing to 1.0.
+                """,
+            ModelId = Environment.GetEnvironmentVariable("AWR_MODEL_ID") ?? "o3",
+            ReasoningLevel = Environment.GetEnvironmentVariable("AWR_REASONING_LEVEL") ?? "high",
+            ProtectedContractVersion = JobSpecExtractionContractValidator.ProtectedContractVersion,
+            Status = "active",
+            ValidationStatus = "valid",
+            ValidationFindingsJson = "[]",
+            CreatedAt = seededAt,
+            CreatedBy = "system:seed",
+            ActivatedAt = seededAt,
+            ActivatedBy = "system:seed",
+            ConcurrencyVersion = 1,
+        });
+        db.SaveChanges();
+    }
+
+    if (!db.PromptGenerationInstructions.Any())
+    {
+        var seededAt = DateTime.UtcNow;
+        db.PromptGenerationInstructions.Add(new PromptGenerationInstruction
+        {
+            VersionNumber = 1,
+            InstructionText = TalentMatch.Application.Prompts.Commands.GeneratePromptCommandHandler.DefaultGenerationInstruction,
+            ModelId = Environment.GetEnvironmentVariable("AWR_MODEL_ID") ?? "o3",
+            ReasoningLevel = Environment.GetEnvironmentVariable("AWR_REASONING_LEVEL") ?? "high",
+            Status = "active",
+            CreatedAt = seededAt,
+            CreatedBy = "system:seed",
+            ActivatedAt = seededAt,
+            ActivatedBy = "system:seed",
         });
         db.SaveChanges();
     }
@@ -218,6 +400,8 @@ static bool BaselineSharedSqliteSchemaIfNeeded(AppDbContext db)
         "20260312120000_AddRubricApprovalStatus",
         "20260313150938_AddRubricSourceToJobConfigVersion",
         "20260323182030_AddLastErrorToApplication",
+        "20260909184257_AddExtractionInstructionLifecycle",
+        "20260917123941_AddScoringPromptProfiles",
     ];
 
     if (!db.Database.IsSqlite())
@@ -306,8 +490,12 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         if (hasExistingSchema)
         {
             EnsureSqliteApplicationCandidateColumns(connection);
+            EnsureSqliteSequentialScoringColumns(connection);
             EnsureSqliteManualReviewHumanEditedColumn(connection);
             EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
+            EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
+            EnsureSqliteExtractionLifecycleSchema(connection);
+            EnsureSqliteScoringProfileSchema(connection);
             return;
         }
 
@@ -319,14 +507,86 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         initializeSchemaCommand.CommandText = File.ReadAllText(schemaPath);
         initializeSchemaCommand.ExecuteNonQuery();
         EnsureSqliteApplicationCandidateColumns(connection);
+        EnsureSqliteSequentialScoringColumns(connection);
         EnsureSqliteManualReviewHumanEditedColumn(connection);
         EnsureSqliteAggregatedResultsFinalSubScoresJsonColumn(connection);
+        EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
+        EnsureSqliteExtractionLifecycleSchema(connection);
+        EnsureSqliteScoringProfileSchema(connection);
     }
     finally
     {
         if (shouldClose)
             connection.Close();
     }
+}
+
+static void EnsureSqliteSequentialScoringColumns(SqliteConnection connection)
+{
+    using var ownerCommand = connection.CreateCommand();
+    ownerCommand.CommandText = "ALTER TABLE Applications ADD COLUMN ScoringOwner TEXT NULL;";
+    TryExecuteSchemaChange(ownerCommand);
+
+    using var leaseCommand = connection.CreateCommand();
+    leaseCommand.CommandText = "ALTER TABLE Applications ADD COLUMN ScoringLeaseUntil TEXT NULL;";
+    TryExecuteSchemaChange(leaseCommand);
+
+    using var indexesCommand = connection.CreateCommand();
+    indexesCommand.CommandText = """
+        CREATE INDEX IF NOT EXISTS IX_Applications_Status_TestRunId_CreatedAt ON Applications (Status, TestRunId, CreatedAt);
+        CREATE INDEX IF NOT EXISTS IX_Applications_Status_ScoringLeaseUntil ON Applications (Status, ScoringLeaseUntil);
+        """;
+    indexesCommand.ExecuteNonQuery();
+}
+
+static void EnsureSqliteScoringProfileSchema(SqliteConnection connection)
+{
+    string[] alterations =
+    [
+        "ALTER TABLE ScoringRuns ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ApprovedModelId TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ApprovedReasoningLevel TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ApprovedTestRunId TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN GenerationInstructionVersionId TEXT NULL;",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE ScoringPrompts ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ApprovedModelId TEXT NULL;",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ApprovedReasoningLevel TEXT NULL;",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptTestRuns ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptGenerationInstructions ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE PromptGenerationInstructions ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';",
+    ];
+
+    foreach (var sql in alterations)
+    {
+        using var alter = connection.CreateCommand();
+        alter.CommandText = sql;
+        TryExecuteSchemaChange(alter);
+    }
+
+    using var create = connection.CreateCommand();
+    create.CommandText = """
+        CREATE TABLE IF NOT EXISTS PromptGenerationInstructions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            JobId TEXT NULL,
+            VersionNumber INTEGER NOT NULL,
+            InstructionText TEXT NOT NULL,
+            ModelId TEXT NOT NULL DEFAULT '',
+            ReasoningLevel TEXT NOT NULL DEFAULT '',
+            Status TEXT NOT NULL DEFAULT 'draft',
+            ChangeNote TEXT NULL,
+            CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CreatedBy TEXT NOT NULL DEFAULT '',
+            ActivatedAt TEXT NULL,
+            ActivatedBy TEXT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS IX_PromptGenerationInstructions_JobId_VersionNumber
+            ON PromptGenerationInstructions (JobId, VersionNumber);
+        CREATE INDEX IF NOT EXISTS IX_PromptGenerationInstructions_JobId_Status
+            ON PromptGenerationInstructions (JobId, Status);
+        """;
+    create.ExecuteNonQuery();
 }
 
 static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connection)
@@ -350,6 +610,123 @@ static void EnsureSqliteManualReviewHumanEditedColumn(SqliteConnection connectio
         using var alterCommand = connection.CreateCommand();
         alterCommand.CommandText = "ALTER TABLE ManualReviews ADD COLUMN HumanEdited INTEGER NOT NULL DEFAULT 0;";
         alterCommand.ExecuteNonQuery();
+    }
+}
+
+static void EnsureSqliteJobConfigVersionsScoringRunCountColumn(SqliteConnection connection)
+{
+    using var columnCheckCommand = connection.CreateCommand();
+    columnCheckCommand.CommandText = "PRAGMA table_info('JobConfigVersions');";
+
+    using var reader = columnCheckCommand.ExecuteReader();
+    var hasColumn = false;
+    while (reader.Read())
+    {
+        if (string.Equals(reader.GetString(1), "ScoringRunCount", StringComparison.OrdinalIgnoreCase))
+        {
+            hasColumn = true;
+            break;
+        }
+    }
+    reader.Close();
+
+    if (hasColumn)
+        return;
+
+    using var alterCommand = connection.CreateCommand();
+    alterCommand.CommandText = "ALTER TABLE JobConfigVersions ADD COLUMN ScoringRunCount INTEGER NOT NULL DEFAULT 3;";
+    alterCommand.ExecuteNonQuery();
+
+    using var backfillCommand = connection.CreateCommand();
+    backfillCommand.CommandText = "UPDATE JobConfigVersions SET ScoringRunCount = COALESCE(RunsPerApplication, 3);";
+    backfillCommand.ExecuteNonQuery();
+}
+
+static void EnsureSqliteExtractionLifecycleSchema(SqliteConnection connection)
+{
+    using var alterExtractionId = connection.CreateCommand();
+    alterExtractionId.CommandText = "ALTER TABLE JobConfigVersions ADD COLUMN ExtractionId TEXT NULL;";
+    TryExecuteSchemaChange(alterExtractionId);
+
+    using var alterInstructionVersionId = connection.CreateCommand();
+    alterInstructionVersionId.CommandText = "ALTER TABLE JobConfigVersions ADD COLUMN ExtractionInstructionVersionId TEXT NULL;";
+    TryExecuteSchemaChange(alterInstructionVersionId);
+
+    using var createInstructionTable = connection.CreateCommand();
+    createInstructionTable.CommandText = """
+        CREATE TABLE IF NOT EXISTS ExtractionInstructionVersions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            VersionNumber INTEGER NOT NULL,
+            InstructionText TEXT NOT NULL,
+            ModelId TEXT NOT NULL DEFAULT '',
+            ReasoningLevel TEXT NOT NULL DEFAULT '',
+            ProtectedContractVersion TEXT NOT NULL,
+            Status TEXT NOT NULL DEFAULT 'draft',
+            ChangeNote TEXT NULL,
+            ValidationStatus TEXT NOT NULL DEFAULT 'unvalidated',
+            ValidationFindingsJson TEXT NOT NULL DEFAULT '[]',
+            ValidatedAt TEXT NULL,
+            ValidatedBy TEXT NULL,
+            CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CreatedBy TEXT NOT NULL DEFAULT '',
+            ActivatedAt TEXT NULL,
+            ActivatedBy TEXT NULL,
+            ConcurrencyVersion INTEGER NOT NULL DEFAULT 1,
+            CHECK (Status IN ('draft', 'active', 'retired')),
+            CHECK (ValidationStatus IN ('unvalidated', 'valid', 'invalid'))
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_VersionNumber ON ExtractionInstructionVersions (VersionNumber);
+        CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_Active ON ExtractionInstructionVersions (Status) WHERE Status = 'active';
+        CREATE INDEX IF NOT EXISTS IX_ExtractionInstructionVersions_Status_VersionNumber ON ExtractionInstructionVersions (Status, VersionNumber DESC);
+        """;
+    createInstructionTable.ExecuteNonQuery();
+
+    using var alterInstructionModel = connection.CreateCommand();
+    alterInstructionModel.CommandText = "ALTER TABLE ExtractionInstructionVersions ADD COLUMN ModelId TEXT NOT NULL DEFAULT '';";
+    TryExecuteSchemaChange(alterInstructionModel);
+
+    using var alterInstructionReasoning = connection.CreateCommand();
+    alterInstructionReasoning.CommandText = "ALTER TABLE ExtractionInstructionVersions ADD COLUMN ReasoningLevel TEXT NOT NULL DEFAULT '';";
+    TryExecuteSchemaChange(alterInstructionReasoning);
+
+    using var createExtractionTable = connection.CreateCommand();
+    createExtractionTable.CommandText = """
+        CREATE TABLE IF NOT EXISTS JobSpecExtractions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            Purpose TEXT NOT NULL,
+            InstructionVersionId TEXT NOT NULL REFERENCES ExtractionInstructionVersions(Id) ON DELETE RESTRICT,
+            ProtectedContractVersion TEXT NOT NULL,
+            SourceFileName TEXT NOT NULL,
+            SourceMimeType TEXT NOT NULL,
+            SourceSha256 TEXT NOT NULL,
+            RawResponse TEXT NOT NULL,
+            NormalizedResponseJson TEXT NULL,
+            ValidationStatus TEXT NOT NULL,
+            ValidationFindingsJson TEXT NOT NULL DEFAULT '[]',
+            JobId TEXT NULL REFERENCES Jobs(Id) ON DELETE RESTRICT,
+            JobConfigVersionId TEXT NULL,
+            CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CreatedBy TEXT NOT NULL DEFAULT '',
+            CompletedAt TEXT NOT NULL DEFAULT (datetime('now')),
+            CorrelationId TEXT NOT NULL,
+            CHECK (Purpose IN ('job_creation', 'instruction_validation')),
+            CHECK (ValidationStatus IN ('valid', 'invalid'))
+        );
+        CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_InstructionVersionId_CreatedAt ON JobSpecExtractions (InstructionVersionId, CreatedAt DESC);
+        CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobId_CreatedAt ON JobSpecExtractions (JobId, CreatedAt DESC);
+        CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobConfigVersionId ON JobSpecExtractions (JobConfigVersionId);
+        """;
+    createExtractionTable.ExecuteNonQuery();
+}
+
+static void TryExecuteSchemaChange(SqliteCommand command)
+{
+    try
+    {
+        command.ExecuteNonQuery();
+    }
+    catch (SqliteException exception) when (exception.SqliteErrorCode == 1 && exception.Message.Contains("duplicate column", StringComparison.OrdinalIgnoreCase))
+    {
     }
 }
 
@@ -439,6 +816,18 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
         })
         .Where(batch => batch.Length > 0);
 
+    var preBatchPath = ResolveSharedSchemaPath(contentRootPath, "schema-pre-batch-upgrades.sql");
+    if (!File.Exists(preBatchPath))
+        throw new FileNotFoundException($"Shared Azure SQL pre-batch upgrade file not found: {preBatchPath}");
+
+    var preBatchUpgrades = Regex.Split(File.ReadAllText(preBatchPath), @"\r?\n\s*GO\s*(?:\r?\n|$)")
+        .Select(batch =>
+        {
+            var lines = batch.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+            return string.Join("\n", lines.Where(line => !line.Trim().StartsWith("--"))).Trim();
+        })
+        .Where(batch => batch.Length > 0);
+
     var connection = db.Database.GetDbConnection();
     var shouldClose = connection.State != System.Data.ConnectionState.Open;
     if (shouldClose)
@@ -446,6 +835,15 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
 
     try
     {
+        // Must precede the batch loop; see the header of the upgrades file for why.
+        foreach (var upgrade in preBatchUpgrades)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = upgrade;
+            command.CommandTimeout = 180;
+            command.ExecuteNonQuery();
+        }
+
         foreach (var batch in batches)
         {
             using var command = connection.CreateCommand();
@@ -524,6 +922,87 @@ BEGIN
 END;
 ");
 
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.PasswordResetRequests', 'Reason') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].PasswordResetRequests
+        ADD [Reason] NVARCHAR(1000) NOT NULL CONSTRAINT DF_PasswordResetRequests_Reason DEFAULT N'';
+END;
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.PasswordResetRequests', 'CreatedAt') IS NULL
+BEGIN
+    ALTER TABLE [talentmatch].PasswordResetRequests
+        ADD [CreatedAt] DATETIME2 NOT NULL CONSTRAINT DF_PasswordResetRequests_CreatedAt DEFAULT SYSUTCDATETIME();
+END;
+");
+
+        ExecuteSql(@"
+UPDATE [talentmatch].PasswordResetRequests
+SET [CreatedAt] = [RequestedAt]
+WHERE [RequestedAt] IS NOT NULL AND [CreatedAt] <> [RequestedAt];
+");
+
+        ExecuteSql(@"
+IF COL_LENGTH('talentmatch.ScoringRuns', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ScoringRuns ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_ScoringRuns_ReasoningLevel DEFAULT N'';
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedModelId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ApprovedModelId] NVARCHAR(100) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ApprovedReasoningLevel] NVARCHAR(30) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ApprovedTestRunId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ApprovedTestRunId] NVARCHAR(450) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'GenerationInstructionVersionId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [GenerationInstructionVersionId] NVARCHAR(450) NULL;
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_ScoringPrompts_ModelId DEFAULT N'';
+IF COL_LENGTH('talentmatch.ScoringPrompts', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ScoringPrompts ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_ScoringPrompts_ReasoningLevel DEFAULT N'';
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ApprovedModelId') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ApprovedModelId] NVARCHAR(100) NULL;
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ApprovedReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ApprovedReasoningLevel] NVARCHAR(30) NULL;
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_PromptTestRuns_ModelId DEFAULT N'';
+IF COL_LENGTH('talentmatch.PromptTestRuns', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].PromptTestRuns ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_PromptTestRuns_ReasoningLevel DEFAULT N'';
+IF OBJECT_ID('talentmatch.ExtractionInstructionVersions', 'U') IS NOT NULL
+   AND COL_LENGTH('talentmatch.ExtractionInstructionVersions', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].ExtractionInstructionVersions ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_ExtractionInstructionVersions_ModelId DEFAULT N'';
+IF OBJECT_ID('talentmatch.ExtractionInstructionVersions', 'U') IS NOT NULL
+   AND COL_LENGTH('talentmatch.ExtractionInstructionVersions', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].ExtractionInstructionVersions ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_ExtractionInstructionVersions_ReasoningLevel DEFAULT N'';
+");
+
+        ExecuteSql(@"
+IF OBJECT_ID(N'[talentmatch].[PromptGenerationInstructions]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [talentmatch].[PromptGenerationInstructions] (
+        [Id] NVARCHAR(450) NOT NULL PRIMARY KEY,
+        [JobId] NVARCHAR(450) NULL,
+        [VersionNumber] INT NOT NULL,
+        [InstructionText] NVARCHAR(MAX) NOT NULL,
+        [ModelId] NVARCHAR(100) NOT NULL,
+        [ReasoningLevel] NVARCHAR(30) NOT NULL,
+        [Status] NVARCHAR(20) NOT NULL,
+        [ChangeNote] NVARCHAR(MAX) NULL,
+        [CreatedAt] DATETIME2 NOT NULL,
+        [CreatedBy] NVARCHAR(100) NOT NULL,
+        [ActivatedAt] DATETIME2 NULL,
+        [ActivatedBy] NVARCHAR(MAX) NULL
+    );
+    CREATE UNIQUE INDEX [IX_PromptGenerationInstructions_JobId_VersionNumber]
+        ON [talentmatch].[PromptGenerationInstructions] ([JobId], [VersionNumber]);
+    CREATE INDEX [IX_PromptGenerationInstructions_JobId_Status]
+        ON [talentmatch].[PromptGenerationInstructions] ([JobId], [Status]);
+END;
+IF COL_LENGTH('talentmatch.PromptGenerationInstructions', 'ModelId') IS NULL
+    ALTER TABLE [talentmatch].PromptGenerationInstructions ADD [ModelId] NVARCHAR(100) NOT NULL CONSTRAINT DF_PromptGenerationInstructions_ModelId DEFAULT N'';
+IF COL_LENGTH('talentmatch.PromptGenerationInstructions', 'ReasoningLevel') IS NULL
+    ALTER TABLE [talentmatch].PromptGenerationInstructions ADD [ReasoningLevel] NVARCHAR(30) NOT NULL CONSTRAINT DF_PromptGenerationInstructions_ReasoningLevel DEFAULT N'';
+");
+
         void ExecuteSql(string sql)
         {
             using var command = connection.CreateCommand();
@@ -551,6 +1030,35 @@ static string ResolveSharedSchemaPath(string contentRootPath, string fileName)
     return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
 }
 
+static string[] ResolveAllowedCorsOrigins(IConfiguration configuration)
+{
+    var configuredOrigins = configuration["CORS_ALLOWED_ORIGINS"];
+    if (string.IsNullOrWhiteSpace(configuredOrigins))
+        return [];
+
+    var origins = configuredOrigins
+        .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(origin => origin.TrimEnd('/'))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    foreach (var origin in origins)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || !string.IsNullOrEmpty(uri.Query)
+            || !string.IsNullOrEmpty(uri.Fragment)
+            || uri.AbsolutePath != "/")
+        {
+            throw new InvalidOperationException(
+                $"CORS_ALLOWED_ORIGINS contains invalid origin '{origin}'. "
+                + "Use comma- or semicolon-separated HTTP(S) origins without paths.");
+        }
+    }
+
+    return origins;
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -560,24 +1068,124 @@ if (app.Environment.IsDevelopment())
 app.UseBlazorFrameworkFiles();
 app.UseStaticFiles();
 
+app.UseRouting();
 app.UseCors();
 app.UseAuthentication();
+app.UseMiddleware<EntraApplicationAuthorizationMiddleware>();
 app.UseAuthorization();
+
+if (useBackgroundAzureSqlWarmup)
+    app.UseMiddleware<AzureSqlReadinessMiddleware>();
 
 // Map endpoints
 app.MapAuthEndpoints();
 app.MapHealthEndpoints();
-app.MapUsersEndpoints();
+if (useEntraAuthentication)
+{
+    app.MapAccessManagementEndpoints();
+    app.MapOrganizationEndpoints();
+}
+else
+    app.MapUsersEndpoints();
 app.MapJobsEndpoints();
+app.MapExtractionInstructionEndpoints();
 app.MapApplicationsEndpoints();
+app.MapUploadEndpoints();
+app.MapUploadSettingsEndpoints();
 app.MapStatsEndpoints();
 app.MapDlqEndpoints();
 app.MapPromptEndpoints();
 app.MapAnalyticsEndpoints();
+app.MapNavigationAuditEndpoints();
 
 app.MapFallbackToFile("index.html");
 
 app.Run();
+
+static string RequireConfiguration(IConfiguration configuration, string key)
+{
+    var value = configuration[key];
+    return string.IsNullOrWhiteSpace(value)
+        ? throw new InvalidOperationException($"{key} is required when APP_AUTH_MODE=entra.")
+        : value;
+}
+
+static (string Code, string Message)? ValidateEntraClaims(
+    ClaimsPrincipal? principal,
+    string tenantId,
+    string apiScope,
+    IReadOnlySet<string> allowedClientIds)
+{
+    if (principal is null)
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
+
+    if (!string.Equals(principal.FindFirstValue("ver"), "2.0", StringComparison.Ordinal))
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
+
+    if (!string.Equals(principal.FindFirstValue("tid"), tenantId, StringComparison.OrdinalIgnoreCase))
+        return AuthFailure(AuthorizationErrorCodes.WrongTenant);
+
+    if (!Guid.TryParse(principal.FindFirstValue("oid"), out _))
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
+
+    var authorizedClient = principal.FindFirstValue("azp");
+    if (authorizedClient is null || !allowedClientIds.Contains(authorizedClient))
+        return AuthFailure(AuthorizationErrorCodes.UnauthorizedClient);
+
+    var scopes = principal.FindAll("scp")
+        .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    if (!scopes.Contains(apiScope, StringComparer.Ordinal))
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
+
+    if (!long.TryParse(principal.FindFirstValue("iat"), out var issuedAtSeconds))
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
+
+    if (DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(issuedAtSeconds) > TimeSpan.FromMinutes(15))
+        return AuthFailure(AuthorizationErrorCodes.TokenStale);
+
+    return null;
+}
+
+static async Task WriteEntraChallengeAsync(JwtBearerChallengeContext context)
+{
+    context.HandleResponse();
+    var code = context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationErrorItemKey] as string
+        ?? AuthorizationErrorCodes.AuthRequired;
+    var correlationId = AuthorizationErrorResults.EnsureCorrelationId(context.HttpContext);
+    try
+    {
+        var eventRepository = context.HttpContext.RequestServices.GetRequiredService<IProcessingEventRepository>();
+        var actor = context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationActorItemKey] as string ?? "unknown";
+        await eventRepository.AddAuthorizationEventAsync(
+            actor,
+            ProcessingEvent.AuthorizationActions.LoginDenied,
+            actor,
+            new Dictionary<string, object?>
+            {
+                ["result"] = code,
+                ["tenantId"] = context.HttpContext.Items[EntraApplicationAuthorizationMiddleware.AuthenticationTenantItemKey],
+            },
+            correlationId,
+            context.HttpContext.RequestAborted);
+    }
+    catch (Exception exception)
+    {
+        var logger = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("EntraAuthentication");
+        logger.LogWarning(exception, "Unable to record an Entra authentication denial audit event.");
+    }
+
+    await AuthorizationErrorResults.WriteAsync(
+        context.HttpContext,
+        code,
+        context.HttpContext.RequestAborted);
+}
+
+static (string Code, string Message) AuthFailure(string code)
+{
+    var error = AuthorizationErrorCodes.Resolve(code);
+    return (error.Code, error.Message);
+}
 
 // Make Program class accessible for integration tests
 public partial class Program { }

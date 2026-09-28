@@ -17,18 +17,20 @@ data "azurerm_mssql_database" "existing" {
 
 # --- Managed SQL Server ---
 resource "azurerm_mssql_server" "main" {
-  count                        = var.reuse ? 0 : 1
-  name                         = var.name
-  resource_group_name          = var.resource_group_name
-  location                     = var.location
-  version                      = "12.0"
-  minimum_tls_version          = "1.2"
-  administrator_login          = var.admin_login
-  administrator_login_password = var.admin_password
+  count                         = var.reuse ? 0 : 1
+  name                          = var.name
+  resource_group_name           = var.resource_group_name
+  location                      = var.location
+  version                       = "12.0"
+  minimum_tls_version           = "1.2"
+  public_network_access_enabled = true
+  administrator_login           = var.admin_password != "" ? var.admin_login : null
+  administrator_login_password  = var.admin_password != "" ? var.admin_password : null
 
   azuread_administrator {
-    login_username = var.aad_admin_login
-    object_id      = var.aad_admin_object_id
+    login_username              = var.aad_admin_login
+    object_id                   = var.aad_admin_object_id
+    azuread_authentication_only = var.admin_password == ""
   }
 
   tags = var.tags
@@ -53,25 +55,12 @@ resource "azurerm_mssql_firewall_rule" "allow_azure" {
   end_ip_address   = "0.0.0.0"
 }
 
-# --- Ensure the talentmatch schema exists (managed databases only) ---
-resource "terraform_data" "ensure_schema" {
-  count = var.reuse ? 0 : 1
+resource "azurerm_mssql_firewall_rule" "operator" {
+  for_each = var.reuse ? toset([]) : toset(var.allowed_ips)
 
-  # Re-run if the database resource changes
-  input = azurerm_mssql_database.main[0].id
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      az sql db query \
-        --server "${azurerm_mssql_server.main[0].name}" \
-        --name "${azurerm_mssql_database.main[0].name}" \
-        --resource-group "${var.resource_group_name}" \
-        --query "IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'talentmatch') EXEC('CREATE SCHEMA [talentmatch]')"
-    EOT
-  }
-
-  depends_on = [
-    azurerm_mssql_database.main,
-    azurerm_mssql_firewall_rule.allow_azure,
-  ]
+  name             = "AllowOperator-${replace(each.value, ".", "-")}"
+  server_id        = azurerm_mssql_server.main[0].id
+  start_ip_address = each.value
+  end_ip_address   = each.value
 }
+

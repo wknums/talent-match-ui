@@ -1,3 +1,9 @@
+variable "enabled" {
+  description = "Whether API Management is part of this deployment"
+  type        = bool
+  default     = false
+}
+
 variable "reuse" {
   description = "Whether to look up an existing APIM instance instead of creating one"
   type        = bool

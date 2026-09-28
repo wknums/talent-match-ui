@@ -9,6 +9,8 @@ public class Job
     public string Title { get; set; } = string.Empty;
     public string Department { get; set; } = string.Empty;
     public string Organisation { get; set; } = string.Empty;
+    public string? OrganizationId { get; set; }
+    public string? DepartmentId { get; set; }
     public DateTime PostingDate { get; set; }
     public string Status { get; set; } = "active"; // active, closed, draft
     public string? JobDescription { get; set; }
@@ -22,4 +24,8 @@ public class Job
     public ICollection<JobConfigVersion> ConfigVersions { get; set; } = new List<JobConfigVersion>();
     [JsonIgnore]
     public ICollection<Application> Applications { get; set; } = new List<Application>();
+    [JsonIgnore]
+    public Organization? Organization { get; set; }
+    [JsonIgnore]
+    public Department? DepartmentEntity { get; set; }
 }

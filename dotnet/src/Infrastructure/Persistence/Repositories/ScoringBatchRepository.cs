@@ -4,6 +4,7 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Infrastructure.Persistence.Repositories;
 
+#pragma warning disable EF1002 // SQL values remain parameterized; interpolation is limited to trusted provider-specific table identifiers.
 public class ScoringBatchRepository : IScoringBatchRepository
 {
     private readonly AppDbContext _db;
@@ -134,6 +135,22 @@ public class ScoringBatchRepository : IScoringBatchRepository
             error, nextPollAt, now, batchId);
     }
 
+    public async Task ScheduleResubmissionAsync(
+        string batchId,
+        string error,
+        DateTime nextPollAt,
+        CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        await _db.Database.ExecuteSqlRawAsync(
+            $@"UPDATE {Batches}
+              SET Status = 'pending', Attempt = Attempt + 1, LastError = {{0}},
+                  PollUrl = NULL, NextPollAt = {{1}},
+                  LeaseOwner = NULL, LeasedUntil = NULL, UpdatedAt = {{2}}
+              WHERE BatchId = {{3}}",
+            error, nextPollAt, now, batchId);
+    }
+
     public async Task<int> RequestCancelByJobAsync(string jobId, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
@@ -172,6 +189,35 @@ public class ScoringBatchRepository : IScoringBatchRepository
             existing.StartedAt = now;
             existing.UpdatedAt = now;
         }
+        await _db.SaveChangesAsync(ct);
+    }
+
+    public async Task AddProgressAsync(
+        string jobId,
+        int additionalApps,
+        int additionalBatchesPending,
+        CancellationToken ct = default)
+    {
+        var now = DateTime.UtcNow;
+        var existing = await _db.ScoringJobProgress.FirstOrDefaultAsync(p => p.JobId == jobId, ct);
+        if (existing is null)
+        {
+            _db.ScoringJobProgress.Add(new ScoringJobProgress
+            {
+                JobId = jobId,
+                TotalApps = additionalApps,
+                BatchesPending = additionalBatchesPending,
+                StartedAt = now,
+                UpdatedAt = now,
+            });
+        }
+        else
+        {
+            existing.TotalApps += additionalApps;
+            existing.BatchesPending += additionalBatchesPending;
+            existing.UpdatedAt = now;
+        }
+
         await _db.SaveChangesAsync(ct);
     }
 
@@ -232,3 +278,4 @@ public class ScoringBatchRepository : IScoringBatchRepository
         await _db.Database.ExecuteSqlRawAsync(sql, args.ToArray());
     }
 }
+#pragma warning restore EF1002

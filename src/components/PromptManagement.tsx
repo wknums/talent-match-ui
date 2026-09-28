@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import {
   Dialog,
   DialogContent,
@@ -36,7 +37,17 @@ import { api } from '@/lib/api'
 import { deriveCandidateNameFromScoringRuns, parseCategoryScores, parseGate, parseGateEntries } from '@/lib/stackb-scoring'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import type { ScoringPrompt, PromptStatus, PromptTestRun, PromptTestRunDetail, Application } from '@/types'
+import type {
+  PromptGenerationInstruction,
+  PromptProfileStatus,
+  ScoringPrompt,
+  PromptStatus,
+  PromptTestRun,
+  PromptTestRunDetail,
+  ReasoningEffort,
+  ReasoningModelsResponse,
+} from '@/types'
+import { ReasoningProfileFields } from '@/components/ReasoningProfileFields'
 
 interface PromptManagementProps {
   jobId: string
@@ -116,7 +127,6 @@ function PromptTestWorkflow({
   const [files, setFiles] = useState<File[]>([])
   const [dragActive, setDragActive] = useState(false)
   const [creating, setCreating] = useState(false)
-  const [approving, setApproving] = useState(false)
   const [approvingProduction, setApprovingProduction] = useState(false)
   const [rescoring, setRescoring] = useState(false)
   const [selectedTestRun, setSelectedTestRun] = useState<PromptTestRunDetail | null>(null)
@@ -540,7 +550,7 @@ function PromptTestWorkflow({
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs bg-muted/40 rounded p-3">
                             <div>
                               <div className="text-muted-foreground">Final Score</div>
-                              <div className="font-semibold">{Number(aggregatedResult?.finalScore ?? application.finalScore ?? 0).toFixed(1)}</div>
+                              <div className="font-semibold">{Number(aggregatedResult?.finalScore ?? application.finalScore ?? 0).toFixed(3)}</div>
                             </div>
                             <div>
                               <div className="text-muted-foreground">Decision</div>
@@ -548,7 +558,7 @@ function PromptTestWorkflow({
                             </div>
                             <div>
                               <div className="text-muted-foreground">Variance</div>
-                              <div className="font-semibold">{Number(aggregatedResult?.variance ?? application.variance ?? 0).toFixed(1)}</div>
+                              <div className="font-semibold">{Number(aggregatedResult?.variance ?? application.variance ?? 0).toFixed(3)}</div>
                             </div>
                             <div>
                               <div className="text-muted-foreground">Confidence</div>
@@ -564,7 +574,7 @@ function PromptTestWorkflow({
                               {Object.entries(aggregatedCategoryScores).map(([category, score]) => (
                                 <div key={category} className="flex justify-between">
                                   <span className="text-muted-foreground truncate mr-2">{category}</span>
-                                  <span className="font-medium">{Number(score ?? 0).toFixed(1)}</span>
+                                  <span className="font-medium">{Number(score ?? 0).toFixed(3)}</span>
                                 </div>
                               ))}
                             </div>
@@ -590,7 +600,7 @@ function PromptTestWorkflow({
 
                         {manualReview && (
                           <div className="rounded border border-success/30 bg-success/5 p-2 text-xs">
-                            Manual review saved. Adjusted final score: {manualReview.adjustedFinalScore != null ? Number(manualReview.adjustedFinalScore).toFixed(1) : 'N/A'}
+                            Manual review saved. Adjusted final score: {manualReview.adjustedFinalScore != null ? Number(manualReview.adjustedFinalScore).toFixed(3) : 'N/A'}
                           </div>
                         )}
 
@@ -610,7 +620,7 @@ function PromptTestWorkflow({
                                   </div>
                                   <div className="text-right">
                                     <div className="font-semibold text-sm">
-                                      Score: {Number(run.overallScore ?? 0).toFixed(1)}
+                                      Score: {Number(run.overallScore ?? 0).toFixed(3)}
                                     </div>
                                     <div className="text-muted-foreground">{run.durationMs ? `${run.durationMs} ms` : 'Duration N/A'}</div>
                                   </div>
@@ -641,7 +651,7 @@ function PromptTestWorkflow({
                                     {Object.entries(runCategoryScores).map(([category, score]) => (
                                       <div key={category} className="flex justify-between">
                                         <span className="text-muted-foreground truncate mr-2">{category}:</span>
-                                        <span className="font-medium">{Number(score ?? 0).toFixed(1)}</span>
+                                        <span className="font-medium">{Number(score ?? 0).toFixed(3)}</span>
                                       </div>
                                     ))}
                                     </div>
@@ -750,7 +760,14 @@ function PromptTestWorkflow({
 export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChange, onStartManualReview }: PromptManagementProps) {
   const [prompts, setPrompts] = useState<ScoringPrompt[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedPrompt, setSelectedPrompt] = useState<ScoringPrompt | null>(null)
+  const [instructions, setInstructions] = useState<PromptGenerationInstruction[]>([])
+  const [instructionText, setInstructionText] = useState('')
+  const [instructionChangeNote, setInstructionChangeNote] = useState('')
+  const [savingInstruction, setSavingInstruction] = useState(false)
+  const [productionProfileStatus, setProductionProfileStatus] = useState<PromptProfileStatus | null>(null)
+  const [catalog, setCatalog] = useState<ReasoningModelsResponse | null>(null)
+  const [instructionModelId, setInstructionModelId] = useState('')
+  const [instructionReasoningLevel, setInstructionReasoningLevel] = useState<ReasoningEffort>('high')
 
   // Editor state
   const [editorOpen, setEditorOpen] = useState(false)
@@ -759,6 +776,8 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
   const [editorMetadata, setEditorMetadata] = useState<Record<string, any> | undefined>()
   const [editingPrompt, setEditingPrompt] = useState<ScoringPrompt | null>(null)
   const [saving, setSaving] = useState(false)
+  const [editorModelId, setEditorModelId] = useState('')
+  const [editorReasoningLevel, setEditorReasoningLevel] = useState<ReasoningEffort>('high')
 
   // Generation state
   const [generating, setGenerating] = useState(false)
@@ -780,12 +799,76 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
   const loadPrompts = async () => {
     setLoading(true)
     try {
-      const data = await api.getPrompts(jobId)
+      const [data, instructionData] = await Promise.all([
+        api.getPrompts(jobId),
+        api.getPromptGenerationInstructions(jobId),
+      ])
       setPrompts(data.sort((a, b) => b.versionNumber - a.versionNumber))
+      setInstructions(instructionData)
+      try {
+        const reasoningCatalog = await api.getReasoningModels()
+        setCatalog(reasoningCatalog)
+        setInstructionModelId(current => current || reasoningCatalog.defaultModel)
+        setInstructionReasoningLevel(current =>
+          reasoningCatalog.supportedReasoningEfforts.includes(current)
+            ? current
+            : reasoningCatalog.defaultReasoningEffort)
+        setEditorModelId(current => current || reasoningCatalog.defaultModel)
+        setEditorReasoningLevel(current =>
+          reasoningCatalog.supportedReasoningEfforts.includes(current)
+            ? current
+            : reasoningCatalog.defaultReasoningEffort)
+      } catch (error) {
+        setCatalog(null)
+        toast.error(error instanceof Error
+          ? `Supported models could not be loaded: ${error.message}`
+          : 'Supported models could not be loaded')
+      }
+      const production = data.find(prompt => prompt.status === 'production-approved')
+      setProductionProfileStatus(
+        production
+          ? await api.getPromptProfileStatus(jobId, production.promptId)
+          : null,
+      )
     } catch {
       toast.error('Failed to load prompts')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const createInstruction = async () => {
+    if (!instructionText.trim()) return
+    setSavingInstruction(true)
+    try {
+      await api.createPromptGenerationInstruction(
+        jobId,
+        instructionText,
+        instructionChangeNote || undefined,
+        instructionModelId,
+        instructionReasoningLevel,
+      )
+      setInstructionText('')
+      setInstructionChangeNote('')
+      toast.success('Job scoring generation instruction draft created')
+      await loadPrompts()
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to create generation instruction')
+    } finally {
+      setSavingInstruction(false)
+    }
+  }
+
+  const activateInstruction = async (instructionId: string) => {
+    setSavingInstruction(true)
+    try {
+      await api.activatePromptGenerationInstruction(jobId, instructionId)
+      toast.success('Job scoring generation instruction activated')
+      await loadPrompts()
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to activate generation instruction')
+    } finally {
+      setSavingInstruction(false)
     }
   }
 
@@ -796,6 +879,10 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
     setEditorText('')
     setEditorSource('manual')
     setEditorMetadata(undefined)
+    if (catalog) {
+      setEditorModelId(catalog.defaultModel)
+      setEditorReasoningLevel(catalog.defaultReasoningEffort)
+    }
     setEditorOpen(true)
   }
 
@@ -812,6 +899,10 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
         setEditorText(text)
         setEditorSource('imported')
         setEditorMetadata(undefined)
+        if (catalog) {
+          setEditorModelId(catalog.defaultModel)
+          setEditorReasoningLevel(catalog.defaultReasoningEffort)
+        }
         setEditorOpen(true)
       } catch {
         toast.error('Failed to read file')
@@ -828,6 +919,10 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
       setEditorText(result.promptText)
       setEditorSource('generated')
       setEditorMetadata(result.generationMetadata)
+      if (catalog) {
+        setEditorModelId(catalog.defaultModel)
+        setEditorReasoningLevel(catalog.defaultReasoningEffort)
+      }
       setEditorOpen(true)
       toast.success('Prompt generated — review and save when ready')
     } catch {
@@ -844,12 +939,18 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
     setSaving(true)
     try {
       if (editingPrompt) {
-        await api.editPrompt(jobId, editingPrompt.promptId, { promptText: editorText })
+        await api.editPrompt(jobId, editingPrompt.promptId, {
+          promptText: editorText,
+          modelId: editorModelId,
+          reasoningLevel: editorReasoningLevel,
+        })
       } else {
         await api.createPrompt(jobId, {
           promptText: editorText,
           source: editorSource,
           generationMetadata: editorMetadata,
+          modelId: editorModelId,
+          reasoningLevel: editorReasoningLevel,
         })
       }
       toast.success(editingPrompt ? 'Prompt updated' : 'New prompt revision created')
@@ -923,6 +1024,75 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
 
   return (
     <div className="space-y-6">
+      <Card>
+        <CardContent className="p-4 space-y-3">
+          <div>
+            <h4 className="font-semibold">Prompt generation instructions</h4>
+            <p className="text-sm text-muted-foreground">
+              An active job instruction overrides the active system default. Every change creates a new version.
+            </p>
+          </div>
+          <Textarea
+            aria-label="Job-specific scoring prompt generation instruction"
+            value={instructionText}
+            onChange={(event) => setInstructionText(event.target.value)}
+            rows={5}
+          />
+          <Input
+            aria-label="Job scoring generation instruction change note"
+            value={instructionChangeNote}
+            onChange={(event) => setInstructionChangeNote(event.target.value)}
+            placeholder="Change note (optional)"
+          />
+          <ReasoningProfileFields
+            idPrefix="job-scoring-generation"
+            catalog={catalog}
+            modelId={instructionModelId}
+            reasoningLevel={instructionReasoningLevel}
+            onModelChange={setInstructionModelId}
+            onReasoningLevelChange={setInstructionReasoningLevel}
+            disabled={savingInstruction}
+          />
+          <Button
+            variant="outline"
+            onClick={createInstruction}
+            disabled={savingInstruction || !instructionText.trim()}
+          >
+            Create instruction draft
+          </Button>
+          <div className="space-y-2">
+            {instructions.map(instruction => (
+              <div
+                key={instruction.id}
+                className="flex items-center justify-between gap-3 rounded-md bg-muted/50 p-2 text-sm"
+              >
+                <span>v{instruction.versionNumber} · {instruction.status} · {instruction.createdBy}</span>
+                <span className="text-xs text-muted-foreground">
+                  {instruction.modelId} · {instruction.reasoningLevel}
+                </span>
+                {instruction.status !== 'active' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void activateInstruction(instruction.id)}
+                    disabled={savingInstruction}
+                  >
+                    Activate
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {productionProfileStatus && !productionProfileStatus.isMatch && (
+        <div role="alert" className="rounded-md border-2 border-destructive bg-destructive/10 p-4 text-sm">
+          <strong>Scoring profile mismatch - production scoring is blocked.</strong>
+          <p className="mt-1">{productionProfileStatus.mismatchMessage}</p>
+        </div>
+      )}
+
       {/* Creation actions */}
       <div className="flex items-center gap-3">
         <Button variant="outline" onClick={handleWriteManually}>
@@ -963,10 +1133,6 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
       ) : (
         <Tabs
           defaultValue={prompts[0]?.promptId}
-          onValueChange={(val) => {
-            const p = prompts.find((p) => p.promptId === val)
-            setSelectedPrompt(p ?? null)
-          }}
         >
           <TabsList className="flex flex-wrap h-auto gap-1">
             {prompts.map((p) => (
@@ -999,6 +1165,12 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
                       <> • Modified {new Date(p.lastModifiedAt).toLocaleDateString()}</>
                     )}
                   </p>
+                  <p className="text-xs text-muted-foreground">
+                    Profile: {p.modelId || 'legacy/unknown'} / {p.reasoningLevel || 'legacy/unknown'}
+                    {p.generationInstructionVersionId && (
+                      <> · generation instruction {p.generationInstructionVersionId}</>
+                    )}
+                  </p>
                   <div className="flex items-center gap-2 mt-1">
                     <StarRating value={p.rating ?? 0} readonly />
                     {p.rating !== undefined && <span className="text-xs text-muted-foreground">({p.rating}/5)</span>}
@@ -1021,6 +1193,10 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
                       setEditorText(p.promptText)
                       setEditorSource(p.source)
                       setEditorMetadata(p.generationMetadata)
+                      setEditorModelId(p.modelId || catalog?.defaultModel || '')
+                      setEditorReasoningLevel(
+                        (p.reasoningLevel as ReasoningEffort) || catalog?.defaultReasoningEffort || 'high',
+                      )
                       setEditorOpen(true)
                     }}
                   >
@@ -1100,11 +1276,20 @@ export function PromptManagement({ jobId, hasApprovedRubric, onPromptStatusChang
               placeholder="Enter scoring prompt text..."
               className="min-h-[300px] font-mono text-sm"
             />
+            <ReasoningProfileFields
+              idPrefix="scoring-prompt"
+              catalog={catalog}
+              modelId={editorModelId}
+              reasoningLevel={editorReasoningLevel}
+              onModelChange={setEditorModelId}
+              onReasoningLevelChange={setEditorReasoningLevel}
+              disabled={saving}
+            />
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setEditorOpen(false)} disabled={saving}>
                 Cancel
               </Button>
-              <Button onClick={handleSave} disabled={!editorText.trim() || saving}>
+              <Button onClick={handleSave} disabled={!editorText.trim() || !editorModelId || saving}>
                 {saving ? (
                   <>
                     <SpinnerGap size={16} className="animate-spin" />

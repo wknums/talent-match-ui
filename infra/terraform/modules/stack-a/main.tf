@@ -13,18 +13,18 @@ module "app_service" {
   service_plan_id     = var.app_service_plan_id
   identity_id         = var.identity_id
 
-  node_version      = "20-lts"
-  always_on         = var.environment != "dev"
-  app_command_line  = "node server/index.js"
+  node_version     = "22-lts"
+  always_on        = var.environment != "dev"
+  app_command_line = "node server/index.js"
 
   virtual_network_subnet_id = var.virtual_network_subnet_id
   allowed_ips               = var.allowed_ips
 
   app_settings = merge(
     {
-      "WEBSITE_NODE_DEFAULT_VERSION"   = "~20"
-      "SCM_DO_BUILD_DURING_DEPLOYMENT" = "true"
-      "ENABLE_ORYX_BUILD"              = "true"
+      "WEBSITE_NODE_DEFAULT_VERSION"   = "~22"
+      "SCM_DO_BUILD_DURING_DEPLOYMENT" = "false"
+      "ENABLE_ORYX_BUILD"              = "false"
       "STORAGE_PROVIDER"               = "azuresql"
       "AZURE_SQL_AUTH_MODE"            = "entra"
       "AZURE_SQL_SERVER_FQDN"          = var.sql_server_fqdn
@@ -33,7 +33,6 @@ module "app_service" {
       "KEY_VAULT_URI"                  = var.key_vault_uri
       "APIM_GATEWAY_URL"               = var.apim_gateway_url
       "AWR_API_KEY"                    = var.use_key_vault_secret_refs ? "@Microsoft.KeyVault(SecretUri=${var.key_vault_uri}secrets/awr-api-key)" : var.awr_api_key
-      "OPENAI_API_KEY"                 = var.use_key_vault_secret_refs ? "@Microsoft.KeyVault(SecretUri=${var.key_vault_uri}secrets/openai-api-key)" : var.openai_api_key
     },
     var.extra_app_settings
   )

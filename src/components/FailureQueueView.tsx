@@ -43,7 +43,7 @@ export function FailureQueueView({ className }: FailureQueueViewProps) {
       await api.retryDLQItem(itemId)
       toast.success('Item re-queued for processing')
       await loadItems()
-    } catch (error) {
+    } catch {
       toast.error('Failed to retry item')
     } finally {
       setRetrying(null)

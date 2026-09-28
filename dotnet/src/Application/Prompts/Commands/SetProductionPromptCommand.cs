@@ -2,6 +2,7 @@ using System.Text.Json;
 using MediatR;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Prompts.Services;
 
 namespace TalentMatch.Application.Prompts.Commands;
 
@@ -14,13 +15,16 @@ public class SetProductionPromptCommandHandler : IRequestHandler<SetProductionPr
 {
     private readonly IScoringPromptRepository _promptRepo;
     private readonly IProcessingEventRepository _eventRepo;
+    private readonly IPromptProfileGuard? _profileGuard;
 
     public SetProductionPromptCommandHandler(
         IScoringPromptRepository promptRepo,
-        IProcessingEventRepository eventRepo)
+        IProcessingEventRepository eventRepo,
+        IPromptProfileGuard? profileGuard = null)
     {
         _promptRepo = promptRepo;
         _eventRepo = eventRepo;
+        _profileGuard = profileGuard;
     }
 
     public async Task<ScoringPrompt> Handle(SetProductionPromptCommand request, CancellationToken ct)
@@ -31,6 +35,9 @@ public class SetProductionPromptCommandHandler : IRequestHandler<SetProductionPr
         // Only allow re-promoting prompts that were previously production-approved (now inactive)
         if (prompt.Status != "inactive" && prompt.Status != "production-approved")
             throw new InvalidOperationException($"Cannot set as production: prompt status is '{prompt.Status}'. Only inactive or production-approved prompts can be set.");
+
+        if (_profileGuard is not null)
+            await _profileGuard.EnsureProductionReadyAsync(prompt, ct);
 
         // Demote any existing production-approved prompts for this job
         var allPrompts = await _promptRepo.GetByJobIdAsync(prompt.JobId, ct);

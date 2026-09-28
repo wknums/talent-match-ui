@@ -1,5 +1,36 @@
-import type { PasswordResetRequest, User } from '@/types'
+import type { AuthorizationContext, PasswordResetRequest, User, UserRole } from '@/types'
 import { realAPI } from '@/lib/api-real'
+
+const rolePriority: UserRole[] = ['admin', 'organization_admin', 'recruiter', 'business_panel']
+
+export function authorizationContextToUser(context: AuthorizationContext): User {
+  const role = context.globalRole
+    ?? rolePriority.find((candidate) => context.authorizations.some((authorization) => authorization.role === candidate))
+    ?? 'business_panel'
+  const department = context.memberships
+    .map((membership) => membership.departments.find(
+      (candidate) => candidate.departmentId === membership.defaultDepartmentId,
+    ))
+    .find((candidate) => candidate !== undefined)
+    ?.departmentName
+
+  return {
+    userId: context.userId,
+    username: context.username,
+    role,
+    authenticationProvider: 'entra',
+    entraTenantId: context.tenantId,
+    entraObjectId: context.objectId,
+    isActive: true,
+    authorizationVersion: context.authorizationVersion,
+    department,
+    fullName: context.fullName,
+    email: context.email,
+    createdAt: context.tokenIssuedAt,
+    lastLogin: context.tokenIssuedAt,
+    passwordResetRequired: false,
+  }
+}
 
 export async function initializeAuth(): Promise<void> {
   // Auth bootstrap is now server-owned. Keep this as a no-op so callers do not

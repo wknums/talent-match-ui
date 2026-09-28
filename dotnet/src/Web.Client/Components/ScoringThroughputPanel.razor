@@ -1,0 +1,245 @@
+@using System.Globalization
+@using Microsoft.Extensions.DependencyInjection
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject IServiceProvider Services
+@implements IAsyncDisposable
+
+<section class="throughput-panel" aria-labelledby="@($"{panelId}-heading")">
+    <header class="throughput-header">
+        <div class="throughput-title">
+            <button type="button"
+                    class="throughput-toggle disclosure-toggle disclosure-toggle-icon-only"
+                    aria-label="@(expanded ? "Collapse dashboard performance" : "Expand dashboard performance")"
+                    aria-expanded="@(expanded ? "true" : "false")"
+                    aria-controls="@($"{panelId}-content")"
+                    @onclick="ToggleExpanded">
+                <span class="disclosure-chevron" aria-hidden="true"></span>
+            </button>
+            <div>
+                <h4 id="@($"{panelId}-heading")">Applications scored / hour</h4>
+                <p class="throughput-help">Rolling last 60 minutes</p>
+            </div>
+        </div>
+        @if (snapshot is not null)
+        {
+            <div class="throughput-total">
+                <strong>@snapshot.ScoredLast24Hours.ToString("N0")</strong> in the rolling last 24 hours
+            </div>
+        }
+    </header>
+
+    @if (expanded)
+    {
+    <div id="@($"{panelId}-content")">
+    <div class="throughput-status" aria-live="polite" aria-atomic="true">
+        @if (snapshot is not null)
+        {
+            <div class="throughput-metric">@snapshot.ScoredLastHour.ToString("N0")</div>
+            <p class="throughput-updated">
+                @(loadError is null ? "Last updated:" : "Last successful update:")
+                <time datetime="@snapshot.AsOfUtc.ToString("O")">@LocalTime(snapshot.AsOfUtc)</time>
+                (local time)
+            </p>
+        }
+        else if (loadError is null)
+        {
+            <p class="throughput-loading">Loading scoring throughput...</p>
+        }
+    </div>
+
+    @if (loadError is not null)
+    {
+        <div class="throughput-error" role="alert">
+            <strong>@(snapshot is null ? "Scoring throughput unavailable." : "Stale data: showing the last successful snapshot.")</strong>
+            <span>@loadError</span>
+            <span>Automatically retrying every 10 seconds.</span>
+        </div>
+    }
+
+    @if (snapshot is not null)
+    {
+        @if (snapshot.ScoredLast24Hours == 0)
+        {
+            <p class="throughput-empty">No applications were scored in this 24-hour window.</p>
+        }
+
+        <svg class="throughput-chart" viewBox="0 0 800 288" role="img"
+             aria-labelledby="@($"{panelId}-chart-title {panelId}-chart-description")">
+            <title id="@($"{panelId}-chart-title")">Applications scored in the rolling last 24 hours</title>
+            <desc id="@($"{panelId}-chart-description")">
+                24 consecutive one-hour windows, oldest on the left, ending at @LocalTime(snapshot.AsOfUtc).
+                Each point counts unique production applications by their first persisted aggregate score.
+                The highlighted rightmost point is the rolling last 60 minutes: @snapshot.ScoredLastHour applications.
+                Points on the baseline represent actual zero counts. Times are local. Exact values are available in the data table below.
+            </desc>
+            <text class="axis-title" x="60" y="18">Applications</text>
+            @for (long tick = 0; tick <= axisMaximum; tick += tickStep)
+            {
+                var y = SvgNumber(216 - 180.0 * tick / axisMaximum);
+                <g class="y-tick">
+                    <line class="grid-line" x1="60" y1="@y" x2="780" y2="@y" />
+                    <text x="50" y="@y" text-anchor="end" dominant-baseline="middle">@tick.ToString("N0")</text>
+                </g>
+            }
+            <line class="axis-line" x1="60" y1="36" x2="60" y2="216" />
+            <line class="axis-line" x1="60" y1="216" x2="780" y2="216" />
+            <polyline class="throughput-line" points="@LinePoints(snapshot.Hours)" />
+            @for (var index = 0; index < snapshot.Hours.Count; index++)
+            {
+                var bucket = snapshot.Hours[index];
+                var current = index == 23;
+                var y = SvgNumber(216 - 180.0 * bucket.Count / axisMaximum);
+                var label = BucketLabel(bucket, current);
+                <g class="throughput-bucket" tabindex="0" role="img" aria-label="@label">
+                    <title>@label</title>
+                    <rect class="bucket-hit-area" x="@(60 + index * 30)" y="36" width="30" height="180" />
+                    <circle class="throughput-point @(current ? "current-point" : "")"
+                            cx="@(75 + index * 30)" cy="@y" r="@(current ? "6" : "4")"
+                            data-count="@bucket.Count" data-current="@(current ? "true" : "false")" />
+                </g>
+                @if (index % 6 == 0 || current)
+                {
+                    <g class="x-tick">
+                        <text x="@(75 + index * 30)" y="238" text-anchor="middle">@bucket.StartUtc.ToLocalTime().ToString("HH:mm")</text>
+                    </g>
+                }
+            }
+            <text class="axis-title" x="420" y="272" text-anchor="middle">Hour starting (local time)</text>
+        </svg>
+        <p class="throughput-legend"><span aria-hidden="true"></span>Highlighted rightmost point: rolling last 60 minutes.</p>
+
+        <details class="throughput-table">
+            <summary>View hourly data table</summary>
+            <div class="table-scroll" role="region" aria-label="Hourly scoring throughput data" tabindex="0">
+                <table>
+                    <caption>Rolling one-hour windows, start inclusive and end exclusive. All times are local.</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">Window start</th>
+                            <th scope="col">Window end</th>
+                            <th scope="col">Applications scored</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var bucket in snapshot.Hours)
+                        {
+                            <tr>
+                                <td><time datetime="@bucket.StartUtc.ToString("O")">@LocalTime(bucket.StartUtc)</time></td>
+                                <td><time datetime="@bucket.EndUtc.ToString("O")">@LocalTime(bucket.EndUtc)</time></td>
+                                <td>@bucket.Count.ToString("N0")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </details>
+    }
+
+    <p class="throughput-help throughput-scope">
+        Includes all jobs you are authorized to access, regardless of the job-list filters below.
+        Each production application is counted once, when its first aggregate score is persisted;
+        scoring runs, retries, reaggregation and test applications do not add to this count.
+        Refreshes independently every 10 seconds.
+    </p>
+    </div>
+    }
+</section>
+
+@code {
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly string panelId = $"scoring-throughput-{Guid.NewGuid():N}";
+    private ScoringThroughputDto? snapshot;
+    private string? loadError;
+    private Task? refreshTask;
+    private bool disposed;
+    private bool expanded = true;
+    private long tickStep = 1;
+    private long axisMaximum = 1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync(lifetime.Token);
+        if (!disposed)
+        {
+            var clock = Services.GetService<TimeProvider>() ?? TimeProvider.System;
+            refreshTask = RefreshAsync(clock, lifetime.Token);
+        }
+    }
+
+    private async Task RefreshAsync(TimeProvider clock, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(RefreshInterval, clock);
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadAsync(cancellationToken);
+                    if (!disposed)
+                        StateHasChanged();
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            await DispatchExceptionAsync(ex);
+        }
+    }
+
+    private async Task LoadAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await Api.GetScoringThroughputAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            snapshot = result;
+            loadError = null;
+            var maximum = result.Hours.Max(bucket => bucket.Count);
+            var targetStep = Math.Max(1L, ((long)maximum + 3) / 4);
+            long magnitude = 1;
+            while (magnitude * 10 < targetStep)
+                magnitude *= 10;
+            tickStep = new[] { 1L, 2L, 5L, 10L }.First(step => step * magnitude >= targetStep) * magnitude;
+            axisMaximum = Math.Max(tickStep, ((maximum + tickStep - 1) / tickStep) * tickStep);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            loadError = ex is OperationCanceledException
+                ? "The scoring throughput request timed out."
+                : ex.Message;
+        }
+    }
+
+    private void ToggleExpanded() => expanded = !expanded;
+
+    private string LinePoints(IReadOnlyList<ScoringThroughputBucketDto> hours)
+        => string.Join(" ", hours.Select((bucket, index) =>
+            $"{75 + index * 30},{SvgNumber(216 - 180.0 * bucket.Count / axisMaximum)}"));
+
+    private static string SvgNumber(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string LocalTime(DateTimeOffset value) => value.ToLocalTime().ToString("MMM d, yyyy HH:mm:ss zzz");
+    private static string BucketLabel(ScoringThroughputBucketDto bucket, bool current)
+        => $"{LocalTime(bucket.StartUtc)} (inclusive) to {LocalTime(bucket.EndUtc)} (exclusive): {bucket.Count:N0} applications"
+            + (current ? " (rolling last 60 minutes)." : ".");
+
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed)
+            return;
+
+        disposed = true;
+        await lifetime.CancelAsync();
+        if (refreshTask is not null)
+            await refreshTask;
+        lifetime.Dispose();
+    }
+}

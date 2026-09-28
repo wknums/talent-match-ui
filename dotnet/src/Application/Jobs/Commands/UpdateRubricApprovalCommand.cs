@@ -1,5 +1,6 @@
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -21,21 +22,27 @@ public class UpdateRubricApprovalCommandHandler : IRequestHandler<UpdateRubricAp
     private readonly IJobRepository _jobRepository;
     private readonly IProcessingEventRepository _eventRepository;
     private readonly ICurrentUserService _currentUser;
+    private readonly IOrganizationRepository? _organizationRepository;
 
     public UpdateRubricApprovalCommandHandler(
         IJobRepository jobRepository,
         IProcessingEventRepository eventRepository,
-        ICurrentUserService currentUser)
+        ICurrentUserService currentUser,
+        IOrganizationRepository? organizationRepository = null)
     {
         _jobRepository = jobRepository;
         _eventRepository = eventRepository;
         _currentUser = currentUser;
+        _organizationRepository = organizationRepository;
     }
 
     public async Task<RubricApprovalResult> Handle(UpdateRubricApprovalCommand request, CancellationToken cancellationToken)
     {
         var job = await _jobRepository.GetByIdAsync(request.JobId, cancellationToken)
             ?? throw new InvalidOperationException($"Job '{request.JobId}' not found.");
+
+        await JobAuthorization.EnsureCanMutateAsync(
+            job, _currentUser, _organizationRepository, cancellationToken);
 
         var currentVersion = job.ConfigVersions.FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
             ?? throw new InvalidOperationException($"No current config version found for job '{request.JobId}'.");

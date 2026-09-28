@@ -15,6 +15,7 @@ import { deriveCandidateNameFromScoringRuns, matchCategoryToRubric, parseCategor
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { DocumentViewer } from '@/components/DocumentViewer'
+import { RubricEditor } from '@/components/RubricEditor'
 import type { Application, ScoringRun, AggregatedResult, DLQItem, Job } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -33,7 +34,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
   const [dlqItem, setDlqItem] = useState<DLQItem | null>(null)
   const [retrying, setRetrying] = useState(false)
   const [rescoring, setRescoring] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [, setLoading] = useState(false)
 
   useEffect(() => {
     if (applicationId && open) {
@@ -309,14 +310,14 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
             <div>
               <p className="text-sm text-muted-foreground mb-1">Final Score</p>
               <p className={cn('text-4xl font-mono font-bold', getScoreColor(application.finalScore))}>
-                {application.finalScore.toFixed(1)}
+                {application.finalScore.toFixed(3)}
               </p>
             </div>
             {application.variance !== undefined && (
               <div>
                 <p className="text-sm text-muted-foreground mb-1">Variance</p>
                 <p className={cn('text-2xl font-mono', application.variance > 15 && 'text-destructive font-bold')}>
-                  ±{application.variance.toFixed(1)}
+                  ±{application.variance.toFixed(3)}
                 </p>
               </div>
             )}
@@ -379,6 +380,25 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
 
                   {hasOverviewData && (
                     <>
+                      {job?.currentVersion.extraction && (
+                        <Card>
+                          <CardHeader>
+                            <CardTitle className="text-lg">Extraction Diagnostics</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-2 text-sm">
+                            <div>Instruction version: {job.currentVersion.extractionInstructionVersionId || job.currentVersion.extraction.instructionVersionId}</div>
+                            <div>Completed: {new Date(job.currentVersion.extraction.completedAt).toLocaleString()}</div>
+                            {job.currentVersion.extraction.validationFindings.length > 0 && (
+                              <ul className="list-disc pl-5 text-muted-foreground">
+                                {job.currentVersion.extraction.validationFindings.map((finding) => (
+                                  <li key={`${finding.code}-${finding.path}`}>{finding.code}: {finding.message}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </CardContent>
+                        </Card>
+                      )}
+
                       <Card>
                         <CardHeader>
                           <CardTitle className="text-lg flex items-center gap-2">
@@ -407,6 +427,11 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                           <CardTitle className="text-lg">Category Scores</CardTitle>
                         </CardHeader>
                         <CardContent>
+                          {job?.currentVersion.rubricEnvelope && (
+                            <div className="mb-4">
+                              <RubricEditor rubric={job.currentVersion.rubricEnvelope} />
+                            </div>
+                          )}
                           <div className="space-y-5">
                             {rubricOverviewEntries.map(({ category, description, weightLabel, score, scoreSource, evidence, tips }) => {
                               return (
@@ -420,7 +445,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                                     </div>
                                     {typeof score === 'number' ? (
                                       <span className={cn('font-mono font-semibold', getScoreColor(Number(score ?? 0)))}>
-                                        {Number(score ?? 0).toFixed(1)}
+                                        {Number(score ?? 0).toFixed(3)}
                                       </span>
                                     ) : (
                                       <span className="text-xs text-muted-foreground">No AI score</span>
@@ -432,7 +457,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                                   {typeof score === 'number' && (
                                     <p className="text-xs font-medium text-muted-foreground mb-2">
                                       {scoreSource === 'overall' ? 'AI Score (overall fallback): ' : 'AI Score: '}
-                                      <span className={cn('font-mono', getScoreColor(Number(score ?? 0)))}>{Number(score ?? 0).toFixed(1)} / 100</span>
+                                      <span className={cn('font-mono', getScoreColor(Number(score ?? 0)))}>{Number(score ?? 0).toFixed(3)} / 100</span>
                                     </p>
                                   )}
                                   {typeof score === 'number' && (
@@ -518,7 +543,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                               <Badge variant="outline">{run.status}</Badge>
                             </div>
                             <Badge variant="outline" className="font-mono">
-                              {run.overallScore.toFixed(1)}
+                              {run.overallScore.toFixed(3)}
                             </Badge>
                           </div>
                           <div className="flex gap-4 text-xs text-muted-foreground mt-2">
@@ -550,7 +575,7 @@ export function ApplicationDetail({ applicationId, open, onClose, onStartManualR
                                   <div key={category} className="flex justify-between">
                                     <span>{category}</span>
                                     <span className={cn('font-mono font-medium', getScoreColor(Number(score ?? 0)))}>
-                                      {Number(score ?? 0).toFixed(1)}
+                                      {Number(score ?? 0).toFixed(3)}
                                     </span>
                                   </div>
                                 ))}

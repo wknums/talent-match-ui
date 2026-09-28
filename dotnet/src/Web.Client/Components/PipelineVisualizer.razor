@@ -1,34 +1,98 @@
 @using TalentMatch.Web.Client.Services
+@using System.Globalization
+@inject UploadCoordinator Coordinator
+@implements IDisposable
 
-<div style="display: flex; gap: 0.5rem; align-items: center;">
+<div class="pipeline-visualizer">
+    <div class="pipeline-stage pipeline-upload-stage">
+        <button type="button"
+                class="pipeline-upload-link"
+                title="@UploadTitle"
+                @onclick="OpenUploadDetails">
+            <div class="pipeline-bar"
+                 role="progressbar"
+                 aria-label="Outstanding uploads"
+                 aria-valuemin="0"
+                 aria-valuemax="@UploadProgressMaximum"
+                 aria-valuenow="@OutstandingUploadCount"
+                 aria-valuetext="@UploadProgressText">
+                <div class="upload-progress-pending"
+                     style="@WidthStyle(PendingUploadPercentage)"></div>
+                <div class="upload-progress-attention"
+                     style="@WidthStyle(AttentionUploadPercentage)"></div>
+            </div>
+            <div class="pipeline-stage-label">Uploads (@OutstandingUploadCount remaining)</div>
+        </button>
+    </div>
+    <span aria-hidden="true">→</span>
     @foreach (var stage in stages)
     {
-        <div style="flex: 1; text-align: center;">
-            <div style="background: #e0e0e0; border-radius: 4px; overflow: hidden; height: 24px;">
-                <div style="background: @stage.Color; height: 100%; width: @(stage.Percentage)%;"></div>
+        <div class="pipeline-stage">
+            <div class="pipeline-bar">
+                <div class="pipeline-stage-progress"
+                     style="@WidthStyle(stage.Percentage); background: @stage.Color;"></div>
             </div>
-            <div style="font-size: 0.75rem; margin-top: 4px;">@stage.Name (@stage.Count)</div>
+            <div class="pipeline-stage-label">@stage.Name (@stage.Count)</div>
         </div>
         @if (stage != stages.Last())
         {
-            <span>→</span>
+            <span aria-hidden="true">→</span>
         }
     }
 </div>
 
 @code {
     [Parameter] public List<ApplicationDto> Applications { get; set; } = new();
+    [Parameter] public JobApplicationCountsDto? ApplicationCounts { get; set; }
+    [Parameter, EditorRequired] public string JobId { get; set; } = string.Empty;
 
+    private int TotalApplications => ApplicationCounts?.Total ?? Applications.Count;
     private List<StageInfo> stages => new()
     {
-        new StageInfo("Queued", Applications.Count(a => a.Status == "Queued"), "#2196f3", Applications.Count),
-        new StageInfo("Scoring", Applications.Count(a => a.Status == "Scoring"), "#ff9800", Applications.Count),
-        new StageInfo("Complete", Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", Applications.Count),
-        new StageInfo("Failed", Applications.Count(a => a.Status is "ScoringFailed" or "ExtractionFailed"), "#f44336", Applications.Count)
+        new StageInfo("Uploading", ApplicationCounts?.Uploading ?? Applications.Count(a => a.Status == "Uploading"), "#805ad5", TotalApplications),
+        new StageInfo("Queued", ApplicationCounts?.Queued ?? Applications.Count(a => a.Status == "Queued"), "#2196f3", TotalApplications),
+        new StageInfo("Scoring", ApplicationCounts?.Scoring ?? Applications.Count(a => a.Status == "Scoring"), "#ff9800", TotalApplications),
+        new StageInfo("Complete", ApplicationCounts?.Complete ?? Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", TotalApplications),
+        new StageInfo("Failed", ApplicationCounts?.Failed ?? Applications.Count(a => a.Status is "Failed" or "ScoringFailed" or "ExtractionFailed"), "#f44336", TotalApplications)
     };
+
+    private IReadOnlyList<UploadSessionDetailDto> ActiveUploadSessions => Coordinator.Sessions
+        .Where(session => session.JobId == JobId && session.Status == "active")
+        .ToArray();
+
+    private UploadSessionDetailDto? LatestUploadSession => Coordinator.Sessions
+        .Where(session => session.JobId == JobId)
+        .OrderByDescending(session => session.CreatedAt)
+        .FirstOrDefault();
+
+    private int SubmittedUploadCount => ActiveUploadSessions.Sum(session => session.Counts.Total);
+    private int PendingUploadCount => ActiveUploadSessions.Sum(session => session.Items.Count(item =>
+        item.Status is "waiting" or "throttled" or "uploading"));
+    private int AttentionUploadCount => ActiveUploadSessions.Sum(session => session.Items.Count(item =>
+        item.Status is "failed" or "retrying"));
+    private int OutstandingUploadCount => PendingUploadCount + AttentionUploadCount;
+    private int UploadProgressMaximum => Math.Max(SubmittedUploadCount, 1);
+    private double PendingUploadPercentage => Percentage(PendingUploadCount, SubmittedUploadCount);
+    private double AttentionUploadPercentage => Percentage(AttentionUploadCount, SubmittedUploadCount);
+    private string UploadTitle => LatestUploadSession is null
+        ? "No files were submitted in the latest upload action"
+        : $"{OutstandingUploadCount} files remain across active upload sessions";
+    private string UploadProgressText =>
+        $"{PendingUploadCount} waiting or uploading; {AttentionUploadCount} failed or retrying";
+
+    protected override void OnInitialized() => Coordinator.Changed += OnChanged;
+
+    private void OpenUploadDetails() => Coordinator.RequestDetails(LatestUploadSession?.Id);
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+    private static double Percentage(int count, int total) =>
+        total > 0 ? (double)count / total * 100 : 0;
+    private static string WidthStyle(double percentage) =>
+        $"width: {percentage.ToString("0.###", CultureInfo.InvariantCulture)}%";
 
     private record StageInfo(string Name, int Count, string Color, int Total)
     {
         public double Percentage => Total > 0 ? (double)Count / Total * 100 : 0;
     }
+
+    public void Dispose() => Coordinator.Changed -= OnChanged;
 }

@@ -29,9 +29,11 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
             ?? throw new InvalidOperationException($"Application {applicationId} not found");
 
         var scores = runs.Select(r => r.TotalScore).ToList();
-        var avgScore = scores.Any() ? scores.Average() : 0;
-        var variance = scores.Any()
-            ? Math.Sqrt(scores.Sum(s => Math.Pow(s - avgScore, 2)) / scores.Count) : 0;
+        var unroundedAverage = scores.Any() ? scores.Average() : 0;
+        var unroundedVariance = scores.Any()
+            ? Math.Sqrt(scores.Sum(s => Math.Pow(s - unroundedAverage, 2)) / scores.Count) : 0;
+        var avgScore = ScorePrecision.Round(unroundedAverage);
+        var variance = ScorePrecision.Round(unroundedVariance);
 
         var categoryTotals = new Dictionary<string, List<double>>();
         foreach (var run in runs)
@@ -48,7 +50,8 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
             }
             catch { /* ignore malformed JSON */ }
         }
-        var finalSubScores = categoryTotals.ToDictionary(kv => kv.Key, kv => kv.Value.Average());
+        var finalSubScores = categoryTotals.ToDictionary(
+            kv => kv.Key, kv => ScorePrecision.Round(kv.Value.Average()));
         var finalSubScoresJson = JsonSerializer.Serialize(finalSubScores);
 
         app.FinalScore = avgScore;
@@ -91,13 +94,14 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
             ApplicationId = applicationId,
             FinalScore = avgScore,
             Variance = variance,
-            Confidence = scores.Count >= runCountTarget ? 1.0 : (double)scores.Count / Math.Max(1, runCountTarget),
+            Confidence = ScorePrecision.Round(
+                scores.Count >= runCountTarget ? 1.0 : (double)scores.Count / Math.Max(1, runCountTarget)),
             Decision = decision,
             ConsolidatedRationale = gateFailedByAggregation
-                ? $"Excluded: eligibility gate failed by aggregated votes (passed: {gatePassVotes}, failed: {gateFailVotes}). Score: {avgScore:F1} ({scores.Count} run(s), variance: {variance:F1})."
+                ? $"Excluded: eligibility gate failed by aggregated votes (passed: {gatePassVotes}, failed: {gateFailVotes}). Score: {avgScore:F3} ({scores.Count} run(s), variance: {variance:F3})."
                 : hasGateVotes
-                    ? $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}. Eligibility votes: passed {gatePassVotes}, failed {gateFailVotes}."
-                    : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F1}, Variance: {variance:F1}",
+                    ? $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F3}, Variance: {variance:F3}. Eligibility votes: passed {gatePassVotes}, failed {gateFailVotes}."
+                    : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F3}, Variance: {variance:F3}",
             FinalSubScoresJson = finalSubScoresJson,
         }, ct);
 

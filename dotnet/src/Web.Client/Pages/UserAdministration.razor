@@ -1,0 +1,53 @@
+@page "/users"
+@using TalentMatch.Web.Client.Components
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
+
+@if (AuthConfiguration.IsSimple)
+{
+    <UserManagement />
+}
+else if (isLoading)
+{
+    <main class="user-administration__state" aria-live="polite">
+        <h1>Access management</h1>
+        <p>Checking administrative authority...</p>
+    </main>
+}
+else if (!canManageAccess)
+{
+    <main class="user-administration__state">
+        <h1>Access management</h1>
+        <p role="alert">You do not have authority to manage application access.</p>
+    </main>
+}
+else
+{
+    <EntraAccessManagement GlobalAdmin="@isGlobalAdmin" />
+}
+
+@code {
+    private bool isLoading;
+    private bool canManageAccess;
+    private bool isGlobalAdmin;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthConfiguration.IsEntra)
+            return;
+
+        isLoading = true;
+        try
+        {
+            var currentUser = await Api.GetCurrentUserAsync();
+            isGlobalAdmin = string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
+            canManageAccess = isGlobalAdmin
+                || string.Equals(currentUser?.Role, "organization_admin", StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+}

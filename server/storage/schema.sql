@@ -17,14 +17,32 @@ CREATE TABLE [talentmatch].Users (
     FullName        NVARCHAR(200)   NOT NULL DEFAULT '',
     Email           NVARCHAR(320)   NOT NULL DEFAULT '',
     Department      NVARCHAR(100)   NOT NULL DEFAULT '',
-    PasswordHash    NVARCHAR(128)   NOT NULL,
+    PasswordHash    NVARCHAR(128)   NULL,
     CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     LastLogin       DATETIME2       NULL,
-    PasswordResetRequired BIT       NOT NULL DEFAULT 0
+    PasswordResetRequired BIT       NOT NULL DEFAULT 0,
+    AuthenticationProvider NVARCHAR(20) NOT NULL DEFAULT 'simple',
+    EntraTenantId   NVARCHAR(36)    NULL,
+    EntraObjectId   NVARCHAR(36)    NULL,
+    IsActive        BIT             NOT NULL DEFAULT 1,
+    AuthorizationVersion INT        NOT NULL DEFAULT 0,
+    CONSTRAINT CK_Users_IdentityProvider CHECK (
+        (AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL)
+        OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0)
+    )
 );
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_Username')
-    CREATE UNIQUE INDEX UX_Users_Username ON [talentmatch].Users (Username);
+IF EXISTS (
+    SELECT * FROM sys.indexes
+    WHERE object_id = OBJECT_ID('[talentmatch].Users')
+      AND name = 'UX_Users_Username'
+      AND (has_filter = 0 OR filter_definition NOT LIKE '%AuthenticationProvider%simple%')
+)
+    DROP INDEX UX_Users_Username ON [talentmatch].Users;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE object_id = OBJECT_ID('[talentmatch].Users') AND name = 'UX_Users_Username')
+    CREATE UNIQUE INDEX UX_Users_Username ON [talentmatch].Users (Username) WHERE AuthenticationProvider = 'simple';
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Users_EntraIdentity')
+    CREATE UNIQUE INDEX UX_Users_EntraIdentity ON [talentmatch].Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
 
 -- 2. PASSWORD RESET REQUESTS
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PasswordResetRequests' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -33,8 +51,10 @@ CREATE TABLE [talentmatch].PasswordResetRequests (
     UserId          NVARCHAR(36)    NOT NULL,
     Username        NVARCHAR(100)   NOT NULL,
     FullName        NVARCHAR(200)   NOT NULL DEFAULT '',
+    Reason          NVARCHAR(1000)  NOT NULL DEFAULT '',
     Status          NVARCHAR(20)    NOT NULL DEFAULT 'pending',
     RequestedAt     DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     ResolvedAt      DATETIME2       NULL,
     ResolvedBy      NVARCHAR(100)   NULL
 );
@@ -58,13 +78,17 @@ CREATE TABLE [talentmatch].Jobs (
     CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     SpecDocumentId          NVARCHAR(36)    NULL,
-    RubricDocumentId        NVARCHAR(36)    NULL
+    RubricDocumentId        NVARCHAR(36)    NULL,
+    OrganizationId          NVARCHAR(36)    NULL,
+    DepartmentId            NVARCHAR(36)    NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Department')
     CREATE INDEX IX_Jobs_Department ON [talentmatch].Jobs (Department);
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_CreatedBy')
     CREATE INDEX IX_Jobs_CreatedBy ON [talentmatch].Jobs (CreatedBy);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Jobs_Organization_Department')
+    CREATE INDEX IX_Jobs_Organization_Department ON [talentmatch].Jobs (OrganizationId, DepartmentId);
 
 -- 4. JOB CONFIG VERSIONS
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobConfigVersions' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -83,11 +107,73 @@ CREATE TABLE [talentmatch].JobConfigVersions (
     RubricApprovalStatus    NVARCHAR(20)    NOT NULL DEFAULT 'draft',
     RubricSource            NVARCHAR(20)    NOT NULL DEFAULT 'manual',
     RawExtractionResponse   NVARCHAR(MAX)   NULL,
+    ExtractionId            NVARCHAR(36)    NULL,
+    ExtractionInstructionVersionId NVARCHAR(36) NULL,
     CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME()
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobConfigVersions_JobId')
     CREATE INDEX IX_JobConfigVersions_JobId ON [talentmatch].JobConfigVersions (JobId);
+
+-- 4B. EXTRACTION INSTRUCTION VERSIONS
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ExtractionInstructionVersions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ExtractionInstructionVersions (
+    Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
+    VersionNumber           INT             NOT NULL,
+    InstructionText         NVARCHAR(MAX)   NOT NULL,
+    ModelId                 NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel          NVARCHAR(30)    NOT NULL DEFAULT '',
+    ProtectedContractVersion NVARCHAR(50)   NOT NULL,
+    Status                  NVARCHAR(20)    NOT NULL DEFAULT 'draft',
+    ChangeNote              NVARCHAR(1000)  NULL,
+    ValidationStatus        NVARCHAR(20)    NOT NULL DEFAULT 'unvalidated',
+    ValidationFindingsJson  NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
+    ValidatedAt             DATETIME2       NULL,
+    ValidatedBy             NVARCHAR(100)   NULL,
+    CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy               NVARCHAR(100)   NOT NULL DEFAULT '',
+    ActivatedAt             DATETIME2       NULL,
+    ActivatedBy             NVARCHAR(100)   NULL,
+    ConcurrencyVersion      INT             NOT NULL DEFAULT 1,
+    CONSTRAINT CK_ExtractionInstructionVersions_Status CHECK (Status IN ('draft', 'active', 'retired')),
+    CONSTRAINT CK_ExtractionInstructionVersions_ValidationStatus CHECK (ValidationStatus IN ('unvalidated', 'valid', 'invalid'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_ExtractionInstructionVersions_VersionNumber')
+    CREATE UNIQUE INDEX UX_ExtractionInstructionVersions_VersionNumber ON [talentmatch].ExtractionInstructionVersions (VersionNumber);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_ExtractionInstructionVersions_Active')
+    CREATE UNIQUE INDEX UX_ExtractionInstructionVersions_Active ON [talentmatch].ExtractionInstructionVersions (Status) WHERE Status = 'active';
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ExtractionInstructionVersions_Status_VersionNumber')
+    CREATE INDEX IX_ExtractionInstructionVersions_Status_VersionNumber ON [talentmatch].ExtractionInstructionVersions (Status, VersionNumber DESC);
+
+-- 4C. JOB SPEC EXTRACTIONS
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobSpecExtractions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].JobSpecExtractions (
+    Id                      NVARCHAR(36)    NOT NULL PRIMARY KEY,
+    Purpose                 NVARCHAR(40)    NOT NULL,
+    InstructionVersionId    NVARCHAR(36)    NOT NULL REFERENCES [talentmatch].ExtractionInstructionVersions(Id) ON DELETE NO ACTION,
+    ProtectedContractVersion NVARCHAR(50)   NOT NULL,
+    SourceFileName          NVARCHAR(500)   NOT NULL,
+    SourceMimeType          NVARCHAR(200)   NOT NULL,
+    SourceSha256            NVARCHAR(64)    NOT NULL,
+    RawResponse             NVARCHAR(MAX)   NOT NULL,
+    NormalizedResponseJson  NVARCHAR(MAX)   NULL,
+    ValidationStatus        NVARCHAR(20)    NOT NULL,
+    ValidationFindingsJson  NVARCHAR(MAX)   NOT NULL DEFAULT '[]',
+    JobId                   NVARCHAR(36)    NULL REFERENCES [talentmatch].Jobs(Id) ON DELETE NO ACTION,
+    JobConfigVersionId      NVARCHAR(36)    NULL,
+    CreatedAt               DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy               NVARCHAR(100)   NOT NULL DEFAULT '',
+    CompletedAt             DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CorrelationId           NVARCHAR(36)    NOT NULL,
+    CONSTRAINT CK_JobSpecExtractions_Purpose CHECK (Purpose IN ('job_creation', 'instruction_validation')),
+    CONSTRAINT CK_JobSpecExtractions_ValidationStatus CHECK (ValidationStatus IN ('valid', 'invalid'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobSpecExtractions_InstructionVersionId_CreatedAt')
+    CREATE INDEX IX_JobSpecExtractions_InstructionVersionId_CreatedAt ON [talentmatch].JobSpecExtractions (InstructionVersionId, CreatedAt DESC);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobSpecExtractions_JobId_CreatedAt')
+    CREATE INDEX IX_JobSpecExtractions_JobId_CreatedAt ON [talentmatch].JobSpecExtractions (JobId, CreatedAt DESC);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_JobSpecExtractions_JobConfigVersionId')
+    CREATE INDEX IX_JobSpecExtractions_JobConfigVersionId ON [talentmatch].JobSpecExtractions (JobConfigVersionId);
 
 -- 5. APPLICATIONS
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Applications' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -105,7 +191,9 @@ CREATE TABLE [talentmatch].Applications (
     CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     TestRunId       NVARCHAR(36)    NULL,
-    LastError       NVARCHAR(MAX)   NULL
+    LastError       NVARCHAR(MAX)   NULL,
+    ScoringOwner    NVARCHAR(128)   NULL,
+    ScoringLeaseUntil DATETIME2     NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_JobId')
@@ -114,6 +202,10 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_TestRunId
     CREATE INDEX IX_Applications_TestRunId ON [talentmatch].Applications (TestRunId) WHERE TestRunId IS NOT NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_JobId_Status')
     CREATE INDEX IX_Applications_JobId_Status ON [talentmatch].Applications (JobId, Status);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_Status_TestRunId_CreatedAt' AND object_id = OBJECT_ID('talentmatch.Applications'))
+    CREATE INDEX IX_Applications_Status_TestRunId_CreatedAt ON [talentmatch].Applications (Status, TestRunId, CreatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Applications_Status_ScoringLeaseUntil' AND object_id = OBJECT_ID('talentmatch.Applications'))
+    CREATE INDEX IX_Applications_Status_ScoringLeaseUntil ON [talentmatch].Applications (Status, ScoringLeaseUntil);
 
 -- 6. APPLICATION DOCUMENTS (metadata only; blobs in Azure Blob Storage or DocumentBlobs table)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ApplicationDocuments' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -163,6 +255,7 @@ CREATE TABLE [talentmatch].ScoringRuns (
     VersionId               NVARCHAR(36)    NOT NULL DEFAULT '',
     RunIndex                INT             NOT NULL,
     ModelDeploymentId       NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel          NVARCHAR(30)    NOT NULL DEFAULT '',
     PromptVersionId         NVARCHAR(36)    NOT NULL DEFAULT '',
     OverallScore            FLOAT           NOT NULL,
     SubScoresJson           NVARCHAR(MAX)   NOT NULL DEFAULT '{}',
@@ -236,7 +329,13 @@ CREATE TABLE [talentmatch].ScoringPrompts (
     Rating                  INT             NULL,
     Comments                NVARCHAR(MAX)   NULL,
     Source                  NVARCHAR(20)    NOT NULL DEFAULT 'manual',
-    GenerationMetadataJson  NVARCHAR(MAX)   NULL
+    GenerationMetadataJson  NVARCHAR(MAX)   NULL,
+    GenerationInstructionVersionId NVARCHAR(36) NULL,
+    ModelId                 NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel          NVARCHAR(30)    NOT NULL DEFAULT '',
+    ApprovedModelId         NVARCHAR(100)   NULL,
+    ApprovedReasoningLevel  NVARCHAR(30)    NULL,
+    ApprovedTestRunId       NVARCHAR(36)    NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_ScoringPrompts_JobId_Status')
@@ -253,11 +352,38 @@ CREATE TABLE [talentmatch].PromptTestRuns (
     CreatedAt           DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
     CompletedAt         DATETIME2       NULL,
     ReviewedBy          NVARCHAR(36)    NULL,
-    ReviewNotes         NVARCHAR(MAX)   NULL
+    ReviewNotes         NVARCHAR(MAX)   NULL,
+    ModelId             NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel      NVARCHAR(30)    NOT NULL DEFAULT '',
+    ApprovedModelId     NVARCHAR(100)   NULL,
+    ApprovedReasoningLevel NVARCHAR(30) NULL
 );
 
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PromptTestRuns_PromptId')
     CREATE INDEX IX_PromptTestRuns_PromptId ON [talentmatch].PromptTestRuns (PromptId);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'PromptGenerationInstructions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].PromptGenerationInstructions (
+    Id              NVARCHAR(36)    NOT NULL PRIMARY KEY,
+    JobId           NVARCHAR(36)    NULL,
+    VersionNumber   INT             NOT NULL,
+    InstructionText NVARCHAR(MAX)   NOT NULL,
+    ModelId         NVARCHAR(100)   NOT NULL DEFAULT '',
+    ReasoningLevel  NVARCHAR(30)    NOT NULL DEFAULT '',
+    Status          NVARCHAR(20)    NOT NULL DEFAULT 'draft',
+    ChangeNote      NVARCHAR(MAX)   NULL,
+    CreatedAt       DATETIME2       NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy       NVARCHAR(100)   NOT NULL,
+    ActivatedAt     DATETIME2       NULL,
+    ActivatedBy     NVARCHAR(100)   NULL
+);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_PromptGenerationInstructions_Scope_Version')
+    CREATE UNIQUE INDEX UX_PromptGenerationInstructions_Scope_Version
+        ON [talentmatch].PromptGenerationInstructions (JobId, VersionNumber);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_PromptGenerationInstructions_Scope_Status')
+    CREATE INDEX IX_PromptGenerationInstructions_Scope_Status
+        ON [talentmatch].PromptGenerationInstructions (JobId, Status);
 
 -- 14. FAILURE QUEUE (DLQ)
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'FailureQueueItems' AND schema_id = SCHEMA_ID('talentmatch'))
@@ -344,3 +470,206 @@ CREATE TABLE [talentmatch].ScoringJobProgress (
     UpdatedAt         DATETIME2      NOT NULL DEFAULT SYSUTCDATETIME()
 );
 
+-- 18. NORMALIZED ORGANIZATION AUTHORIZATION
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Organizations' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].Organizations (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    Name NVARCHAR(200) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT CK_Organizations_Status CHECK (Status IN ('active', 'retired'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Organizations_ActiveName')
+    CREATE UNIQUE INDEX UX_Organizations_ActiveName ON [talentmatch].Organizations (Name) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Departments' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].Departments (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    OrganizationId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Organizations(Id),
+    Name NVARCHAR(100) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT UQ_Departments_Id_Organization UNIQUE (Id, OrganizationId),
+    CONSTRAINT CK_Departments_Status CHECK (Status IN ('active', 'retired'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_Departments_ActiveOrganizationName')
+    CREATE UNIQUE INDEX UX_Departments_ActiveOrganizationName ON [talentmatch].Departments (OrganizationId, Name) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'OrganizationMemberships' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].OrganizationMemberships (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    UserId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Users(Id),
+    OrganizationId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Organizations(Id),
+    DefaultDepartmentMembershipId NVARCHAR(36) NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    RevokedAt DATETIME2 NULL,
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT CK_OrganizationMemberships_Status CHECK ((Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_OrganizationMemberships_ActiveUserOrganization')
+    CREATE UNIQUE INDEX UX_OrganizationMemberships_ActiveUserOrganization ON [talentmatch].OrganizationMemberships (UserId, OrganizationId) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'DepartmentMemberships' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].DepartmentMemberships (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    UserId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Users(Id),
+    OrganizationId NVARCHAR(36) NOT NULL,
+    DepartmentId NVARCHAR(36) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    RevokedAt DATETIME2 NULL,
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT UQ_DepartmentMemberships_Id_User_Organization UNIQUE (Id, UserId, OrganizationId),
+    CONSTRAINT FK_DepartmentMemberships_Department FOREIGN KEY (DepartmentId, OrganizationId) REFERENCES [talentmatch].Departments(Id, OrganizationId),
+    CONSTRAINT CK_DepartmentMemberships_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_DepartmentMemberships_ActiveUserDepartment')
+    CREATE UNIQUE INDEX UX_DepartmentMemberships_ActiveUserDepartment ON [talentmatch].DepartmentMemberships (UserId, DepartmentId) WHERE Status = 'active';
+
+IF NOT EXISTS (SELECT * FROM sys.foreign_keys WHERE name = 'FK_OrganizationMemberships_DefaultDepartmentMembership')
+    ALTER TABLE [talentmatch].OrganizationMemberships ADD CONSTRAINT FK_OrganizationMemberships_DefaultDepartmentMembership
+        FOREIGN KEY (DefaultDepartmentMembershipId, UserId, OrganizationId)
+        REFERENCES [talentmatch].DepartmentMemberships (Id, UserId, OrganizationId);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'RoleGroupMappings' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].RoleGroupMappings (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    TenantId NVARCHAR(36) NOT NULL,
+    GroupObjectId NVARCHAR(36) NOT NULL,
+    Role NVARCHAR(30) NOT NULL,
+    OrganizationId NVARCHAR(36) NULL,
+    DepartmentId NVARCHAR(36) NULL,
+    Enabled BIT NOT NULL DEFAULT 1,
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT UQ_RoleGroupMappings_TenantGroup UNIQUE (TenantId, GroupObjectId),
+    CONSTRAINT CK_RoleGroupMappings_Scope CHECK ((Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'RoleAssignments' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].RoleAssignments (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    UserId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Users(Id),
+    TenantId NVARCHAR(36) NOT NULL,
+    UserObjectId NVARCHAR(36) NOT NULL,
+    Role NVARCHAR(30) NOT NULL,
+    OrganizationId NVARCHAR(36) NULL,
+    DepartmentId NVARCHAR(36) NULL,
+    RoleGroupMappingId NVARCHAR(36) NULL REFERENCES [talentmatch].RoleGroupMappings(Id),
+    Source NVARCHAR(20) NOT NULL,
+    Status NVARCHAR(20) NOT NULL DEFAULT 'active',
+    EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    RevokedAt DATETIME2 NULL,
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedBy NVARCHAR(100) NOT NULL,
+    CONSTRAINT CK_RoleAssignments_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveGroup')
+    CREATE UNIQUE INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveDelegated')
+    CREATE UNIQUE INDEX UX_RoleAssignments_ActiveDelegated ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
+
+-- 19. OPTIONAL PARALLEL UPLOADS
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadSettings' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].UploadSettings (
+    Id                      NVARCHAR(64)  NOT NULL CONSTRAINT PK_UploadSettings PRIMARY KEY,
+    FileConcurrency         INT           NOT NULL,
+    MaxIndividualFileBytes  BIGINT        NOT NULL,
+    MaxInFlightBytes        BIGINT        NOT NULL,
+    ConcurrencyVersion      INT           NOT NULL,
+    CreatedAt               DATETIME2     NOT NULL,
+    CreatedBy               NVARCHAR(128) NOT NULL,
+    UpdatedAt               DATETIME2     NOT NULL,
+    UpdatedBy               NVARCHAR(128) NOT NULL,
+    CONSTRAINT CK_UploadSettings_FileConcurrency CHECK (FileConcurrency > 0),
+    CONSTRAINT CK_UploadSettings_MaxIndividualFileBytes CHECK (MaxIndividualFileBytes > 0),
+    CONSTRAINT CK_UploadSettings_MaxInFlightBytes CHECK (MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload')
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadSessions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].UploadSessions (
+    Id                      NVARCHAR(36)  NOT NULL CONSTRAINT PK_UploadSessions PRIMARY KEY,
+    JobId                   NVARCHAR(36)  NOT NULL,
+    OwnerActorId            NVARCHAR(128) NOT NULL,
+    OwnerDisplayName        NVARCHAR(200) NULL,
+    AllowDuplicates         BIT           NOT NULL,
+    Status                  NVARCHAR(20)  NOT NULL,
+    FileConcurrency         INT           NOT NULL,
+    MaxIndividualFileBytes  BIGINT        NOT NULL,
+    MaxInFlightBytes        BIGINT        NOT NULL,
+    TotalItemCount          INT           NOT NULL,
+    WaitingCount            INT           NOT NULL,
+    ActiveCount             INT           NOT NULL,
+    SucceededCount          INT           NOT NULL,
+    SkippedCount            INT           NOT NULL,
+    FailedCount             INT           NOT NULL,
+    InterruptedCount        INT           NOT NULL,
+    TerminalItemCount       INT           NOT NULL,
+    CorrelationId           NVARCHAR(64)  NOT NULL,
+    LastHeartbeatAt         DATETIME2     NOT NULL,
+    CreatedAt               DATETIME2     NOT NULL,
+    StartedAt               DATETIME2     NULL,
+    CompletedAt             DATETIME2     NULL,
+    ConcurrencyVersion      INT           NOT NULL,
+    CONSTRAINT FK_UploadSessions_Jobs_JobId FOREIGN KEY (JobId) REFERENCES [talentmatch].Jobs(Id),
+    CONSTRAINT CK_UploadSessions_Counts CHECK (TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0),
+    CONSTRAINT CK_UploadSessions_Limits CHECK (FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSessions_Status CHECK (Status IN ('active', 'completed'))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadItems' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].UploadItems (
+    Id                      NVARCHAR(36)   NOT NULL CONSTRAINT PK_UploadItems PRIMARY KEY,
+    SessionId               NVARCHAR(36)   NOT NULL,
+    OccurrenceKey           NVARCHAR(36)   NOT NULL,
+    Ordinal                 INT            NOT NULL,
+    FileName                NVARCHAR(500)  NOT NULL,
+    MimeType                NVARCHAR(200)  NOT NULL,
+    RawSizeBytes            BIGINT         NOT NULL,
+    Status                  NVARCHAR(32)   NOT NULL,
+    AttemptCount            INT            NOT NULL,
+    ContentFingerprint      NVARCHAR(64)   NULL,
+    ApplicationId           NVARCHAR(36)   NULL,
+    OutcomeCode             NVARCHAR(100)  NULL,
+    OutcomeMessage          NVARCHAR(1000) NULL,
+    LastHttpStatus          INT            NULL,
+    LastAttemptAt           DATETIME2      NULL,
+    NextRetryAt             DATETIME2      NULL,
+    CreatedAt               DATETIME2      NOT NULL,
+    UpdatedAt               DATETIME2      NOT NULL,
+    CompletedAt             DATETIME2      NULL,
+    ConcurrencyVersion      INT            NOT NULL,
+    CONSTRAINT FK_UploadItems_Applications_ApplicationId FOREIGN KEY (ApplicationId) REFERENCES [talentmatch].Applications(Id),
+    CONSTRAINT FK_UploadItems_UploadSessions_SessionId FOREIGN KEY (SessionId) REFERENCES [talentmatch].UploadSessions(Id) ON DELETE CASCADE,
+    CONSTRAINT CK_UploadItems_Application CHECK ((Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)),
+    CONSTRAINT CK_UploadItems_Attempts CHECK (AttemptCount >= 0 AND AttemptCount <= 4),
+    CONSTRAINT CK_UploadItems_RawSizeBytes CHECK (RawSizeBytes >= 0),
+    CONSTRAINT CK_UploadItems_Status CHECK (Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted'))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_ApplicationId' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE UNIQUE INDEX IX_UploadItems_ApplicationId ON [talentmatch].UploadItems (ApplicationId) WHERE ApplicationId IS NOT NULL;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_ContentFingerprint' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE INDEX IX_UploadItems_SessionId_ContentFingerprint ON [talentmatch].UploadItems (SessionId, ContentFingerprint);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_OccurrenceKey' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE UNIQUE INDEX IX_UploadItems_SessionId_OccurrenceKey ON [talentmatch].UploadItems (SessionId, OccurrenceKey);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_Ordinal' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE UNIQUE INDEX IX_UploadItems_SessionId_Ordinal ON [talentmatch].UploadItems (SessionId, Ordinal);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_SessionId_Status_Ordinal' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE INDEX IX_UploadItems_SessionId_Status_Ordinal ON [talentmatch].UploadItems (SessionId, Status, Ordinal);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadItems_Status_UpdatedAt' AND object_id = OBJECT_ID('talentmatch.UploadItems'))
+    CREATE INDEX IX_UploadItems_Status_UpdatedAt ON [talentmatch].UploadItems (Status, UpdatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_JobId_CreatedAt' AND object_id = OBJECT_ID('talentmatch.UploadSessions'))
+    CREATE INDEX IX_UploadSessions_JobId_CreatedAt ON [talentmatch].UploadSessions (JobId, CreatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_OwnerActorId_CreatedAt' AND object_id = OBJECT_ID('talentmatch.UploadSessions'))
+    CREATE INDEX IX_UploadSessions_OwnerActorId_CreatedAt ON [talentmatch].UploadSessions (OwnerActorId, CreatedAt);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_Status_LastHeartbeatAt' AND object_id = OBJECT_ID('talentmatch.UploadSessions'))
+    CREATE INDEX IX_UploadSessions_Status_LastHeartbeatAt ON [talentmatch].UploadSessions (Status, LastHeartbeatAt);

@@ -1,5 +1,7 @@
 using MediatR;
 using TalentMatch.Application.Applications.Commands;
+using TalentMatch.Application.Authorization;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Web.Server.Endpoints;
@@ -9,6 +11,23 @@ public static class DlqEndpoints
     public static void MapDlqEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/api/dlq").WithTags("DLQ").RequireAuthorization();
+        group.AddEndpointFilter(async (context, next) =>
+        {
+            try
+            {
+                return await next(context);
+            }
+            catch (InvalidJobScopeException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext, AuthorizationErrorCodes.InvalidJobScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext, AuthorizationErrorCodes.Forbidden);
+            }
+        });
 
         group.MapGet("/", async (IFailureQueueRepository repo) =>
         {

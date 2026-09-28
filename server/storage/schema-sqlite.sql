@@ -11,12 +11,19 @@ CREATE TABLE IF NOT EXISTS Users (
     FullName        TEXT    NOT NULL DEFAULT '',
     Email           TEXT    NOT NULL DEFAULT '',
     Department      TEXT    NOT NULL DEFAULT '',
-    PasswordHash    TEXT    NOT NULL,
+    PasswordHash    TEXT    NULL,
     CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
     LastLogin       TEXT    NULL,
-    PasswordResetRequired INTEGER NOT NULL DEFAULT 0
+    PasswordResetRequired INTEGER NOT NULL DEFAULT 0,
+    AuthenticationProvider TEXT NOT NULL DEFAULT 'simple',
+    EntraTenantId TEXT NULL,
+    EntraObjectId TEXT NULL,
+    IsActive INTEGER NOT NULL DEFAULT 1,
+    AuthorizationVersion INTEGER NOT NULL DEFAULT 0,
+    CHECK ((AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS UX_Users_Username ON Users (Username);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_Users_Username ON Users (Username) WHERE AuthenticationProvider = 'simple';
+CREATE UNIQUE INDEX IF NOT EXISTS UX_Users_EntraIdentity ON Users (EntraTenantId, EntraObjectId) WHERE AuthenticationProvider = 'entra';
 
 -- 2. PASSWORD RESET REQUESTS
 CREATE TABLE IF NOT EXISTS PasswordResetRequests (
@@ -24,8 +31,10 @@ CREATE TABLE IF NOT EXISTS PasswordResetRequests (
     UserId          TEXT    NOT NULL,
     Username        TEXT    NOT NULL,
     FullName        TEXT    NOT NULL DEFAULT '',
+    Reason          TEXT    NOT NULL DEFAULT '',
     Status          TEXT    NOT NULL DEFAULT 'pending',
     RequestedAt     TEXT    NOT NULL DEFAULT (datetime('now')),
+    CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
     ResolvedAt      TEXT    NULL,
     ResolvedBy      TEXT    NULL
 );
@@ -46,10 +55,13 @@ CREATE TABLE IF NOT EXISTS Jobs (
     CreatedAt               TEXT    NOT NULL DEFAULT (datetime('now')),
     UpdatedAt               TEXT    NOT NULL DEFAULT (datetime('now')),
     SpecDocumentId          TEXT    NULL,
-    RubricDocumentId        TEXT    NULL
+    RubricDocumentId        TEXT    NULL,
+    OrganizationId          TEXT    NULL,
+    DepartmentId            TEXT    NULL
 );
 CREATE INDEX IF NOT EXISTS IX_Jobs_Department ON Jobs (Department);
 CREATE INDEX IF NOT EXISTS IX_Jobs_CreatedBy ON Jobs (CreatedBy);
+CREATE INDEX IF NOT EXISTS IX_Jobs_Organization_Department ON Jobs (OrganizationId, DepartmentId);
 
 -- 4. JOB CONFIG VERSIONS
 CREATE TABLE IF NOT EXISTS JobConfigVersions (
@@ -59,6 +71,7 @@ CREATE TABLE IF NOT EXISTS JobConfigVersions (
     RubricJson              TEXT    NOT NULL DEFAULT '[]',
     MustHavesJson           TEXT    NOT NULL DEFAULT '[]',
     DesiredCriteriaJson     TEXT    NOT NULL DEFAULT '[]',
+    ScoringRunCount         INTEGER NOT NULL DEFAULT 3,
     RunsPerApplication      INTEGER NOT NULL DEFAULT 3,
     AggregationStrategy     TEXT    NOT NULL DEFAULT 'median',
     LonglistThreshold       REAL    NOT NULL DEFAULT 70,
@@ -67,9 +80,63 @@ CREATE TABLE IF NOT EXISTS JobConfigVersions (
     RubricApprovalStatus    TEXT    NOT NULL DEFAULT 'draft',
     RubricSource            TEXT    NOT NULL DEFAULT 'manual',
     RawExtractionResponse   TEXT    NULL,
+    ExtractionId            TEXT    NULL,
+    ExtractionInstructionVersionId TEXT NULL,
     CreatedAt               TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS IX_JobConfigVersions_JobId ON JobConfigVersions (JobId);
+
+-- 4B. EXTRACTION INSTRUCTION VERSIONS
+CREATE TABLE IF NOT EXISTS ExtractionInstructionVersions (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    VersionNumber           INTEGER NOT NULL,
+    InstructionText         TEXT    NOT NULL,
+    ModelId                 TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel          TEXT    NOT NULL DEFAULT '',
+    ProtectedContractVersion TEXT   NOT NULL,
+    Status                  TEXT    NOT NULL DEFAULT 'draft',
+    ChangeNote              TEXT    NULL,
+    ValidationStatus        TEXT    NOT NULL DEFAULT 'unvalidated',
+    ValidationFindingsJson  TEXT    NOT NULL DEFAULT '[]',
+    ValidatedAt             TEXT    NULL,
+    ValidatedBy             TEXT    NULL,
+    CreatedAt               TEXT    NOT NULL DEFAULT (datetime('now')),
+    CreatedBy               TEXT    NOT NULL DEFAULT '',
+    ActivatedAt             TEXT    NULL,
+    ActivatedBy             TEXT    NULL,
+    ConcurrencyVersion      INTEGER NOT NULL DEFAULT 1,
+    CHECK (Status IN ('draft', 'active', 'retired')),
+    CHECK (ValidationStatus IN ('unvalidated', 'valid', 'invalid'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_VersionNumber ON ExtractionInstructionVersions (VersionNumber);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_ExtractionInstructionVersions_Active ON ExtractionInstructionVersions (Status) WHERE Status = 'active';
+CREATE INDEX IF NOT EXISTS IX_ExtractionInstructionVersions_Status_VersionNumber ON ExtractionInstructionVersions (Status, VersionNumber DESC);
+
+-- 4C. JOB SPEC EXTRACTIONS
+CREATE TABLE IF NOT EXISTS JobSpecExtractions (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    Purpose                 TEXT    NOT NULL,
+    InstructionVersionId    TEXT    NOT NULL REFERENCES ExtractionInstructionVersions(Id) ON DELETE RESTRICT,
+    ProtectedContractVersion TEXT   NOT NULL,
+    SourceFileName          TEXT    NOT NULL,
+    SourceMimeType          TEXT    NOT NULL,
+    SourceSha256            TEXT    NOT NULL,
+    RawResponse             TEXT    NOT NULL,
+    NormalizedResponseJson  TEXT    NULL,
+    ValidationStatus        TEXT    NOT NULL,
+    ValidationFindingsJson  TEXT    NOT NULL DEFAULT '[]',
+    JobId                   TEXT    NULL REFERENCES Jobs(Id) ON DELETE RESTRICT,
+    JobConfigVersionId      TEXT    NULL,
+    CreatedAt               TEXT    NOT NULL DEFAULT (datetime('now')),
+    CreatedBy               TEXT    NOT NULL DEFAULT '',
+    CompletedAt             TEXT    NOT NULL DEFAULT (datetime('now')),
+    CorrelationId           TEXT    NOT NULL,
+    CHECK (Purpose IN ('job_creation', 'instruction_validation')),
+    CHECK (ValidationStatus IN ('valid', 'invalid'))
+);
+CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_InstructionVersionId_CreatedAt ON JobSpecExtractions (InstructionVersionId, CreatedAt DESC);
+CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobId_CreatedAt ON JobSpecExtractions (JobId, CreatedAt DESC);
+CREATE INDEX IF NOT EXISTS IX_JobSpecExtractions_JobConfigVersionId ON JobSpecExtractions (JobConfigVersionId);
 
 -- 5. APPLICATIONS
 CREATE TABLE IF NOT EXISTS Applications (
@@ -86,11 +153,15 @@ CREATE TABLE IF NOT EXISTS Applications (
     CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
     UpdatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
     TestRunId       TEXT    NULL,
-    LastError       TEXT    NULL
+    LastError       TEXT    NULL,
+    ScoringOwner    TEXT    NULL,
+    ScoringLeaseUntil TEXT  NULL
 );
 CREATE INDEX IF NOT EXISTS IX_Applications_JobId ON Applications (JobId);
 CREATE INDEX IF NOT EXISTS IX_Applications_TestRunId ON Applications (TestRunId);
 CREATE INDEX IF NOT EXISTS IX_Applications_JobId_Status ON Applications (JobId, Status);
+CREATE INDEX IF NOT EXISTS IX_Applications_Status_TestRunId_CreatedAt ON Applications (Status, TestRunId, CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_Applications_Status_ScoringLeaseUntil ON Applications (Status, ScoringLeaseUntil);
 
 -- 6. APPLICATION DOCUMENTS
 CREATE TABLE IF NOT EXISTS ApplicationDocuments (
@@ -130,6 +201,7 @@ CREATE TABLE IF NOT EXISTS ScoringRuns (
     VersionId               TEXT    NOT NULL DEFAULT '',
     RunIndex                INTEGER NOT NULL,
     ModelDeploymentId       TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel          TEXT    NOT NULL DEFAULT '',
     PromptVersionId         TEXT    NOT NULL DEFAULT '',
     OverallScore            REAL    NOT NULL,
     SubScoresJson           TEXT    NOT NULL DEFAULT '{}',
@@ -194,7 +266,13 @@ CREATE TABLE IF NOT EXISTS ScoringPrompts (
     Rating                  INTEGER NULL,
     Comments                TEXT    NULL,
     Source                  TEXT    NOT NULL DEFAULT 'manual',
-    GenerationMetadataJson  TEXT    NULL
+    GenerationMetadataJson  TEXT    NULL,
+    GenerationInstructionVersionId TEXT NULL,
+    ModelId                 TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel          TEXT    NOT NULL DEFAULT '',
+    ApprovedModelId         TEXT    NULL,
+    ApprovedReasoningLevel  TEXT    NULL,
+    ApprovedTestRunId       TEXT    NULL
 );
 CREATE INDEX IF NOT EXISTS IX_ScoringPrompts_JobId_Status ON ScoringPrompts (JobId, Status);
 
@@ -208,9 +286,32 @@ CREATE TABLE IF NOT EXISTS PromptTestRuns (
     CreatedAt           TEXT    NOT NULL DEFAULT (datetime('now')),
     CompletedAt         TEXT    NULL,
     ReviewedBy          TEXT    NULL,
-    ReviewNotes         TEXT    NULL
+    ReviewNotes         TEXT    NULL,
+    ModelId             TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel      TEXT    NOT NULL DEFAULT '',
+    ApprovedModelId     TEXT    NULL,
+    ApprovedReasoningLevel TEXT NULL
 );
 CREATE INDEX IF NOT EXISTS IX_PromptTestRuns_PromptId ON PromptTestRuns (PromptId);
+
+CREATE TABLE IF NOT EXISTS PromptGenerationInstructions (
+    Id              TEXT    NOT NULL PRIMARY KEY,
+    JobId           TEXT    NULL,
+    VersionNumber   INTEGER NOT NULL,
+    InstructionText TEXT    NOT NULL,
+    ModelId         TEXT    NOT NULL DEFAULT '',
+    ReasoningLevel  TEXT    NOT NULL DEFAULT '',
+    Status          TEXT    NOT NULL DEFAULT 'draft',
+    ChangeNote      TEXT    NULL,
+    CreatedAt       TEXT    NOT NULL DEFAULT (datetime('now')),
+    CreatedBy       TEXT    NOT NULL,
+    ActivatedAt     TEXT    NULL,
+    ActivatedBy     TEXT    NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_PromptGenerationInstructions_Scope_Version
+    ON PromptGenerationInstructions (JobId, VersionNumber);
+CREATE INDEX IF NOT EXISTS IX_PromptGenerationInstructions_Scope_Status
+    ON PromptGenerationInstructions (JobId, Status);
 
 -- 14. FAILURE QUEUE (DLQ)
 CREATE TABLE IF NOT EXISTS FailureQueueItems (
@@ -287,3 +388,173 @@ CREATE TABLE IF NOT EXISTS ScoringJobProgress (
     UpdatedAt         TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 18. NORMALIZED ORGANIZATION AUTHORIZATION
+CREATE TABLE IF NOT EXISTS Organizations (
+    Id TEXT NOT NULL PRIMARY KEY,
+    Name TEXT NOT NULL,
+    Status TEXT NOT NULL DEFAULT 'active' CHECK (Status IN ('active', 'retired')),
+    CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedBy TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_Organizations_ActiveName ON Organizations (Name) WHERE Status = 'active';
+
+CREATE TABLE IF NOT EXISTS Departments (
+    Id TEXT NOT NULL PRIMARY KEY,
+    OrganizationId TEXT NOT NULL REFERENCES Organizations(Id),
+    Name TEXT NOT NULL,
+    Status TEXT NOT NULL DEFAULT 'active' CHECK (Status IN ('active', 'retired')),
+    CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedBy TEXT NOT NULL,
+    UNIQUE (Id, OrganizationId)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_Departments_ActiveOrganizationName ON Departments (OrganizationId, Name) WHERE Status = 'active';
+
+CREATE TABLE IF NOT EXISTS OrganizationMemberships (
+    Id TEXT NOT NULL PRIMARY KEY,
+    UserId TEXT NOT NULL REFERENCES Users(Id),
+    OrganizationId TEXT NOT NULL REFERENCES Organizations(Id),
+    DefaultDepartmentMembershipId TEXT NULL,
+    Status TEXT NOT NULL DEFAULT 'active',
+    EffectiveAt TEXT NOT NULL DEFAULT (datetime('now')),
+    RevokedAt TEXT NULL,
+    UpdatedBy TEXT NOT NULL,
+    FOREIGN KEY (DefaultDepartmentMembershipId, UserId, OrganizationId) REFERENCES DepartmentMemberships(Id, UserId, OrganizationId) DEFERRABLE INITIALLY DEFERRED,
+    CHECK ((Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_OrganizationMemberships_ActiveUserOrganization ON OrganizationMemberships (UserId, OrganizationId) WHERE Status = 'active';
+
+CREATE TABLE IF NOT EXISTS DepartmentMemberships (
+    Id TEXT NOT NULL PRIMARY KEY,
+    UserId TEXT NOT NULL REFERENCES Users(Id),
+    OrganizationId TEXT NOT NULL,
+    DepartmentId TEXT NOT NULL,
+    Status TEXT NOT NULL DEFAULT 'active',
+    EffectiveAt TEXT NOT NULL DEFAULT (datetime('now')),
+    RevokedAt TEXT NULL,
+    UpdatedBy TEXT NOT NULL,
+    UNIQUE (Id, UserId, OrganizationId),
+    FOREIGN KEY (DepartmentId, OrganizationId) REFERENCES Departments(Id, OrganizationId),
+    CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_DepartmentMemberships_ActiveUserDepartment ON DepartmentMemberships (UserId, DepartmentId) WHERE Status = 'active';
+
+CREATE TABLE IF NOT EXISTS RoleGroupMappings (
+    Id TEXT NOT NULL PRIMARY KEY,
+    TenantId TEXT NOT NULL,
+    GroupObjectId TEXT NOT NULL,
+    Role TEXT NOT NULL,
+    OrganizationId TEXT NULL,
+    DepartmentId TEXT NULL,
+    Enabled INTEGER NOT NULL DEFAULT 1,
+    CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedBy TEXT NOT NULL,
+    UNIQUE (TenantId, GroupObjectId),
+    CHECK ((Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS RoleAssignments (
+    Id TEXT NOT NULL PRIMARY KEY,
+    UserId TEXT NOT NULL REFERENCES Users(Id),
+    TenantId TEXT NOT NULL,
+    UserObjectId TEXT NOT NULL,
+    Role TEXT NOT NULL,
+    OrganizationId TEXT NULL,
+    DepartmentId TEXT NULL,
+    RoleGroupMappingId TEXT NULL REFERENCES RoleGroupMappings(Id),
+    Source TEXT NOT NULL,
+    Status TEXT NOT NULL DEFAULT 'active',
+    EffectiveAt TEXT NOT NULL DEFAULT (datetime('now')),
+    RevokedAt TEXT NULL,
+    CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedBy TEXT NOT NULL,
+    CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveGroup ON RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveDelegated ON RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
+
+-- 19. OPTIONAL PARALLEL UPLOADS
+CREATE TABLE IF NOT EXISTS UploadSettings (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    FileConcurrency         INTEGER NOT NULL,
+    MaxIndividualFileBytes  INTEGER NOT NULL,
+    MaxInFlightBytes        INTEGER NOT NULL,
+    ConcurrencyVersion      INTEGER NOT NULL,
+    CreatedAt               TEXT    NOT NULL,
+    CreatedBy               TEXT    NOT NULL,
+    UpdatedAt               TEXT    NOT NULL,
+    UpdatedBy               TEXT    NOT NULL,
+    CONSTRAINT CK_UploadSettings_FileConcurrency CHECK (FileConcurrency > 0),
+    CONSTRAINT CK_UploadSettings_MaxIndividualFileBytes CHECK (MaxIndividualFileBytes > 0),
+    CONSTRAINT CK_UploadSettings_MaxInFlightBytes CHECK (MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload')
+);
+
+CREATE TABLE IF NOT EXISTS UploadSessions (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    JobId                   TEXT    NOT NULL REFERENCES Jobs(Id) ON DELETE RESTRICT,
+    OwnerActorId            TEXT    NOT NULL,
+    OwnerDisplayName        TEXT    NULL,
+    AllowDuplicates         INTEGER NOT NULL,
+    Status                  TEXT    NOT NULL,
+    FileConcurrency         INTEGER NOT NULL,
+    MaxIndividualFileBytes  INTEGER NOT NULL,
+    MaxInFlightBytes        INTEGER NOT NULL,
+    TotalItemCount          INTEGER NOT NULL,
+    WaitingCount            INTEGER NOT NULL,
+    ActiveCount             INTEGER NOT NULL,
+    SucceededCount          INTEGER NOT NULL,
+    SkippedCount            INTEGER NOT NULL,
+    FailedCount             INTEGER NOT NULL,
+    InterruptedCount        INTEGER NOT NULL,
+    TerminalItemCount       INTEGER NOT NULL,
+    CorrelationId           TEXT    NOT NULL,
+    LastHeartbeatAt         TEXT    NOT NULL,
+    CreatedAt               TEXT    NOT NULL,
+    StartedAt               TEXT    NULL,
+    CompletedAt             TEXT    NULL,
+    ConcurrencyVersion      INTEGER NOT NULL,
+    CONSTRAINT CK_UploadSessions_Counts CHECK (TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0),
+    CONSTRAINT CK_UploadSessions_Limits CHECK (FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes),
+    CONSTRAINT CK_UploadSessions_Status CHECK (Status IN ('active', 'completed'))
+);
+
+CREATE TABLE IF NOT EXISTS UploadItems (
+    Id                      TEXT    NOT NULL PRIMARY KEY,
+    SessionId               TEXT    NOT NULL REFERENCES UploadSessions(Id) ON DELETE CASCADE,
+    OccurrenceKey           TEXT    NOT NULL,
+    Ordinal                 INTEGER NOT NULL,
+    FileName                TEXT    NOT NULL,
+    MimeType                TEXT    NOT NULL,
+    RawSizeBytes            INTEGER NOT NULL,
+    Status                  TEXT    NOT NULL,
+    AttemptCount            INTEGER NOT NULL,
+    ContentFingerprint      TEXT    NULL,
+    ApplicationId           TEXT    NULL REFERENCES Applications(Id) ON DELETE RESTRICT,
+    OutcomeCode             TEXT    NULL,
+    OutcomeMessage          TEXT    NULL,
+    LastHttpStatus          INTEGER NULL,
+    LastAttemptAt           TEXT    NULL,
+    NextRetryAt             TEXT    NULL,
+    CreatedAt               TEXT    NOT NULL,
+    UpdatedAt               TEXT    NOT NULL,
+    CompletedAt             TEXT    NULL,
+    ConcurrencyVersion      INTEGER NOT NULL,
+    CONSTRAINT CK_UploadItems_Application CHECK ((Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)),
+    CONSTRAINT CK_UploadItems_Attempts CHECK (AttemptCount >= 0 AND AttemptCount <= 4),
+    CONSTRAINT CK_UploadItems_RawSizeBytes CHECK (RawSizeBytes >= 0),
+    CONSTRAINT CK_UploadItems_Status CHECK (Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS IX_UploadItems_ApplicationId ON UploadItems (ApplicationId) WHERE ApplicationId IS NOT NULL;
+CREATE INDEX IF NOT EXISTS IX_UploadItems_SessionId_ContentFingerprint ON UploadItems (SessionId, ContentFingerprint);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_UploadItems_SessionId_OccurrenceKey ON UploadItems (SessionId, OccurrenceKey);
+CREATE UNIQUE INDEX IF NOT EXISTS IX_UploadItems_SessionId_Ordinal ON UploadItems (SessionId, Ordinal);
+CREATE INDEX IF NOT EXISTS IX_UploadItems_SessionId_Status_Ordinal ON UploadItems (SessionId, Status, Ordinal);
+CREATE INDEX IF NOT EXISTS IX_UploadItems_Status_UpdatedAt ON UploadItems (Status, UpdatedAt);
+CREATE INDEX IF NOT EXISTS IX_UploadSessions_JobId_CreatedAt ON UploadSessions (JobId, CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_UploadSessions_OwnerActorId_CreatedAt ON UploadSessions (OwnerActorId, CreatedAt);
+CREATE INDEX IF NOT EXISTS IX_UploadSessions_Status_LastHeartbeatAt ON UploadSessions (Status, LastHeartbeatAt);

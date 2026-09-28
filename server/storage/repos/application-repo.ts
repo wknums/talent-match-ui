@@ -103,6 +103,7 @@ function rowToScoringRun(r: any): ScoringRun {
     versionId: r.VersionId ?? '',
     runIndex: r.RunIndex,
     modelDeploymentId: r.ModelDeploymentId ?? r.AiModelId ?? '',
+    reasoningLevel: r.ReasoningLevel ?? undefined,
     promptVersionId: r.PromptVersionId ?? r.PromptVersion ?? '',
     overallScore: r.OverallScore ?? r.TotalScore,
     subScores: parseJson(r.SubScoresJson ?? r.CategoryScoresJson, {}),
@@ -551,6 +552,7 @@ export const applicationRepo = {
       .input('versionId', sql.NVarChar, run.versionId)
       .input('runIndex', sql.Int, run.runIndex)
       .input('modelDeploymentId', sql.NVarChar, run.modelDeploymentId)
+      .input('reasoningLevel', sql.NVarChar, run.reasoningLevel ?? '')
       .input('promptVersionId', sql.NVarChar, run.promptVersionId)
       .input('overallScore', sql.Float, run.overallScore)
       .input('subScoresJson', sql.NVarChar, JSON.stringify(run.subScores))
@@ -571,12 +573,12 @@ export const applicationRepo = {
 
     if (isAzureSql) {
       await req.query(`INSERT INTO ${T('ScoringRuns')} (
-        Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, PromptVersionId,
+        Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, ReasoningLevel, PromptVersionId,
         OverallScore, SubScoresJson, MustHaveResultJson, EvidenceCitationsJson, Rationale, ImprovementRecsJson,
         CreatedAt, DurationMs, TokenUsageJson, Status, RawResponseText,
         RawParsedResponseJson, ParserWarningsJson, ParserConfidence)
         VALUES (
-        @id, @applicationId, @versionId, @runIndex, @modelDeploymentId, @promptVersionId,
+        @id, @applicationId, @versionId, @runIndex, @modelDeploymentId, @reasoningLevel, @promptVersionId,
         @overallScore, @subScoresJson, @mustHaveResultJson, @evidenceCitationsJson, @rationale, @improvementRecsJson,
         @createdAt, @durationMs, @tokenUsageJson, @status, @rawResponseText,
         @rawParsedResponseJson, @parserWarningsJson, @parserConfidence)`)
@@ -584,13 +586,13 @@ export const applicationRepo = {
     }
 
     await req.query(`INSERT INTO ${T('ScoringRuns')} (
-      Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, PromptVersionId,
+      Id, ApplicationId, VersionId, RunIndex, ModelDeploymentId, ReasoningLevel, PromptVersionId,
       OverallScore, SubScoresJson, MustHaveResultJson, EvidenceCitationsJson, Rationale, ImprovementRecsJson,
       TotalScore, CategoryScoresJson, MustHaveEvaluationJson, ImprovementTipsJson, AiModelId, PromptVersion,
       InputTokens, OutputTokens, CreatedAt, DurationMs, TokenUsageJson, Status, RawResponseText,
       RawParsedResponseJson, ParserWarningsJson, ParserConfidence)
       VALUES (
-      @id, @applicationId, @versionId, @runIndex, @modelDeploymentId, @promptVersionId,
+      @id, @applicationId, @versionId, @runIndex, @modelDeploymentId, @reasoningLevel, @promptVersionId,
       @overallScore, @subScoresJson, @mustHaveResultJson, @evidenceCitationsJson, @rationale, @improvementRecsJson,
       @overallScore, @subScoresJson, @mustHaveResultJson, @improvementRecsJson, @modelDeploymentId, @promptVersionId,
       @inputTokens, @outputTokens, @createdAt, @durationMs, @tokenUsageJson, @status, @rawResponseText,

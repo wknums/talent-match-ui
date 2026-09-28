@@ -8,15 +8,22 @@
         "dev:client": "vite",
         "dev:server": "tsx watch server/index.ts",
         "build": "tsc -b --noCheck && vite build",
+        "build:client": "vite build",
         "build:server": "tsc -p tsconfig.server.json",
         "start": "node dist-server/index.js",
         "lint": "eslint .",
         "preview": "vite preview",
         "test": "vitest run",
-        "test:watch": "vitest"
+        "test:auth-parity": "tsx tests/integration/run-auth-parity.ts",
+        "test:watch": "vitest",
+        "test:e2e": "playwright test",
+        "test:e2e:ui": "playwright test --ui",
+        "test:e2e:auth": "tsx tests/e2e/capture-auth-state.ts"
     },
     "dependencies": {
         "@azure/identity": "^4.13.0",
+        "@azure/msal-browser": "^4.30.0",
+        "@azure/msal-react": "^3.0.20",
         "@azure/storage-blob": "^12.31.0",
         "@heroicons/react": "^2.2.0",
         "@hookform/resolvers": "^4.1.3",
@@ -49,7 +56,6 @@
         "@radix-ui/react-toggle-group": "^1.1.2",
         "@radix-ui/react-tooltip": "^1.1.8",
         "@tailwindcss/container-queries": "^0.1.1",
-        "@tailwindcss/vite": "^4.1.11",
         "@tanstack/react-query": "^5.83.1",
         "better-sqlite3": "^12.9.0",
         "class-variance-authority": "^0.7.1",
@@ -61,14 +67,16 @@
         "express": "^4.21.0",
         "framer-motion": "^12.6.2",
         "input-otp": "^1.4.2",
+        "jszip": "^3.10.1",
+        "jose": "^6.1.3",
         "lucide-react": "^0.484.0",
         "mammoth": "^1.12.0",
         "marked": "^15.0.7",
         "mssql": "^11.0.0",
         "next-themes": "^0.4.6",
-        "react": "^19.0.0",
+        "react": "19.2.7",
         "react-day-picker": "^9.6.7",
-        "react-dom": "^19.0.0",
+        "react-dom": "19.2.7",
         "react-error-boundary": "^6.0.0",
         "react-hook-form": "^7.54.2",
         "react-resizable-panels": "^2.1.7",
@@ -80,9 +88,12 @@
         "zod": "^3.25.76"
     },
     "devDependencies": {
+        "@axe-core/playwright": "^4.11.1",
         "@eslint/js": "^9.21.0",
+        "@playwright/test": "^1.58.2",
         "@rollup/rollup-win32-x64-msvc": "^4.60.4",
         "@tailwindcss/postcss": "^4.1.8",
+        "@tailwindcss/vite": "^4.1.11",
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.2",
         "@types/better-sqlite3": "^7.6.13",
@@ -101,6 +112,6 @@
         "typescript": "~5.7.2",
         "typescript-eslint": "^8.38.0",
         "vite": "^7.2.6",
-        "vitest": "^4.0.18"
+        "vitest": "^4.1.10"
     }
 }

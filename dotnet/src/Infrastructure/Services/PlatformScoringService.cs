@@ -7,6 +7,7 @@ using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Scoring.Commands;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Prompts.Services;
 
 namespace TalentMatch.Infrastructure.Services;
 
@@ -91,6 +92,25 @@ public class PlatformScoringService : IPlatformScoringService
         if (job is null) return new PlatformSubmitOutcome(PlatformSubmitStatus.PermanentFailure, Error: $"Job {batch.JobId} not found");
         var prompt = await promptRepo.GetByIdAsync(batch.PromptVersionId, ct);
         if (prompt is null) return new PlatformSubmitOutcome(PlatformSubmitStatus.PermanentFailure, Error: $"Prompt {batch.PromptVersionId} not found");
+        var queueProfile = scope.ServiceProvider.GetRequiredService<IScoringProfileProvider>().Current;
+        if (!queueProfile.Matches(prompt.ModelId, prompt.ReasoningLevel))
+        {
+            return new PlatformSubmitOutcome(
+                PlatformSubmitStatus.PermanentFailure,
+                Error: $"Queue-worker profile is '{queueProfile.ModelId}' / '{queueProfile.ReasoningLevel}', "
+                    + $"but prompt v{prompt.VersionNumber} uses '{prompt.ModelId}' / '{prompt.ReasoningLevel}'. "
+                    + "Queue-worker scoring remains limited to its configured profile.");
+        }
+        var profileGuard = scope.ServiceProvider.GetRequiredService<IPromptProfileGuard>();
+        try
+        {
+            await profileGuard.EnsureProductionReadyAsync(prompt, ct);
+        }
+        catch (ScoringProfileMismatchException ex)
+        {
+            return new PlatformSubmitOutcome(
+                PlatformSubmitStatus.PermanentFailure, Error: ex.Message);
+        }
 
         var jobDescriptionText = job.JobDescription ?? job.Title;
         var resolvedPrompt = prompt.PromptText.Replace("{{JOB_SPEC_TEXT}}", jobDescriptionText);
@@ -131,6 +151,8 @@ public class PlatformScoringService : IPlatformScoringService
             promptVersionId = batch.PromptVersionId,
             runCount = batch.RunCount,
             prompt = new { kind = "inline", text = resolvedPrompt },
+            model = prompt.ApprovedModelId,
+            reasoning = prompt.ApprovedReasoningLevel,
             cvs,
             callbackUrl = (string?)null,
         };
@@ -139,7 +161,10 @@ public class PlatformScoringService : IPlatformScoringService
         {
             Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json"),
         };
-        req.Headers.Add("Idempotency-Key", batch.Id);
+        var idempotencyKey = batch.SubmissionId is null
+            ? batch.Id
+            : $"{batch.Id}-retry-{batch.Attempt}";
+        req.Headers.Add("Idempotency-Key", idempotencyKey);
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(SubmitTimeoutS));
@@ -263,22 +288,11 @@ public class PlatformScoringService : IPlatformScoringService
                           ?? (errEl.TryGetProperty("code", out var c) ? c.GetString() : null)
                           ?? msg;
                 }
-                await batchRepo.MarkFailedAsync(batch.Id, msg, ct);
-                await batchRepo.ApplyTransitionAsync(batch.JobId, "submitted", "failed", 0, ids.Count, ct);
-                foreach (var aId in ids)
-                {
-                    try
-                    {
-                        var a = await appRepo.GetByIdAsync(aId, ct);
-                        if (a != null) { a.Status = "ScoringFailed"; a.LastError = msg; await appRepo.UpdateAsync(a, ct); }
-                    }
-                    catch { /* best effort */ }
-                }
                 return new PlatformPollOutcome(PlatformPollStatus.Failed, Error: msg);
             }
 
-            // status == "completed"
-            await batchRepo.MarkCompletedAsync(batch.Id, json, ct);
+            if (status != "completed")
+                throw new InvalidDataException($"Platform returned unknown batch status '{status ?? "(null)"}'.");
 
             var job = await jobRepo.GetByIdAsync(batch.JobId, ct);
             var config = job?.ConfigVersions.FirstOrDefault(v => v.Id == job.CurrentConfigVersionId)
@@ -298,6 +312,9 @@ public class PlatformScoringService : IPlatformScoringService
                         cvsById[aIdEl.GetString()!] = cv;
                 }
             }
+            ValidateCompletedPayload(cvsById, ids, batch.RunCount);
+
+            await batchRepo.MarkCompletedAsync(batch.Id, json, ct);
 
             int completed = 0, failed = 0;
             foreach (var applicationId in ids)
@@ -325,7 +342,13 @@ public class PlatformScoringService : IPlatformScoringService
                             idx++;
                             extractedCandidateName ??= ExtractCandidateName(r);
                             var parsedRunJson = r.GetRawText();
-                            var run = ScoreApplicationCommandHandler.ParseSingleRunStatic(r, applicationId, prompt?.Id ?? batch.PromptVersionId, idx);
+                            var run = ScoreApplicationCommandHandler.ParseSingleRunStatic(
+                                r,
+                                applicationId,
+                                prompt?.Id ?? batch.PromptVersionId,
+                                idx,
+                                prompt?.ApprovedModelId ?? prompt?.ModelId ?? "passthrough-llm",
+                                prompt?.ApprovedReasoningLevel ?? prompt?.ReasoningLevel ?? "medium");
                             run.RawResponseText = parsedRunJson;
                             run.RawParsedResponseJson = parsedRunJson;
                             ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubric);
@@ -391,6 +414,27 @@ public class PlatformScoringService : IPlatformScoringService
     {
         try { return JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
         catch { return new(); }
+    }
+
+    private static void ValidateCompletedPayload(
+        IReadOnlyDictionary<string, JsonElement> cvsById,
+        IReadOnlyCollection<string> applicationIds,
+        int expectedRunCount)
+    {
+        foreach (var applicationId in applicationIds)
+        {
+            if (!cvsById.TryGetValue(applicationId, out var cv))
+                throw new InvalidDataException(
+                    $"Completed platform response omitted application {applicationId}.");
+
+            if (!cv.TryGetProperty("runs", out var runs) || runs.ValueKind != JsonValueKind.Array)
+                throw new InvalidDataException(
+                    $"Completed platform response has no runs array for application {applicationId}.");
+
+            if (runs.GetArrayLength() < expectedRunCount)
+                throw new InvalidDataException(
+                    $"Completed platform response returned {runs.GetArrayLength()} run(s) for application {applicationId}; expected {expectedRunCount}.");
+        }
     }
 
     private static string? ExtractCandidateName(JsonElement node)

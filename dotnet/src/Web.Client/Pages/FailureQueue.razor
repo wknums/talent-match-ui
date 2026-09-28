@@ -5,24 +5,44 @@
 
 <h3>Failure Queue</h3>
 
-<p style="font-size: 0.8rem; color: gray;">Auto-refreshes every 30 seconds. Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
+<p style="font-size: 0.8rem; color: #595959;">Auto-refreshes every 30 seconds. Last updated: @lastUpdated.ToString("HH:mm:ss")</p>
 
-@if (items.Any())
+@if (!string.IsNullOrWhiteSpace(loadError))
+{
+    <div role="alert" style="padding: 0.75rem 1rem; margin-bottom: 1rem; border: 1px solid #fca5a5; border-radius: 6px; background: #fef2f2; color: #991b1b;">
+        <strong>Failed to refresh the failure queue.</strong>
+        <span>@loadError</span>
+        <button type="button" @onclick="LoadItems" style="margin-left: 0.75rem;">Retry</button>
+    </div>
+}
+
+@if (isLoading && items.Count == 0)
+{
+    <div style="text-align: center; padding: 2rem; color: #666;">
+        <p>Loading failure queue...</p>
+    </div>
+}
+else if (!string.IsNullOrWhiteSpace(loadError) && items.Count == 0)
+{
+    <p class="visually-hidden">Failure queue data is unavailable.</p>
+}
+else if (items.Any())
 {
     @if (selectedIds.Count > 0)
     {
         <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: #ebf8ff; border: 1px solid #bee3f8; border-radius: 6px;">
             <span style="font-size: 0.85rem; font-weight: 600;">@selectedIds.Count selected</span>
-            <button @onclick="BulkRetry" disabled="@isBulkProcessing" style="padding: 0.3rem 0.75rem; background: #3182ce; color: white; border: none; border-radius: 4px; font-size: 0.85rem;">
+            <button @onclick="BulkRetry" disabled="@isBulkProcessing" style="padding: 0.3rem 0.75rem; background: #2b6cb0; color: white; border: none; border-radius: 4px; font-size: 0.85rem;">
                 @(isBulkProcessing ? "Retrying..." : "🔄 Retry Selected")
             </button>
-            <button @onclick="BulkDelete" disabled="@isBulkProcessing" style="padding: 0.3rem 0.75rem; background: #e53e3e; color: white; border: none; border-radius: 4px; font-size: 0.85rem;">
+            <button @onclick="BulkDelete" disabled="@isBulkProcessing" style="padding: 0.3rem 0.75rem; background: #c53030; color: white; border: none; border-radius: 4px; font-size: 0.85rem;">
                 @(isBulkProcessing ? "Deleting..." : "🗑️ Delete Selected")
             </button>
             <button @onclick="ClearSelection" style="padding: 0.3rem 0.75rem; border: 1px solid #cbd5e0; background: white; border-radius: 4px; font-size: 0.85rem;">Clear</button>
         </div>
     }
 
+    <div class="table-scroll">
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ccc;">
@@ -45,20 +65,21 @@
                         <input type="checkbox" checked="@selectedIds.Contains(item.Id)" @onchange="() => ToggleItem(item.Id)" />
                     </td>
                     <td style="padding: 0.5rem;">@item.EntityType</td>
-                    <td style="padding: 0.5rem; font-family: monospace; font-size: 0.85rem;">@item.EntityId</td>
-                    <td style="padding: 0.5rem; color: #e53e3e;">@item.FailureReason</td>
+                    <td style="padding: 0.5rem; font-family: var(--app-font-mono); font-size: 0.85rem;">@item.EntityId</td>
+                    <td style="padding: 0.5rem; color: #c53030;">@item.FailureReason</td>
                     <td style="padding: 0.5rem;">@item.RetryCount</td>
                     <td style="padding: 0.5rem;">@item.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
-                    <td style="padding: 0.5rem; display: flex; gap: 0.25rem;">
-                        <button @onclick="() => RetryItem(item.Id)" disabled="@retryingIds.Contains(item.Id)" style="padding: 0.25rem 0.5rem; background: #3182ce; color: white; border: none; border-radius: 4px;">
+                    <td class="row-actions">
+                        <button @onclick="() => RetryItem(item.Id)" disabled="@retryingIds.Contains(item.Id)" style="padding: 0.25rem 0.5rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
                             @(retryingIds.Contains(item.Id) ? "..." : "Retry")
                         </button>
-                        <button @onclick="() => DeleteItem(item.Id)" style="padding: 0.25rem 0.5rem; background: #e53e3e; color: white; border: none; border-radius: 4px;">Del</button>
+                        <button @onclick="() => DeleteItem(item.Id)" style="padding: 0.25rem 0.5rem; background: #c53030; color: white; border: none; border-radius: 4px;">Del</button>
                     </td>
                 </tr>
             }
         </tbody>
     </table>
+    </div>
 }
 else
 {
@@ -73,6 +94,8 @@ else
     private HashSet<string> selectedIds = new();
     private HashSet<string> retryingIds = new();
     private bool isBulkProcessing;
+    private bool isLoading = true;
+    private string? loadError;
     private DateTime lastUpdated;
     private System.Threading.Timer? refreshTimer;
 
@@ -90,10 +113,24 @@ else
 
     private async Task LoadItems()
     {
-        items = await Api.GetDlqItemsAsync();
-        // Remove selections for items no longer in the list
-        selectedIds.IntersectWith(items.Select(i => i.Id));
-        lastUpdated = DateTime.Now;
+        isLoading = true;
+        loadError = null;
+        try
+        {
+            var refreshedItems = await Api.GetDlqItemsAsync();
+            items = refreshedItems;
+            // Remove selections for items no longer in the list
+            selectedIds.IntersectWith(items.Select(i => i.Id));
+            lastUpdated = DateTime.Now;
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+        }
     }
 
     private void ToggleSelectAll()

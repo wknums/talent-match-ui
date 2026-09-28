@@ -5,6 +5,13 @@ using TalentMatch.Domain.Entities;
 public interface IProcessingEventRepository
 {
     Task AddAsync(ProcessingEvent evt, CancellationToken cancellationToken = default);
+    Task AddAuthorizationEventAsync(
+        string actor,
+        string action,
+        string subjectId,
+        IReadOnlyDictionary<string, object?> safeDetails,
+        string correlationId,
+        CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ProcessingEvent>> GetFilteredAsync(
         string? entityType = null,
         string? eventType = null,

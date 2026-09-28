@@ -67,13 +67,6 @@ variable "awr_api_key" {
   sensitive   = true
 }
 
-variable "openai_api_key" {
-  description = "Direct OpenAI API key value for non-sensitive environments"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
 variable "extra_app_settings" {
   description = "Additional app settings to merge"
   type        = map(string)

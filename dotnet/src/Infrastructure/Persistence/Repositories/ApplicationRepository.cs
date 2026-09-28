@@ -7,6 +7,7 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Infrastructure.Persistence.Repositories;
 
+#pragma warning disable EF1002 // SQL values remain parameterized; interpolation is limited to trusted provider-specific table identifiers.
 public class ApplicationRepository : IApplicationRepository
 {
     private readonly AppDbContext _context;
@@ -26,15 +27,153 @@ public class ApplicationRepository : IApplicationRepository
             .AsNoTracking()
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<TalentMatch.Domain.Entities.Application>> GetByJobIdAsync(
+        string jobId,
+        string? list,
+        double longlistThreshold,
+        double shortlistThreshold,
+        bool includeTestCases = false,
+        CancellationToken ct = default)
+    {
+        var query = BaseJobApplications(jobId, includeTestCases);
+        query = list?.ToLowerInvariant() switch
+        {
+            "shortlist" => query.Where(application =>
+                application.FinalScore != null
+                && application.FinalScore >= shortlistThreshold),
+            "longlist" => query.Where(application =>
+                application.FinalScore != null
+                && application.FinalScore >= longlistThreshold),
+            "excluded" => query.Where(application =>
+                application.FinalDecision == "Excluded"),
+            "review" => query.Where(application =>
+                application.Status == "NeedsManualReview"
+                || application.FinalDecision == "NeedsManualReview"),
+            "failed" => query.Where(application =>
+                application.Status == "Failed"
+                || application.Status == "ScoringFailed"
+                || application.Status == "ExtractionFailed"),
+            _ => query,
+        };
+        return await query.ToListAsync(ct);
+    }
+
+    public async Task<ApplicationCounts> GetCountsByJobIdAsync(
+        string jobId,
+        double longlistThreshold,
+        double shortlistThreshold,
+        bool includeTestCases = false,
+        CancellationToken ct = default)
+    {
+        var countsQuery = _context.Applications
+            .AsNoTracking()
+            .Where(application => application.JobId == jobId);
+        if (!includeTestCases)
+            countsQuery = countsQuery.Where(application =>
+                application.TestRunId == null);
+
+        var counts = await countsQuery
+            .GroupBy(_ => 1)
+            .Select(group => new ApplicationCounts(
+                group.Count(),
+                group.Count(application =>
+                    application.Status == "Queued"
+                    || application.Status == "Extracting"
+                    || application.Status == "Scoring"
+                    || application.Status == "Aggregating"),
+                group.Count(application => application.Status == "Uploading"),
+                group.Count(application =>
+                    application.FinalScore != null
+                    && application.FinalScore >= shortlistThreshold),
+                group.Count(application =>
+                    application.FinalScore != null
+                    && application.FinalScore >= longlistThreshold),
+                group.Count(application => application.FinalDecision == "Excluded"),
+                group.Count(application =>
+                    application.Status == "NeedsManualReview"
+                    || application.FinalDecision == "NeedsManualReview"),
+                group.Count(application => application.Status == "Queued"),
+                group.Count(application => application.Status == "Scoring"),
+                group.Count(application =>
+                    application.Status == "Completed"
+                    || application.Status == "NeedsManualReview"),
+                group.Count(application =>
+                    application.Status == "Failed"
+                    || application.Status == "ScoringFailed"
+                    || application.Status == "ExtractionFailed")))
+            .SingleOrDefaultAsync(ct);
+        return counts ?? new ApplicationCounts(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+
+    private IQueryable<TalentMatch.Domain.Entities.Application> BaseJobApplications(
+        string jobId,
+        bool includeTestCases)
+    {
+        var query = _context.Applications
+            .AsNoTracking()
+            .Where(application =>
+                application.JobId == jobId
+                && application.Status != "Uploading");
+        return includeTestCases
+            ? query
+            : query.Where(application => application.TestRunId == null);
+    }
+
     public async Task<TalentMatch.Domain.Entities.Application?> GetByIdAsync(string id, CancellationToken ct = default)
         => await _context.Applications
             .AsNoTracking()
             .FirstOrDefaultAsync(a => a.Id == id, ct);
 
+    public async Task<ApplicationDocument?> FindDocumentByFingerprintAsync(
+        string jobId,
+        string fingerprint,
+        CancellationToken ct = default)
+        => await _context.ApplicationDocuments
+            .AsNoTracking()
+            .Join(
+                _context.Applications,
+                document => document.ApplicationId,
+                application => application.Id,
+                (document, application) => new { document, application.JobId })
+            .Where(item => item.JobId == jobId && item.document.Fingerprint == fingerprint)
+            .Select(item => new ApplicationDocument
+            {
+                Id = item.document.Id,
+                ApplicationId = item.document.ApplicationId,
+                FileName = item.document.FileName,
+                Fingerprint = item.document.Fingerprint,
+            })
+            .FirstOrDefaultAsync(ct);
+
     public async Task AddAsync(TalentMatch.Domain.Entities.Application application, CancellationToken ct = default)
     {
         await _context.Applications.AddAsync(application, ct);
         await _context.SaveChangesAsync(ct);
+    }
+
+    public async Task PublishUploadedAsync(IReadOnlyCollection<string> applicationIds, CancellationToken ct = default)
+    {
+        if (applicationIds.Count == 0)
+            return;
+        var now = DateTime.UtcNow;
+        await _context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var transaction = await _context.Database.BeginTransactionAsync(ct);
+            await _context.Applications
+                .Where(application => applicationIds.Contains(application.Id) && application.Status == "Uploading")
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(application => application.Status, "Queued")
+                    .SetProperty(application => application.UpdatedAt, now), ct);
+            var ready = await _context.Applications
+                .CountAsync(application =>
+                    applicationIds.Contains(application.Id)
+                    && application.Status == "Queued", ct);
+            if (ready != applicationIds.Distinct(StringComparer.Ordinal).Count())
+                throw new InvalidOperationException("Some uploaded applications could not be made ready for scoring.");
+            await transaction.CommitAsync(ct);
+        });
+        foreach (var application in _context.Applications.Local.Where(application => applicationIds.Contains(application.Id)).ToArray())
+            _context.Entry(application).State = EntityState.Detached;
     }
 
     public async Task UpdateAsync(TalentMatch.Domain.Entities.Application application, CancellationToken ct = default)
@@ -56,6 +195,11 @@ public class ApplicationRepository : IApplicationRepository
             }
         }
 
+        // Only the queue repository owns these fields; unrelated updates must not rewind a heartbeat.
+        var persistedEntry = _context.Entry(
+            _context.Applications.Local.FirstOrDefault(app => app.Id == application.Id) ?? application);
+        persistedEntry.Property(app => app.ScoringOwner).IsModified = false;
+        persistedEntry.Property(app => app.ScoringLeaseUntil).IsModified = false;
         await _context.SaveChangesAsync(ct);
     }
 
@@ -725,3 +869,4 @@ public class ApplicationRepository : IApplicationRepository
             .AsNoTracking()
             .FirstOrDefaultAsync(r => r.ApplicationId == applicationId, ct);
 }
+#pragma warning restore EF1002

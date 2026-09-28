@@ -5,7 +5,7 @@ import {
   deriveCandidateNameFromScoringRuns,
   matchCategoryToRubric,
 } from '@/lib/stackb-scoring'
-import type { ScoringRun, AggregatedResult, ManualReviewData } from '@/types'
+import type { ScoringRun, ManualReviewData } from '@/types'
 import fixtures from './fixtures/manual-review-prepopulation-fixtures.json'
 
 function createEmptyReview(appId = 'app-1', jobId = 'job-1'): ManualReviewData {

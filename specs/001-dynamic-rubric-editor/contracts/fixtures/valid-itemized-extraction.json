@@ -1,0 +1,172 @@
+{
+  "job_title": "Senior Data Platform Engineer",
+  "job_description": "Northwind Analytics is hiring a Senior Data Platform Engineer to build reliable, compliant, and observable data products for internal and external teams.",
+  "department": "Data Engineering",
+  "organization": "Northwind Analytics",
+  "requirements": [
+    {
+      "id": "req-001",
+      "text": "5+ years of backend or platform engineering experience",
+      "requirement_type": "experience",
+      "category_id": "cat-platform",
+      "source_text": "Must have 5+ years of backend or platform engineering experience and proven experience with distributed systems.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-002",
+      "text": "Proven experience with distributed systems",
+      "requirement_type": "must_have",
+      "category_id": "cat-platform",
+      "source_text": "Must have 5+ years of backend or platform engineering experience and proven experience with distributed systems.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-003",
+      "text": "Expert SQL experience",
+      "requirement_type": "must_have",
+      "category_id": "cat-platform",
+      "source_text": "Must have expert SQL, Python, and Azure Data Factory experience.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-004",
+      "text": "Expert Python experience",
+      "requirement_type": "must_have",
+      "category_id": "cat-platform",
+      "source_text": "Must have expert SQL, Python, and Azure Data Factory experience.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-005",
+      "text": "Expert Azure Data Factory experience",
+      "requirement_type": "must_have",
+      "category_id": "cat-platform",
+      "source_text": "Must have expert SQL, Python, and Azure Data Factory experience.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-006",
+      "text": "Azure Data Engineer Associate certification",
+      "requirement_type": "experience",
+      "category_id": "cat-delivery",
+      "source_text": "Must hold an Azure Data Engineer Associate certification.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-007",
+      "text": "Experience implementing CI/CD for data workloads",
+      "requirement_type": "responsibility",
+      "category_id": "cat-delivery",
+      "source_text": "Must have experience implementing CI/CD for data workloads.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-008",
+      "text": "Excellent written and verbal communication skills",
+      "requirement_type": "must_have",
+      "category_id": "cat-collaboration",
+      "source_text": "Must have excellent written and verbal communication skills.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-009",
+      "text": "Experience with Spark, Databricks, or Synapse analytics",
+      "requirement_type": "desired",
+      "category_id": "cat-platform",
+      "source_text": "Nice to have experience with Spark, Databricks, or Synapse analytics.",
+      "source_location": "Preferred Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-010",
+      "text": "Experience in regulated industries",
+      "requirement_type": "desired",
+      "category_id": "cat-delivery",
+      "source_text": "Preferred experience in regulated industries and creating audit-ready diagnostics.",
+      "source_location": "Preferred Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-011",
+      "text": "Creating audit-ready diagnostics",
+      "requirement_type": "desired",
+      "category_id": "cat-delivery",
+      "source_text": "Preferred experience in regulated industries and creating audit-ready diagnostics.",
+      "source_location": "Preferred Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-012",
+      "text": "Leading architecture reviews",
+      "requirement_type": "desired",
+      "category_id": "cat-leadership",
+      "source_text": "Bonus points for leading architecture reviews.",
+      "source_location": "Preferred Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    },
+    {
+      "id": "req-013",
+      "text": "5+ years of backend or platform engineering experience",
+      "requirement_type": "experience",
+      "category_id": "cat-platform",
+      "source_text": "Must have 5+ years of backend or platform engineering experience.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": "req-001",
+      "needs_review": false
+    }
+  ],
+  "rubric": {
+    "has_rubric_in_doc": true,
+    "categories": [
+      {
+        "id": "cat-platform",
+        "name": "Technical Platform Skills",
+        "weight": 0.5,
+        "description": "Deep engineering capability for platform, distributed systems, data tooling, and related technical requirements.",
+        "source": "doc"
+      },
+      {
+        "id": "cat-delivery",
+        "name": "Delivery and Quality",
+        "weight": 0.2,
+        "description": "Ability to deliver compliant, reliable, and auditable data solutions.",
+        "source": "doc"
+      },
+      {
+        "id": "cat-collaboration",
+        "name": "Collaboration and Communication",
+        "weight": 0.2,
+        "description": "Communication and partnership across technical and business audiences.",
+        "source": "doc"
+      },
+      {
+        "id": "cat-leadership",
+        "name": "Leadership and Growth",
+        "weight": 0.1,
+        "description": "Mentorship, leadership, and growth-oriented contributions.",
+        "source": "doc"
+      }
+    ],
+    "weights_sum_to_1_0": true
+  }
+}

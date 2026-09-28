@@ -160,15 +160,18 @@ Each packaged deployment stamps a `build-info.json` file with a unique version a
 
 Expected result: every deployment emits a new version value and timestamp so operators can verify the app is serving newly deployed artifacts.
 
-## Seed Key Vault Secrets
+## Optional AWReason API-Key Secret
 
 ```bash
 KV_NAME="kv-talentmatch-dev"
-az keyvault secret set --vault-name "$KV_NAME" --name openai-api-key --value "<your-key>"
 az keyvault secret set --vault-name "$KV_NAME" --name awr-api-key --value "<your-key>"
 ```
 
-Azure SQL auth is handled with Entra managed identity. After shared deployment creates or resolves the app identities, the deployment flow must create contained database users for those identities in Azure SQL.
+Azure OpenAI authentication uses managed identity and RBAC; no OpenAI API key
+is stored in Key Vault or App Service settings. The AWReason secret is needed
+only when `AWR_AUTH_MODE=apikey` and Key Vault secret references are enabled.
+
+Azure SQL auth is handled with Entra managed identity. After shared deployment creates or resolves the app identities, the deployment flow creates contained database users for those identities in Azure SQL. For a reused private-only database that the operator host cannot reach, set `AZ_SQL_BOOTSTRAP_ENABLED=FALSE` and run `infra/scripts/bootstrap-sql-entra-users.mjs` from a VNet-connected host before application use.
 
 ## Safe Deprovisioning
 

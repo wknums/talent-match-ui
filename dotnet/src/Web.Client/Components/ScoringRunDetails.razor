@@ -1,0 +1,165 @@
+@using System.Text.Json
+@using TalentMatch.Web.Client.Services
+
+@if (HasError(Run.MustHaveEvaluationJson))
+{
+    <div style="padding: 0.5rem; background: #fed7d7; border-radius: 4px; border: 1px solid #feb2b2; margin-bottom: 0.5rem;">
+        <div style="font-weight: 600; color: #822727; font-size: 0.85rem; margin-bottom: 0.25rem;">⚠️ Scoring Error</div>
+        <div style="color: #822727; font-size: 0.85rem;">@GetErrorMessage(Run.MustHaveEvaluationJson)</div>
+        @if (GetRawResponse(Run.MustHaveEvaluationJson) is { Length: > 0 } rawResponse)
+        {
+            <details style="margin-top: 0.5rem;">
+                <summary style="cursor: pointer; font-size: 0.8rem; color: #822727;">Show raw LLM response</summary>
+                <pre style="margin-top: 0.25rem; padding: 0.5rem; background: #1a202c; color: #e2e8f0; border-radius: 4px; font-size: 0.75rem; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">@rawResponse</pre>
+            </details>
+        }
+    </div>
+}
+
+@if (ParseJson<Dictionary<string, double>>(Run.CategoryScoresJson) is { Count: > 0 } categoryScores)
+{
+    <h6 style="margin: 0.5rem 0 0.25rem;">Category Scores</h6>
+    <div style="display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 1rem;">
+        @foreach (var score in categoryScores)
+        {
+            <span style="color: #4a5568;">@score.Key</span>
+            <span style="font-weight: bold; text-align: right;">@score.Value.ToString("F3")</span>
+        }
+    </div>
+}
+
+@if (ScoringGateSummary.Parse(Run.MustHaveEvaluationJson) is { } gate)
+{
+    <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
+    <span style="color: @(gate.Passed ? "#276749" : "#c53030");">
+        @(gate.Passed ? "✅ Passed" : "❌ Failed")
+    </span>
+
+    @if (gate.Entries.Count > 0)
+    {
+        <div style="margin-top: 0.5rem;">
+            @foreach (var entry in gate.Entries)
+            {
+                <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
+                    <span aria-label="@(entry.Passed ? "Passed" : "Failed")"
+                          style="color: @(entry.Passed ? "#276749" : "#c53030"); flex-shrink: 0;">
+                        @(entry.Passed ? "✅" : "❌")
+                    </span>
+                    <div>
+                        <span style="font-size: 0.85rem;">@entry.Criterion</span>
+                        @if (!string.IsNullOrWhiteSpace(entry.Evidence))
+                        {
+                            <div style="font-size: 0.8rem; color: #718096; font-style: italic; margin-top: 0.15rem;">@entry.Evidence</div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+@if (ParseJson<List<EvidenceCitation>>(Run.EvidenceCitationsJson) is { Count: > 0 } evidence)
+{
+    <h6 style="margin: 0.75rem 0 0.25rem;">Evidence Citations</h6>
+    @foreach (var citation in evidence)
+    {
+        var evaluation = ScoringEvidenceEvaluation.Parse(citation.Snippet);
+        <div class="scoring-evidence-citation" style="display:flex; align-items:flex-start; gap:0.4rem; margin-bottom:0.3rem;">
+            @if (evaluation == true)
+            {
+                <span aria-label="Passed" style="color:#276749; flex-shrink:0;">✅</span>
+            }
+            else if (evaluation == false)
+            {
+                <span aria-label="Failed" style="color:#c53030; flex-shrink:0;">❌</span>
+            }
+            else
+            {
+                <span aria-label="Not explicitly evaluated" style="color:#718096; flex-shrink:0;">•</span>
+            }
+            <div>
+                <span style="font-weight: 600; color: #4a5568;">@(citation.Category ?? "—"):</span>
+                <span style="color: #718096;"> @(citation.Snippet ?? "")</span>
+            </div>
+        </div>
+    }
+}
+
+@if (ParseJson<List<string>>(Run.ImprovementTipsJson) is { Count: > 0 } tips)
+{
+    <h6 style="margin: 0.75rem 0 0.25rem;">Improvement Tips</h6>
+    <ul style="margin: 0; padding-left: 1.25rem;">
+        @foreach (var tip in tips)
+        {
+            <li>@tip</li>
+        }
+    </ul>
+}
+
+@code {
+    [Parameter, EditorRequired] public ScoringRunDto Run { get; set; } = default!;
+
+    private static T? ParseJson<T>(string? json) where T : class
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<T>(
+                json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool HasError(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty("error", out _);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string GetErrorMessage(string? json)
+        => ReadStringProperty(json, "error");
+
+    private static string GetRawResponse(string? json)
+        => ReadStringProperty(json, "rawResponse");
+
+    private static string ReadStringProperty(string? json, string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return string.Empty;
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.TryGetProperty(propertyName, out var value)
+                && value.ValueKind == JsonValueKind.String
+                    ? value.GetString() ?? string.Empty
+                    : string.Empty;
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private sealed class EvidenceCitation
+    {
+        public string? Category { get; set; }
+        public string? Snippet { get; set; }
+    }
+}

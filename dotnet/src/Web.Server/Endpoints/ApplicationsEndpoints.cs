@@ -1,7 +1,11 @@
 using MediatR;
 using TalentMatch.Application.Applications.Commands;
 using TalentMatch.Application.Applications.Queries;
+using TalentMatch.Application.Authorization;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Interfaces;
+using TalentMatch.Application.Common.Services;
 
 namespace TalentMatch.Web.Server.Endpoints;
 
@@ -11,20 +15,33 @@ public static class ApplicationsEndpoints
     {
         var jobAppsGroup = app.MapGroup("/api/jobs/{jobId}/applications").WithTags("Applications").RequireAuthorization();
 
-        jobAppsGroup.MapPost("/upload", async (string jobId, HttpRequest request, ISender mediator) =>
+        jobAppsGroup.MapPost("/upload", async (string jobId, bool? allowDuplicates, HttpRequest request, ISender mediator, CancellationToken ct) =>
         {
             var files = new List<UploadedFile>();
-            var form = await request.ReadFormAsync();
+            var form = await request.ReadFormAsync(ct);
             foreach (var file in form.Files)
             {
                 using var ms = new MemoryStream();
-                await file.CopyToAsync(ms);
+                await file.CopyToAsync(ms, ct);
                 var bytes = ms.ToArray();
                 var fingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
                 files.Add(new UploadedFile(file.FileName, file.ContentType, file.Length, Convert.ToBase64String(bytes), fingerprint));
             }
-            var result = await mediator.Send(new UploadApplicationsCommand(jobId, files));
-            return Results.Ok(result);
+            try
+            {
+                var result = await mediator.Send(new UploadApplicationsCommand(
+                    jobId,
+                    files,
+                    AllowDuplicates: allowDuplicates == true), ct);
+                return Results.Ok(result);
+            }
+            catch (TalentMatch.Application.Prompts.Services.ScoringProfileMismatchException ex)
+            {
+                return Results.Problem(
+                    ex.Message,
+                    statusCode: StatusCodes.Status409Conflict,
+                    title: "Scoring profile mismatch");
+            }
         }).DisableAntiforgery();
 
         jobAppsGroup.MapGet("/", async (string jobId, string? list, string? applicantName, string? sortField, string? sortOrder,
@@ -35,11 +52,70 @@ public static class ApplicationsEndpoints
             return Results.Ok(apps);
         });
 
+        jobAppsGroup.MapGet("/summary", async (string jobId, ISender mediator) =>
+        {
+            var counts = await mediator.Send(new GetApplicationCountsQuery(jobId));
+            return Results.Ok(counts);
+        });
+
         var appGroup = app.MapGroup("/api/applications/{applicationId}").WithTags("Applications").RequireAuthorization();
+        appGroup.AddEndpointFilter(async (context, next) =>
+        {
+            var applicationId = context.HttpContext.Request.RouteValues["applicationId"]?.ToString();
+            if (string.IsNullOrWhiteSpace(applicationId))
+                return Results.NotFound();
+
+            var services = context.HttpContext.RequestServices;
+            var applications = services.GetRequiredService<IApplicationRepository>();
+            var application = await applications.GetByIdAsync(
+                applicationId, context.HttpContext.RequestAborted);
+
+            if (application is null)
+                return Results.NotFound();
+
+            var jobs = services.GetRequiredService<IJobRepository>();
+            var job = await jobs.GetByIdAsync(application.JobId, context.HttpContext.RequestAborted);
+            if (job is null)
+                return Results.NotFound();
+
+            try
+            {
+                var currentUser = services.GetService<ICurrentUserService>();
+                var organizations = services.GetService<IOrganizationRepository>();
+                if (HttpMethods.IsGet(context.HttpContext.Request.Method)
+                    || HttpMethods.IsHead(context.HttpContext.Request.Method))
+                {
+                    await JobAuthorization.EnsureCanReadAsync(
+                        job, currentUser, organizations, context.HttpContext.RequestAborted);
+                }
+                else
+                {
+                    await JobAuthorization.EnsureCanMutateAsync(
+                        job, currentUser, organizations, context.HttpContext.RequestAborted);
+                }
+            }
+            catch (InvalidJobScopeException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext, AuthorizationErrorCodes.InvalidJobScope);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return AuthorizationErrorResults.Create(
+                    context.HttpContext, AuthorizationErrorCodes.Forbidden);
+            }
+
+            return await next(context);
+        });
 
         appGroup.MapGet("/", async (string applicationId, IApplicationRepository repo) =>
         {
             var application = await repo.GetByIdAsync(applicationId);
+            if (application is not null)
+            {
+                application.FinalScore = ScorePrecision.Round(application.FinalScore);
+                application.Variance = ScorePrecision.Round(application.Variance);
+            }
             return application != null ? Results.Ok(application) : Results.NotFound();
         });
 
@@ -100,7 +176,9 @@ public static class ApplicationsEndpoints
         appGroup.MapGet("/manual-review", async (string applicationId, IApplicationRepository repo) =>
         {
             var review = await repo.GetManualReviewAsync(applicationId);
-            return review != null ? Results.Ok(review) : Results.NotFound();
+            return review != null
+                ? Results.Ok(review)
+                : Results.Text("null", "application/json");
         });
 
         appGroup.MapPost("/manual-review", async (string applicationId, SaveManualReviewRequest request, ISender mediator) =>

@@ -2,6 +2,7 @@
 # =============================================================================
 # package-stack-a.sh — Build and package Stack A for App Service deployment
 # =============================================================================
+# Usage: ./infra/scripts/package-stack-a.sh [env-file]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,17 +15,81 @@ print_banner "Packaging Stack A (Node.js/Express)"
 
 cd "$REPO_ROOT"
 
+ENV_FILE="${1:-}"
+if [[ -n "$ENV_FILE" ]]; then
+	load_env_file "$ENV_FILE"
+fi
+
+export VITE_APP_AUTH_MODE="${VITE_APP_AUTH_MODE:-${APP_AUTH_MODE:-simple}}"
+if command -v node >/dev/null 2>&1; then
+	NODE_COMMAND="node"
+elif command -v node.exe >/dev/null 2>&1; then
+	NODE_COMMAND="node.exe"
+else
+	log_fatal "Node.js is required to package Stack A"
+fi
+
+if [[ "$VITE_APP_AUTH_MODE" == "entra" ]]; then
+	export VITE_ENTRA_TENANT_ID="${VITE_ENTRA_TENANT_ID:-${AZURE_TENANT_ID:-}}"
+	export VITE_ENTRA_STACK_A_CLIENT_ID="${VITE_ENTRA_STACK_A_CLIENT_ID:-${ENTRA_STACK_A_CLIENT_ID:-}}"
+	export VITE_ENTRA_API_APP_CLIENT_ID="${VITE_ENTRA_API_APP_CLIENT_ID:-${ENTRA_API_APP_CLIENT_ID:-}}"
+	export VITE_ENTRA_API_IDENTIFIER_URI="${VITE_ENTRA_API_IDENTIFIER_URI:-${ENTRA_API_IDENTIFIER_URI:-}}"
+	export VITE_ENTRA_API_SCOPE="${VITE_ENTRA_API_SCOPE:-${ENTRA_API_SCOPE:-access_as_user}}"
+	validate_required \
+		"VITE_ENTRA_TENANT_ID" \
+		"VITE_ENTRA_STACK_A_CLIENT_ID" \
+		"VITE_ENTRA_API_APP_CLIENT_ID" \
+		"VITE_ENTRA_API_IDENTIFIER_URI" \
+		"VITE_ENTRA_API_SCOPE"
+elif [[ "$VITE_APP_AUTH_MODE" != "simple" ]]; then
+	log_fatal "VITE_APP_AUTH_MODE must be simple or entra"
+fi
+
+log_info "Building client with authentication mode: $VITE_APP_AUTH_MODE"
+
 # ---------------------------------------------------------------------------
-# Step 1: Install dependencies
+# Step 1: Prepare dependencies
 # ---------------------------------------------------------------------------
-log_info "Installing Node.js dependencies..."
-npm ci
+INSTALL_MODE="${STACK_A_INSTALL_MODE:-auto}"
+case "$INSTALL_MODE" in
+	auto)
+		if [[ -f node_modules/.package-lock.json \
+			&& node_modules/.package-lock.json -nt package-lock.json \
+			&& node_modules/.package-lock.json -nt package.json \
+			&& -x node_modules/.bin/vite \
+			&& -x node_modules/.bin/tsc ]]; then
+			log_info "Reusing node_modules validated by npm's current hidden lockfile (set STACK_A_INSTALL_MODE=clean for npm ci)"
+		else
+			log_info "node_modules is missing or stale; installing dependencies with npm ci..."
+			npm ci
+		fi
+		;;
+	clean)
+		log_info "Installing dependencies with npm ci (clean mode)..."
+		npm ci
+		;;
+	*)
+		log_fatal "STACK_A_INSTALL_MODE must be auto or clean"
+		;;
+esac
 
 # ---------------------------------------------------------------------------
 # Step 2: Build client
 # ---------------------------------------------------------------------------
 log_info "Building client application..."
-npm run build
+vite_env_file="$REPO_ROOT/.env.production.local"
+cat > "$vite_env_file" <<EOF
+VITE_APP_AUTH_MODE=$VITE_APP_AUTH_MODE
+VITE_ENTRA_TENANT_ID=${VITE_ENTRA_TENANT_ID:-}
+VITE_ENTRA_STACK_A_CLIENT_ID=${VITE_ENTRA_STACK_A_CLIENT_ID:-}
+VITE_ENTRA_API_APP_CLIENT_ID=${VITE_ENTRA_API_APP_CLIENT_ID:-}
+VITE_ENTRA_API_IDENTIFIER_URI=${VITE_ENTRA_API_IDENTIFIER_URI:-}
+VITE_ENTRA_API_SCOPE=${VITE_ENTRA_API_SCOPE:-}
+EOF
+trap 'rm -f "$vite_env_file"' EXIT
+npm run build:client
+rm -f "$vite_env_file"
+trap - EXIT
 
 # ---------------------------------------------------------------------------
 # Step 3: Build server
@@ -42,6 +107,10 @@ mkdir -p "$ARTIFACT_DIR"
 # Copy server build output
 cp -r dist-server/* "$ARTIFACT_DIR/"
 
+# tsc emits only JS, but db.ts reads these at runtime from its own directory
+mkdir -p "$ARTIFACT_DIR/server/storage"
+cp server/storage/*.sql "$ARTIFACT_DIR/server/storage/"
+
 # Copy client build output
 mkdir -p "$ARTIFACT_DIR/dist"
 cp -r dist/* "$ARTIFACT_DIR/dist/"
@@ -57,28 +126,25 @@ cat > "$ARTIFACT_DIR/dist/build-info.json" <<EOF
 {
 	"version": "$BUILD_VERSION",
 	"createdAtUtc": "$BUILD_CREATED_AT_UTC",
-	"source": "package-stack-a.sh"
+	"source": "package-stack-a.sh",
+	"authMode": "$VITE_APP_AUTH_MODE"
 }
 EOF
 
 log_info "Stamped build metadata: version=$BUILD_VERSION createdAtUtc=$BUILD_CREATED_AT_UTC"
 
-# Copy package.json only (no lockfile: it can pin platform-specific native binaries
-# such as @rollup/rollup-win32-x64-msvc that break Oryx npm install on Linux).
+# Copy package.json as the basis for a minimal runtime manifest.
 cp package.json "$ARTIFACT_DIR/"
 
 # Reduce artifact's package.json to runtime essentials:
-# - keep only the `start` script (Oryx auto-runs `npm run build` if present,
-#   which would fail because devDeps like tsc/vite are not installed)
-# - drop devDependencies and optionalDependencies (devDeps may include
-#   platform-locked native binaries that break cross-platform install)
+# - keep only dependencies imported by the compiled server
+# - exclude better-sqlite3 because Azure deployments use Azure SQL and its
+#   native Windows binary cannot be deployed to Linux
 cd "$ARTIFACT_DIR"
-node -e "const fs=require('fs'); const p='package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.scripts={start:'node server/index.js'}; delete j.devDependencies; delete j.optionalDependencies; fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');"
+"$NODE_COMMAND" -e "const fs=require('fs'); const p='package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); const runtime=['@azure/identity','@azure/storage-blob','express','jose','mssql','zod']; j.scripts={start:'node server/index.js'}; j.dependencies=Object.fromEntries(runtime.map(name => [name, j.dependencies[name]])); delete j.devDependencies; delete j.optionalDependencies; fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');"
 
-# Intentionally exclude node_modules from the artifact.
-# App Service installs dependencies during deployment when
-# SCM_DO_BUILD_DURING_DEPLOYMENT=true and ENABLE_ORYX_BUILD=true.
-log_info "Skipping node_modules in package (on-host dependency restore enabled)"
+log_info "Installing minimal production dependencies into the artifact..."
+npm install --omit=dev --ignore-scripts --no-audit --no-fund
 
 # Create startup helper for manual fallback scenarios
 cat > "$ARTIFACT_DIR/startup.sh" << 'EOF'
@@ -95,7 +161,7 @@ ARTIFACT_PATH="${REPO_ROOT}/artifacts/stack-a.zip"
 rm -f "$ARTIFACT_PATH"
 
 FILE_COUNT="$(find . -type f | wc -l | tr -d ' ')"
-log_info "Creating zip artifact from $FILE_COUNT files (node_modules excluded)..."
+log_info "Creating self-contained zip artifact from $FILE_COUNT files..."
 if command -v zip >/dev/null 2>&1; then
 	zip -q -r "$ARTIFACT_PATH" .
 elif command -v powershell.exe >/dev/null 2>&1; then

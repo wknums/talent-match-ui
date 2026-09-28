@@ -5,8 +5,23 @@ using TalentMatch.Domain.Entities;
 public interface IApplicationRepository
 {
     Task<IReadOnlyList<Application>> GetByJobIdAsync(string jobId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Application>> GetByJobIdAsync(
+        string jobId,
+        string? list,
+        double longlistThreshold,
+        double shortlistThreshold,
+        bool includeTestCases = false,
+        CancellationToken cancellationToken = default);
+    Task<ApplicationCounts> GetCountsByJobIdAsync(
+        string jobId,
+        double longlistThreshold,
+        double shortlistThreshold,
+        bool includeTestCases = false,
+        CancellationToken cancellationToken = default);
     Task<Application?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
+    Task<ApplicationDocument?> FindDocumentByFingerprintAsync(string jobId, string fingerprint, CancellationToken cancellationToken = default);
     Task AddAsync(Application application, CancellationToken cancellationToken = default);
+    Task PublishUploadedAsync(IReadOnlyCollection<string> applicationIds, CancellationToken cancellationToken = default);
     Task UpdateAsync(Application application, CancellationToken cancellationToken = default);
     Task AddDocumentAsync(ApplicationDocument document, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ApplicationDocument>> GetDocumentsAsync(string applicationId, CancellationToken cancellationToken = default);
@@ -23,3 +38,16 @@ public interface IApplicationRepository
     Task<ManualReviewData?> GetManualReviewAsync(string applicationId, CancellationToken cancellationToken = default);
     Task DeleteAsync(string id, CancellationToken cancellationToken = default);
 }
+
+public sealed record ApplicationCounts(
+    int Total,
+    int Pending,
+    int Uploading,
+    int Shortlist,
+    int Longlist,
+    int Excluded,
+    int Review,
+    int Queued,
+    int Scoring,
+    int Complete,
+    int Failed);

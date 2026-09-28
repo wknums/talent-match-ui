@@ -19,7 +19,7 @@ Output format: raw Markdown text.`
 
 export async function runExtraction(
   applicationId: string,
-  jobId: string,
+  _jobId: string,
 ): Promise<ExtractionArtifact> {
   // Update status to Extracting
   await applicationRepo.updateStatus(applicationId, 'Extracting')

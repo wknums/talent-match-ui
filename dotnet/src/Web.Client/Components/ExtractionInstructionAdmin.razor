@@ -1,0 +1,328 @@
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Forms
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+
+<div style="display:grid; gap:1rem;">
+    <div>
+        <h3 style="margin-bottom:0.5rem;">Job Extraction Prompt</h3>
+        <p style="color:#475569; margin-top:0;">Create, validate, activate, and review the protected extraction instruction lifecycle.</p>
+    </div>
+
+    <details style="border:1px solid #cbd5e1; border-radius:10px; padding:0.75rem 1rem; background:#f8fafc;">
+        <summary style="cursor:pointer; font-weight:600;">How to activate a draft prompt</summary>
+        <ol style="margin-bottom:0.5rem;">
+            <li>Create a draft containing the job extraction instructions.</li>
+            <li>In that draft's <strong>Validation file</strong> field, select a representative job specification (maximum 10 MB).</li>
+            <li>Wait for validation to finish. The draft must show a validation status of <strong>valid</strong>.</li>
+            <li>Select <strong>Activate</strong> to make the validated draft the active job extraction prompt.</li>
+        </ol>
+        <p style="margin-bottom:0; color:#475569;">
+            If validation is invalid, review the findings shown below the draft, create a corrected draft, and validate it again.
+        </p>
+    </details>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div style="padding:0.75rem 1rem; border-radius:8px; background:@(success ? "#dcfce7" : "#fee2e2"); color:@(success ? "#166534" : "#991b1b");">
+            @message
+        </div>
+    }
+
+    <section style="border:1px solid #e2e8f0; border-radius:10px; padding:1rem; background:#fff;">
+        <h4 style="margin-top:0;">Create draft</h4>
+        <textarea rows="8" style="width:100%;" @bind="draftInstructionText"></textarea>
+        <input placeholder="Change note (optional)" style="width:100%; margin-top:0.5rem;" @bind="draftChangeNote" />
+        <div style="margin-top:0.75rem;">
+            <ReasoningProfileFields Catalog="reasoningCatalog"
+                                    @bind-ModelId="draftModelId"
+                                    @bind-ReasoningLevel="draftReasoningLevel"
+                                    Disabled="isBusy" />
+        </div>
+        <div style="margin-top:0.75rem;">
+            <button type="button" @onclick="CreateDraft" disabled="@isBusy">Create draft</button>
+        </div>
+    </section>
+
+    <section style="border:1px solid #e2e8f0; border-radius:10px; padding:1rem; background:#fff;">
+        <h4 style="margin-top:0;">Protected contract</h4>
+        @if (selectedVersion is not null
+            && selectedVersion.ProtectedContract.ValueKind != JsonValueKind.Undefined)
+        {
+            <pre style="white-space:pre-wrap;">@JsonSerializer.Serialize(selectedVersion.ProtectedContract, new JsonSerializerOptions { WriteIndented = true })</pre>
+        }
+    </section>
+
+    <section style="display:grid; gap:0.75rem;">
+        @foreach (var version in versions)
+        {
+            <div style="border:1px solid #e2e8f0; border-radius:10px; padding:1rem; background:#fff;">
+                <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start;">
+                    <div>
+                        <strong>v@(version.VersionNumber)</strong> — @version.Status / @version.ValidationStatus
+                        <div style="font-size:0.85rem; color:#64748b;">@version.CreatedBy · @version.CreatedAt.ToString("u")</div>
+                        <div style="font-size:0.85rem; color:#64748b;">
+                            @version.ModelId · reasoning effort @version.ReasoningLevel
+                        </div>
+                        @if (validatingVersionId == version.Id)
+                        {
+                            <div role="status" aria-live="polite" style="margin-top:0.5rem; color:#1d4ed8; font-weight:600; min-width:18rem;">
+                                <div>Validation underway: @FormatValidationProgress()</div>
+                                <progress value="@validationElapsedSeconds"
+                                          max="@ValidationTimeoutSeconds"
+                                          aria-label="Job extraction prompt validation progress"
+                                          style="width:100%; margin-top:0.35rem;">
+                                </progress>
+                            </div>
+                        }
+                    </div>
+                    <div style="display:grid; gap:0.5rem;">
+                        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                            <button type="button" @onclick="@(() => LoadVersion(version.Id))" disabled="@isBusy">View</button>
+                            <label style="display:inline-flex; align-items:center; gap:0.35rem;">
+                                <span style="font-size:0.85rem;">Validation file</span>
+                                <InputFile OnChange="@((args) => ValidateVersion(version.Id, args))" disabled="@isBusy" />
+                            </label>
+                            <button type="button"
+                                    @onclick="@(() => ActivateVersion(version))"
+                                    disabled="@(validatingVersionId == version.Id || version.ValidationStatus != "valid")">
+                                Activate
+                            </button>
+                        </div>
+                        @if (validationMessageVersionId == version.Id && !string.IsNullOrWhiteSpace(validationMessage))
+                        {
+                            <div data-validation-result
+                                 role="status"
+                                 aria-live="polite"
+                                 style="padding:0.5rem 0.75rem; border-radius:6px; background:@(validationSucceeded ? "#dcfce7" : "#fee2e2"); color:@(validationSucceeded ? "#166534" : "#991b1b");">
+                                @validationMessage
+                            </div>
+                        }
+                    </div>
+                </div>
+                @if (version.ValidationStatus != "valid")
+                {
+                    <div style="margin-top:0.75rem; color:#92400e; font-size:0.9rem;">
+                        Activation disabled:
+                        @(version.ValidationStatus == "invalid"
+                            ? "validation did not pass. Review the findings below and create a corrected draft."
+                            : "validate this draft with a representative job specification first.")
+                    </div>
+                }
+                <pre style="white-space:pre-wrap; margin:0.75rem 0 0;">@version.InstructionText</pre>
+                @if (version.ValidationFindings is { Count: > 0 })
+                {
+                    <section aria-label="Validation findings" style="margin-top:0.75rem; padding:0.75rem; border-left:4px solid #dc2626; background:#fef2f2;">
+                        <strong>Why validation did not pass</strong>
+                        <ul style="margin-bottom:0;">
+                            @foreach (var finding in version.ValidationFindings)
+                            {
+                                <li style="margin-top:0.5rem;">
+                                    <div><strong>@finding.Code</strong> at <code>@finding.Path</code>: @finding.Message</div>
+                                    <div style="margin-top:0.25rem; color:#475569;">
+                                        <strong>Suggested fix:</strong> @GetValidationSuggestion(finding)
+                                    </div>
+                                </li>
+                            }
+                        </ul>
+                    </section>
+                }
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private List<ExtractionInstructionVersionDto> versions = new();
+    private ExtractionInstructionVersionDetailDto? selectedVersion;
+    private string draftInstructionText = "Extract every distinct, independently assessable requirement as its own rubric item.";
+    private string? draftChangeNote;
+    private string? message;
+    private bool success;
+    private bool isBusy;
+    private string? validatingVersionId;
+    private string? validationMessageVersionId;
+    private string? validationMessage;
+    private bool validationSucceeded;
+    private int validationElapsedSeconds;
+    private ReasoningModelsResponseDto? reasoningCatalog;
+    private string draftModelId = "";
+    private string draftReasoningLevel = "high";
+    private const int ValidationTimeoutSeconds = 6 * 60;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        versions = await Api.GetExtractionInstructionsAsync();
+        try
+        {
+            reasoningCatalog = await Api.GetReasoningModelsAsync();
+        }
+        catch (Exception ex)
+        {
+            reasoningCatalog = null;
+            success = false;
+            message = $"Supported models could not be loaded: {ex.Message}";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(draftModelId))
+            draftModelId = reasoningCatalog.DefaultModel;
+        if (!reasoningCatalog.SupportedReasoningEfforts.Contains(draftReasoningLevel))
+            draftReasoningLevel = reasoningCatalog.DefaultReasoningEffort;
+        if (versions.Count > 0)
+        {
+            selectedVersion = await Api.GetExtractionInstructionAsync(versions[0].Id);
+        }
+    }
+
+    private async Task LoadVersion(string versionId)
+    {
+        isBusy = true;
+        try
+        {
+            selectedVersion = await Api.GetExtractionInstructionAsync(versionId);
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task CreateDraft()
+    {
+        isBusy = true;
+        try
+        {
+            await Api.CreateExtractionInstructionDraftAsync(
+                draftInstructionText,
+                draftChangeNote,
+                draftModelId,
+                draftReasoningLevel);
+            success = true;
+            message = "Draft created.";
+            await RefreshAsync();
+        }
+        catch (ApiException ex)
+        {
+            success = false;
+            message = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task ValidateVersion(string versionId, InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file is null)
+            return;
+
+        validatingVersionId = versionId;
+        validationMessageVersionId = null;
+        validationMessage = null;
+        validationElapsedSeconds = 0;
+        isBusy = true;
+        using var progressCancellation = new CancellationTokenSource();
+        var progressTask = TrackValidationProgressAsync(progressCancellation.Token);
+        try
+        {
+            var buffer = new byte[file.Size];
+            await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).ReadExactlyAsync(buffer);
+            var payload = Convert.ToBase64String(buffer);
+            var result = await Api.ValidateExtractionInstructionAsync(versionId, file.Name, payload, file.ContentType);
+            var validationPassed = result.HasValue
+                && result.Value.ValueKind == JsonValueKind.Object
+                && result.Value.TryGetProperty("validationStatus", out var validationStatus)
+                && validationStatus.GetString() == "valid";
+            await RefreshAsync();
+            validationSucceeded = validationPassed;
+            validationMessageVersionId = versionId;
+            validationMessage = validationPassed
+                ? "Validation passed. The draft can now be activated."
+                : "Validation completed but did not pass. Review the findings shown with the draft.";
+        }
+        catch (ApiException ex)
+        {
+            validationSucceeded = false;
+            validationMessageVersionId = versionId;
+            validationMessage = ex.Message;
+        }
+        finally
+        {
+            await progressCancellation.CancelAsync();
+            try
+            {
+                await progressTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            validatingVersionId = null;
+            isBusy = false;
+        }
+    }
+
+    private async Task ActivateVersion(ExtractionInstructionVersionDto version)
+    {
+        isBusy = true;
+        try
+        {
+            await Api.ActivateExtractionInstructionAsync(version.Id, version.ConcurrencyVersion);
+            success = true;
+            message = "Instruction version activated.";
+            await RefreshAsync();
+            selectedVersion = await Api.GetExtractionInstructionAsync(version.Id);
+        }
+        catch (ApiException ex)
+        {
+            success = false;
+            message = ex.Message;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private static string GetValidationSuggestion(ExtractionValidationFindingDto finding)
+        => finding.Code switch
+        {
+            "invalid_json" when finding.Message.Contains("empty", StringComparison.OrdinalIgnoreCase)
+                => "Retry the validation. If the response remains empty, the AWReason service produced no model output and must be corrected before this prompt can be activated.",
+            "invalid_json"
+                => "Update the draft to require one JSON object only, with no Markdown or explanatory text, matching the protected contract exactly.",
+            "missing_requirement"
+                => "Tell the model to return every independently assessable requirement as a separate entry in the requirements array.",
+            "missing_source_trace"
+                => "Require every requirement to include source_text containing the exact supporting wording from the job specification.",
+            "invalid_weight_total"
+                => "Require category weights to be normalized so they sum exactly to 1.0 and set weights_sum_to_1_0 to true.",
+            "unassigned_requirement"
+                => "Require each requirement's category_id to reference an ID present in rubric.categories, or assign uncertain items to the review category.",
+            "duplicate_requirement"
+                => "Only set duplicate_of when it references a different requirement ID that contains the same underlying requirement.",
+            "schema_mismatch"
+                => $"Update the draft to explicitly require the field at {finding.Path} with the exact name, type, and allowed value defined by the protected contract.",
+            _ => "Update the draft to address this finding, then validate the new draft with the same representative document."
+        };
+
+    private async Task TrackValidationProgressAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        while (validationElapsedSeconds < ValidationTimeoutSeconds
+               && await timer.WaitForNextTickAsync(cancellationToken))
+        {
+            validationElapsedSeconds++;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string FormatValidationProgress()
+        => $"{validationElapsedSeconds / 60}:{validationElapsedSeconds % 60:00} / 6:00";
+}

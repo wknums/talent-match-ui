@@ -4,6 +4,261 @@ export type AggregationStrategy = 'median' | 'mean' | 'weighted'
 export type Decision = 'Eligible' | 'Excluded' | 'NeedsManualReview'
 export type RubricApprovalStatus = 'draft' | 'approved'
 export type RubricSource = 'manual' | 'extracted' | 'generated'
+export type ExtractionValidationSeverity = 'error' | 'warning'
+export type ExtractionInstructionStatus = 'draft' | 'active' | 'retired'
+export type ExtractionInstructionValidationStatus = 'unvalidated' | 'valid' | 'invalid'
+export type RequirementType = 'must_have' | 'desired' | 'experience' | 'responsibility' | 'other'
+export type RubricItemReviewStatus = 'confirmed' | 'needs_review'
+export type RubricItemCreatedFrom = 'extracted' | 'manual' | 'legacy_conversion'
+export type ReasoningEffort = 'low' | 'medium' | 'high'
+
+export const OPTIONAL_UPLOAD_DEFAULTS = {
+  fileConcurrency: 4,
+  maxIndividualFileBytes: 4194304,
+  maxInFlightBytes: 104857600,
+} as const
+
+export const SUPPORTED_UPLOAD_MIME_TYPES = [
+  'application/pdf',
+  'text/markdown',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'image/jpeg',
+  'image/png',
+] as const
+
+export type SupportedUploadMimeType = typeof SUPPORTED_UPLOAD_MIME_TYPES[number]
+export type UploadItemStatus =
+  | 'waiting'
+  | 'throttled'
+  | 'uploading'
+  | 'retrying'
+  | 'succeeded'
+  | 'skipped_duplicate'
+  | 'failed'
+  | 'interrupted'
+export type UploadSessionStatus = 'active' | 'completed'
+
+export interface UploadSettings {
+  fileConcurrency: number
+  maxIndividualFileBytes: number
+  maxInFlightBytes: number
+  concurrencyVersion: number
+  persisted: boolean
+  updatedAt: string | null
+  updatedBy: string | null
+}
+
+export interface UpdateUploadSettingsRequest {
+  fileConcurrency: number
+  maxIndividualFileBytes: number
+  maxInFlightBytes: number
+  expectedConcurrencyVersion: number
+}
+
+export interface CreateUploadItem {
+  occurrenceKey: string
+  ordinal: number
+  fileName: string
+  mimeType: SupportedUploadMimeType
+  rawSizeBytes: number
+}
+
+export interface CreateUploadSessionRequest {
+  allowDuplicates: boolean
+  items: CreateUploadItem[]
+}
+
+export interface UploadLimitsSnapshot {
+  fileConcurrency: number
+  maxIndividualFileBytes: number
+  maxInFlightBytes: number
+}
+
+export interface UploadAggregateCounts {
+  total: number
+  waitingOrThrottled: number
+  activeOrRetrying: number
+  succeeded: number
+  skipped: number
+  failed: number
+  interrupted: number
+  terminal: number
+}
+
+export interface UploadItem {
+  id: string
+  sessionId: string
+  occurrenceKey: string
+  ordinal: number
+  fileName: string
+  mimeType: SupportedUploadMimeType
+  rawSizeBytes: number
+  status: UploadItemStatus
+  attemptCount: number
+  contentFingerprint: string | null
+  applicationId: string | null
+  outcomeCode: string | null
+  outcomeMessage: string | null
+  nextRetryAt: string | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+  concurrencyVersion: number
+}
+
+export interface UploadSessionSummary {
+  id: string
+  jobId: string
+  status: UploadSessionStatus
+  allowDuplicates: boolean
+  limits: UploadLimitsSnapshot
+  counts: UploadAggregateCounts
+  progressPercent: number
+  correlationId: string
+  createdAt: string
+  startedAt: string | null
+  lastHeartbeatAt: string
+  completedAt: string | null
+  concurrencyVersion: number
+}
+
+export interface UploadSessionDetail extends UploadSessionSummary {
+  items: UploadItem[]
+}
+
+export interface UpdateUploadItemStatusRequest {
+  occurrenceKey: string
+  status: Extract<UploadItemStatus, 'waiting' | 'throttled' | 'retrying' | 'failed' | 'interrupted'>
+  expectedConcurrencyVersion: number
+  outcomeCode?: string | null
+  outcomeMessage?: string | null
+  nextRetryAt?: string | null
+  transportAttemptCount?: number | null
+}
+
+export interface UploadValidationError extends CanonicalApiError {
+  errors: Record<string, string[]>
+}
+
+export interface ReasoningModelOption {
+  slot: string
+  deployment: string
+  isDefault: boolean
+}
+
+export interface ReasoningModelsResponse {
+  defaultModel: string
+  defaultReasoningEffort: ReasoningEffort
+  supportedReasoningEfforts: ReasoningEffort[]
+  models: ReasoningModelOption[]
+}
+
+export interface ExtractionValidationFinding {
+  code: string
+  severity: ExtractionValidationSeverity
+  path: string
+  message: string
+}
+
+export interface ExtractionInstructionVersion {
+  id: string
+  versionNumber: number
+  instructionText: string
+  modelId: string
+  reasoningLevel: ReasoningEffort
+  protectedContractVersion: string
+  status: ExtractionInstructionStatus
+  validationStatus: ExtractionInstructionValidationStatus
+  changeNote?: string | null
+  validationFindings: ExtractionValidationFinding[]
+  createdAt: string
+  createdBy: string
+  validatedAt?: string | null
+  validatedBy?: string | null
+  activatedAt?: string | null
+  activatedBy?: string | null
+  concurrencyVersion: number
+}
+
+export interface ExtractionInstructionVersionDetail extends ExtractionInstructionVersion {
+  protectedContract: Record<string, unknown>
+}
+
+export interface RubricCategoryV2 {
+  id: string
+  name: string
+  weight: number
+  description?: string | null
+  order: number
+}
+
+export interface RubricItem {
+  id: string
+  categoryId: string
+  text: string
+  requirementType: RequirementType
+  order: number
+  sourceText?: string | null
+  sourceLocation?: string | null
+  sourceRequirementId?: string | null
+  reviewStatus: RubricItemReviewStatus
+  createdFrom: RubricItemCreatedFrom
+}
+
+export interface RubricEnvelope {
+  schemaVersion: 'rubric-v2'
+  legacySourceVersionId?: string | null
+  categories: RubricCategoryV2[]
+  items: RubricItem[]
+}
+
+export interface LegacyRubricState {
+  isLegacy: boolean
+  canConvert: boolean
+  preview?: RubricEnvelope | null
+}
+
+export interface JobSpecExtractionRecord {
+  id: string
+  purpose: 'job_creation' | 'instruction_validation'
+  instructionVersionId: string
+  protectedContractVersion: string
+  sourceFileName: string
+  sourceMimeType: string
+  sourceSha256: string
+  rawResponse: string
+  normalizedResponseJson?: string | null
+  validationStatus: 'valid' | 'invalid'
+  validationFindings: ExtractionValidationFinding[]
+  jobId?: string | null
+  jobConfigVersionId?: string | null
+  createdAt: string
+  createdBy: string
+  completedAt: string
+  correlationId: string
+}
+
+export interface ExtractionResult {
+  extractionId: string
+  instructionVersionId: string
+  protectedContractVersion: string
+  validationStatus: 'valid'
+  validationFindings: ExtractionValidationFinding[]
+  title?: string | null
+  jobDescription?: string | null
+  department?: string | null
+  organization?: string | null
+  rubric: RubricEnvelope
+}
+
+export interface ExtractionFailure {
+  extractionId: string
+  instructionVersionId: string
+  protectedContractVersion: string
+  validationStatus: 'invalid'
+  validationFindings: ExtractionValidationFinding[]
+}
 
 export interface RubricCategory {
   id: string
@@ -28,6 +283,7 @@ export interface JobConfigVersion {
   versionId: string
   jobId: string
   rubric: RubricCategory[]
+  rubricEnvelope?: RubricEnvelope
   mustHaves: MustHave[]
   desiredCriteria: DesiredCriteria[]
   runsPerApplication: number
@@ -38,6 +294,10 @@ export interface JobConfigVersion {
   rubricApprovalStatus: RubricApprovalStatus
   rubricSource: RubricSource
   rawExtractionResponse?: string
+  extractionId?: string
+  extractionInstructionVersionId?: string
+  extraction?: JobSpecExtractionRecord
+  legacyRubricState?: LegacyRubricState
   createdAt: string
 }
 
@@ -47,6 +307,8 @@ export interface Job {
   title: string
   department: string
   organization: string
+  organizationId?: string
+  departmentId?: string
   postingDate: string
   createdBy: string
   createdByName?: string
@@ -136,6 +398,7 @@ export interface ScoringRun {
   versionId: string
   runIndex: number
   modelDeploymentId: string
+  reasoningLevel?: string
   promptVersionId: string
   overallScore: number
   subScores: Record<string, number>
@@ -245,12 +508,283 @@ export interface ManualReviewData {
   lastModifiedBy: string
 }
 
-export type UserRole = 'admin' | 'recruiter' | 'business_panel'
+export type AuthenticationProvider = 'simple' | 'entra'
+export type UserRole = 'admin' | 'organization_admin' | 'recruiter' | 'business_panel'
+export type MembershipStatus = 'active' | 'revoked'
+export type OrganizationStatus = 'active' | 'retired'
+export type RoleAssignmentSource = 'group' | 'delegated' | 'bootstrap'
+export type RoleAssignmentStatus = 'active' | 'revoked'
+
+export interface Organization {
+  organizationId: string
+  name: string
+  status: OrganizationStatus
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface Department {
+  departmentId: string
+  organizationId: string
+  name: string
+  status: OrganizationStatus
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface OrganizationMembership {
+  membershipId: string
+  userId: string
+  organizationId: string
+  defaultDepartmentMembershipId?: string
+  defaultDepartmentId?: string
+  status: MembershipStatus
+  effectiveAt: string
+  revokedAt?: string
+  updatedBy: string
+}
+
+export interface DepartmentMembership {
+  membershipId: string
+  userId: string
+  organizationId: string
+  departmentId: string
+  status: MembershipStatus
+  effectiveAt: string
+  revokedAt?: string
+  updatedBy: string
+}
+
+export interface RoleGroupMapping {
+  mappingId: string
+  tenantId: string
+  groupObjectId: string
+  role: UserRole
+  organizationId?: string
+  departmentId?: string
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface RoleAssignment {
+  assignmentId: string
+  userId: string
+  tenantId: string
+  userObjectId: string
+  role: UserRole
+  organizationId?: string
+  departmentId?: string
+  roleGroupMappingId?: string
+  source: RoleAssignmentSource
+  status: RoleAssignmentStatus
+  effectiveAt: string
+  revokedAt?: string
+  createdAt: string
+  updatedAt: string
+  updatedBy: string
+}
+
+export interface AuthorizationContext {
+  userId: string
+  tenantId: string
+  objectId: string
+  username: string
+  fullName: string
+  email?: string
+  globalRole: 'admin' | null
+  authorizationVersion: number
+  memberships: Array<{
+    organizationId: string
+    organizationName: string
+    defaultDepartmentId: string
+    departments: Array<{ departmentId: string; departmentName: string }>
+  }>
+  authorizations: Array<{
+    role: UserRole
+    roleLabel: string
+    organizationId: string | null
+    departmentId: string | null
+    assignmentSource: RoleAssignmentSource
+  }>
+  tokenIssuedAt: string
+  refreshRequiredAt: string
+}
+
+export type AuthErrorCode =
+  | 'auth_required' | 'invalid_token' | 'wrong_tenant' | 'invalid_audience'
+  | 'unauthorized_client' | 'token_stale' | 'role_missing' | 'role_conflict'
+  | 'assignment_missing' | 'assignment_revoked' | 'scope_unmapped'
+  | 'membership_missing' | 'invalid_job_scope' | 'identity_disabled'
+  | 'invalid_navigation_action' | 'navigation_audit_unavailable'
+
+export interface EntraAccessRoleAssignment {
+  id: string
+  role: Exclude<UserRole, 'admin'>
+  organizationId: string
+  departmentId: string | null
+  source: Exclude<RoleAssignmentSource, 'bootstrap'>
+  status: RoleAssignmentStatus
+}
+
+export interface EntraOrganizationAccess {
+  organizationId: string
+  status: MembershipStatus
+  departmentIds: string[]
+  defaultDepartmentId: string | null
+  roleAssignments: EntraAccessRoleAssignment[]
+}
+
+export interface EntraAccessUser {
+  objectId: string
+  username: string
+  fullName: string
+  email: string | null
+  isActive: boolean
+  authorizationVersion: number
+  organizations: EntraOrganizationAccess[]
+}
+
+export interface EntraAccessUserPage {
+  items: EntraAccessUser[]
+  nextCursor: string | null
+}
+
+export interface EntraProfileInput {
+  username: string
+  fullName: string
+  email: string | null
+}
+
+export interface DesiredDelegatedRole {
+  role: Exclude<UserRole, 'admin'>
+  departmentId: string | null
+}
+
+export interface PutOrganizationAccessRequest {
+  expectedVersion: number
+  profile: EntraProfileInput
+  membership: {
+    status: MembershipStatus
+    departmentIds: string[]
+    defaultDepartmentId: string | null
+  }
+  roleAssignments: DesiredDelegatedRole[]
+}
+
+export interface UpdateEntraAccessUserRequest {
+  expectedVersion: number
+  profile?: EntraProfileInput
+  isActive?: boolean
+}
+
+export interface CanonicalApiError {
+  error:
+    | AuthErrorCode
+    | 'invalid_scope'
+    | 'forbidden'
+    | 'not_found'
+    | 'conflict'
+    | 'version_conflict'
+    | 'stale_version'
+    | 'validation_error'
+    | 'validation_failed'
+    | 'already_converted'
+    | 'internal_error'
+  message: string
+  correlationId: string
+}
+
+export interface OrganizationAdminDepartment {
+  id: string
+  organizationId: string
+  name: string
+  status: OrganizationStatus
+}
+
+export interface OrganizationAdminOrganization {
+  id: string
+  name: string
+  status: OrganizationStatus
+  departments: OrganizationAdminDepartment[]
+}
+
+export interface OrganizationAdminMembership {
+  userObjectId: string
+  organizationId: string
+  departmentIds: string[]
+  defaultDepartmentId: string
+}
+
+export interface OrganizationAdminRoleAssignment {
+  id: string
+  userObjectId: string
+  role: Exclude<UserRole, 'admin'>
+  organizationId: string
+  departmentId: string | null
+  source: 'delegated'
+  status: RoleAssignmentStatus
+}
+
+export interface CreateOrganizationAdminRequest {
+  name: string
+  initialDepartmentName: string
+}
+
+export interface CreateOrganizationDepartmentRequest {
+  name: string
+}
+
+export interface UpdateOrganizationDepartmentRequest {
+  name?: string
+  status?: OrganizationStatus
+}
+
+export interface RegisterOrganizationMembershipRequest {
+  userObjectId: string
+  departmentIds: string[]
+  defaultDepartmentId: string
+}
+
+export interface GrantOrganizationRoleRequest {
+  userObjectId: string
+  role: Exclude<UserRole, 'admin'>
+  departmentId: string | null
+}
+
+export type NavigationAction = 'collapse' | 'expand'
+
+export interface NavigationShellState {
+  desktopCollapsed: boolean
+  compactOverlayOpen: boolean
+  isCompact: boolean
+}
+
+export interface NavigationAuditRequest {
+  action: NavigationAction
+  correlationId: string
+  requestedAt: string
+}
+
+export interface NavigationAuditOutcome {
+  action: NavigationAction
+  correlationId: string
+  actorObjectId: string
+  recordedAt: string
+}
 
 export interface User {
   userId: string
   username: string
   role: UserRole
+  authenticationProvider?: AuthenticationProvider
+  entraTenantId?: string
+  entraObjectId?: string
+  isActive?: boolean
+  authorizationVersion?: number
   department?: string
   fullName: string
   email?: string
@@ -309,6 +843,12 @@ export interface ScoringPrompt {
   comments?: string
   source: PromptSource
   generationMetadata?: Record<string, any>
+  generationInstructionVersionId?: string
+  modelId?: string
+  reasoningLevel?: string
+  approvedModelId?: string
+  approvedReasoningLevel?: string
+  approvedTestRunId?: string
 }
 
 export interface PromptTestRun {
@@ -321,6 +861,37 @@ export interface PromptTestRun {
   completedAt?: string
   reviewedBy?: string
   reviewNotes?: string
+  modelId?: string
+  reasoningLevel?: string
+  approvedModelId?: string
+  approvedReasoningLevel?: string
+}
+
+export interface PromptGenerationInstruction {
+  id: string
+  jobId?: string
+  versionNumber: number
+  instructionText: string
+  modelId: string
+  reasoningLevel: ReasoningEffort
+  status: 'draft' | 'active' | 'inactive'
+  changeNote?: string
+  createdAt: string
+  createdBy: string
+  activatedAt?: string
+  activatedBy?: string
+}
+
+export interface PromptProfileStatus {
+  promptId: string
+  modelId: string
+  reasoningLevel: string
+  currentModelId: string
+  currentReasoningLevel: string
+  isMatch: boolean
+  hasExactProfileApprovedTest: boolean
+  approvedTestRunId?: string
+  mismatchMessage?: string
 }
 
 export interface TestRunApplicationDetail {

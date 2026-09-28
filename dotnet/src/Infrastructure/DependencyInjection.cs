@@ -10,6 +10,8 @@ using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure.Persistence;
 using TalentMatch.Infrastructure.Persistence.Repositories;
 using TalentMatch.Infrastructure.Services;
+using TalentMatch.Application.JobExtraction.Services;
+using TalentMatch.Application.Rubrics.Services;
 
 namespace TalentMatch.Infrastructure;
 
@@ -38,14 +40,38 @@ public static class DependencyInjection
         }
 
         services.AddScoped<IJobRepository, JobRepository>();
+        services.AddScoped<IExtractionInstructionRepository, ExtractionInstructionRepository>();
+        services.AddScoped<IJobSpecExtractionRepository, JobSpecExtractionRepository>();
         services.AddScoped<IApplicationRepository, ApplicationRepository>();
+        services.AddScoped<IUploadSettingsRepository, UploadSettingsRepository>();
+        services.AddScoped<IUploadSessionRepository, UploadSessionRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IOrganizationRepository, OrganizationRepository>();
+        services.AddScoped<IRoleAssignmentRepository, RoleAssignmentRepository>();
+        services.AddScoped<IEntraAccessManagementRepository, EntraAccessManagementRepository>();
         services.AddScoped<IProcessingEventRepository, ProcessingEventRepository>();
+        services.AddScoped<INavigationAuditRepository, NavigationAuditRepository>();
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();
         services.AddScoped<IScoringPromptRepository, ScoringPromptRepository>();
+        services.AddScoped<IPromptGenerationInstructionRepository, PromptGenerationInstructionRepository>();
         services.AddScoped<IPromptTestRunRepository, PromptTestRunRepository>();
+        services.AddSingleton<IScoringProfileProvider, ConfigurationScoringProfileProvider>();
+        services.AddHttpClient<IReasoningModelCatalog, AwrReasoningModelCatalog>(client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(1);
+            })
+            .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddScoped<IScoringBatchRepository, ScoringBatchRepository>();
+        services.AddScoped<ISequentialScoringQueueRepository, SequentialScoringQueueRepository>();
+        services.AddScoped<IScoringThroughputRepository, ScoringThroughputRepository>();
+        services.AddSingleton<IScoringQueueSignal, SequentialScoringSignal>();
+        services.AddSingleton(_ => SequentialScoringOptions.FromEnvironment());
         services.AddScoped<ICurrentUserService, CurrentUserService>();
+        services.AddScoped<RubricOrderNormalizer>();
+        services.AddScoped<LegacyRubricAdapter>();
+        services.AddScoped<JobSpecExtractionContractValidator>();
+        services.AddScoped<JobSpecExtractionOrchestrator>();
+        services.AddScoped<IExtractionInstructionValidationRunner>(sp => sp.GetRequiredService<JobSpecExtractionOrchestrator>());
         services.AddTransient<AwrAuthHandler>();
         services.AddHttpClient<ILlmProxyService, LlmProxyService>(client =>
             {
@@ -53,6 +79,11 @@ public static class DependencyInjection
             })
             .AddHttpMessageHandler<AwrAuthHandler>();
         services.AddHttpClient("AwrApiClient", client =>
+            {
+                client.Timeout = TimeSpan.FromMinutes(6);
+            })
+            .AddHttpMessageHandler<AwrAuthHandler>();
+        services.AddHttpClient<IJobSpecExtractionTransport, AwrJobSpecExtractionService>(client =>
             {
                 client.Timeout = TimeSpan.FromMinutes(6);
             })
@@ -82,6 +113,7 @@ public static class DependencyInjection
         // Platform-mode reconciler hosted service. It self-disables when scoring
         // mode is sequential, so it is safe to register unconditionally.
         services.AddHostedService<TalentMatch.Infrastructure.HostedServices.PlatformScoringReconciler>();
+        services.AddHostedService<TalentMatch.Infrastructure.HostedServices.SequentialScoringPool>();
 
         return services;
     }

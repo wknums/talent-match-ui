@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Application, Job } from '../../src/types/index.js'
+import type { Application, Job, RoleAssignment } from '../../src/types/index.js'
 import type { StoredUser } from '../../server/storage/repos/user-repo.js'
+import type { ServerAuthorizationContext } from '../../server/services/authorization.js'
 
 const repoMocks = vi.hoisted(() => ({
   userRepo: { getAll: vi.fn() },
   jobRepo: { getAll: vi.fn() },
   applicationRepo: { getByJobId: vi.fn(), getAggregatedResult: vi.fn() },
+  roleAssignmentRepo: { getActiveByRole: vi.fn() },
+  organizationRepo: { getDepartment: vi.fn() },
 }))
 
 vi.mock('../../server/storage/repos/index.js', () => repoMocks)
@@ -36,6 +39,8 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     title: overrides.title ?? 'Software Engineer',
     department: overrides.department ?? 'Engineering',
     organization: overrides.organization ?? 'Acme',
+    organizationId: overrides.organizationId,
+    departmentId: overrides.departmentId,
     postingDate: overrides.postingDate ?? '2026-01-01T00:00:00Z',
     createdBy: overrides.createdBy ?? 'user-1',
     createdAt: overrides.createdAt ?? '2026-01-01T00:00:00Z',
@@ -78,10 +83,54 @@ function makeApplication(overrides: Partial<Application> = {}): Application {
   }
 }
 
+function makeContext(overrides: Partial<ServerAuthorizationContext> = {}): ServerAuthorizationContext {
+  return {
+    userId: overrides.userId ?? 'admin-1',
+    tenantId: overrides.tenantId ?? 'tenant-1',
+    objectId: overrides.objectId ?? 'object-admin',
+    username: overrides.username ?? 'admin',
+    fullName: overrides.fullName ?? 'Admin User',
+    email: overrides.email ?? 'admin@example.com',
+    globalRole: overrides.globalRole === undefined ? 'admin' : overrides.globalRole,
+    authorizationVersion: overrides.authorizationVersion ?? 1,
+    memberships: overrides.memberships ?? [],
+    authorizations: overrides.authorizations ?? [],
+    tokenIssuedAt: overrides.tokenIssuedAt ?? '2026-01-01T00:00:00Z',
+    refreshRequiredAt: overrides.refreshRequiredAt ?? '2026-01-01T01:00:00Z',
+  }
+}
+
+function makeAssignment(userId: string, departmentId: string, organizationId = 'org-1'): RoleAssignment {
+  return {
+    assignmentId: `assignment-${userId}-${departmentId}`,
+    userId,
+    tenantId: 'tenant-1',
+    userObjectId: `object-${userId}`,
+    role: 'recruiter',
+    organizationId,
+    departmentId,
+    source: 'delegated',
+    status: 'active',
+    effectiveAt: '2026-01-01T00:00:00Z',
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+    updatedBy: 'admin-1',
+  }
+}
+
 describe('analytics service', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     repoMocks.applicationRepo.getAggregatedResult.mockResolvedValue(undefined)
+    repoMocks.organizationRepo.getDepartment.mockImplementation(async (_organizationId: string, departmentId: string) => ({
+      departmentId,
+      organizationId: 'org-1',
+      name: departmentId === 'dept-product' ? 'Product' : 'Engineering',
+      status: 'active',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      updatedBy: 'admin-1',
+    }))
   })
 
   it('matches jobs created by recruiter username', async () => {
@@ -167,6 +216,68 @@ describe('analytics service', () => {
     const result = await computeRecruiterAnalytics()
 
     expect(result[0].applicationsInQueue).toBe(1)
+  })
+
+  it('uses scoped Entra assignments so admins see all recruiter analytics', async () => {
+    repoMocks.roleAssignmentRepo.getActiveByRole.mockResolvedValue([
+      makeAssignment('user-1', 'dept-eng'),
+      makeAssignment('user-2', 'dept-product'),
+    ])
+    repoMocks.userRepo.getAll.mockResolvedValue([
+      makeUser({ userId: 'user-1', fullName: 'Alice' }),
+      makeUser({ userId: 'user-2', fullName: 'Bob' }),
+    ])
+    repoMocks.jobRepo.getAll.mockResolvedValue([
+      makeJob({ jobId: 'job-1', createdBy: 'user-1', organizationId: 'org-1', departmentId: 'dept-eng', department: 'Engineering' }),
+      makeJob({ jobId: 'job-2', createdBy: 'user-2', organizationId: 'org-1', departmentId: 'dept-product', department: 'Product' }),
+    ])
+    repoMocks.applicationRepo.getByJobId.mockResolvedValue([])
+
+    const result = await computeRecruiterAnalytics(makeContext())
+
+    expect(result).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recruiterId: 'user-1', department: 'Engineering', activeJobs: 1 }),
+      expect.objectContaining({ recruiterId: 'user-2', department: 'Product', activeJobs: 1 }),
+    ]))
+  })
+
+  it('shows an Entra recruiter only their own exact-scope analytics', async () => {
+    repoMocks.roleAssignmentRepo.getActiveByRole.mockResolvedValue([
+      makeAssignment('user-1', 'dept-eng'),
+      makeAssignment('user-2', 'dept-product'),
+    ])
+    repoMocks.userRepo.getAll.mockResolvedValue([
+      makeUser({ userId: 'user-1', fullName: 'Alice' }),
+      makeUser({ userId: 'user-2', fullName: 'Bob' }),
+    ])
+    repoMocks.jobRepo.getAll.mockResolvedValue([
+      makeJob({ jobId: 'own-job', createdBy: 'user-1', organizationId: 'org-1', departmentId: 'dept-eng', department: 'Engineering' }),
+      makeJob({ jobId: 'wrong-scope', createdBy: 'user-1', organizationId: 'org-2', departmentId: 'dept-eng', department: 'Engineering' }),
+    ])
+    repoMocks.applicationRepo.getByJobId.mockResolvedValue([])
+    const context = makeContext({
+      userId: 'user-1',
+      globalRole: null,
+      memberships: [{
+        organizationId: 'org-1',
+        organizationName: 'Acme',
+        defaultDepartmentId: 'dept-eng',
+        departments: [{ departmentId: 'dept-eng', departmentName: 'Engineering' }],
+      }],
+      authorizations: [{
+        role: 'recruiter',
+        roleLabel: 'Recruiter',
+        organizationId: 'org-1',
+        departmentId: 'dept-eng',
+        assignmentSource: 'delegated',
+      }],
+    })
+
+    const result = await computeRecruiterAnalytics(context)
+
+    expect(result).toEqual([
+      expect.objectContaining({ recruiterId: 'user-1', department: 'Engineering', activeJobs: 1 }),
+    ])
   })
 
   it('groups recruiter metrics by department', () => {

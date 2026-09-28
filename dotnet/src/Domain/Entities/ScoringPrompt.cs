@@ -16,6 +16,12 @@ public class ScoringPrompt
     public string? Comments { get; set; }
     public string Source { get; set; } = "manual"; // manual, imported, generated
     public string? GenerationMetadataJson { get; set; }
+    public string? GenerationInstructionVersionId { get; set; }
+    public string ModelId { get; set; } = string.Empty;
+    public string ReasoningLevel { get; set; } = string.Empty;
+    public string? ApprovedTestRunId { get; set; }
+    public string? ApprovedModelId { get; set; }
+    public string? ApprovedReasoningLevel { get; set; }
 
     // Navigation properties
     [JsonIgnore]

@@ -21,7 +21,7 @@ interface UploadRubricDialogProps {
   onSuccess?: (rubric: RubricCategory[]) => void
 }
 
-export function UploadRubricDialog({ open, jobId, jobTitle, onClose, onSuccess }: UploadRubricDialogProps) {
+export function UploadRubricDialog({ open, jobTitle, onClose, onSuccess }: UploadRubricDialogProps) {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [processing, setProcessing] = useState(false)
   const [extractedRubric, setExtractedRubric] = useState<RubricCategory[] | null>(null)

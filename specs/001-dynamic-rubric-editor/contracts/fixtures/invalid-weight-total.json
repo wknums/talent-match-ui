@@ -1,0 +1,38 @@
+{
+  "job_title": "Senior Data Platform Engineer",
+  "job_description": "Northwind Analytics is hiring a Senior Data Platform Engineer.",
+  "department": "Data Engineering",
+  "organization": "Northwind Analytics",
+  "requirements": [
+    {
+      "id": "req-001",
+      "text": "Expert SQL experience",
+      "requirement_type": "must_have",
+      "category_id": "cat-platform",
+      "source_text": "Must have expert SQL, Python, and Azure Data Factory experience.",
+      "source_location": "Required Qualifications",
+      "duplicate_of": null,
+      "needs_review": false
+    }
+  ],
+  "rubric": {
+    "has_rubric_in_doc": true,
+    "categories": [
+      {
+        "id": "cat-platform",
+        "name": "Technical Platform Skills",
+        "weight": 0.75,
+        "description": "Technical platform experience.",
+        "source": "doc"
+      },
+      {
+        "id": "cat-delivery",
+        "name": "Delivery and Quality",
+        "weight": 0.5,
+        "description": "Delivery quality.",
+        "source": "doc"
+      }
+    ],
+    "weights_sum_to_1_0": false
+  }
+}

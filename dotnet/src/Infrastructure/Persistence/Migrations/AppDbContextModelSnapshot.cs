@@ -15,7 +15,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.3");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.AggregatedResult", b =>
                 {
@@ -31,7 +31,8 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("ConsolidatedRationale")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("RationaleText");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
@@ -39,14 +40,20 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Decision")
                         .IsRequired()
                         .HasMaxLength(30)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("FinalDecision");
 
                     b.Property<double>("FinalScore")
                         .HasColumnType("REAL");
 
-                    b.Property<string>("MergedImprovementTipsJson")
+                    b.Property<string>("FinalSubScoresJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("MergedImprovementTipsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("RecommendationsText");
 
                     b.Property<double>("Variance")
                         .HasColumnType("REAL");
@@ -63,6 +70,21 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                 {
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("CandidateEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CandidateName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CandidateRef")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
@@ -81,7 +103,12 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("LastError")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("PromptTestRunId")
+                    b.Property<DateTime?>("ScoringLeaseUntil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScoringOwner")
+                        .IsConcurrencyToken()
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Status")
@@ -102,9 +129,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("JobId");
 
-                    b.HasIndex("PromptTestRunId");
-
                     b.HasIndex("TestRunId");
+
+                    b.HasIndex("Status", "ScoringLeaseUntil");
+
+                    b.HasIndex("Status", "TestRunId", "CreatedAt");
 
                     b.ToTable("Applications");
                 });
@@ -118,7 +147,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ContentBase64")
+                    b.Property<string>("BlobUri")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentSha256")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("FileName")
@@ -127,25 +159,138 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<long>("FileSize")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("SizeBytes");
 
                     b.Property<string>("FileType")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("MimeType");
 
                     b.Property<string>("Fingerprint")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime>("UploadTimestamp")
-                        .HasColumnType("TEXT");
+                    b.Property<string>("UploadTimestamp")
+                        .HasColumnType("TEXT")
+                        .HasColumnName("UploadedAt");
 
                     b.HasKey("Id");
 
                     b.HasIndex("ApplicationId");
 
                     b.ToTable("ApplicationDocuments");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.Department", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("active");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "Name")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active'");
+
+                    b.ToTable("Departments", t =>
+                        {
+                            t.HasCheckConstraint("CK_Departments_Status", "Status IN ('active', 'retired')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.DepartmentMembership", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DepartmentId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("EffectiveAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("active");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("DepartmentId", "OrganizationId");
+
+                    b.HasIndex("UserId", "DepartmentId")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active'");
+
+                    b.ToTable("DepartmentMemberships", t =>
+                        {
+                            t.HasCheckConstraint("CK_DepartmentMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.DocumentBlob", b =>
+                {
+                    b.Property<string>("DocumentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("DocumentId");
+
+                    b.ToTable("DocumentBlobs");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ExtractionArtifact", b =>
@@ -158,14 +303,16 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<double>("ConfidenceScore")
-                        .HasColumnType("REAL");
+                        .HasColumnType("REAL")
+                        .HasColumnName("Confidence");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("NormalisedText")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("Markdown");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -178,6 +325,95 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("ExtractionArtifacts");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ExtractionInstructionVersion", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActivatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChangeNote")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstructionText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProtectedContractVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ValidatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationFindingsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Status")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active'");
+
+                    b.HasIndex("VersionNumber")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "VersionNumber");
+
+                    b.ToTable("ExtractionInstructionVersions", t =>
+                        {
+                            t.HasCheckConstraint("CK_ExtractionInstructionVersions_Status", "Status IN ('draft', 'active', 'retired')");
+
+                            t.HasCheckConstraint("CK_ExtractionInstructionVersions_ValidationStatus", "ValidationStatus IN ('unvalidated', 'valid', 'invalid')");
+                        });
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.FailureQueueItem", b =>
@@ -231,6 +467,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DepartmentId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("JobCode")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -241,6 +481,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("Organisation")
                         .IsRequired()
                         .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(36)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("PostingDate")
@@ -260,6 +504,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("DepartmentId", "OrganizationId");
+
+                    b.HasIndex("OrganizationId", "DepartmentId");
 
                     b.ToTable("Jobs");
                 });
@@ -281,6 +529,14 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ExtractionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExtractionInstructionVersionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("JobId")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -288,9 +544,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<double>("LonglistThreshold")
                         .HasColumnType("REAL");
 
-                    b.Property<string>("MustHaveCriteriaJson")
+                    b.Property<string>("MustHavesJson")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("MustHavesJson");
 
                     b.Property<string>("RawExtractionResponse")
                         .HasColumnType("TEXT");
@@ -306,6 +563,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("RubricSource")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("RunsPerApplication")
+                        .HasColumnType("INTEGER")
+                        .HasColumnName("RunsPerApplication");
 
                     b.Property<int>("ScoringRunCount")
                         .HasColumnType("INTEGER");
@@ -324,6 +585,95 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("JobId");
 
                     b.ToTable("JobConfigVersions");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.JobSpecExtraction", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstructionVersionId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobConfigVersionId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedResponseJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProtectedContractVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RawResponse")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFileName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceMimeType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationFindingsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ValidationStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobConfigVersionId");
+
+                    b.HasIndex("InstructionVersionId", "CreatedAt");
+
+                    b.HasIndex("JobId", "CreatedAt");
+
+                    b.ToTable("JobSpecExtractions", t =>
+                        {
+                            t.HasCheckConstraint("CK_JobSpecExtractions_Purpose", "Purpose IN ('job_creation', 'instruction_validation')");
+
+                            t.HasCheckConstraint("CK_JobSpecExtractions_ValidationStatus", "ValidationStatus IN ('valid', 'invalid')");
+                        });
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ManualReviewData", b =>
@@ -345,6 +695,9 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("HumanEdited")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("OverallComment")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -362,6 +715,96 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("ManualReviews");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.Organization", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("active");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active'");
+
+                    b.ToTable("Organizations", t =>
+                        {
+                            t.HasCheckConstraint("CK_Organizations_Status", "Status IN ('active', 'retired')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.OrganizationMembership", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultDepartmentMembershipId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("EffectiveAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("active");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("UserId", "OrganizationId")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active'");
+
+                    b.HasIndex("DefaultDepartmentMembershipId", "UserId", "OrganizationId");
+
+                    b.ToTable("OrganizationMemberships", t =>
+                        {
+                            t.HasCheckConstraint("CK_OrganizationMemberships_Status", "(Status = 'active' AND RevokedAt IS NULL AND DefaultDepartmentMembershipId IS NOT NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.PasswordResetRequest", b =>
@@ -419,11 +862,13 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("EventType")
                         .IsRequired()
                         .HasMaxLength(50)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("Action");
 
                     b.Property<string>("PayloadJson")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("DetailsJson");
 
                     b.Property<DateTime>("Timestamp")
                         .HasColumnType("TEXT");
@@ -435,6 +880,63 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.ToTable("ProcessingEvents");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.PromptGenerationInstruction", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ActivatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActivatedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChangeNote")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstructionText")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId", "Status");
+
+                    b.HasIndex("JobId", "VersionNumber")
+                        .IsUnique();
+
+                    b.ToTable("PromptGenerationInstructions");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.PromptTestRun", b =>
                 {
                     b.Property<string>("Id")
@@ -442,6 +944,14 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("ApplicationIdsJson")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedModelId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedReasoningLevel")
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("CompletedAt")
@@ -454,8 +964,18 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PromptId")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ReviewNotes")
@@ -478,9 +998,281 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.ToTable("PromptTestRuns");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.RoleAssignment", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DepartmentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("EffectiveAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RoleGroupMappingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("active");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserObjectId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RoleGroupMappingId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("TenantId", "UserObjectId", "RoleGroupMappingId")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active' AND [RoleGroupMappingId] IS NOT NULL");
+
+                    b.HasIndex("TenantId", "UserObjectId", "Role", "OrganizationId", "DepartmentId")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active' AND [Source] = 'delegated'");
+
+                    b.ToTable("RoleAssignments", t =>
+                        {
+                            t.HasCheckConstraint("CK_RoleAssignments_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.RoleGroupMapping", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DepartmentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GroupObjectId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OrganizationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "GroupObjectId")
+                        .IsUnique();
+
+                    b.ToTable("RoleGroupMappings", t =>
+                        {
+                            t.HasCheckConstraint("CK_RoleGroupMappings_Scope", "(Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringBatch", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT")
+                        .HasColumnName("BatchId");
+
+                    b.Property<string>("ApplicationIdsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CancelRequested")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastPolledAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LeasedUntil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("NextPollAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PollUrl")
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PromptVersionId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RunCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubmissionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SubmittedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId")
+                        .HasDatabaseName("IX_ScoringBatches_JobId");
+
+                    b.HasIndex("SubmissionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ScoringBatches_SubmissionId")
+                        .HasFilter("[SubmissionId] IS NOT NULL");
+
+                    b.HasIndex("Status", "NextPollAt")
+                        .HasDatabaseName("IX_ScoringBatches_Status_NextPollAt");
+
+                    b.ToTable("ScoringBatches", (string)null);
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringJobProgress", b =>
+                {
+                    b.Property<string>("JobId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AppsCompleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("AppsFailed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BatchesCompleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BatchesFailed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BatchesPending")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BatchesSubmitted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CancelRequested")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TotalApps")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("JobId");
+
+                    b.ToTable("ScoringJobProgress", (string)null);
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
                 {
                     b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedModelId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedReasoningLevel")
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApprovedTestRunId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Author")
@@ -494,6 +1286,9 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("GenerationInstructionVersionId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("GenerationMetadataJson")
                         .HasColumnType("TEXT");
 
@@ -504,12 +1299,22 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("LastModifiedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("PromptText")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<int?>("Rating")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Source")
                         .IsRequired()
@@ -539,7 +1344,8 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("AiModelId")
                         .IsRequired()
                         .HasMaxLength(100)
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ModelDeploymentId");
 
                     b.Property<string>("ApplicationId")
                         .IsRequired()
@@ -547,7 +1353,8 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("CategoryScoresJson")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("SubScoresJson");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
@@ -558,27 +1365,42 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("ImprovementTipsJson")
                         .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("InputTokens")
-                        .HasColumnType("INTEGER");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("ImprovementRecsJson");
 
                     b.Property<string>("MustHaveEvaluationJson")
                         .IsRequired()
-                        .HasColumnType("TEXT");
+                        .HasColumnType("TEXT")
+                        .HasColumnName("MustHaveResultJson");
 
-                    b.Property<int>("OutputTokens")
-                        .HasColumnType("INTEGER");
+                    b.Property<double?>("ParserConfidence")
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("ParserWarningsJson")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("PromptVersion")
                         .IsRequired()
+                        .HasColumnType("TEXT")
+                        .HasColumnName("PromptVersionId");
+
+                    b.Property<string>("RawParsedResponseJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RawResponseText")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasoningLevel")
+                        .IsRequired()
+                        .HasMaxLength(30)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("RunIndex")
                         .HasColumnType("INTEGER");
 
                     b.Property<double>("TotalScore")
-                        .HasColumnType("REAL");
+                        .HasColumnType("REAL")
+                        .HasColumnName("OverallScore");
 
                     b.HasKey("Id");
 
@@ -587,10 +1409,280 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.ToTable("ScoringRuns");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadItem", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApplicationId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastAttemptAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("LastHttpStatus")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("NextRetryAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OccurrenceKey")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Ordinal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OutcomeCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OutcomeMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("RawSizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApplicationId")
+                        .IsUnique()
+                        .HasFilter("[ApplicationId] IS NOT NULL");
+
+                    b.HasIndex("SessionId", "ContentFingerprint");
+
+                    b.HasIndex("SessionId", "OccurrenceKey")
+                        .IsUnique();
+
+                    b.HasIndex("SessionId", "Ordinal")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "UpdatedAt");
+
+                    b.HasIndex("SessionId", "Status", "Ordinal");
+
+                    b.ToTable("UploadItems", t =>
+                        {
+                            t.HasCheckConstraint("CK_UploadItems_Application", "(Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)");
+
+                            t.HasCheckConstraint("CK_UploadItems_Attempts", "AttemptCount >= 0 AND AttemptCount <= 4");
+
+                            t.HasCheckConstraint("CK_UploadItems_RawSizeBytes", "RawSizeBytes >= 0");
+
+                            t.HasCheckConstraint("CK_UploadItems_Status", "Status IN ('waiting', 'throttled', 'uploading', 'retrying', 'succeeded', 'skipped_duplicate', 'failed', 'interrupted')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSession", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ActiveCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowDuplicates")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FailedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("FileConcurrency")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("InterruptedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("JobId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastHeartbeatAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("MaxInFlightBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxIndividualFileBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OwnerActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OwnerDisplayName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SkippedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SucceededCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TerminalItemCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("TotalItemCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("WaitingCount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId", "CreatedAt");
+
+                    b.HasIndex("OwnerActorId", "CreatedAt");
+
+                    b.HasIndex("Status", "LastHeartbeatAt");
+
+                    b.ToTable("UploadSessions", t =>
+                        {
+                            t.HasCheckConstraint("CK_UploadSessions_Counts", "TotalItemCount > 0 AND WaitingCount >= 0 AND ActiveCount >= 0 AND SucceededCount >= 0 AND SkippedCount >= 0 AND FailedCount >= 0 AND InterruptedCount >= 0 AND TerminalItemCount >= 0");
+
+                            t.HasCheckConstraint("CK_UploadSessions_Limits", "FileConcurrency > 0 AND MaxIndividualFileBytes > 0 AND MaxInFlightBytes >= MaxIndividualFileBytes");
+
+                            t.HasCheckConstraint("CK_UploadSessions_Status", "Status IN ('active', 'completed')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSettings", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FileConcurrency")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxInFlightBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxIndividualFileBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("UploadSettings", t =>
+                        {
+                            t.HasCheckConstraint("CK_UploadSettings_FileConcurrency", "FileConcurrency > 0");
+
+                            t.HasCheckConstraint("CK_UploadSettings_MaxInFlightBytes", "MaxInFlightBytes >= MaxIndividualFileBytes");
+
+                            t.HasCheckConstraint("CK_UploadSettings_MaxIndividualFileBytes", "MaxIndividualFileBytes > 0");
+
+                            t.HasCheckConstraint("CK_UploadSettings_Singleton", "Id = 'optional-file-upload'");
+                        });
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.User", b =>
                 {
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("AuthenticationProvider")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("simple");
+
+                    b.Property<int>("AuthorizationVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
@@ -603,16 +1695,32 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("EntraObjectId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EntraTenantId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("FullName")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(true);
 
                     b.Property<DateTime?>("LastLogin")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PasswordHash")
-                        .IsRequired()
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
+
+                    b.Property<bool>("PasswordResetRequired")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -627,9 +1735,17 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("Username")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("[AuthenticationProvider] = 'simple'");
 
-                    b.ToTable("Users");
+                    b.HasIndex("EntraTenantId", "EntraObjectId")
+                        .IsUnique()
+                        .HasFilter("[AuthenticationProvider] = 'entra'");
+
+                    b.ToTable("Users", t =>
+                        {
+                            t.HasCheckConstraint("CK_Users_IdentityProvider", "(AuthenticationProvider = 'simple' AND PasswordHash IS NOT NULL AND EntraTenantId IS NULL AND EntraObjectId IS NULL) OR (AuthenticationProvider = 'entra' AND PasswordHash IS NULL AND EntraTenantId IS NOT NULL AND EntraObjectId IS NOT NULL AND PasswordResetRequired = 0)");
+                        });
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.AggregatedResult", b =>
@@ -651,13 +1767,7 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("TalentMatch.Domain.Entities.PromptTestRun", "PromptTestRun")
-                        .WithMany()
-                        .HasForeignKey("PromptTestRunId");
-
                     b.Navigation("Job");
-
-                    b.Navigation("PromptTestRun");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ApplicationDocument", b =>
@@ -671,6 +1781,54 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Application");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.Department", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Organization", "Organization")
+                        .WithMany("Departments")
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Organization");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.DepartmentMembership", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.User", "User")
+                        .WithMany("DepartmentMemberships")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.Department", "Department")
+                        .WithMany("Memberships")
+                        .HasForeignKey("DepartmentId", "OrganizationId")
+                        .HasPrincipalKey("Id", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Department");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.DocumentBlob", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.ApplicationDocument", null)
+                        .WithOne()
+                        .HasForeignKey("TalentMatch.Domain.Entities.DocumentBlob", "DocumentId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.ExtractionArtifact", b =>
                 {
                     b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
@@ -680,6 +1838,24 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Application");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.Job", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Organization", "Organization")
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TalentMatch.Domain.Entities.Department", "DepartmentEntity")
+                        .WithMany()
+                        .HasForeignKey("DepartmentId", "OrganizationId")
+                        .HasPrincipalKey("Id", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("DepartmentEntity");
+
+                    b.Navigation("Organization");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.JobConfigVersion", b =>
@@ -693,6 +1869,24 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Job");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.JobSpecExtraction", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.ExtractionInstructionVersion", "InstructionVersion")
+                        .WithMany()
+                        .HasForeignKey("InstructionVersionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("InstructionVersion");
+
+                    b.Navigation("Job");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.ManualReviewData", b =>
                 {
                     b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
@@ -702,6 +1896,33 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Application");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.OrganizationMembership", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Organization", "Organization")
+                        .WithMany("Memberships")
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.User", "User")
+                        .WithMany("OrganizationMemberships")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.DepartmentMembership", "DefaultDepartmentMembership")
+                        .WithMany("DefaultForOrganizationMemberships")
+                        .HasForeignKey("DefaultDepartmentMembershipId", "UserId", "OrganizationId")
+                        .HasPrincipalKey("Id", "UserId", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("DefaultDepartmentMembership");
+
+                    b.Navigation("Organization");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.PromptTestRun", b =>
@@ -721,6 +1942,24 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Job");
 
                     b.Navigation("Prompt");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.RoleAssignment", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.RoleGroupMapping", "RoleGroupMapping")
+                        .WithMany()
+                        .HasForeignKey("RoleGroupMappingId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TalentMatch.Domain.Entities.User", "User")
+                        .WithMany("RoleAssignments")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("RoleGroupMapping");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
@@ -745,6 +1984,35 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Application");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadItem", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
+                        .WithOne()
+                        .HasForeignKey("TalentMatch.Domain.Entities.UploadItem", "ApplicationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TalentMatch.Domain.Entities.UploadSession", "Session")
+                        .WithMany("Items")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Application");
+
+                    b.Navigation("Session");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSession", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Job");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.Application", b =>
                 {
                     b.Navigation("AggregatedResult");
@@ -758,6 +2026,16 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("ScoringRuns");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.Department", b =>
+                {
+                    b.Navigation("Memberships");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.DepartmentMembership", b =>
+                {
+                    b.Navigation("DefaultForOrganizationMemberships");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.Job", b =>
                 {
                     b.Navigation("Applications");
@@ -765,9 +2043,30 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("ConfigVersions");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.Organization", b =>
+                {
+                    b.Navigation("Departments");
+
+                    b.Navigation("Memberships");
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.ScoringPrompt", b =>
                 {
                     b.Navigation("TestRuns");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.UploadSession", b =>
+                {
+                    b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.User", b =>
+                {
+                    b.Navigation("DepartmentMemberships");
+
+                    b.Navigation("OrganizationMemberships");
+
+                    b.Navigation("RoleAssignments");
                 });
 #pragma warning restore 612, 618
         }

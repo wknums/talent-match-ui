@@ -4,8 +4,8 @@ import type { AuthenticatedRequest } from '../middleware/auth.js'
 import { jobRepo, applicationRepo } from '../storage/repos/index.js'
 import { auditService } from '../services/audit.js'
 import type {
-  Application, ApplicationDocument, ExtractionArtifact,
-  ScoringRun, AggregatedResult, ManualReviewData, ManualReviewAuditEntry
+  Application, ApplicationDocument,
+  ManualReviewData, ManualReviewAuditEntry
 } from '../../src/types/index.js'
 
 function normalizeCategoryName(name: string): string {
@@ -54,6 +54,7 @@ export function createApplicationsRouter() {
       }
 
       const files = req.body.files as Array<{ fileName: string; content: string; mimeType: string; sizeBytes: number }>
+      const allowDuplicates = req.body.allowDuplicates === true
       if (!files || !Array.isArray(files) || files.length === 0) {
         return res.status(400).json({ error: 'Validation Error', message: 'No files provided' })
       }
@@ -63,6 +64,7 @@ export function createApplicationsRouter() {
 
       const applicationIds: string[] = []
       const warnings: string[] = []
+      const requestFingerprints = new Set<string>()
 
       for (const file of files) {
         // Type validation
@@ -78,10 +80,17 @@ export function createApplicationsRouter() {
 
         const fingerprint = createHash('sha256').update(file.content || '').digest('hex')
 
-        // Duplicate detection
-        const duplicate = await applicationRepo.findDuplicateFingerprint(jobId, fingerprint)
-        if (duplicate) {
-          warnings.push(`${file.fileName}: duplicate detected (matches ${duplicate.fileName})`)
+        if (!allowDuplicates) {
+          const repeatedInRequest = requestFingerprints.has(fingerprint)
+          const duplicate = repeatedInRequest
+            ? undefined
+            : await applicationRepo.findDuplicateFingerprint(jobId, fingerprint)
+          requestFingerprints.add(fingerprint)
+          if (repeatedInRequest || duplicate) {
+            const match = duplicate ? ` (matches ${duplicate.fileName})` : ''
+            warnings.push(`${file.fileName}: duplicate detected${match}`)
+            continue
+          }
         }
 
         const applicationId = randomUUID()
@@ -120,7 +129,7 @@ export function createApplicationsRouter() {
         req.user?.username || 'unknown',
         'applications.uploaded',
         'Job', jobId,
-        { count: applicationIds.length, warnings }
+        { count: applicationIds.length, warnings, allowDuplicates }
       )
 
       res.status(201).json({ applicationIds, warnings })
@@ -141,7 +150,7 @@ export function createApplicationsRouter() {
       }
 
       const includeTestCases = req.query.includeTestCases === 'true'
-      let apps = includeTestCases
+      const apps = includeTestCases
         ? await applicationRepo.getByJobIdAll(jobId)
         : await applicationRepo.getByJobId(jobId)
 
@@ -335,7 +344,6 @@ export function createApplicationsRouter() {
       const effectiveJobId = existing?.jobId || req.body.jobId || ''
       const job = effectiveJobId ? await jobRepo.getById(effectiveJobId) : null
       const rubricCategories = job?.currentVersion.rubric ?? []
-      const categoryNameById = new Map(job?.currentVersion.rubric.map(category => [category.id, category.name]) ?? [])
       const existingRubricScores = (existing?.rubricScores || {}) as Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>
       const incomingRubricScores = (rubricScores || {}) as Record<string, { score?: number; points?: number; maxPoints?: number; comment?: string }>
       const responseRubricScores: Record<string, { score: number; points: number; maxPoints: number; comment: string }> = {}

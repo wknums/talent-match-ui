@@ -1,6 +1,5 @@
 ﻿import type {
   Job,
-  JobConfigVersion,
   Application,
   ScoringRun,
   AggregatedResult,
@@ -13,12 +12,34 @@
   DesiredCriteria,
   AggregationStrategy,
   RubricSource,
+  RubricEnvelope,
+  ExtractionInstructionVersion,
+  ExtractionInstructionVersionDetail,
+  ExtractionResult,
+  ExtractionFailure,
   ScoringPrompt,
   PromptTestRun,
+  CreateUploadSessionRequest,
+  UploadItem,
+  UploadSessionDetail,
+  UploadSessionSummary,
+  UpdateUploadItemStatusRequest,
+  UploadSettings,
+  UpdateUploadSettingsRequest,
 } from '@/types'
 import { kv } from '@/lib/spark-client'
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+const mockUploadSessions = new Map<string, UploadSessionDetail>()
+let mockUploadSettings: UploadSettings = {
+  fileConcurrency: 4,
+  maxIndividualFileBytes: 4194304,
+  maxInFlightBytes: 104857600,
+  concurrencyVersion: 0,
+  persisted: false,
+  updatedAt: null,
+  updatedBy: null,
+}
 
 const generateJobCode = (title: string, department: string): string => {
   const titlePart = title.split(' ').map(w => w[0]).join('').slice(0, 3).toUpperCase()
@@ -317,36 +338,40 @@ export const mockAPI = {
     }
   },
 
-  async extractJobSpec(_fileName: string, _content: string, _mimeType: string): Promise<any> {
+  async extractJobSpec(_fileName: string, _content: string, _mimeType: string): Promise<ExtractionResult> {
     await delay(800)
     return {
+      extractionId: `extract-${Date.now()}`,
+      instructionVersionId: 'instruction-v1',
+      protectedContractVersion: 'extraction-rubric-v1',
+      validationStatus: 'valid',
+      validationFindings: [],
       title: 'Senior Software Engineer',
       department: 'Engineering',
       organization: 'TechCorp Solutions',
       jobDescription: 'We are seeking a Senior Software Engineer to join our Engineering team.',
-      mustHaves: [
-        { criterion: 'Bachelor\'s degree in Computer Science', description: 'Educational requirement' },
-        { criterion: '5+ years of professional experience', description: 'Experience requirement' },
-      ],
-      desiredCriteria: [
-        { qualification: 'Experience with cloud platforms (AWS, Azure)', description: 'Cloud experience preferred' },
-        { qualification: 'Open-source contributions', description: 'Community involvement' },
-      ],
-      rubric: [],
+      rubric: {
+        schemaVersion: 'rubric-v2',
+        legacySourceVersionId: null,
+        categories: [
+          { id: 'cat-tech', name: 'Technical Skills', description: 'Programming languages, frameworks, tools', weight: 0.7, order: 0 },
+          { id: 'cat-collab', name: 'Communication', description: 'Written and verbal skills', weight: 0.3, order: 1 },
+        ],
+        items: [],
+      },
     }
   },
 
-  async extractRubric(_fileName: string, _content: string, _mimeType: string): Promise<any> {
+  async extractRubric(_fileName: string, _content: string, _mimeType: string): Promise<RubricEnvelope> {
     await delay(800)
     return {
-      title: 'Senior Software Engineer',
+      schemaVersion: 'rubric-v2',
+      legacySourceVersionId: null,
       categories: [
-        { name: 'Technical Skills', description: 'Programming languages, frameworks, tools', weight: 0.35 },
-        { name: 'Experience', description: 'Years and relevant projects', weight: 0.25 },
-        { name: 'Problem Solving', description: 'Analytical thinking', weight: 0.20 },
-        { name: 'Communication', description: 'Written and verbal skills', weight: 0.10 },
-        { name: 'Cultural Fit', description: 'Company values alignment', weight: 0.10 },
+        { id: 'cat-tech', name: 'Technical Skills', description: 'Programming languages, frameworks, tools', weight: 0.7, order: 0 },
+        { id: 'cat-collab', name: 'Communication', description: 'Written and verbal skills', weight: 0.3, order: 1 },
       ],
+      items: [],
     }
   },
 
@@ -366,7 +391,7 @@ export const mockAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: RubricCategory[]
+    rubric: RubricCategory[] | RubricEnvelope
     mustHaves: MustHave[]
     desiredCriteria?: DesiredCriteria[]
     jobDescription?: string
@@ -379,6 +404,8 @@ export const mockAPI = {
     jobCode?: string
     rubricSource?: RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
   }): Promise<Job> {
     await delay(500)
     const jobId = `job-${Date.now()}`
@@ -400,7 +427,8 @@ export const mockAPI = {
       currentVersion: {
         versionId: `v1-${Date.now()}`,
         jobId,
-        rubric: data.rubric,
+        rubric: Array.isArray(data.rubric) ? data.rubric : data.rubric.categories.map(category => ({ id: category.id, name: category.name, description: category.description || '', weight: category.weight })),
+        rubricEnvelope: Array.isArray(data.rubric) ? undefined : data.rubric,
         mustHaves: data.mustHaves,
         desiredCriteria: data.desiredCriteria || [],
         runsPerApplication: data.runsPerApplication,
@@ -411,6 +439,8 @@ export const mockAPI = {
         rubricApprovalStatus: rubricSource === 'manual' ? 'approved' : 'draft',
         rubricSource,
         rawExtractionResponse: data.rawExtractionResponse,
+        extractionId: data.extractionId,
+        extractionInstructionVersionId: data.extractionInstructionVersionId,
         createdAt: new Date().toISOString(),
       },
       stats: {
@@ -438,7 +468,7 @@ export const mockAPI = {
     department: string
     organization: string
     postingDate: string
-    rubric: RubricCategory[]
+    rubric: RubricCategory[] | RubricEnvelope
     mustHaves: MustHave[]
     desiredCriteria?: DesiredCriteria[]
     jobDescription?: string
@@ -451,6 +481,9 @@ export const mockAPI = {
     jobCode?: string
     rubricSource?: RubricSource
     rawExtractionResponse?: string
+    extractionId?: string
+    extractionInstructionVersionId?: string
+    expectedConfigVersionId?: string
   }): Promise<Job> {
     await delay(500)
     const jobs = await kv.get<Job[]>('jobs') || getDefaultJobs()
@@ -474,7 +507,8 @@ export const mockAPI = {
       currentVersion: {
         versionId: `v${Date.now()}`,
         jobId,
-        rubric: data.rubric,
+        rubric: Array.isArray(data.rubric) ? data.rubric : data.rubric.categories.map(category => ({ id: category.id, name: category.name, description: category.description || '', weight: category.weight })),
+        rubricEnvelope: Array.isArray(data.rubric) ? undefined : data.rubric,
         mustHaves: data.mustHaves,
         desiredCriteria: data.desiredCriteria || [],
         runsPerApplication: data.runsPerApplication,
@@ -485,6 +519,8 @@ export const mockAPI = {
         rubricApprovalStatus: 'draft',
         rubricSource: data.rubricSource || 'manual',
         rawExtractionResponse: data.rawExtractionResponse,
+        extractionId: data.extractionId,
+        extractionInstructionVersionId: data.extractionInstructionVersionId,
         createdAt: new Date().toISOString(),
       },
     }
@@ -525,6 +561,80 @@ export const mockAPI = {
       rubricApprovalStatus: status,
       updatedAt: new Date().toISOString(),
     }
+  },
+
+  async previewLegacyRubricConversion(jobId: string, _expectedConfigVersionId: string): Promise<RubricEnvelope> {
+    const job = await this.getJob(jobId)
+    return job?.currentVersion.rubricEnvelope || await this.extractRubric('legacy.md', '', 'text/markdown')
+  },
+
+  async confirmLegacyRubricConversion(_jobId: string, _expectedConfigVersionId: string, reviewedRubric: RubricEnvelope): Promise<RubricEnvelope> {
+    return reviewedRubric
+  },
+
+  async listExtractionInstructions(): Promise<ExtractionInstructionVersion[]> {
+    return [{
+      id: 'instruction-v1',
+      versionNumber: 1,
+      instructionText: 'Extract every independently assessable requirement as its own item.',
+      modelId: 'o3',
+      reasoningLevel: 'high',
+      protectedContractVersion: 'extraction-rubric-v1',
+      status: 'active',
+      validationStatus: 'valid',
+      validationFindings: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'system:seed',
+      validatedAt: new Date().toISOString(),
+      validatedBy: 'system:seed',
+      activatedAt: new Date().toISOString(),
+      activatedBy: 'system:seed',
+      concurrencyVersion: 1,
+    }]
+  },
+
+  async getExtractionInstruction(versionId: string): Promise<ExtractionInstructionVersionDetail> {
+    const version = (await this.listExtractionInstructions()).find(item => item.id === versionId) || (await this.listExtractionInstructions())[0]
+    return { ...version, protectedContract: { version: 'extraction-rubric-v1' } }
+  },
+
+  async createExtractionInstructionDraft(instructionText: string, changeNote?: string): Promise<ExtractionInstructionVersion> {
+    return {
+      id: `instruction-${Date.now()}`,
+      versionNumber: 2,
+      instructionText,
+      modelId: 'o3',
+      reasoningLevel: 'high',
+      protectedContractVersion: 'extraction-rubric-v1',
+      status: 'draft',
+      validationStatus: 'unvalidated',
+      changeNote,
+      validationFindings: [],
+      createdAt: new Date().toISOString(),
+      createdBy: 'current.user@company.com',
+      concurrencyVersion: 1,
+    }
+  },
+
+  async validateExtractionInstruction(versionId: string): Promise<ExtractionResult | ExtractionFailure> {
+    return {
+      extractionId: `extract-${versionId}`,
+      instructionVersionId: versionId,
+      protectedContractVersion: 'extraction-rubric-v1',
+      validationStatus: 'valid',
+      validationFindings: [],
+      title: 'Senior Software Engineer',
+      department: 'Engineering',
+      organization: 'TechCorp Solutions',
+      jobDescription: 'We are seeking a Senior Software Engineer.',
+      rubric: await this.extractRubric('sample.md', '', 'text/markdown'),
+    }
+  },
+
+  async activateExtractionInstruction(versionId: string, expectedConcurrencyVersion: number): Promise<ExtractionInstructionVersion> {
+    const detail = await this.getExtractionInstruction(versionId)
+    const { protectedContract: _protectedContract, ...version } = detail
+    return { ...version, status: 'active', concurrencyVersion: expectedConcurrencyVersion + 1, activatedAt: new Date().toISOString(), activatedBy: 'current.user@company.com' }
   },
 
   async getApplications(jobId: string, filters?: {
@@ -626,7 +736,7 @@ export const mockAPI = {
       confidence: 1 - (variance / 100),
       variance,
       finalDecision: variance > (job.currentVersion.varianceThreshold || 15) ? 'NeedsManualReview' : finalScore >= (job.currentVersion.longlistThreshold || 60) ? 'Eligible' : 'Excluded',
-      rationaleText: `Engine-aggregated assessment across ${runs.length} scoring runs. Scores ranged from ${Math.min(...scores).toFixed(1)} to ${Math.max(...scores).toFixed(1)} with variance ${variance.toFixed(2)}. ${variance > (job.currentVersion.varianceThreshold || 15) ? 'High variance flagged for manual review.' : 'Consistent scoring across runs confirms decision.'}`,
+      rationaleText: `Engine-aggregated assessment across ${runs.length} scoring runs. Scores ranged from ${Math.min(...scores).toFixed(3)} to ${Math.max(...scores).toFixed(3)} with variance ${variance.toFixed(3)}. ${variance > (job.currentVersion.varianceThreshold || 15) ? 'High variance flagged for manual review.' : 'Consistent scoring across runs confirms decision.'}`,
       recommendationsText: runs.flatMap(r => r.improvementRecommendations).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3).join('; '),
       allRuns: runs,
       createdAt: new Date().toISOString(),
@@ -678,18 +788,179 @@ export const mockAPI = {
     ]
   },
 
-  async retryDLQItem(itemId: string): Promise<void> {
+  async retryDLQItem(_itemId: string): Promise<void> {
     await delay(500)
   },
 
-  async uploadApplications(jobId: string, files: File[]): Promise<{ applicationIds: string[] }> {
+  async uploadApplications(
+    jobId: string,
+    files: File[],
+    _allowDuplicates = false,
+  ): Promise<{ applicationIds: string[]; warnings?: string[] }> {
     await delay(2000)
     return {
       applicationIds: files.map((_, i) => `app-${jobId}-new-${i + 1}`),
     }
   },
 
-  async getAuditEvents(filters?: {
+  async createUploadSession(
+    jobId: string,
+    request: CreateUploadSessionRequest,
+  ): Promise<UploadSessionDetail> {
+    const now = new Date().toISOString()
+    const sessionId = crypto.randomUUID()
+    const items: UploadItem[] = request.items.map(item => ({
+      id: crypto.randomUUID(),
+      sessionId,
+      ...item,
+      status: 'waiting',
+      attemptCount: 0,
+      contentFingerprint: null,
+      applicationId: null,
+      outcomeCode: null,
+      outcomeMessage: null,
+      nextRetryAt: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      concurrencyVersion: 1,
+    }))
+    const session: UploadSessionDetail = {
+      id: sessionId,
+      jobId,
+      status: 'active',
+      allowDuplicates: request.allowDuplicates,
+      limits: {
+        fileConcurrency: 4,
+        maxIndividualFileBytes: 4194304,
+        maxInFlightBytes: 104857600,
+      },
+      counts: {
+        total: items.length,
+        waitingOrThrottled: items.length,
+        activeOrRetrying: 0,
+        succeeded: 0,
+        skipped: 0,
+        failed: 0,
+        interrupted: 0,
+        terminal: 0,
+      },
+      progressPercent: 0,
+      correlationId: crypto.randomUUID(),
+      createdAt: now,
+      startedAt: null,
+      lastHeartbeatAt: now,
+      completedAt: null,
+      concurrencyVersion: 1,
+      items,
+    }
+    mockUploadSessions.set(session.id, session)
+    return session
+  },
+
+  async uploadItemContent(
+    sessionId: string,
+    itemId: string,
+    occurrenceKey: string,
+    file: File,
+  ): Promise<UploadItem> {
+    const now = new Date().toISOString()
+    const item: UploadItem = {
+      id: itemId,
+      sessionId,
+      occurrenceKey,
+      ordinal: 0,
+      fileName: file.name,
+      mimeType: (file.type || 'application/pdf') as UploadItem['mimeType'],
+      rawSizeBytes: file.size,
+      status: 'succeeded',
+      attemptCount: 1,
+      contentFingerprint: null,
+      applicationId: crypto.randomUUID(),
+      outcomeCode: null,
+      outcomeMessage: null,
+      nextRetryAt: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+      concurrencyVersion: 2,
+    }
+    const session = mockUploadSessions.get(sessionId)
+    if (session) session.items = session.items.map(current => current.id === itemId ? item : current)
+    return item
+  },
+
+  async listUploadSessions(
+    jobId?: string,
+    includeTerminal = true,
+  ): Promise<UploadSessionSummary[]> {
+    return [...mockUploadSessions.values()]
+      .filter(session => (!jobId || session.jobId === jobId) && (includeTerminal || session.status !== 'completed'))
+  },
+
+  async getUploadSession(sessionId: string): Promise<UploadSessionDetail> {
+    const session = mockUploadSessions.get(sessionId)
+    if (!session) throw new Error('Upload session not found')
+    return session
+  },
+
+  async heartbeatUploadSession(
+    sessionId: string,
+    expectedConcurrencyVersion: number,
+  ): Promise<UploadSessionSummary> {
+    const session = await this.getUploadSession(sessionId)
+    session.lastHeartbeatAt = new Date().toISOString()
+    session.concurrencyVersion = expectedConcurrencyVersion + 1
+    return session
+  },
+
+  async updateUploadItemStatus(
+    sessionId: string,
+    itemId: string,
+    request: UpdateUploadItemStatusRequest,
+  ): Promise<UploadItem> {
+    const session = await this.getUploadSession(sessionId)
+    const current = session.items.find(item => item.id === itemId)
+    if (!current) throw new Error('Upload item not found')
+    const updated: UploadItem = {
+      ...current,
+      status: request.status,
+      outcomeCode: request.outcomeCode ?? current.outcomeCode,
+      outcomeMessage: request.outcomeMessage ?? current.outcomeMessage,
+      nextRetryAt: request.nextRetryAt ?? null,
+      updatedAt: new Date().toISOString(),
+      completedAt: request.status === 'failed' || request.status === 'interrupted'
+        ? new Date().toISOString()
+        : null,
+      concurrencyVersion: current.concurrencyVersion + 1,
+    }
+    session.items = session.items.map(item => item.id === itemId ? updated : item)
+    return updated
+  },
+
+  async getUploadSettings(): Promise<UploadSettings> {
+    return { ...mockUploadSettings }
+  },
+
+  async updateUploadSettings(
+    request: UpdateUploadSettingsRequest,
+  ): Promise<UploadSettings> {
+    if (request.expectedConcurrencyVersion !== mockUploadSettings.concurrencyVersion) {
+      throw new Error('The upload settings have changed.')
+    }
+    mockUploadSettings = {
+      fileConcurrency: request.fileConcurrency,
+      maxIndividualFileBytes: request.maxIndividualFileBytes,
+      maxInFlightBytes: request.maxInFlightBytes,
+      concurrencyVersion: request.expectedConcurrencyVersion + 1,
+      persisted: true,
+      updatedAt: new Date().toISOString(),
+      updatedBy: 'mock-admin',
+    }
+    return { ...mockUploadSettings }
+  },
+
+  async getAuditEvents(_filters?: {
     entityType?: string
     entityId?: string
     startDate?: string
@@ -849,7 +1120,7 @@ export const mockAPI = {
     }
   },
 
-  async generatePrompt(jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
+  async generatePrompt(_jobId: string): Promise<{ promptText: string; generationMetadata: Record<string, any> }> {
     await delay(2000)
     return {
       promptText: 'You are evaluating a candidate for a position. Score each rubric category from 0-100 based on evidence from their documents.',
@@ -873,7 +1144,7 @@ export const mockAPI = {
     }
   },
 
-  async getTestRuns(jobId: string, promptId: string): Promise<PromptTestRun[]> {
+  async getTestRuns(_jobId: string, _promptId: string): Promise<PromptTestRun[]> {
     await delay(300)
     return []
   },

@@ -16,7 +16,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Plus, X, UploadSimple, File, Sparkle, WarningCircle } from '@phosphor-icons/react'
 import { api } from '@/lib/api'
 import { toast } from 'sonner'
-import type { RubricCategory, MustHave, DesiredCriteria, AggregationStrategy, RubricApprovalStatus, RubricSource } from '@/types'
+import type {
+  RubricCategory,
+  MustHave,
+  DesiredCriteria,
+  AggregationStrategy,
+  RubricApprovalStatus,
+  RubricSource,
+  RubricEnvelope,
+  ExtractionValidationFinding,
+} from '@/types'
+import { RubricEditor } from '@/components/RubricEditor'
 
 interface CreateJobDialogProps {
   open: boolean
@@ -26,6 +36,10 @@ interface CreateJobDialogProps {
 }
 
 import type { Job } from '@/types'
+
+export function requiresLegacyConversionConfirmation(editingJob: Job | null | undefined, rubricEnvelope: RubricEnvelope | null): boolean {
+  return Boolean(editingJob && !editingJob.currentVersion.rubricEnvelope && rubricEnvelope)
+}
 
 export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: CreateJobDialogProps) {
   const [title, setTitle] = useState('')
@@ -55,6 +69,11 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   const [rubricApprovalStatus, setRubricApprovalStatus] = useState<RubricApprovalStatus>('approved')
   const [rubricSource, setRubricSource] = useState<RubricSource>('manual')
   const [rawExtractionResponse, setRawExtractionResponse] = useState<string | undefined>(undefined)
+  const [rubricEnvelope, setRubricEnvelope] = useState<RubricEnvelope | null>(null)
+  const [extractionId, setExtractionId] = useState<string | undefined>(undefined)
+  const [extractionInstructionVersionId, setExtractionInstructionVersionId] = useState<string | undefined>(undefined)
+  const [extractionFindings, setExtractionFindings] = useState<ExtractionValidationFinding[]>([])
+  const [previewingLegacyConversion, setPreviewingLegacyConversion] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const rubricFileInputRef = useRef<HTMLInputElement>(null)
 
@@ -76,8 +95,14 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
       setRubricApprovalStatus(editingJob.currentVersion.rubricApprovalStatus || 'approved')
       setRubricSource(editingJob.currentVersion.rubricSource || 'manual')
       setRawExtractionResponse(editingJob.currentVersion.rawExtractionResponse)
+      setRubricEnvelope(editingJob.currentVersion.rubricEnvelope || null)
+      setExtractionId(editingJob.currentVersion.extractionId)
+      setExtractionInstructionVersionId(editingJob.currentVersion.extractionInstructionVersionId)
+      setExtractionFindings(editingJob.currentVersion.extraction?.validationFindings || [])
     }
   }, [editingJob])
+
+  const hasPendingLegacyConversionPreview = requiresLegacyConversionConfirmation(editingJob, rubricEnvelope)
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -110,13 +135,47 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
 
       // Track rubric source and raw extraction response for audit
       setRawExtractionResponse(JSON.stringify(extracted))
+      setExtractionId(extracted.extractionId)
+      setExtractionInstructionVersionId(extracted.instructionVersionId)
+      setExtractionFindings(extracted.validationFindings || [])
 
       setTitle(extracted.title || '')
       setDepartment(extracted.department || '')
       setOrganization(extracted.organization && extracted.organization !== 'Not Specified' ? extracted.organization : '')
       setJobDescription(extracted.jobDescription || '')
 
-      if (extracted.mustHaves && Array.isArray(extracted.mustHaves)) {
+      if (extracted.rubric?.schemaVersion === 'rubric-v2') {
+        setRubricEnvelope(extracted.rubric)
+        setRubricCategories(
+          extracted.rubric.categories.map((category: any) => ({
+            id: category.id,
+            name: category.name || '',
+            description: category.description || '',
+            weight: category.weight || 0,
+          })),
+        )
+        setMustHaves(
+          extracted.rubric.items
+            .filter((item: any) => item.requirementType === 'must_have' || item.requirementType === 'experience')
+            .map((item: any, i: number) => ({
+              id: item.id || String(i + 1),
+              criterion: item.text || '',
+              description: item.sourceText || '',
+            })),
+        )
+        setDesiredCriteria(
+          extracted.rubric.items
+            .filter((item: any) => item.requirementType === 'desired')
+            .map((item: any, i: number) => ({
+              id: item.id || String(i + 1),
+              qualification: item.text || '',
+              description: item.sourceText || '',
+            })),
+        )
+        setRubricSource('extracted')
+        setRubricApprovalStatus('draft')
+      } else if (extracted.mustHaves && Array.isArray(extracted.mustHaves)) {
+        setRubricEnvelope(null)
         setMustHaves(
           extracted.mustHaves.map((m: any, i: number) => ({
             id: String(i + 1),
@@ -124,30 +183,30 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
             description: m.description || '',
           }))
         )
-      }
+        if (extracted.desiredCriteria && Array.isArray(extracted.desiredCriteria)) {
+          setDesiredCriteria(
+            extracted.desiredCriteria.map((d: any, i: number) => ({
+              id: String(i + 1),
+              qualification: d.qualification || '',
+              description: d.description || '',
+            }))
+          )
+        }
 
-      if (extracted.desiredCriteria && Array.isArray(extracted.desiredCriteria)) {
-        setDesiredCriteria(
-          extracted.desiredCriteria.map((d: any, i: number) => ({
-            id: String(i + 1),
-            qualification: d.qualification || '',
-            description: d.description || '',
-          }))
-        )
-      }
-
-      if (extracted.rubric && Array.isArray(extracted.rubric) && extracted.rubric.length > 0) {
-        setRubricCategories(
-          extracted.rubric.map((r: any, i: number) => ({
-            id: String(i + 1),
-            name: r.name || '',
-            description: r.description || '',
-            weight: r.weight || 0,
-          }))
-        )
-        setRubricSource('extracted')
-        setRubricApprovalStatus('draft')
+        if (extracted.rubric && Array.isArray(extracted.rubric) && extracted.rubric.length > 0) {
+          setRubricCategories(
+            extracted.rubric.map((r: any, i: number) => ({
+              id: String(i + 1),
+              name: r.name || '',
+              description: r.description || '',
+              weight: r.weight || 0,
+            }))
+          )
+          setRubricSource('extracted')
+          setRubricApprovalStatus('draft')
+        }
       } else if (!rubricUploadedFile) {
+        setRubricEnvelope(null)
         // Auto-generate draft rubric: 60% weight to must-haves
         const mhItems = (extracted.mustHaves || []).filter((m: any) => m.criterion)
         const dcItems = (extracted.desiredCriteria || []).filter((d: any) => d.qualification)
@@ -236,31 +295,18 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
 
       // Track raw response for audit
       setRawExtractionResponse(JSON.stringify(extracted))
+      setExtractionFindings([])
 
-      // Check title mismatch
-      if (extracted.title && title && extracted.title.toLowerCase() !== title.toLowerCase()) {
-        setRubricTitleMismatch(
-          `The rubric document title "${extracted.title}" does not match the job title "${title}". Please correct and upload the corrected rubric document. The existing rubric document will be discarded.`
+      if (extracted.schemaVersion === 'rubric-v2') {
+        setRubricEnvelope(extracted)
+        setRubricCategories(
+          extracted.categories.map((category: any) => ({
+            id: category.id,
+            name: category.name || '',
+            description: category.description || '',
+            weight: category.weight || 0,
+          })),
         )
-        setRubricUploadedFile(null)
-        if (rubricFileInputRef.current) rubricFileInputRef.current.value = ''
-        return
-      }
-
-      if (extracted.categories && Array.isArray(extracted.categories)) {
-        const rubric: RubricCategory[] = extracted.categories.map((c: any, i: number) => ({
-          id: `rubric-${Date.now()}-${i}`,
-          name: c.name || '',
-          description: c.description || '',
-          weight: c.weight || 0,
-        }))
-
-        const totalWeight = rubric.reduce((sum, c) => sum + c.weight, 0)
-        if (Math.abs(totalWeight - 1.0) > 0.01) {
-          rubric.forEach(c => c.weight = c.weight / totalWeight)
-        }
-
-        setRubricCategories(rubric)
         setRubricSource('extracted')
         setRubricApprovalStatus('draft')
         toast.success('Rubric extracted from document successfully')
@@ -291,6 +337,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   }
 
   const addRubricCategory = () => {
+    setRubricEnvelope(null)
     setRubricCategories([
       ...rubricCategories,
       { id: Date.now().toString(), name: '', description: '', weight: 0 },
@@ -298,10 +345,12 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   }
 
   const removeRubricCategory = (id: string) => {
+    setRubricEnvelope(null)
     setRubricCategories(rubricCategories.filter((c) => c.id !== id))
   }
 
   const updateRubricCategory = (id: string, field: keyof RubricCategory, value: string | number) => {
+    setRubricEnvelope(null)
     setRubricCategories(
       rubricCategories.map((c) => (c.id === id ? { ...c, [field]: value } : c))
     )
@@ -338,6 +387,11 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
   }
 
   const handleSubmit = async () => {
+    if (hasPendingLegacyConversionPreview) {
+      toast.error('Confirm or cancel the legacy rubric conversion preview before saving.')
+      return
+    }
+
     if (!title || !department || !organization || !jobCode) {
       toast.error('Please fill in job title, job code, department, and organization')
       return
@@ -364,7 +418,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
           department,
           organization,
           postingDate,
-          rubric: validCategories,
+          rubric: rubricEnvelope || validCategories,
           mustHaves: mustHaves.filter((m) => m.criterion),
           desiredCriteria: desiredCriteria.filter((d) => d.qualification),
           jobDescription: jobDescription || undefined,
@@ -376,6 +430,9 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
           rubricDocumentId: editingJob.rubricDocumentId,
           rubricSource,
           rawExtractionResponse,
+          extractionId,
+          extractionInstructionVersionId,
+          expectedConfigVersionId: editingJob.currentVersion.versionId,
           rubricApprovalStatus,
         })
         toast.success('Job updated successfully')
@@ -386,7 +443,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
           department,
           organization,
           postingDate,
-          rubric: validCategories,
+          rubric: rubricEnvelope || validCategories,
           mustHaves: mustHaves.filter((m) => m.criterion),
           desiredCriteria: desiredCriteria.filter((d) => d.qualification),
           jobDescription: jobDescription || undefined,
@@ -397,6 +454,8 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
           specDocumentId: uploadedSpecDocId || undefined,
           rubricSource,
           rawExtractionResponse,
+          extractionId,
+          extractionInstructionVersionId,
         })
         toast.success('Job created successfully')
       }
@@ -404,7 +463,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
       onSuccess?.()
       onClose()
       resetForm()
-    } catch (error) {
+    } catch {
       toast.error(editingJob ? 'Failed to update job' : 'Failed to create job')
     } finally {
       setSubmitting(false)
@@ -432,6 +491,10 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
     setRubricApprovalStatus('approved')
     setRubricSource('manual')
     setRawExtractionResponse(undefined)
+    setRubricEnvelope(null)
+    setExtractionId(undefined)
+    setExtractionInstructionVersionId(undefined)
+    setExtractionFindings([])
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -665,6 +728,110 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
             </div>
 
             <div className="space-y-3">
+              {extractionFindings.length > 0 && (
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      <div className="font-medium">Extraction warnings</div>
+                      <ul className="mt-2 list-disc pl-5">
+                        {extractionFindings.map((finding) => (
+                          <li key={`${finding.code}-${finding.path}`}>
+                            {finding.code}: {finding.message}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              {editingJob && !editingJob.currentVersion.rubricEnvelope && !rubricEnvelope && (
+                <Card>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="text-sm text-muted-foreground">
+                      This rubric uses the legacy category-description format. Preview a rubric-v2 conversion before editing individual items.
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={previewingLegacyConversion}
+                      onClick={async () => {
+                        setPreviewingLegacyConversion(true)
+                        try {
+                          const preview = await api.previewLegacyRubricConversion(editingJob.jobId, editingJob.currentVersion.versionId)
+                          setRubricEnvelope(preview)
+                          toast.success('Legacy conversion preview ready')
+                        } catch (error: any) {
+                          toast.error(error?.message || 'Failed to preview legacy conversion')
+                        } finally {
+                          setPreviewingLegacyConversion(false)
+                        }
+                      }}
+                    >
+                      Preview legacy conversion
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+              {rubricEnvelope && (
+                <Card>
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Itemized Rubric</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Instruction version: {extractionInstructionVersionId || 'pending'}
+                        </p>
+                      </div>
+                      {editingJob && !editingJob.currentVersion.rubricEnvelope && (
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setRubricEnvelope(null)}
+                          >
+                            Cancel preview
+                          </Button>
+                          <Button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await api.confirmLegacyRubricConversion(editingJob.jobId, editingJob.currentVersion.versionId, rubricEnvelope)
+                                toast.success('Legacy rubric converted')
+                                onSuccess?.()
+                                onClose()
+                                resetForm()
+                              } catch (error: any) {
+                                toast.error(error?.message || 'Failed to convert legacy rubric')
+                              }
+                            }}
+                          >
+                            Confirm conversion
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                    <RubricEditor
+                      rubric={rubricEnvelope}
+                      editable
+                      onChange={(next) => {
+                        setRubricEnvelope(next)
+                        setRubricCategories(next.categories.map(category => ({
+                          id: category.id,
+                          name: category.name,
+                          description: category.description || '',
+                          weight: category.weight,
+                        })))
+                        setMustHaves(next.items
+                          .filter(item => item.requirementType === 'must_have' || item.requirementType === 'experience')
+                          .map((item) => ({ id: item.id, criterion: item.text, description: item.sourceText || '' })))
+                        setDesiredCriteria(next.items
+                          .filter(item => item.requirementType === 'desired')
+                          .map((item) => ({ id: item.id, qualification: item.text, description: item.sourceText || '' })))
+                      }}
+                    />
+                  </CardContent>
+                </Card>
+              )}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Label>Rubric Categories</Label>
@@ -888,7 +1055,7 @@ export function CreateJobDialog({ open, onClose, onSuccess, editingJob }: Create
         <Button variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={handleSubmit} disabled={submitting}>
+        <Button onClick={handleSubmit} disabled={submitting || hasPendingLegacyConversionPreview}>
           {submitting ? (editingJob ? 'Updating...' : 'Creating...') : (editingJob ? 'Update Job' : 'Create Job')}
         </Button>
       </DraggableDialogFooter>
