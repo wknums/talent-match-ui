@@ -1342,7 +1342,12 @@ public class ApiClient : INavigationAuditClient
 
     public async Task<PromptTestRunDto?> CreateTestRunAsync(string jobId, string promptId, object files)
     {
-        var response = await _http.PostAsJsonAsync($"/api/jobs/{jobId}/prompts/{promptId}/test-runs", new { Files = files });
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/prompts/{promptId}/test-runs")
+        {
+            Content = JsonContent.Create(new { Files = files }),
+        };
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+        using var response = await _http.SendAsync(request);
         await EnsureSuccessOrThrowAsync(response, "Failed to create prompt test run.");
         return await response.Content.ReadFromJsonAsync<PromptTestRunDto>();
     }

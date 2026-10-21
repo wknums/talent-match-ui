@@ -5,9 +5,19 @@
 @implements IDisposable
 @inject ApiClient Api
 @inject NavigationManager Navigation
+@inject PublicAuthConfiguration AuthConfiguration
 
 <div>
     <h5>Prompt Test Workflow</h5>
+
+    @if (sessionRefreshRequired)
+    {
+        <div role="alert" data-testid="prompt-session-required" style="padding:0.75rem; margin-bottom:1rem; border:1px solid #f59e0b; border-radius:4px;">
+            <p>@sessionRefreshMessage</p>
+            <button type="button" data-testid="prompt-sign-in"
+                    @onclick="() => ProductSessionRecovery.SignInAgain(Navigation, AuthConfiguration)">Sign in again</button>
+        </div>
+    }
 
     @if (CurrentPrompt == null)
     {
@@ -49,10 +59,10 @@
 
                 @if (!showUpload)
                 {
-                    <button @onclick="() => showUpload = true" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
+                    <button @onclick="() => showUpload = true" disabled="@sessionRefreshRequired" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
                         📤 Upload Test Applications
                     </button>
-                    <button @onclick="ReconcileRuns" disabled="@isReconciling" style="margin-left: 0.5rem; padding: 0.5rem 1rem; background: #2f855a; color: white; border: none; border-radius: 4px;">
+                    <button @onclick="ReconcileRuns" disabled="@(isReconciling || sessionRefreshRequired)" style="margin-left: 0.5rem; padding: 0.5rem 1rem; background: #2f855a; color: white; border: none; border-radius: 4px;">
                         @(isReconciling ? "Reconciling..." : "🩹 Reconcile Stuck Runs")
                     </button>
                 }
@@ -66,7 +76,7 @@
                                 @uploadError
                             </div>
                         }
-                        <button @onclick="SubmitTestFiles" disabled="@isUploading" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
+                        <button @onclick="SubmitTestFiles" disabled="@(isUploading || sessionRefreshRequired)" style="margin-top: 0.5rem; padding: 0.5rem 1rem;">
                             @(isUploading ? "Uploading..." : "Start Test Run")
                         </button>
                         <button @onclick="() => showUpload = false" style="margin-left: 0.5rem; padding: 0.5rem 1rem;">Cancel</button>
@@ -481,6 +491,8 @@
     private string? _loadedContextKey;
     private string? uploadError;
     private string? workflowMessage;
+    private bool sessionRefreshRequired;
+    private string? sessionRefreshMessage;
     private PromptProfileStatusDto? profileStatus;
     private ScoringPromptDto? CurrentPrompt => ActivePrompt;
     private bool CanRunTests => CurrentPrompt is not null
@@ -507,12 +519,14 @@
             await LoadSelectedPromptAsync();
             _loadedContextKey = contextKey;
         }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
+        }
         catch (ApiException ex)
         {
             StopPolling();
-            workflowMessage = ex.StatusCode == 401
-                ? "Your session is no longer authorized. Sign in again, then reopen prompt management."
-                : ex.Message;
+            workflowMessage = ex.Message;
         }
         catch (HttpRequestException)
         {
@@ -589,6 +603,10 @@
         {
             profileStatus = await Api.GetPromptProfileStatusAsync(JobId, CurrentPrompt.Id);
         }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
+        }
         catch
         {
             profileStatus = null;
@@ -602,9 +620,16 @@
     private async Task RetryTestRun(string promptId, string testRunId)
     {
         workflowMessage = null;
-        await Api.RetryTestRunAsync(JobId, promptId, testRunId);
-        testRuns = await FetchSelectedPromptTestRunsAsync();
-        StartPolling();
+        try
+        {
+            await Api.RetryTestRunAsync(JobId, promptId, testRunId);
+            testRuns = await FetchSelectedPromptTestRunsAsync();
+            StartPolling();
+        }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
+        }
     }
 
     private async Task RetestPrompt(string testRunId)
@@ -617,6 +642,10 @@
             testRuns = await FetchSelectedPromptTestRunsAsync();
             await LoadProfileStatus();
             StartPolling();
+        }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
         }
         catch (ApiException ex)
         {
@@ -642,6 +671,10 @@
                 : "No test runs required reconciliation.";
             StartOrStopPolling();
         }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
+        }
         catch (ApiException ex)
         {
             workflowMessage = ex.Message;
@@ -658,7 +691,7 @@
 
     private void StartPolling()
     {
-        if (_pollTimer != null) return;
+        if (_pollTimer != null || sessionRefreshRequired) return;
         _pollTimer = new System.Threading.Timer(async _ =>
         {
             if (_disposed || CurrentPrompt == null) return;
@@ -681,6 +714,10 @@
                                 _selectedDetailPromptId,
                                 _selectedDetailRunId);
                         }
+                        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+                        {
+                            RequireSessionRenewal();
+                        }
                         catch { /* detail may not be ready yet */ }
                     }
 
@@ -689,6 +726,14 @@
                     // Stop polling when no active runs remain
                     if (!HasActiveRuns)
                         StopPolling();
+                });
+            }
+            catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+            {
+                await InvokeAsync(() =>
+                {
+                    RequireSessionRenewal();
+                    StateHasChanged();
                 });
             }
             catch { /* ignore transient errors during polling */ }
@@ -713,6 +758,17 @@
         _pollTimer = null;
     }
 
+    private void RequireSessionRenewal(bool testRunCreated = false)
+    {
+        sessionRefreshRequired = true;
+        sessionRefreshMessage = testRunCreated
+            ? "The test run was created, but its status could not be loaded. Sign in again and check the test history before starting another run."
+            : "Your TalentMatch session needs to be renewed. Select Sign in again to continue. If you were uploading test files, reselect them after sign-in. Check the test history before starting another run.";
+        uploadError = null;
+        workflowMessage = null;
+        StopPolling();
+    }
+
     public void Dispose()
     {
         _disposed = true;
@@ -732,6 +788,7 @@
         isUploading = true;
         uploadError = null;
         workflowMessage = null;
+        var testRunCreated = false;
         StateHasChanged();
         try
         {
@@ -750,10 +807,15 @@
                 });
             }
             await Api.CreateTestRunAsync(JobId, CurrentPrompt.Id, files);
+            testRunCreated = true;
             showUpload = false;
             selectedFiles.Clear();
             testRuns = await FetchSelectedPromptTestRunsAsync();
             StartPolling();
+        }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal(testRunCreated);
         }
         catch (ApiException ex)
         {
@@ -773,18 +835,32 @@
     {
         _selectedDetailRunId = run.Id;
         _selectedDetailPromptId = run.PromptId;
-        selectedDetail = await Api.GetTestRunDetailAsync(JobId, run.PromptId, run.Id);
+        try
+        {
+            selectedDetail = await Api.GetTestRunDetailAsync(JobId, run.PromptId, run.Id);
+        }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
+        }
     }
 
     private async Task ApproveTestRun(string promptId, string testRunId)
     {
         workflowMessage = null;
-        await Api.ApproveTestRunAsync(JobId, promptId, testRunId);
-        testRuns = await FetchSelectedPromptTestRunsAsync();
-        await LoadProfileStatus();
-        selectedDetail = null;
-        _selectedDetailRunId = null;
-        _selectedDetailPromptId = null;
+        try
+        {
+            await Api.ApproveTestRunAsync(JobId, promptId, testRunId);
+            testRuns = await FetchSelectedPromptTestRunsAsync();
+            await LoadProfileStatus();
+            selectedDetail = null;
+            _selectedDetailRunId = null;
+            _selectedDetailPromptId = null;
+        }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
+        }
     }
 
     private async Task ApproveForProduction(string promptId)
@@ -794,6 +870,10 @@
             await Api.ApprovePromptForProductionAsync(JobId, promptId);
             await LoadProfileStatus();
             await OnPromptStatusChange.InvokeAsync();
+        }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
         }
         catch (ApiException ex)
         {
@@ -829,6 +909,10 @@
             }
 
             workflowMessage = $"Re-parsed scoring run {scoringRunId[..8]}... (source: {result?.Source ?? "unknown"}).";
+        }
+        catch (Exception ex) when (ProductSessionRecovery.IsRequired(ex))
+        {
+            RequireSessionRenewal();
         }
         catch (ApiException ex)
         {

@@ -23,10 +23,21 @@ mode, and Entra tokens are never accepted in simple mode.
 - One protected API registration exposes the delegated scope `access_as_user`. Only the two
   registered SPA client IDs may request it.
 - Access tokens older than 15 minutes are rejected with `token_stale`. Stack B attempts one silent
-  refresh for reads and explicitly opted-in bulk source/request mutations. Only the canonical
+  refresh for reads, prompt-test creation, and explicitly opted-in bulk source/request mutations. Only the canonical
   pre-endpoint `401 token_stale` denial permits replay; the original JSON body and content headers
   are preserved. Timeouts, transport failures, other authorization denials, and server errors do
   not trigger mutation replay.
+- Stack B does not load protected refresh settings on the login or authentication callback routes.
+  Settings are loaded when returning to an application route after sign-in. If a token cannot be
+  acquired while viewing an application page, the settings provider offers **Sign in again** rather
+  than displaying the token library's raw scope message.
+- Prompt testing handles interactive token requirements and expired-session denials during loading,
+  upload, polling, and test actions with **Sign in again**, returning to the same job URL after
+  product sign-in. Browser-selected files are not persisted across sign-in and must be reselected.
+  Test creation is not automatically repeated after interactive sign-in. If creation succeeded but
+  the following history reload lost authentication, the message explicitly directs the user to
+  check test history before starting another run. This is product-session recovery, not a change
+  to the prompt's model, API scope, or Microsoft 365 source permissions.
 - If renewal requires interaction or a product session still cannot be renewed, the Stack B bulk
   dialog offers **Sign in again**. It saves the folder link, opaque connection/request references,
   and review choices in this tab's session storage, then returns to the same job after product

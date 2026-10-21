@@ -1,7 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
 using Bunit;
+using Bunit.TestDoubles;
 using FluentAssertions;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Forms;
+using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
 using Microsoft.Extensions.DependencyInjection;
 using TalentMatch.Web.Client.Components;
 using TalentMatch.Web.Client.Services;
@@ -10,6 +14,140 @@ namespace TalentMatch.Web.Tests;
 
 public sealed class PromptTestRunnerTests : BunitContext
 {
+    public PromptTestRunnerTests()
+    {
+        Services.AddSingleton(PublicAuthConfiguration.Simple("http://localhost/"));
+    }
+
+    [Fact]
+    public void InitialPromptLoadRequiringATokenOffersSignInRatherThanCrashing()
+    {
+        using var http = new HttpClient(new RoutingHandler(_ =>
+            throw TokenRequired(Services.GetRequiredService<NavigationManager>())))
+        {
+            BaseAddress = new Uri("http://localhost/"),
+        };
+        Services.AddSingleton(new ApiClient(http));
+
+        var cut = Render<PromptTestRunner>(parameters => parameters
+            .Add(component => component.JobId, "job-1")
+            .Add(component => component.ActivePrompt, Prompt("prompt-1", 2, "active", "o3", "high")));
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Find("[data-testid=prompt-session-required]").TextContent.Should().Contain("Sign in again");
+            cut.Markup.Should().NotContain("api://");
+        });
+    }
+
+    [Theory]
+    [InlineData("interactive")]
+    [InlineData("token_stale")]
+    [InlineData("auth_required")]
+    public void PromptUploadOffersExplicitSignInAndDoesNotResubmitTheFiles(string failure)
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        Services.AddSingleton(new PublicAuthConfiguration(
+            "entra", TenantId: "tenant-id", ClientId: "client-id",
+            Authority: "https://login.microsoftonline.com/tenant-id",
+            ApiScope: "api://test/access_as_user", ApiBaseAddress: "http://localhost/"));
+        var creates = 0;
+        using var http = new HttpClient(new RoutingHandler(request =>
+        {
+            if (request.Method == HttpMethod.Post)
+            {
+                creates++;
+                if (failure == "interactive")
+                    throw TokenRequired(Services.GetRequiredService<NavigationManager>());
+                return new(HttpStatusCode.Unauthorized)
+                {
+                    Content = JsonContent.Create(new { error = failure, message = "Sign in is required." }),
+                };
+            }
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/api/jobs/job-1/config" => JsonResponse<JobConfigDto?>(null),
+                "/api/jobs/job-1/prompts/prompt-1/test-runs" => JsonResponse(Array.Empty<PromptTestRunDto>()),
+                "/api/jobs/job-1/prompts/prompt-1/profile" => JsonResponse(Profile("prompt-1", "o3", false)),
+                _ => new(HttpStatusCode.NotFound),
+            };
+        })) { BaseAddress = new Uri("http://localhost/") };
+        Services.AddSingleton(new ApiClient(http));
+        var navigation = Services.GetRequiredService<BunitNavigationManager>();
+        navigation.NavigateTo("/jobs/job-1?tab=prompts");
+        var cut = Render<PromptTestRunner>(parameters => parameters
+            .Add(component => component.JobId, "job-1")
+            .Add(component => component.ActivePrompt, Prompt("prompt-1", 2, "active", "o3", "high")));
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Current backend profile"));
+        cut.FindAll("button").Single(button => button.TextContent.Contains("Upload Test Applications")).Click();
+        cut.FindComponent<InputFile>().UploadFiles(
+            InputFileContent.CreateFromText("test cv", "candidate.txt", contentType: "text/plain"));
+
+        cut.FindAll("button").Single(button => button.TextContent.Contains("Start Test Run")).Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Find("[data-testid=prompt-session-required]").TextContent.Should()
+                .Contain("Sign in again").And.Contain("reselect");
+            cut.Markup.Should().NotContain("api://");
+            cut.FindAll("button").Single(button => button.TextContent.Contains("Start Test Run"))
+                .HasAttribute("disabled").Should().BeTrue();
+        });
+        cut.Find("[data-testid=prompt-sign-in]").Click();
+        navigation.Uri.Should().Be("http://localhost/authentication/login");
+        navigation.History.First().Options.HistoryEntryState.Should()
+            .Contain("jobs/job-1").And.Contain("login");
+        creates.Should().Be(1);
+    }
+
+    private static AccessTokenNotAvailableException TokenRequired(NavigationManager navigation) =>
+        new(navigation, new AccessTokenResult(
+            AccessTokenResultStatus.RequiresRedirect, new AccessToken(),
+            "authentication/login", new InteractiveRequestOptions
+            {
+                Interaction = InteractionType.GetToken, ReturnUrl = navigation.Uri,
+            }), ["api://test/access_as_user"]);
+
+    [Fact]
+    public void SessionLossAfterCreationDirectsTheUserToHistoryWithoutCreatingAnotherRun()
+    {
+        JSInterop.Mode = JSRuntimeMode.Loose;
+        var creates = 0;
+        using var http = new HttpClient(new RoutingHandler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (request.Method == HttpMethod.Post)
+            {
+                creates++;
+                return JsonResponse(new { id = "test-run-1" });
+            }
+            if (path.EndsWith("/test-runs", StringComparison.Ordinal) && creates > 0)
+                throw TokenRequired(Services.GetRequiredService<NavigationManager>());
+            return path switch
+            {
+                "/api/jobs/job-1/config" => JsonResponse<JobConfigDto?>(null),
+                "/api/jobs/job-1/prompts/prompt-1/test-runs" => JsonResponse(Array.Empty<PromptTestRunDto>()),
+                "/api/jobs/job-1/prompts/prompt-1/profile" => JsonResponse(Profile("prompt-1", "o3", false)),
+                _ => new(HttpStatusCode.NotFound),
+            };
+        })) { BaseAddress = new Uri("http://localhost/") };
+        Services.AddSingleton(new ApiClient(http));
+        var cut = Render<PromptTestRunner>(parameters => parameters
+            .Add(component => component.JobId, "job-1")
+            .Add(component => component.ActivePrompt, Prompt("prompt-1", 2, "active", "o3", "high")));
+        cut.WaitForAssertion(() => cut.Markup.Should().Contain("Current backend profile"));
+        cut.FindAll("button").Single(button => button.TextContent.Contains("Upload Test Applications")).Click();
+        cut.FindComponent<InputFile>().UploadFiles(
+            InputFileContent.CreateFromText("test cv", "candidate.txt", contentType: "text/plain"));
+
+        cut.FindAll("button").Single(button => button.TextContent.Contains("Start Test Run")).Click();
+
+        cut.WaitForAssertion(() => cut.Find("[data-testid=prompt-session-required]").TextContent.Should()
+            .Contain("test run was created").And.Contain("check the test history"));
+        creates.Should().Be(1);
+        cut.Markup.Should().NotContain("api://");
+    }
+
     [Fact]
     public void ProductionApprovedPromptRemainsAvailableForPromptTesting()
     {

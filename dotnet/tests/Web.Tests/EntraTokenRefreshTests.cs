@@ -122,6 +122,62 @@ public class EntraTokenRefreshTests
         invalidator.InvalidationCount.Should().Be(1);
     }
 
+    [Fact]
+    public async Task PromptTestCreationRetriesOnlyThePreEndpointStaleTokenDenialWithTheSameFiles()
+    {
+        var invalidator = new RecordingInvalidator();
+        var inner = new ScriptedHandler(StaleTokenResponse(),
+            new(HttpStatusCode.OK) { Content = JsonContent.Create(new { id = "test-run-1" }) });
+        using var client = CreateClient(invalidator, inner);
+        var api = new ApiClient(client);
+
+        await api.CreateTestRunAsync("job-1", "prompt-1",
+            new[] { new { FileName = "candidate.txt", Content = "Y3Y=", MimeType = "text/plain", SizeBytes = 2 } });
+
+        inner.Attempts.Should().Be(2);
+        invalidator.InvalidationCount.Should().Be(1);
+        inner.Bodies.Should().HaveCount(2);
+        inner.Bodies[0].Should().Be(inner.Bodies[1]);
+        inner.Bodies[0].Should().Contain("candidate.txt").And.Contain("Y3Y=");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "wrong_tenant")]
+    [InlineData(HttpStatusCode.InternalServerError, "server_error")]
+    [InlineData(HttpStatusCode.Conflict, "version_conflict")]
+    public async Task PromptTestCreationDoesNotReplayOtherDenials(HttpStatusCode status, string error)
+    {
+        var invalidator = new RecordingInvalidator();
+        var response = AuthErrorResponse(error);
+        response.StatusCode = status;
+        var inner = new ScriptedHandler(response);
+        using var client = CreateClient(invalidator, inner);
+
+        await new ApiClient(client).Invoking(api => api.CreateTestRunAsync("job-1", "prompt-1", Array.Empty<object>()))
+            .Should().ThrowAsync<ApiException>();
+
+        inner.Attempts.Should().Be(1);
+        invalidator.InvalidationCount.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PromptTestCreationDoesNotReplayAnUnknownTransportOutcome(bool timeout)
+    {
+        var invalidator = new RecordingInvalidator();
+        var inner = new FailingTransport(timeout);
+        using var client = CreateClient(invalidator, inner);
+        var action = () => new ApiClient(client).CreateTestRunAsync("job-1", "prompt-1", Array.Empty<object>());
+
+        if (timeout)
+            await action.Should().ThrowAsync<OperationCanceledException>();
+        else
+            await action.Should().ThrowAsync<HttpRequestException>();
+        inner.Attempts.Should().Be(1);
+        invalidator.InvalidationCount.Should().Be(0);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.InternalServerError, "server_error")]
     [InlineData(HttpStatusCode.ServiceUnavailable, "unavailable")]

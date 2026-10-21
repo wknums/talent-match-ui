@@ -1,12 +1,22 @@
 @using TalentMatch.Web.Client.Services
+@using Microsoft.AspNetCore.Components.Routing
 @implements IAsyncDisposable
 @inject ApiClient Api
 @inject IServiceProvider Services
+@inject NavigationManager Navigation
+@inject PublicAuthConfiguration AuthConfiguration
 
 <CascadingValue Value="settings">
     @if (loadError is not null)
     {
-        <p role="alert">@loadError</p>
+        <div role="alert">
+            <p>@loadError</p>
+            @if (sessionRefreshRequired)
+            {
+                <button type="button" data-testid="polling-sign-in"
+                        @onclick="() => ProductSessionRecovery.SignInAgain(Navigation, AuthConfiguration)">Sign in again</button>
+            }
+        </div>
     }
     @ChildContent
 </CascadingValue>
@@ -17,10 +27,14 @@
     private AsyncRefreshLoop? refresh;
     private string? loadError;
     private bool disposed;
+    private bool sessionRefreshRequired;
+    private bool wasAuthenticationRoute;
 
     protected override async Task OnInitializedAsync()
     {
         settings.Changed += SettingsChanged;
+        wasAuthenticationRoute = IsAuthenticationRoute();
+        Navigation.LocationChanged += LocationChanged;
         refresh = new(
             TimeSpan.FromSeconds(60),
             Services.GetService<TimeProvider>() ?? TimeProvider.System,
@@ -33,22 +47,38 @@
 
     private async Task LoadAsync(CancellationToken cancellationToken)
     {
+        if (disposed)
+            return;
+        if (IsAuthenticationRoute())
+        {
+            loadError = null;
+            sessionRefreshRequired = false;
+            return;
+        }
         try
         {
-            settings.Update(await Api.GetPollingSettingsAsync(cancellationToken));
+            var loaded = await Api.GetPollingSettingsAsync(cancellationToken);
+            if (disposed || IsAuthenticationRoute())
+                return;
+            settings.Update(loaded);
             loadError = null;
+            sessionRefreshRequired = false;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
-        catch (ApiException exception) when (exception.StatusCode == 401)
+        catch (Exception exception) when (ProductSessionRecovery.IsRequired(exception))
         {
-            // The shared layout also hosts signed-out routes.
-            loadError = null;
+            sessionRefreshRequired = !IsAuthenticationRoute();
+            loadError = sessionRefreshRequired
+                ? "Your TalentMatch session needs to be renewed. Select Sign in again to reload refresh settings."
+                : null;
         }
         catch (Exception exception)
         {
-            loadError = $"Refresh settings could not be loaded; the last known intervals remain active. {exception.Message}";
+            loadError = IsAuthenticationRoute()
+                ? null
+                : $"Refresh settings could not be loaded; the last known intervals remain active. {exception.Message}";
         }
         if (!disposed)
             StateHasChanged();
@@ -56,11 +86,38 @@
 
     private void SettingsChanged() => StateHasChanged();
 
+    private bool IsAuthenticationRoute()
+    {
+        var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/');
+        return string.Equals(path, "login", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("authentication/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private async void LocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        if (disposed)
+            return;
+        var isAuthenticationRoute = IsAuthenticationRoute();
+        var returnedFromSignIn = wasAuthenticationRoute && !isAuthenticationRoute;
+        wasAuthenticationRoute = isAuthenticationRoute;
+        if (isAuthenticationRoute)
+        {
+            loadError = null;
+            sessionRefreshRequired = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        else if (returnedFromSignIn && refresh is not null)
+        {
+            await InvokeAsync(() => LoadAsync(refresh.Token));
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (disposed)
             return;
         disposed = true;
+        Navigation.LocationChanged -= LocationChanged;
         settings.Changed -= SettingsChanged;
         if (refresh is not null)
             await refresh.DisposeAsync();
