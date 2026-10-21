@@ -29,12 +29,24 @@ fi
 log_info "Restoring and auditing all Stack B production and test dependencies..."
 dotnet restore "$SOLUTION_PATH" --force
 
-log_info "Publishing Stack B from $PROJECT_PATH..."
+log_info "Restoring the pinned Linux x64 runtime for self-contained deployment..."
+dotnet restore "$PROJECT_PATH" -p:PackageStackB=true -p:Configuration=Release
+
+log_info "Publishing self-contained Stack B for Linux x64 from $PROJECT_PATH..."
 dotnet publish "$PROJECT_PATH" \
   --configuration Release \
+  -p:PackageStackB=true \
   --output "$ARTIFACT_DIR_DOTNET" \
-  --no-restore \
-  --self-contained false
+  --no-restore
+
+for runtime_file in libcoreclr.so libhostfxr.so libhostpolicy.so System.Private.CoreLib.dll Microsoft.AspNetCore.dll; do
+  if [[ ! -s "$ARTIFACT_DIR/$runtime_file" ]]; then
+    log_fatal "Self-contained publish is missing required runtime file: $runtime_file"
+  fi
+done
+if ! grep -q '"includedFrameworks"' "$ARTIFACT_DIR/TalentMatch.Web.Server.runtimeconfig.json"; then
+  log_fatal "Published runtime configuration does not declare bundled frameworks."
+fi
 
 # ---------------------------------------------------------------------------
 # Step 1b: Stamp deploy metadata for runtime diagnostics

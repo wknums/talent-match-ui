@@ -304,6 +304,18 @@ transaction when status or size changes, not for audit-only writes. Deadlock
 retries reload committed handoff state and track existing content parents without
 re-inserting them. Repeated committed handoffs do not requeue an application.
 
+If an application is deleted after bulk import records its creation but before
+handoff, the worker marks the item failed with `scoring_failed` and
+"The application no longer exists." It releases the import lease, records the
+failure audit, and reconciles request counts without recreating the application
+or queueing scoring. Previously these orphaned items could repeatedly log
+`BulkHandoffPersistenceException` and exceed `BULK_MAX_ATTEMPTS`, because handoff
+persistence failures deliberately bypass the ordinary import retry budget.
+After deploying this fix, still-active orphaned items settle on their next claim
+(after any outstanding lease expires). No SQL data repair or limit increase is
+required. Other handoff persistence errors still surface as errors; they are not
+misclassified as deleted applications.
+
 Deploy the `20261020150000_AddBulkAuditLookupIndex` EF migration with the updated
 Stack B code. It adds the nonunique `(SubjectId, EventType)` audit lookup index on
 both providers. The targeted Azure SQL script
@@ -505,13 +517,24 @@ dotnet restore dotnet/TalentMatch.slnx --force
 dotnet list dotnet/TalentMatch.slnx package --vulnerable --include-transitive --no-restore
 ```
 
-Stack B remains framework-dependent. Its published runtime configuration requires
-.NET and ASP.NET Core 10.0.13 or a later 10.0 patch; it must not run on an older
-runtime. App Service's `10.0` stack setting does not select a particular patch.
-Verify the selected runtime on the target host before republishing. If the host
-has not received a patched runtime, do not lower the application's minimum to
-make deployment succeed. A clean NuGet audit covers known package advisories,
-not unknown vulnerabilities or the host operating system.
+The Stack B deployment packager publishes a self-contained `linux-x64` application
+with .NET and ASP.NET Core 10.0.13, using the shared `DotNetPatchVersion` pin.
+It restores the Release runtime assets explicitly and refuses to package output
+without the bundled runtime. The packager passes `PackageStackB=true`; only the
+server project maps that flag to Linux x64/self-contained settings, leaving the
+Blazor client's `browser-wasm` target intact during restore and publish.
+The existing `dotnet TalentMatch.Web.Server.dll`
+App Service startup command remains valid; the application uses its bundled
+frameworks instead of requiring that patch in App Service's shared installation.
+The `10.0` platform stack setting does not select a particular patch and no longer
+blocks deployment when the managed runtime rollout lags behind the pinned version.
+Normal local builds and tests remain framework-dependent.
+
+Self-contained deployments do not automatically adopt newer shared-runtime
+security patches. Update the SDK/package/runtime pins, repackage, and redeploy
+when .NET security updates are released. Native operating-system dependencies
+still come from the Linux host. A clean NuGet audit covers known package
+advisories, not unknown vulnerabilities or the host operating system.
 
 | Variable | Status; values/default | Purpose and handling |
 | --- | --- | --- |

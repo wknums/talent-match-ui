@@ -51,10 +51,11 @@ describe('Stack B dependency security', () => {
       .toContain('Include="System.Security.Cryptography.Pkcs" Version="$(DotNetPatchVersion)"')
   })
 
-  it('requires the patched shared runtime and only rolls forward to later patches', () => {
+  it('pins the runtime patch without changing ordinary framework-dependent builds', () => {
     const project = read('dotnet/src/Web.Server/TalentMatch.Web.Server.csproj')
     expect(project).toContain('<RuntimeFrameworkVersion>$(DotNetPatchVersion)</RuntimeFrameworkVersion>')
     expect(project).toContain('<RollForward>LatestPatch</RollForward>')
+    expect(project).toContain('<PropertyGroup Condition="\'$(PackageStackB)\' == \'true\'">')
   })
 
   it('performs a fresh solution audit before publishing without a second restore', () => {
@@ -65,6 +66,44 @@ describe('Stack B dependency security', () => {
     expect(publish).toBeGreaterThan(restore)
     expect(script.slice(publish)).toContain('--no-restore')
     expect(script).not.toContain('NuGetAudit=false')
+  })
+
+  it('restores Release runtime assets before publishing a self-contained Linux x64 application', () => {
+    const script = read('infra/scripts/package-stack-b.sh')
+    const restore = script.indexOf('dotnet restore "$PROJECT_PATH" -p:PackageStackB=true -p:Configuration=Release')
+    const publish = script.indexOf('dotnet publish "$PROJECT_PATH"')
+    expect(restore).toBeGreaterThan(script.indexOf('dotnet restore "$SOLUTION_PATH" --force'))
+    expect(publish).toBeGreaterThan(restore)
+    expect(script.slice(publish)).toContain('-p:PackageStackB=true')
+    expect(script).not.toContain('--self-contained false')
+  })
+
+  it('rejects a publish output without the bundled runtime before creating the ZIP', () => {
+    const script = read('infra/scripts/package-stack-b.sh')
+    const validation = script.indexOf('for runtime_file in')
+    expect(validation).toBeGreaterThan(script.indexOf('dotnet publish "$PROJECT_PATH"'))
+    expect(script.indexOf('log_info "Creating zip artifact..."')).toBeGreaterThan(validation)
+    for (const file of [
+      'libcoreclr.so',
+      'libhostfxr.so',
+      'libhostpolicy.so',
+      'System.Private.CoreLib.dll',
+      'Microsoft.AspNetCore.dll',
+    ]) {
+      expect(script).toContain(file)
+    }
+    expect(script).toContain('includedFrameworks')
+    expect(script).toContain('log_fatal')
+  })
+
+  it('keeps the browser client isolated from the server runtime publish settings', () => {
+    const project = read('dotnet/src/Web.Server/TalentMatch.Web.Server.csproj')
+    expect(project).toMatch(
+      /<PropertyGroup Condition="'\$\(PackageStackB\)' == 'true'">\s*<RuntimeIdentifier>linux-x64<\/RuntimeIdentifier>\s*<SelfContained>true<\/SelfContained>\s*<\/PropertyGroup>/,
+    )
+    const script = read('infra/scripts/package-stack-b.sh')
+    expect(script).not.toContain('--runtime')
+    expect(script).not.toContain('--self-contained true')
   })
 
   it('runs solution tests before uploading the deployment artifact', () => {

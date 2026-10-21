@@ -229,9 +229,11 @@ az account set --subscription "<subscription-id-or-name>"
 
 Stack B packaging requires the SDK selected by the repository's `global.json`.
 It audits all solution dependencies and fails on any known NuGet advisory or
-unavailable audit data. The framework-dependent artifact requires .NET and
-ASP.NET Core 10.0.13 or a later 10.0 patch. Verify the target App Service runtime
-before deploying; the `10.0` platform stack setting alone is not patch evidence.
+unavailable audit data. The self-contained Linux x64 artifact includes the pinned
+.NET and ASP.NET Core 10.0.13 runtime, so it does not depend on App Service receiving
+that shared-runtime patch first. Keep the existing `dotnet TalentMatch.Web.Server.dll`
+startup command. Runtime security updates require repackaging and redeployment;
+they are not inherited automatically from the platform's shared runtime.
 See [dependency and runtime security](../CONFIGURATION.md#stack-b-dependency-and-runtime-security).
 
 Both artifact deployment scripts load the environment profile, validate the

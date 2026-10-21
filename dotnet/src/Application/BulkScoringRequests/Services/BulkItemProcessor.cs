@@ -16,6 +16,9 @@ public sealed class BulkHandoffPersistenceException(Exception innerException)
 public sealed class BulkWorkerPersistenceException(Exception innerException)
     : Exception("The bulk worker state boundary could not be persisted.", innerException);
 
+public sealed class BulkApplicationMissingException()
+    : Exception("The application no longer exists.");
+
 // Runs one claimed item through download -> stage -> fingerprint/duplicate -> optional convert ->
 // create application -> publish Queued (research R5, R6, R8, R10). Every step persists a marker so a
 // crash re-enters at the right step, and application/document identifiers are deterministic so a
@@ -69,6 +72,13 @@ public sealed class BulkItemProcessor(
         catch (BulkHandoffPersistenceException) { throw; }
         catch (BulkWorkerPersistenceException) { throw; }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (BulkApplicationMissingException)
+        {
+            logger.LogWarning(
+                "Bulk item {ItemId} of request {RequestId} cannot be handed off because application {ApplicationId} no longer exists",
+                item.Id, item.RequestId, item.ApplicationId);
+            return await FailAsync(item, request, BulkReasonCode.ScoringFailed, "The application no longer exists.");
+        }
         catch (SourceAccessDeniedException) { return await FailAsync(item, request, BulkReasonCode.AccessDenied, "You no longer have access to this file."); }
         catch (SourceNotFoundException) { return await FailAsync(item, request, BulkReasonCode.SourceMissing, "The file no longer exists in the source folder."); }
         catch (SourceLimitExceededException) { return await FailAsync(item, request, BulkReasonCode.FileTooLarge, "The file is larger than the allowed size."); }
@@ -369,6 +379,8 @@ public sealed class BulkItemProcessor(
         catch (Exception ex) when (ex is not BulkHandoffPersistenceException)
         {
             RestoreHandoff(item, originalStatus, originalHandedOffAt, originalVersionId, originalUpdatedAt);
+            if (ex is BulkApplicationMissingException)
+                throw;
             throw new BulkHandoffPersistenceException(ex);
         }
     }
@@ -621,7 +633,6 @@ public sealed class BulkItemProcessor(
         BulkReasonCode reason,
         string message)
     {
-        // A file that failed before hand-off holds no application, so the item can simply become failed.
         if (item.Status is BulkItemStatus.Waiting or BulkItemStatus.Scoring)
             throw new InvalidOperationException($"Item {item.Id} cannot fail from {item.Status.ToWire()}.");
         item.TransitionTo(BulkItemStatus.Failed, Now, reason, message);

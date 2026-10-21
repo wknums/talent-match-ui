@@ -832,10 +832,15 @@ public sealed class BulkScoringRepository(AppDbContext context, TimeProvider clo
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(application => application.Status, "Queued")
                     .SetProperty(application => application.UpdatedAt, utcNow), ct);
-            if (!await context.Applications.AnyAsync(
-                    application => application.Id == applicationId && application.Status == "Queued",
-                    ct))
-                throw new InvalidOperationException("The uploaded application could not be made ready for scoring.");
+            var applicationStatus = await context.Applications
+                .Where(application => application.Id == applicationId)
+                .Select(application => application.Status)
+                .SingleOrDefaultAsync(ct);
+            if (applicationStatus is null)
+                throw new BulkApplicationMissingException();
+            if (applicationStatus != "Queued")
+                throw new InvalidOperationException(
+                    $"The uploaded application could not be made ready for scoring (status: {applicationStatus}).");
 
             await PersistItemAsync(current, ct);
             await persistAudit(ct);

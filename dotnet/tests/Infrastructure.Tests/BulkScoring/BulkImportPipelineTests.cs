@@ -439,6 +439,92 @@ public sealed class BulkImportPipelineTests
         (await h.Db.Applications.CountAsync()).Should().Be(1);
     }
 
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 1)]
+    [InlineData(false, 239)]
+    [InlineData(true, 239)]
+    public async Task A_deleted_application_before_handoff_fails_once_without_recreating_or_requeueing_it(
+        bool converting, int attempt)
+    {
+        await using var h = await Harness.CreateAsync();
+        var request = await h.ActiveRequestAsync(Candidates, rasterize: converting, allowDuplicates: true);
+        var item = (await h.ClaimAllAsync()).First(i => i.FileName == "bob-2page.pdf");
+        var applicationId = DeterministicIds.Application(item.Id);
+        await h.Apps.AddAsync(new TalentMatch.Domain.Entities.Application
+        {
+            Id = applicationId, JobId = request.JobId, CandidateRef = "deleted", Status = "Uploading"
+        });
+        item.SourceStoredAt = Start;
+        item.Attempt = attempt;
+        item.LinkApplication(applicationId, DeterministicIds.Document(item.Id), Start);
+        if (converting)
+            item.TransitionTo(BulkItemStatus.Converting, Start);
+        await h.Repo.SaveItemAsync(item);
+        await h.Apps.DeleteAsync(applicationId);
+        h.Db.ChangeTracker.Clear();
+
+        (await h.Processor.ProcessAsync(item, (await h.Repo.GetAsync(request.Id))!, default))
+            .Should().Be(BulkItemOutcome.Failed);
+
+        var failed = await h.Db.BulkScoringItems.AsNoTracking().SingleAsync(i => i.Id == item.Id);
+        failed.Status.Should().Be(BulkItemStatus.Failed);
+        failed.ReasonCode.Should().Be(BulkReasonCode.ScoringFailed);
+        failed.ReasonMessage.Should().Be("The application no longer exists.");
+        failed.TerminalAt.Should().NotBeNull();
+        failed.LeaseOwner.Should().BeNull();
+        failed.LeaseUntil.Should().BeNull();
+        failed.HandedOffAt.Should().BeNull();
+        failed.ScoringConfigVersionId.Should().BeNull();
+        failed.Attempt.Should().Be(attempt);
+        (await h.Db.Applications.CountAsync()).Should().Be(0);
+        (await h.Db.ApplicationDocuments.CountAsync()).Should().Be(0);
+        h.Signal.Pulses.Should().Be(0);
+        h.Raster.Calls.Should().BeEmpty();
+        var updatedRequest = (await h.Repo.GetAsync(request.Id))!;
+        updatedRequest.FailedCount.Should().Be(1);
+        updatedRequest.ScoringCount.Should().Be(0);
+        (await h.Db.BulkAuditEvents.CountAsync(e => e.SubjectId == item.Id
+            && e.EventType == BulkAuditEventTypes.BulkItemFailed)).Should().Be(1);
+        (await h.Db.BulkAuditEvents.CountAsync(e => e.SubjectId == item.Id
+            && e.EventType == BulkAuditEventTypes.BulkItemScoringHandoffQueued)).Should().Be(0);
+
+        h.Clock.Advance(TimeSpan.FromMinutes(10));
+        await h.Repo.ReclaimExpiredLeasesAsync(h.Clock.GetUtcNow().UtcDateTime);
+        (await h.ClaimAllAsync()).Should().NotContain(i => i.Id == item.Id);
+    }
+
+    [Theory]
+    [InlineData("Scoring")]
+    [InlineData("Completed")]
+    [InlineData("Failed")]
+    public async Task An_existing_application_in_an_unexpected_state_remains_a_handoff_persistence_failure(string status)
+    {
+        await using var h = await Harness.CreateAsync();
+        var request = await h.ActiveRequestAsync(Candidates, rasterize: false, allowDuplicates: true);
+        var item = (await h.ClaimAllAsync()).First(i => i.FileName == "bob-2page.pdf");
+        var applicationId = DeterministicIds.Application(item.Id);
+        await h.Apps.AddAsync(new TalentMatch.Domain.Entities.Application
+        {
+            Id = applicationId, JobId = request.JobId, CandidateRef = "existing", Status = status
+        });
+        item.SourceStoredAt = Start;
+        item.LinkApplication(applicationId, DeterministicIds.Document(item.Id), Start);
+        await h.Repo.SaveItemAsync(item);
+
+        var active = (await h.Repo.GetAsync(request.Id))!;
+        await h.Processor.Invoking(p => p.ProcessAsync(item, active, default))
+            .Should().ThrowAsync<BulkHandoffPersistenceException>();
+
+        (await h.Apps.GetByIdAsync(applicationId))!.Status.Should().Be(status);
+        var persisted = await h.Repo.GetItemAsync(request.Id, item.Id);
+        persisted!.Status.Should().Be(BulkItemStatus.Importing);
+        persisted.HandedOffAt.Should().BeNull();
+        item.Status.Should().Be(BulkItemStatus.Importing);
+        item.HandedOffAt.Should().BeNull();
+        h.Signal.Pulses.Should().Be(0);
+    }
+
     [Fact]
     public async Task Atomic_handoff_retains_one_conversion_without_using_the_legacy_publish_call()
     {
