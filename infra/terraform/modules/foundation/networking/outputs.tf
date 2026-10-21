@@ -27,3 +27,8 @@ output "sql_private_endpoint_id" {
   description = "Created SQL private endpoint ID, or empty when reusing one"
   value       = var.reuse_sql_private_endpoint ? "" : azurerm_private_endpoint.sql[0].id
 }
+
+output "key_vault_private_endpoint_id" {
+  description = "Created Key Vault private endpoint ID, or empty when Key Vault connectivity is disabled"
+  value       = var.key_vault_id != "" ? azurerm_private_endpoint.key_vault[0].id : ""
+}

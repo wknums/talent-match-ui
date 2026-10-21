@@ -164,6 +164,22 @@ public sealed class MainLayoutTests : BunitContext
         });
     }
 
+    [Fact]
+    public void About_ShowsTheDeployedReleaseAndUtcBuildDate()
+    {
+        var browser = new StubNavigationShellBrowser(new(DesktopCollapsed: false, IsCompact: false));
+        var cut = RenderLayout(browser, new StubNavigationAuditClient());
+
+        cut.Find("[data-testid='about-button']").Click();
+
+        cut.WaitForAssertion(() =>
+        {
+            cut.Find("[role='dialog']").TextContent.Should().Contain("About TalentMatch");
+            cut.Find("[data-testid='about-release']").TextContent.Should().Be("20261016112416-abc1234");
+            cut.Find("[data-testid='about-build-date']").TextContent.Should().Be("2026-10-16 11:24:16 UTC");
+        });
+    }
+
     private static string AccessibleName(IRenderedComponent<MainLayout> cut)
     {
         var toggle = cut.Find("[data-testid='navigation-toggle']");
@@ -190,6 +206,7 @@ public sealed class MainLayoutTests : BunitContext
         Services.AddSingleton(configuration);
         var api = new ApiClient(client, configuration);
         Services.AddSingleton(api);
+        Services.AddSingleton(new BuildInfoService(client));
         Services.AddSingleton(new UploadCoordinator(api));
         Services.AddSingleton<INavigationShellBrowser>(browser);
         Services.AddSingleton<INavigationAuditClient>(audit);
@@ -289,6 +306,17 @@ public sealed class MainLayoutTests : BunitContext
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            if (path.EndsWith("/build-info.json", StringComparison.Ordinal))
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"version":"20261016112416-abc1234","createdAtUtc":"2026-10-16T11:24:16Z","source":"test"}""",
+                        Encoding.UTF8,
+                        "application/json"),
+                });
+            }
+
             if (!path.EndsWith("/api/auth/me", StringComparison.Ordinal))
             {
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent)

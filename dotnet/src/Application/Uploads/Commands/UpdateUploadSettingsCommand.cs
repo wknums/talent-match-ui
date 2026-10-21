@@ -34,6 +34,13 @@ public sealed class UpdateUploadSettingsCommandHandler(
             throw new UnauthorizedAccessException("Global administrator access is required.");
 
         var previous = await repository.GetPersistedAsync(cancellationToken);
+        var throughputSeconds = command.Request.ThroughputRefreshIntervalSeconds
+            ?? previous?.ThroughputRefreshIntervalSeconds ?? UploadSettings.DefaultRefreshIntervalSeconds;
+        var statusSeconds = command.Request.StatusPollingIntervalSeconds
+            ?? previous?.StatusPollingIntervalSeconds ?? UploadSettings.DefaultRefreshIntervalSeconds;
+        var pollingErrors = UploadSettings.ValidatePolling(throughputSeconds, statusSeconds);
+        if (pollingErrors.Count > 0)
+            throw new UploadValidationException(pollingErrors);
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var actor = currentUser.UserId;
         var settings = new UploadSettings
@@ -41,6 +48,8 @@ public sealed class UpdateUploadSettingsCommandHandler(
             FileConcurrency = command.Request.FileConcurrency,
             MaxIndividualFileBytes = command.Request.MaxIndividualFileBytes,
             MaxInFlightBytes = command.Request.MaxInFlightBytes,
+            ThroughputRefreshIntervalSeconds = throughputSeconds,
+            StatusPollingIntervalSeconds = statusSeconds,
             CreatedAt = previous?.CreatedAt ?? now,
             CreatedBy = previous?.CreatedBy ?? actor,
             UpdatedAt = now,
@@ -63,6 +72,8 @@ public sealed class UpdateUploadSettingsCommandHandler(
                     previous.FileConcurrency,
                     previous.MaxIndividualFileBytes,
                     previous.MaxInFlightBytes,
+                    previous.ThroughputRefreshIntervalSeconds,
+                    previous.StatusPollingIntervalSeconds,
                     previous.ConcurrencyVersion,
                 },
                 current = new
@@ -70,6 +81,8 @@ public sealed class UpdateUploadSettingsCommandHandler(
                     saved.FileConcurrency,
                     saved.MaxIndividualFileBytes,
                     saved.MaxInFlightBytes,
+                    saved.ThroughputRefreshIntervalSeconds,
+                    saved.StatusPollingIntervalSeconds,
                     saved.ConcurrencyVersion,
                 },
             }),
@@ -81,6 +94,8 @@ public sealed class UpdateUploadSettingsCommandHandler(
             saved.ConcurrencyVersion,
             true,
             saved.UpdatedAt,
-            saved.UpdatedBy);
+            saved.UpdatedBy,
+            saved.ThroughputRefreshIntervalSeconds,
+            saved.StatusPollingIntervalSeconds);
     }
 }

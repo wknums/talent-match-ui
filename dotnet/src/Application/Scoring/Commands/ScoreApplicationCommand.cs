@@ -16,13 +16,15 @@ public record ScoreApplicationCommand(
     string PromptVersionId,
     string JobDescriptionText,
     string? RubricJson = null,
-    bool PersistResults = true
+    bool PersistResults = true,
+    string? ScoringConfigVersionId = null
 ) : IRequest<ScoreApplicationResult>;
 
 public record ScoreApplicationResult(
     IReadOnlyList<ScoringRun> Runs,
     EngineAggregatedResult? Aggregated,
-    string? CandidateName = null
+    string? CandidateName = null,
+    string? ScoringConfigVersionId = null
 );
 
 public record EngineAggregatedResult(
@@ -113,7 +115,11 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         EngineAggregatedResult? aggregated = null;
 
         if (!request.PersistResults)
-            return new ScoreApplicationResult(runs, aggregated, extractedCandidateName);
+            return new ScoreApplicationResult(
+                runs,
+                aggregated,
+                extractedCandidateName,
+                request.ScoringConfigVersionId);
 
         foreach (var run in runs)
         {
@@ -131,7 +137,10 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
             }
         }
 
-        return new ScoreApplicationResult(runs, aggregated);
+        return new ScoreApplicationResult(
+            runs,
+            aggregated,
+            ScoringConfigVersionId: request.ScoringConfigVersionId);
     }
 
     private async Task<(List<ScoringRun> Runs, string? CandidateName)> ScoreAndParseWithRetryAsync(
@@ -619,7 +628,36 @@ public class ScoreApplicationCommandHandler : IRequestHandler<ScoreApplicationCo
         }
 
         if (remapped.Count > 0)
+        {
             run.CategoryScoresJson = JsonSerializer.Serialize(remapped);
+            RecalculateTotalScore(run, rubric, remapped);
+        }
+    }
+
+    private static void RecalculateTotalScore(
+        ScoringRun run,
+        IReadOnlyCollection<RubricCategoryInfo> rubric,
+        IReadOnlyDictionary<string, double> scores)
+    {
+        var weightedCategories = rubric
+            .Where(category => double.IsFinite(category.Weight) && category.Weight > 0)
+            .ToList();
+
+        if (weightedCategories.Count == 0
+            || weightedCategories.Any(category => !scores.ContainsKey(category.Name)))
+        {
+            return;
+        }
+
+        var totalWeight = weightedCategories.Sum(category => category.Weight);
+        if (!double.IsFinite(totalWeight) || totalWeight <= 0)
+        {
+            return;
+        }
+
+        var weightedScore = weightedCategories.Sum(
+            category => scores[category.Name] * category.Weight) / totalWeight;
+        run.TotalScore = ScorePrecision.Round(weightedScore);
     }
 
     private static List<RubricCategoryInfo> ReadRubricCategories(string rubricJson)

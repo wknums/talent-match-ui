@@ -95,6 +95,22 @@
 - **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
 - **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
 
+### Security and Configuration Constraints *(mandatory)*
+
+- **SCF-001**: [List required environment variable names and purposes without including concrete
+  Azure resource identifiers, environment-specific identifiers, credentials, keys, or secret values]
+- **SCF-002**: [Confirm that concrete environment-specific and secret values exist only in
+  untracked `.env` files and that committed `.env` templates leave those values blank]
+- **SCF-003**: [When the feature reads a user-selected Microsoft 365 folder, specify independently
+  testable requirements for separate product/source authorization, per-user multi-tenant
+  authorization-code connection, selecting-user exact-folder Graph verification, encrypted and
+  lifecycle-discarded scoped caches, confirming-user delegated background reads, actionable admin
+  consent, immediate cessation of all source reads on authorization lapse, failure of non-terminal
+  items that still require source access, completion of source-independent scoring for content
+  already securely imported and handed to scoring, and rejection of personal Microsoft accounts,
+  fallback identities, application-only access, and deployment-time source allow-lists; otherwise
+  mark N/A]
+
 ### Key Entities *(include if feature involves data)*
 
 - **[Entity 1]**: [What it represents, key attributes without implementation]

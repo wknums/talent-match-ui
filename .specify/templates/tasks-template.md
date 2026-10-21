@@ -68,6 +68,15 @@ Examples of foundational tasks (adjust based on your project):
 - [ ] T007 Create base models/entities that all stories depend on
 - [ ] T008 Configure error handling and logging infrastructure
 - [ ] T009 Setup environment configuration management
+- [ ] TXXX [P] For Microsoft 365 folder sources, implement and test a separate per-user,
+      multi-tenant authorization-code connection and selecting-user exact-folder Graph verification
+- [ ] TXXX For Microsoft 365 folder sources, implement encrypted, fully scoped temporary/request
+      caches, delegated confirming-user background access, admin-consent recovery, and lifecycle
+      discard; on delegated authorization lapse, immediately stop all further source reads, fail
+      non-terminal items that still require source access, and allow securely imported content
+      already handed to scoring to finish without Microsoft 365 authorization; remove and test
+      against fallback identities, application-only access, personal accounts, and deployment-time
+      source allow-lists
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
@@ -155,6 +164,16 @@ Examples of foundational tasks (adjust based on your project):
 - [ ] TXXX Performance optimization across all stories
 - [ ] TXXX [P] Additional unit tests (if requested) in tests/unit/
 - [ ] TXXX Security hardening
+- [ ] TXXX Verify code, tests, scripts, infrastructure definitions, checked-in configuration, and
+      documentation contain no hardcoded Azure resource identifiers, environment-specific
+      identifiers, credentials, keys, tokens, connection strings, or secrets
+- [ ] TXXX Verify concrete environment-specific and secret values exist only in untracked `.env`
+      files and committed environment templates contain variable names with blank values
+- [ ] TXXX For Microsoft 365 folder sources, verify no source authorization material is returned,
+      logged, or retained beyond its connection/request lifecycle
+- [ ] TXXX For Microsoft 365 folder sources, verify an authorization lapse stops every further
+      source read, fails all non-terminal source-dependent items, permits securely imported content
+      already handed to source-independent scoring to finish, and never switches identity
 - [ ] TXXX Run quickstart.md validation
 
 ---

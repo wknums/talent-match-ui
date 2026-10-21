@@ -1,0 +1,68 @@
+@using TalentMatch.Web.Client.Services
+@implements IAsyncDisposable
+@inject ApiClient Api
+@inject IServiceProvider Services
+
+<CascadingValue Value="settings">
+    @if (loadError is not null)
+    {
+        <p role="alert">@loadError</p>
+    }
+    @ChildContent
+</CascadingValue>
+
+@code {
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    private readonly PollingSettingsState settings = new();
+    private AsyncRefreshLoop? refresh;
+    private string? loadError;
+    private bool disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        settings.Changed += SettingsChanged;
+        refresh = new(
+            TimeSpan.FromSeconds(60),
+            Services.GetService<TimeProvider>() ?? TimeProvider.System,
+            token => InvokeAsync(() => LoadAsync(token)),
+            DispatchExceptionAsync);
+        await LoadAsync(refresh.Token);
+        if (!disposed)
+            refresh.Start();
+    }
+
+    private async Task LoadAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            settings.Update(await Api.GetPollingSettingsAsync(cancellationToken));
+            loadError = null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (ApiException exception) when (exception.StatusCode == 401)
+        {
+            // The shared layout also hosts signed-out routes.
+            loadError = null;
+        }
+        catch (Exception exception)
+        {
+            loadError = $"Refresh settings could not be loaded; the last known intervals remain active. {exception.Message}";
+        }
+        if (!disposed)
+            StateHasChanged();
+    }
+
+    private void SettingsChanged() => StateHasChanged();
+
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed)
+            return;
+        disposed = true;
+        settings.Changed -= SettingsChanged;
+        if (refresh is not null)
+            await refresh.DisposeAsync();
+    }
+}

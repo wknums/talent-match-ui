@@ -3,9 +3,12 @@
 @inject ApiClient Api
 @inject UploadCoordinator UploadCoordinator
 @inject NavigationManager Navigation
-@implements IDisposable
+@inject IServiceProvider Services
+@implements IAsyncDisposable
 
 <h3>Dashboard</h3>
+
+<BulkScoringRequestNotification />
 
 @if (stats != null)
 {
@@ -148,7 +151,11 @@ else if (string.IsNullOrEmpty(jobLoadError))
     private DateTime lastUpdated;
     private string organisationFilter = "";
     private string departmentFilter = "";
-    private System.Threading.Timer? refreshTimer;
+    [CascadingParameter] public PollingSettingsState? PollingSettings { get; set; }
+    private AsyncRefreshLoop? refresh;
+    private readonly CancellationTokenSource lifetime = new();
+    private bool disposed;
+    private TimeSpan RefreshInterval => TimeSpan.FromSeconds(PollingSettings?.Current.StatusPollingIntervalSeconds ?? 60);
     private bool showCreateJob;
     private string? jobLoadError;
     private string? statsLoadError;
@@ -193,13 +200,18 @@ else if (string.IsNullOrEmpty(jobLoadError))
         canViewAnalytics = currentUser?.Role == "admin" || currentUser?.Role == "recruiter";
 
         await LoadData();
-        refreshTimer = new System.Threading.Timer(async _ =>
+        if (disposed) return;
+        refresh = new(RefreshInterval, Services.GetService<TimeProvider>() ?? TimeProvider.System, _ => InvokeAsync(async () =>
         {
             await LoadStats();
             await LoadUploadActivity();
-            await InvokeAsync(StateHasChanged);
-        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+            if (!disposed) StateHasChanged();
+        }), DispatchExceptionAsync);
+        if (!lifetime.IsCancellationRequested)
+            refresh.Start();
     }
+
+    protected override void OnParametersSet() => refresh?.UpdateInterval(RefreshInterval);
 
     private async Task LoadData()
     {
@@ -224,10 +236,11 @@ else if (string.IsNullOrEmpty(jobLoadError))
 
     private async Task LoadStats()
     {
+        if (disposed) return;
         try
         {
             statsLoadError = null;
-            stats = await Api.GetSystemStatsAsync();
+            stats = await Api.GetSystemStatsAsync(lifetime.Token);
             lastUpdated = DateTime.Now;
         }
         catch (Exception ex)
@@ -239,9 +252,10 @@ else if (string.IsNullOrEmpty(jobLoadError))
 
     private async Task LoadUploadActivity()
     {
+        if (disposed) return;
         try
         {
-            await UploadCoordinator.RefreshAsync();
+            await UploadCoordinator.RefreshAsync(lifetime.Token);
             uploadStatsLoadError = null;
         }
         catch (Exception ex)
@@ -296,10 +310,16 @@ else if (string.IsNullOrEmpty(jobLoadError))
         jobToDelete = null;
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        refreshTimer?.Dispose();
+        if (disposed)
+            return;
+        disposed = true;
         UploadCoordinator.Changed -= OnUploadActivityChanged;
+        var stopping = refresh?.DisposeAsync() ?? ValueTask.CompletedTask;
+        await lifetime.CancelAsync();
+        await stopping;
+        lifetime.Dispose();
     }
 
     private async Task OnJobCreated()

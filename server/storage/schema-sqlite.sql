@@ -482,6 +482,8 @@ CREATE TABLE IF NOT EXISTS UploadSettings (
     FileConcurrency         INTEGER NOT NULL,
     MaxIndividualFileBytes  INTEGER NOT NULL,
     MaxInFlightBytes        INTEGER NOT NULL,
+    ThroughputRefreshIntervalSeconds INTEGER NOT NULL DEFAULT 60,
+    StatusPollingIntervalSeconds INTEGER NOT NULL DEFAULT 60,
     ConcurrencyVersion      INTEGER NOT NULL,
     CreatedAt               TEXT    NOT NULL,
     CreatedBy               TEXT    NOT NULL,
@@ -490,7 +492,9 @@ CREATE TABLE IF NOT EXISTS UploadSettings (
     CONSTRAINT CK_UploadSettings_FileConcurrency CHECK (FileConcurrency > 0),
     CONSTRAINT CK_UploadSettings_MaxIndividualFileBytes CHECK (MaxIndividualFileBytes > 0),
     CONSTRAINT CK_UploadSettings_MaxInFlightBytes CHECK (MaxInFlightBytes >= MaxIndividualFileBytes),
-    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload')
+    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload'),
+    CONSTRAINT CK_UploadSettings_ThroughputRefresh CHECK (ThroughputRefreshIntervalSeconds BETWEEN 1 AND 4294967),
+    CONSTRAINT CK_UploadSettings_StatusPolling CHECK (StatusPollingIntervalSeconds BETWEEN 1 AND 4294967)
 );
 
 CREATE TABLE IF NOT EXISTS UploadSessions (

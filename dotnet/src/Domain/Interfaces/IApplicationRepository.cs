@@ -19,11 +19,13 @@ public interface IApplicationRepository
         bool includeTestCases = false,
         CancellationToken cancellationToken = default);
     Task<Application?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
+    // Production duplicate lookup excludes prompt-test applications (TestRunId != null).
     Task<ApplicationDocument?> FindDocumentByFingerprintAsync(string jobId, string fingerprint, CancellationToken cancellationToken = default);
     Task AddAsync(Application application, CancellationToken cancellationToken = default);
     Task PublishUploadedAsync(IReadOnlyCollection<string> applicationIds, CancellationToken cancellationToken = default);
     Task UpdateAsync(Application application, CancellationToken cancellationToken = default);
     Task AddDocumentAsync(ApplicationDocument document, CancellationToken cancellationToken = default);
+    Task<bool> DocumentExistsAsync(string documentId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ApplicationDocument>> GetDocumentsAsync(string applicationId, CancellationToken cancellationToken = default);
     Task SetDocumentBlobReferenceAsync(string documentId, string blobUri, string contentSha256, CancellationToken cancellationToken = default);
     Task AddScoringRunAsync(ScoringRun run, CancellationToken cancellationToken = default);

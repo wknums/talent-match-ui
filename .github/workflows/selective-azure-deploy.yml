@@ -20,6 +20,8 @@ on:
       - 'tsconfig*.json'
       - 'tailwind.config.js'
       - 'dotnet/**'
+      - 'global.json'
+      - 'NuGet.Config'
       - 'infra/**'
       - '.github/workflows/selective-azure-deploy.yml'
       - '.env_*.example'
@@ -70,6 +72,7 @@ jobs:
   resolve-targets:
     name: Resolve Targets
     runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production') || (github.ref == 'refs/heads/develop' && 'staging') || 'development' }}
     outputs:
       gh_environment: ${{ steps.resolve.outputs.gh_environment }}
       tf_environment: ${{ steps.resolve.outputs.tf_environment }}
@@ -107,10 +110,13 @@ jobs:
               - 'tailwind.config.js'
             stack_b:
               - 'dotnet/**'
+              - 'global.json'
+              - 'NuGet.Config'
 
       - name: Resolve targets
         id: resolve
         env:
+          DEPLOYMENT_ENV_FILE: ${{ secrets.DEPLOYMENT_ENV_FILE }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_REF: ${{ github.ref }}
           INPUT_TARGET: ${{ github.event.inputs.target }}
@@ -180,6 +186,7 @@ jobs:
 
       - name: Deploy shared infrastructure
         env:
+          DEPLOYMENT_ENV_FILE: ${{ secrets.DEPLOYMENT_ENV_FILE }}
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -187,7 +194,8 @@ jobs:
           AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           chmod +x infra/scripts/deploy.sh infra/scripts/lib/common.sh
-          cp ${{ needs.resolve-targets.outputs.env_file }}.example ${{ needs.resolve-targets.outputs.env_file }} 2>/dev/null || true
+          source infra/scripts/lib/common.sh
+          write_ci_env_file "${{ needs.resolve-targets.outputs.env_file }}"
           bash infra/scripts/deploy.sh \
             "${{ needs.resolve-targets.outputs.env_file }}" \
             "${{ needs.resolve-targets.outputs.tf_environment }}" \
@@ -244,15 +252,12 @@ jobs:
       - name: Package Stack A
         env:
           STACK_A_INSTALL_MODE: clean
-          APP_AUTH_MODE: ${{ vars.APP_AUTH_MODE || 'entra' }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ENTRA_STACK_A_CLIENT_ID: ${{ vars.ENTRA_STACK_A_CLIENT_ID }}
-          ENTRA_API_APP_CLIENT_ID: ${{ vars.ENTRA_API_APP_CLIENT_ID }}
-          ENTRA_API_IDENTIFIER_URI: ${{ vars.ENTRA_API_IDENTIFIER_URI }}
-          ENTRA_API_SCOPE: ${{ vars.ENTRA_API_SCOPE || 'access_as_user' }}
+          DEPLOYMENT_ENV_FILE: ${{ secrets.DEPLOYMENT_ENV_FILE }}
         run: |
           chmod +x infra/scripts/package-stack-a.sh infra/scripts/lib/common.sh
-          bash infra/scripts/package-stack-a.sh
+          source infra/scripts/lib/common.sh
+          write_ci_env_file "${{ needs.resolve-targets.outputs.env_file }}"
+          bash infra/scripts/package-stack-a.sh "${{ needs.resolve-targets.outputs.env_file }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -277,12 +282,15 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          global-json-file: global.json
 
       - name: Package Stack B
         run: |
           chmod +x infra/scripts/package-stack-b.sh infra/scripts/lib/common.sh
           bash infra/scripts/package-stack-b.sh
+
+      - name: Test Stack B
+        run: dotnet test dotnet/TalentMatch.slnx --configuration Release --no-restore --maxcpucount:1
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -332,6 +340,7 @@ jobs:
 
       - name: Deploy Stack A
         env:
+          DEPLOYMENT_ENV_FILE: ${{ secrets.DEPLOYMENT_ENV_FILE }}
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -345,7 +354,8 @@ jobs:
           TF_VAR_apim_gateway_url: ${{ needs.plan-or-apply-shared.outputs.apim_gateway_url }}
         run: |
           chmod +x infra/scripts/deploy.sh infra/scripts/lib/common.sh
-          cp ${{ needs.resolve-targets.outputs.env_file }}.example ${{ needs.resolve-targets.outputs.env_file }} 2>/dev/null || true
+          source infra/scripts/lib/common.sh
+          write_ci_env_file "${{ needs.resolve-targets.outputs.env_file }}"
           bash infra/scripts/deploy.sh \
             "${{ needs.resolve-targets.outputs.env_file }}" \
             "${{ needs.resolve-targets.outputs.tf_environment }}" \
@@ -354,11 +364,18 @@ jobs:
 
       - name: Deploy artifact to App Service
         if: needs.resolve-targets.outputs.action == 'apply'
+        env:
+          ENV_FILE: ${{ needs.resolve-targets.outputs.env_file }}
         run: |
-          APP_NAME="app-talentmatch-node-${{ needs.resolve-targets.outputs.tf_environment }}"
-          RG="${{ needs.resolve-targets.outputs.tf_environment == 'dev' && 'rg-talentmatch-dev' || needs.resolve-targets.outputs.tf_environment == 'test' && 'rg-talentmatch-test' || 'rg-talentmatch-prod' }}"
+          source infra/scripts/lib/common.sh
+          load_env_file "$ENV_FILE"
+          validate_deployment_target stack-a
+          validate_azure_context
+          APP_NAME="$(get_terraform_output "infra/terraform/live/stack-a" "app_name")"
+          validate_required RESOURCE_GROUP APP_NAME
           az webapp deploy \
-            --resource-group "$RG" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --resource-group "$RESOURCE_GROUP" \
             --name "$APP_NAME" \
             --src-path artifacts/stack-a.zip \
             --type zip \
@@ -405,6 +422,7 @@ jobs:
 
       - name: Deploy Stack B
         env:
+          DEPLOYMENT_ENV_FILE: ${{ secrets.DEPLOYMENT_ENV_FILE }}
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -418,7 +436,8 @@ jobs:
           TF_VAR_apim_gateway_url: ${{ needs.plan-or-apply-shared.outputs.apim_gateway_url }}
         run: |
           chmod +x infra/scripts/deploy.sh infra/scripts/lib/common.sh
-          cp ${{ needs.resolve-targets.outputs.env_file }}.example ${{ needs.resolve-targets.outputs.env_file }} 2>/dev/null || true
+          source infra/scripts/lib/common.sh
+          write_ci_env_file "${{ needs.resolve-targets.outputs.env_file }}"
           bash infra/scripts/deploy.sh \
             "${{ needs.resolve-targets.outputs.env_file }}" \
             "${{ needs.resolve-targets.outputs.tf_environment }}" \
@@ -427,11 +446,18 @@ jobs:
 
       - name: Deploy artifact to App Service
         if: needs.resolve-targets.outputs.action == 'apply'
+        env:
+          ENV_FILE: ${{ needs.resolve-targets.outputs.env_file }}
         run: |
-          APP_NAME="app-talentmatch-blazor-${{ needs.resolve-targets.outputs.tf_environment }}"
-          RG="${{ needs.resolve-targets.outputs.tf_environment == 'dev' && 'rg-talentmatch-dev' || needs.resolve-targets.outputs.tf_environment == 'test' && 'rg-talentmatch-test' || 'rg-talentmatch-prod' }}"
+          source infra/scripts/lib/common.sh
+          load_env_file "$ENV_FILE"
+          validate_deployment_target stack-b
+          validate_azure_context
+          APP_NAME="$(get_terraform_output "infra/terraform/live/stack-b" "app_name")"
+          validate_required RESOURCE_GROUP APP_NAME
           az webapp deploy \
-            --resource-group "$RG" \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --resource-group "$RESOURCE_GROUP" \
             --name "$APP_NAME" \
             --src-path artifacts/stack-b.zip \
             --type zip \

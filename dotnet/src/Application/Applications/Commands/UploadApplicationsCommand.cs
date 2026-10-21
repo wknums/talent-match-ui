@@ -3,6 +3,7 @@ using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 using System.IO;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Common.Services;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Application.Prompts.Services;
 
@@ -66,13 +67,13 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
         {
             foreach (var file in request.Files)
             {
+                var canonicalFingerprint = ContentFingerprint.ComputeFromBase64(file.ContentBase64);
                 if (!request.AllowDuplicates)
                 {
-                    var repeatedInRequest = !requestFingerprints.Add(file.Fingerprint);
+                    var repeatedInRequest = !requestFingerprints.Add(canonicalFingerprint);
                     var existingDocument = repeatedInRequest
                         ? null
-                        : await _applicationRepository.FindDocumentByFingerprintAsync(
-                            request.JobId, file.Fingerprint, cancellationToken);
+                        : await FindExistingDocumentAsync(request.JobId, file, cancellationToken);
                     if (repeatedInRequest || existingDocument is not null)
                         continue;
                 }
@@ -95,7 +96,7 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
                         FileName = file.FileName,
                         FileType = file.FileType,
                         FileSize = file.FileSize,
-                        Fingerprint = file.Fingerprint,
+                        Fingerprint = canonicalFingerprint,
                         ContentBase64 = file.ContentBase64
                     };
                     await _applicationRepository.AddDocumentAsync(doc, cancellationToken);
@@ -141,6 +142,20 @@ public class UploadApplicationsCommandHandler : IRequestHandler<UploadApplicatio
                 // Best-effort cleanup: preserve the original exception path.
             }
         }
+    }
+
+    private async Task<ApplicationDocument?> FindExistingDocumentAsync(
+        string jobId, UploadedFile file, CancellationToken cancellationToken)
+    {
+        foreach (var candidate in ContentFingerprint.LookupCandidatesFromBase64(file.ContentBase64))
+        {
+            var existing = await _applicationRepository.FindDocumentByFingerprintAsync(
+                jobId, candidate, cancellationToken);
+            if (existing is not null)
+                return existing;
+        }
+
+        return null;
     }
 
     private static string DeriveCandidateName(string fileName)

@@ -54,6 +54,13 @@ variable "apim_gateway_url" {
   type        = string
 }
 
+variable "app_insights_connection_string" {
+  description = "Shared Application Insights connection string; empty disables monitoring"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "use_key_vault_secret_refs" {
   description = "When true, app settings use Key Vault references for runtime secrets"
   type        = bool

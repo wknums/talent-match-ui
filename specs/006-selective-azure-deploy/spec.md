@@ -304,7 +304,7 @@ Allow each environment (local dev, QA/staging, production) to **selectively reus
 | `AZ_KEY_VAULT_REUSE` | `reuse_key_vault` | `modules/key_vault` | `azurerm_key_vault` |
 | `AZ_APIM_REUSE` | `reuse_apim` | `modules/apim` | `azurerm_api_management` |
 | `AZ_LOGANALYTICS_REUSE` | `reuse_loganalytics` | `modules/log_analytics` | `azurerm_log_analytics_workspace` |
-| `AZ_IDENTITIES_REUSE` | `reuse_identities` | `modules/identities` | `azurerm_user_assigned_identity` (×2) |
+| `AZ_IDENTITIES_REUSE` | `reuse_identities` | `modules/identities` | `azurerm_user_assigned_identity` for each stack selected by `STACK_TARGET` (zero, one, or two) |
 | `AZ_VNET_REUSE` | `reuse_vnet` | `modules/networking` | `azurerm_virtual_network` + `azurerm_subnet` |
 | `AZ_SQL_PRIVATE_ENDPOINT_REUSE` | `reuse_sql_private_endpoint` | `modules/networking` | *(skip PE creation — existing PE on VNet is used)* |
 

@@ -29,6 +29,10 @@ public sealed class InlineBlobStore : IBlobStore
     public Task<byte[]?> ReadByUriAsync(string blobUri, CancellationToken cancellationToken = default)
         => Task.FromResult<byte[]?>(null);
 
+    public Task<BlobUploadResult> PutObjectAsync(
+        string blobName, string mimeType, byte[] bytes, CancellationToken cancellationToken = default)
+        => Task.FromResult(new BlobUploadResult(null, Sha256Hex(bytes)));
+
     internal static string Sha256Hex(byte[] bytes)
     {
         var hash = SHA256.HashData(bytes);
@@ -123,6 +127,33 @@ public sealed class AzureBlobStore : IBlobStore
             _logger.LogWarning(ex, "Failed to read blob content from {BlobUri}", blobUri);
             return null;
         }
+    }
+
+    public async Task<BlobUploadResult> PutObjectAsync(
+        string blobName, string mimeType, byte[] bytes, CancellationToken cancellationToken = default)
+    {
+        var sha = InlineBlobStore.Sha256Hex(bytes);
+        var blob = _container.GetBlobClient(blobName);
+        using var stream = new MemoryStream(bytes, writable: false);
+        await blob.UploadAsync(stream, new BlobUploadOptions
+        {
+            HttpHeaders = new BlobHttpHeaders { ContentType = string.IsNullOrWhiteSpace(mimeType) ? "application/octet-stream" : mimeType },
+            Metadata = new Dictionary<string, string> { ["sha256"] = sha },
+        }, cancellationToken);
+        return new BlobUploadResult(blob.Uri.ToString(), sha);
+    }
+
+    public async Task DeleteByPrefixAsync(string prefix, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(prefix)) throw new ArgumentException("A prefix is required.", nameof(prefix));
+        await foreach (var item in _container.GetBlobsAsync(prefix: prefix, cancellationToken: cancellationToken))
+            await _container.DeleteBlobIfExistsAsync(item.Name, cancellationToken: cancellationToken);
+    }
+
+    public async Task DeleteByUriAsync(string blobUri, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(blobUri)) return;
+        await new BlobClient(new Uri(blobUri), new DefaultAzureCredential()).DeleteIfExistsAsync(cancellationToken: cancellationToken);
     }
 
     private static string ExtFromName(string name)

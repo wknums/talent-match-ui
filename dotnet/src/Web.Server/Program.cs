@@ -13,6 +13,7 @@ using Microsoft.IdentityModel.Tokens;
 using TalentMatch.Application;
 using TalentMatch.Application.Authorization;
 using TalentMatch.Application.JobExtraction.Services;
+using TalentMatch.Application.BulkScoringRequests.SourceConnections;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure;
@@ -26,6 +27,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services
 builder.Services.AddApplication();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddDataProtection();
+builder.Services.AddScoped<IBulkSourceClientAddress, BulkSourceClientAddress>();
 builder.Services.AddInfrastructure(builder.Configuration, builder.Environment.ContentRootPath);
 
 var appAuthMode = builder.Configuration["APP_AUTH_MODE"] ?? "simple";
@@ -48,9 +52,11 @@ if (useEntraAuthentication)
     var apiScope = builder.Configuration["ENTRA_API_SCOPE"] ?? "access_as_user";
     var allowedClientIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        RequireConfiguration(builder.Configuration, "ENTRA_STACK_A_CLIENT_ID"),
         RequireConfiguration(builder.Configuration, "ENTRA_STACK_B_CLIENT_ID"),
     };
+    var stackAClientId = builder.Configuration["ENTRA_STACK_A_CLIENT_ID"];
+    if (!string.IsNullOrWhiteSpace(stackAClientId))
+        allowedClientIds.Add(stackAClientId);
     var issuer = $"https://login.microsoftonline.com/{tenantId}/v2.0";
 
     builder.Services
@@ -149,6 +155,7 @@ else
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddHttpClient();
+builder.Services.AddBulkMetricsExport(builder.Configuration);
 builder.Services.AddSingleton<IAzureSqlProbe, EfCoreAzureSqlProbe>();
 builder.Services.AddSingleton<IAzureSqlReadinessService>(serviceProvider =>
     new AzureSqlReadinessService(
@@ -186,6 +193,9 @@ var useBackgroundAzureSqlWarmup =
 if (useBackgroundAzureSqlWarmup)
 {
     Console.WriteLine("[startup] Azure SQL detected; continuing startup while database initialization runs in the background.");
+    // Workers that need the tables wait for this gate instead of failing against a database that is not ready.
+    var databaseGate = app.Services.GetService<TalentMatch.Infrastructure.HostedServices.DatabaseInitializationGate>();
+    databaseGate?.Close();
     _ = Task.Run(async () =>
     {
         try
@@ -200,6 +210,10 @@ if (useBackgroundAzureSqlWarmup)
         catch (Exception ex)
         {
             Console.WriteLine($"[startup] Background Azure SQL initialization failed: {ex.Message}");
+        }
+        finally
+        {
+            databaseGate?.Open();
         }
     });
 }
@@ -496,6 +510,7 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
             EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
             EnsureSqliteExtractionLifecycleSchema(connection);
             EnsureSqliteScoringProfileSchema(connection);
+            EnsureSqlitePollingSettingsColumns(connection);
             return;
         }
 
@@ -513,11 +528,48 @@ static void EnsureSharedSqliteSchemaIfNeeded(AppDbContext db, string contentRoot
         EnsureSqliteJobConfigVersionsScoringRunCountColumn(connection);
         EnsureSqliteExtractionLifecycleSchema(connection);
         EnsureSqliteScoringProfileSchema(connection);
+        EnsureSqlitePollingSettingsColumns(connection);
     }
     finally
     {
         if (shouldClose)
             connection.Close();
+    }
+}
+
+static void EnsureSqlitePollingSettingsColumns(SqliteConnection connection)
+{
+    using var createCommand = connection.CreateCommand();
+    createCommand.CommandText = """
+        CREATE TABLE IF NOT EXISTS UploadSettings (
+            Id TEXT NOT NULL PRIMARY KEY,
+            FileConcurrency INTEGER NOT NULL CHECK (FileConcurrency > 0),
+            MaxIndividualFileBytes INTEGER NOT NULL CHECK (MaxIndividualFileBytes > 0),
+            MaxInFlightBytes INTEGER NOT NULL CHECK (MaxInFlightBytes >= MaxIndividualFileBytes),
+            ThroughputRefreshIntervalSeconds INTEGER NOT NULL DEFAULT 60 CHECK (ThroughputRefreshIntervalSeconds BETWEEN 1 AND 4294967),
+            StatusPollingIntervalSeconds INTEGER NOT NULL DEFAULT 60 CHECK (StatusPollingIntervalSeconds BETWEEN 1 AND 4294967),
+            ConcurrencyVersion INTEGER NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            CreatedBy TEXT NOT NULL,
+            UpdatedAt TEXT NOT NULL,
+            UpdatedBy TEXT NOT NULL,
+            CHECK (Id = 'optional-file-upload')
+        );
+        """;
+    createCommand.ExecuteNonQuery();
+    using var columnsCommand = connection.CreateCommand();
+    columnsCommand.CommandText = "PRAGMA table_info(UploadSettings);";
+    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    using (var reader = columnsCommand.ExecuteReader())
+        while (reader.Read())
+            columns.Add(reader.GetString(1));
+    foreach (var column in new[] { "ThroughputRefreshIntervalSeconds", "StatusPollingIntervalSeconds" })
+    {
+        if (columns.Contains(column))
+            continue;
+        using var command = connection.CreateCommand();
+        command.CommandText = $"ALTER TABLE UploadSettings ADD COLUMN {column} INTEGER NOT NULL DEFAULT 60 CHECK ({column} BETWEEN 1 AND 4294967);";
+        command.ExecuteNonQuery();
     }
 }
 
@@ -803,6 +855,10 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
     if (!File.Exists(schemaPath))
         throw new FileNotFoundException($"Shared Azure SQL schema file not found: {schemaPath}");
 
+    var bulkV3UpgradePath = ResolveSharedSchemaPath(contentRootPath, "schema-bulk-v3-upgrades.sql");
+    if (!File.Exists(bulkV3UpgradePath))
+        throw new FileNotFoundException($"Delegated bulk v3 Azure SQL upgrade file not found: {bulkV3UpgradePath}");
+
     var schemaSql = File.ReadAllText(schemaPath);
     var batches = Regex.Split(schemaSql, @"\r?\n(?=IF NOT EXISTS|CREATE (?:UNIQUE )?INDEX)")
         .Select(batch => 
@@ -835,6 +891,14 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
 
     try
     {
+        foreach (var upgrade in SplitSqlServerBatches(File.ReadAllText(bulkV3UpgradePath)))
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = upgrade;
+            command.CommandTimeout = 180;
+            command.ExecuteNonQuery();
+        }
+
         // Must precede the batch loop; see the header of the upgrades file for why.
         foreach (var upgrade in preBatchUpgrades)
         {
@@ -844,7 +908,13 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
             command.ExecuteNonQuery();
         }
 
-        foreach (var batch in batches)
+        var hasDelegatedBulkV3 = Convert.ToInt32(ExecuteScalarSql(
+            "SELECT CASE WHEN OBJECT_ID(N'[talentmatch].[BulkSourceConnections]', N'U') IS NULL THEN 0 ELSE 1 END;")) == 1;
+
+        foreach (var batch in batches.Where(batch =>
+                     !hasDelegatedBulkV3
+                     || (!batch.Contains("[talentmatch].[Bulk", StringComparison.Ordinal)
+                         && !batch.Contains("talentmatch.Bulk", StringComparison.Ordinal))))
         {
             using var command = connection.CreateCommand();
             command.CommandText = batch;
@@ -1010,12 +1080,29 @@ IF COL_LENGTH('talentmatch.PromptGenerationInstructions', 'ReasoningLevel') IS N
             command.CommandTimeout = 180;
             command.ExecuteNonQuery();
         }
+
+        object? ExecuteScalarSql(string sql)
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            command.CommandTimeout = 180;
+            return command.ExecuteScalar();
+        }
     }
     finally
     {
         if (shouldClose)
             connection.Close();
     }
+
+    static IEnumerable<string> SplitSqlServerBatches(string sql) =>
+        Regex.Split(sql, @"\r?\n\s*GO\s*(?:\r?\n|$)", RegexOptions.IgnoreCase)
+            .Select(batch =>
+            {
+                var lines = batch.Split(["\r\n", "\r", "\n"], StringSplitOptions.None);
+                return string.Join("\n", lines.Where(line => !line.Trim().StartsWith("--"))).Trim();
+            })
+            .Where(batch => batch.Length > 0);
 }
 
 static string ResolveSharedSchemaPath(string contentRootPath, string fileName)
@@ -1092,6 +1179,8 @@ app.MapExtractionInstructionEndpoints();
 app.MapApplicationsEndpoints();
 app.MapUploadEndpoints();
 app.MapUploadSettingsEndpoints();
+app.MapSourceConnectionsEndpoints();
+app.MapBulkScoringRequestsEndpoints();
 app.MapStatsEndpoints();
 app.MapDlqEndpoints();
 app.MapPromptEndpoints();

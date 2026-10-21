@@ -44,16 +44,28 @@
 @code {
     [Parameter] public List<ApplicationDto> Applications { get; set; } = new();
     [Parameter] public JobApplicationCountsDto? ApplicationCounts { get; set; }
+    [Parameter] public BulkCountsDto? BulkCounts { get; set; }
     [Parameter, EditorRequired] public string JobId { get; set; } = string.Empty;
 
     private int TotalApplications => ApplicationCounts?.Total ?? Applications.Count;
+    private int BulkPreApplicationCount =>
+        (BulkCounts?.Waiting ?? 0)
+        + (BulkCounts?.Importing ?? 0)
+        + (BulkCounts?.Converting ?? 0);
+    private int PipelineTotal => TotalApplications + BulkPreApplicationCount;
     private List<StageInfo> stages => new()
     {
-        new StageInfo("Uploading", ApplicationCounts?.Uploading ?? Applications.Count(a => a.Status == "Uploading"), "#805ad5", TotalApplications),
-        new StageInfo("Queued", ApplicationCounts?.Queued ?? Applications.Count(a => a.Status == "Queued"), "#2196f3", TotalApplications),
-        new StageInfo("Scoring", ApplicationCounts?.Scoring ?? Applications.Count(a => a.Status == "Scoring"), "#ff9800", TotalApplications),
-        new StageInfo("Complete", ApplicationCounts?.Complete ?? Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", TotalApplications),
-        new StageInfo("Failed", ApplicationCounts?.Failed ?? Applications.Count(a => a.Status is "Failed" or "ScoringFailed" or "ExtractionFailed"), "#f44336", TotalApplications)
+        new StageInfo(
+            "Uploading",
+            (ApplicationCounts?.Uploading ?? Applications.Count(a => a.Status == "Uploading"))
+            + (BulkCounts?.Importing ?? 0)
+            + (BulkCounts?.Converting ?? 0),
+            "#805ad5",
+            PipelineTotal),
+        new StageInfo("Queued", ApplicationCounts?.Queued ?? Applications.Count(a => a.Status == "Queued"), "#2196f3", PipelineTotal),
+        new StageInfo("Scoring", ApplicationCounts?.Scoring ?? Applications.Count(a => a.Status == "Scoring"), "#ff9800", PipelineTotal),
+        new StageInfo("Complete", ApplicationCounts?.Complete ?? Applications.Count(a => a.Status is "Completed" or "NeedsManualReview"), "#4caf50", PipelineTotal),
+        new StageInfo("Failed", ApplicationCounts?.Failed ?? Applications.Count(a => a.Status is "Failed" or "ScoringFailed" or "ExtractionFailed"), "#f44336", PipelineTotal)
     };
 
     private IReadOnlyList<UploadSessionDetailDto> ActiveUploadSessions => Coordinator.Sessions
@@ -65,20 +77,25 @@
         .OrderByDescending(session => session.CreatedAt)
         .FirstOrDefault();
 
-    private int SubmittedUploadCount => ActiveUploadSessions.Sum(session => session.Counts.Total);
+    private int SubmittedUploadCount =>
+        ActiveUploadSessions.Sum(session => session.Counts.Total)
+        + (BulkCounts?.Discovered ?? 0);
     private int PendingUploadCount => ActiveUploadSessions.Sum(session => session.Items.Count(item =>
         item.Status is "waiting" or "throttled" or "uploading"));
     private int AttentionUploadCount => ActiveUploadSessions.Sum(session => session.Items.Count(item =>
         item.Status is "failed" or "retrying"));
-    private int OutstandingUploadCount => PendingUploadCount + AttentionUploadCount;
+    private int OutstandingUploadCount =>
+        PendingUploadCount
+        + AttentionUploadCount
+        + (BulkCounts?.Waiting ?? 0);
     private int UploadProgressMaximum => Math.Max(SubmittedUploadCount, 1);
     private double PendingUploadPercentage => Percentage(PendingUploadCount, SubmittedUploadCount);
     private double AttentionUploadPercentage => Percentage(AttentionUploadCount, SubmittedUploadCount);
-    private string UploadTitle => LatestUploadSession is null
+    private string UploadTitle => LatestUploadSession is null && BulkCounts is null
         ? "No files were submitted in the latest upload action"
-        : $"{OutstandingUploadCount} files remain across active upload sessions";
+        : $"{OutstandingUploadCount} files remain across active upload and bulk source sessions";
     private string UploadProgressText =>
-        $"{PendingUploadCount} waiting or uploading; {AttentionUploadCount} failed or retrying";
+        $"{PendingUploadCount + (BulkCounts?.Waiting ?? 0)} waiting or uploading; {AttentionUploadCount} failed or retrying";
 
     protected override void OnInitialized() => Coordinator.Changed += OnChanged;
 

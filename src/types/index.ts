@@ -904,3 +904,274 @@ export interface TestRunApplicationDetail {
 export interface PromptTestRunDetail extends PromptTestRun {
   applications: TestRunApplicationDetail[]
 }
+
+// Delegated Microsoft 365 bulk scoring (OpenAPI 3.1.0).
+// These are public wire contracts only. Source credentials and internal fingerprints have no DTO.
+export type BulkScoringSourceKind = 'sharepoint' | 'onedrive_business'
+export type MicrosoftCommercialCloud = 'microsoftCommercial'
+export type SourceConnectionState =
+  | 'authorizing'
+  | 'authorized'
+  | 'verified'
+  | 'consumed'
+  | 'expired'
+  | 'abandoned'
+  | 'failed'
+export type BulkScoringAuthorizationState =
+  | 'pending'
+  | 'active'
+  | 'lapsed'
+  | 'revoked'
+  | 'accessLost'
+  | 'discarded'
+  | 'unavailableHistorical'
+export type BulkScoringRequestStatus = 'draft' | 'active' | 'completed'
+export type BulkScoringRequestOutcome = 'all_succeeded' | 'partial' | 'failed' | 'cancelled'
+export type BulkScoringDiscoveryStatus = 'more_available' | 'complete' | 'limit_reached'
+export type BulkScoringItemStatus =
+  | 'waiting'
+  | 'importing'
+  | 'converting'
+  | 'scoring'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
+export type BulkScoringReasonCode =
+  | 'unsupported_type'
+  | 'file_too_large'
+  | 'limit_exceeded'
+  | 'empty_file'
+  | 'not_convertible'
+  | 'access_denied'
+  | 'authorization_lapsed'
+  | 'source_missing'
+  | 'source_changed'
+  | 'duplicate_in_request'
+  | 'duplicate_in_job'
+  | 'conversion_failed'
+  | 'conversion_timeout'
+  | 'converted_too_large'
+  | 'conversion_page_mismatch'
+  | 'conversion_dimension_mismatch'
+  | 'conversion_ssim_below_threshold'
+  | 'conversion_blank_page'
+  | 'conversion_cropped_page'
+  | 'scoring_failed'
+  | 'cancelled_by_user'
+  | 'transient_exhausted'
+export type BulkScoringErrorCode =
+  | 'source_authorization_required'
+  | 'source_admin_consent_required'
+  | 'source_authorization_expired'
+  | 'source_authorization_revoked'
+  | 'source_access_denied'
+  | 'source_connection_invalid_or_expired'
+  | 'source_connection_limit_reached'
+  | 'source_connection_rate_limited'
+  | 'source_callback_rate_limited'
+  | 'source_unsupported_account'
+  | 'source_unsupported_cloud'
+  | 'source_folder_invalid_or_unavailable'
+  | 'source_connector_unavailable'
+  | 'draft_review_changed'
+  | 'invalid_request_state'
+  | 'concurrency_conflict'
+  | 'validation_failed'
+  | 'not_found'
+  | 'forbidden'
+
+export interface BulkScoringProblem {
+  type: string
+  title: string
+  status: number
+  detail?: string
+  code: BulkScoringErrorCode
+  correlationId: string
+  adminConsentUrl?: string | null
+}
+
+export interface BeginSourceConnectionRequest {
+  folderUrl: string
+  retryOfRequestId?: string | null
+}
+
+export interface BeginSourceConnectionResponse {
+  connectionId: string
+  status: 'authorizing'
+  authorizationUrl: string
+  expiresAt: string
+}
+
+export interface SourceConnectionStatus {
+  connectionId: string
+  status: SourceConnectionState
+  expiresAt: string
+  sourceKind?: BulkScoringSourceKind
+  sourceAccountDisplay?: string | null
+  folderName?: string | null
+  adminConsentRequired?: boolean
+  adminConsentUrl?: string | null
+  safeFailureCode?: BulkScoringErrorCode | null
+}
+
+export interface BulkScoringCapabilities {
+  enabled: boolean
+  supportedSources: BulkScoringSourceKind[]
+  supportedCloud: MicrosoftCommercialCloud
+  maxDiscoveryStepFiles: number
+  rasterizationAvailable: boolean
+}
+
+export interface BulkScoringLimits {
+  maxFilesPerRequest: number
+  maxBytesPerFile: number
+  maxTotalBytes: number
+  discoveryStepMaxFiles: number
+}
+
+export interface BulkScoringCounts {
+  discovered: number
+  excluded: number
+  inaccessible: number
+  waiting: number
+  importing: number
+  converting: number
+  scoring: number
+  completed: number
+  failed: number
+  skipped: number
+  cancelled: number
+}
+
+export interface BulkScoringTerminalCounts {
+  completed: number
+  failed: number
+  skipped: number
+  cancelled: number
+}
+
+export interface BulkScoringPreviewFile {
+  itemId: string
+  name: string
+  relativePath: string
+  sizeBytes: number
+  excludedWhenRasterized?: boolean
+}
+
+export interface BulkScoringPreviewResponse {
+  requestId: string
+  connectionId: string
+  sourceKind: BulkScoringSourceKind
+  sourceAccountDisplay?: string
+  folderName: string
+  authorizationState: 'pending'
+  discoveryStatus: BulkScoringDiscoveryStatus
+  reviewSnapshotVersion: number
+  counts: BulkScoringCounts
+  excludedByReason?: Partial<Record<BulkScoringReasonCode, number>>
+  entriesScanned?: number
+  totalEligibleBytes: number
+  limits: BulkScoringLimits
+  draftItemsPath?: string
+}
+
+export interface BulkScoringDraftItemPage {
+  items: BulkScoringPreviewFile[]
+  totalItems: number
+  reviewSnapshotVersion: number
+  nextReviewCursor: string | null
+}
+
+export interface BulkScoringConfirmRequest {
+  convertToRasterPdf: boolean
+  allowDuplicates: boolean
+  expectedConcurrencyVersion: number
+}
+
+export interface BulkScoringRequestSummary {
+  requestId: string
+  jobId: string
+  status: BulkScoringRequestStatus
+  outcome?: BulkScoringRequestOutcome | null
+  sourceKind: BulkScoringSourceKind
+  sourceAccountDisplay?: string
+  folderName: string
+  convertToRasterPdf: boolean
+  counts: BulkScoringCounts
+  authorizationState: BulkScoringAuthorizationState
+  capturedScoringConfigVersionId: string | null
+  currentScoringConfigVersionId: string | null
+  configChangedSinceAcceptance: boolean
+  retryOfRequestId?: string | null
+  createdAt: string
+  terminalAt?: string | null
+}
+
+/**
+ * Detail-only actor projection. The API resolves a display name solely from the recorded product
+ * actor ID and returns that recorded ID itself when the record or display name is unavailable.
+ * There is intentionally no username field or username fallback contract.
+ */
+export type RecordedActorDisplay = string
+
+export interface BulkScoringRequestDetail extends BulkScoringRequestSummary {
+  submittedBy: RecordedActorDisplay
+  submittedAt: string
+  cancelledBy: RecordedActorDisplay | null
+  cancelledAt: string | null
+  sourceWebUrl?: string
+  excludedByReason?: Partial<Record<BulkScoringReasonCode, number>>
+  totalEligibleBytes?: number
+  allowDuplicates?: boolean
+  limits: BulkScoringLimits
+  concurrencyVersion: number
+}
+
+export interface BulkScoringNotification {
+  requestId: string
+  outcome: BulkScoringRequestOutcome
+  counts: BulkScoringTerminalCounts
+  requestDetailPath: string
+  terminalAt: string
+}
+
+export interface BulkScoringItem {
+  itemId: string
+  name: string
+  relativePath: string
+  sizeBytes: number
+  status: BulkScoringItemStatus
+  reasonCode?: BulkScoringReasonCode | null
+  reasonMessage?: string | null
+  scoredVersion?: 'original' | 'converted' | null
+  pageCount: number | null
+  scoringConfigVersionId: string | null
+  applicationId?: string | null
+  hasRetainedOriginal: boolean
+}
+
+export interface BulkScoringRequestPage {
+  items: BulkScoringRequestSummary[]
+  nextCursor: string | null
+}
+
+export interface BulkScoringItemPage {
+  items: BulkScoringItem[]
+  nextCursor: string | null
+}
+
+export interface BulkScoringSettings {
+  maxIndividualFileBytes: number
+  maxInFlightUploadBytes: number
+  displayUnit: 'MiB'
+  maxFilesPerRequest: number
+  concurrencyVersion: number
+}
+
+export interface UpdateBulkScoringSettingsRequest {
+  maxIndividualFileBytes: number
+  maxInFlightUploadBytes: number
+  maxFilesPerRequest: number
+  expectedConcurrencyVersion: number
+}

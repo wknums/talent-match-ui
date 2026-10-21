@@ -1,0 +1,26 @@
+{
+  "$comment": "Every ErrorCode literal from contracts/openapi.yaml with safe RFC 9457 expectations.",
+  "requiredFields": ["type", "title", "status", "code", "correlationId"],
+  "forbiddenFields": ["exception", "stackTrace", "providerPayload", "rawProviderError", "token", "folderUrl", "itemName", "fingerprint", "content"],
+  "cases": [
+    { "code": "source_authorization_required", "status": 401 },
+    { "code": "source_admin_consent_required", "status": 401, "allowsAdminConsentUrl": true },
+    { "code": "source_authorization_expired", "status": 401 },
+    { "code": "source_authorization_revoked", "status": 401 },
+    { "code": "source_access_denied", "status": 403 },
+    { "code": "source_connection_invalid_or_expired", "status": 410 },
+    { "code": "source_connection_limit_reached", "status": 429 },
+    { "code": "source_connection_rate_limited", "status": 429 },
+    { "code": "source_callback_rate_limited", "status": 429 },
+    { "code": "source_unsupported_account", "status": 422 },
+    { "code": "source_unsupported_cloud", "status": 422 },
+    { "code": "source_folder_invalid_or_unavailable", "status": 422 },
+    { "code": "source_connector_unavailable", "status": 503 },
+    { "code": "draft_review_changed", "status": 409 },
+    { "code": "invalid_request_state", "status": 409 },
+    { "code": "concurrency_conflict", "status": 409 },
+    { "code": "validation_failed", "status": 422 },
+    { "code": "not_found", "status": 404 },
+    { "code": "forbidden", "status": 403 }
+  ]
+}

@@ -29,6 +29,20 @@ log_warn()    { echo -e "${YELLOW}[WARN]${NC} $*"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 log_fatal()   { log_error "$@"; exit 1; }
 
+write_ci_env_file() {
+  set +x
+  local env_file="${1:?Usage: write_ci_env_file <path>}"
+  [[ "${DEPLOYMENT_ENV_FILE:-}" =~ [^[:space:]] ]] \
+    || log_fatal "GitHub environment secret DEPLOYMENT_ENV_FILE is required; refusing to use an example profile."
+  (
+    umask 077
+    printf '%s\n' "$DEPLOYMENT_ENV_FILE" | sed 's/\r$//' > "$env_file" \
+      || log_fatal "Unable to write the CI deployment profile."
+    chmod 600 "$env_file" || log_fatal "Unable to restrict CI deployment profile permissions."
+  ) || return $?
+  unset DEPLOYMENT_ENV_FILE
+}
+
 # ---------------------------------------------------------------------------
 # load_env_file — Source a .env_* file, skipping comments and blank lines
 # ---------------------------------------------------------------------------
@@ -104,9 +118,48 @@ validate_enum() {
 }
 
 # ---------------------------------------------------------------------------
+# validate_deployment_target — Limit commands to stacks enabled in the profile
+# ---------------------------------------------------------------------------
+validate_deployment_target() {
+  local target="${1:?Usage: validate_deployment_target <target>}"
+  local configured="${STACK_TARGET:-both}"
+  case "$configured" in
+    shared-only|stack-a|stack-b|both) ;;
+    *) log_fatal "STACK_TARGET must be shared-only, stack-a, stack-b, or both" ;;
+  esac
+
+  case "$target" in
+    shared-only) return 0 ;;
+    stack-a|stack-b|stack-b-only|both)
+      local required="${target%-only}"
+      [[ "$configured" == "both" || "$configured" == "$required" ]] \
+        || log_fatal "Deployment target '$target' is not enabled by STACK_TARGET=$configured in the environment profile."
+      ;;
+    *) log_fatal "Unknown deployment target: $target" ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
 # export_tf_vars — Export TF_VAR_* from environment profile settings
 # ---------------------------------------------------------------------------
+validate_app_insights_config() {
+  local name value
+  for name in AZ_APP_INSIGHTS_ENABLED AZ_APP_INSIGHTS_REUSE; do
+    value="${!name:-FALSE}"
+    case "${value^^}" in
+      TRUE|FALSE) ;;
+      *) log_fatal "$name must be TRUE or FALSE" ;;
+    esac
+  done
+
+  if [[ "$(bool_to_tf "${AZ_APP_INSIGHTS_ENABLED:-FALSE}")" == "true" && "$(bool_to_tf "${AZ_APP_INSIGHTS_REUSE:-FALSE}")" == "true" ]]; then
+    validate_required AZ_APP_INSIGHTS_NAME AZ_APP_INSIGHTS_RG
+  fi
+}
+
 export_tf_vars() {
+  validate_app_insights_config
+
   # Core variables
   export TF_VAR_tenant_id="${AZURE_TENANT_ID:?}"
   export TF_VAR_environment="${ENVIRONMENT:?}"
@@ -131,7 +184,8 @@ export_tf_vars() {
   export TF_VAR_sql_aad_admin_login="${SQL_AAD_ADMIN_LOGIN:-}"
   export TF_VAR_sql_aad_admin_object_id="${SQL_AAD_ADMIN_OBJECT_ID:-}"
 
-  # Key Vault
+  # Key Vault. NAME/RG identify an existing vault when reuse is true; when reuse
+  # is false, non-empty values override the managed vault's generated name/main RG.
   export TF_VAR_enable_key_vault="$(bool_to_tf "${AZ_KEY_VAULT_ENABLED:-FALSE}")"
   export TF_VAR_reuse_key_vault="$(bool_to_tf "${AZ_KEY_VAULT_REUSE:-FALSE}")"
   export TF_VAR_existing_key_vault_name="${AZ_KEY_VAULT_NAME:-}"
@@ -142,6 +196,12 @@ export_tf_vars() {
   export TF_VAR_reuse_apim="$(bool_to_tf "${AZ_APIM_REUSE:-FALSE}")"
   export TF_VAR_existing_apim_name="${AZ_APIM_NAME:-}"
   export TF_VAR_existing_apim_rg="${AZ_APIM_RG:-}"
+
+  # Application Insights
+  export TF_VAR_enable_app_insights="$(bool_to_tf "${AZ_APP_INSIGHTS_ENABLED:-FALSE}")"
+  export TF_VAR_reuse_app_insights="$(bool_to_tf "${AZ_APP_INSIGHTS_REUSE:-FALSE}")"
+  export TF_VAR_existing_app_insights_name="${AZ_APP_INSIGHTS_NAME:-}"
+  export TF_VAR_existing_app_insights_rg="${AZ_APP_INSIGHTS_RG:-}"
 
   # Identities
   export TF_VAR_reuse_identities="$(bool_to_tf "${AZ_IDENTITIES_REUSE:-FALSE}")"
@@ -156,12 +216,53 @@ export_tf_vars() {
   export TF_VAR_existing_entra_stack_a_client_id="${ENTRA_STACK_A_CLIENT_ID:-}"
   export TF_VAR_existing_entra_stack_b_client_id="${ENTRA_STACK_B_CLIENT_ID:-}"
   export TF_VAR_entra_api_identifier_uri="${ENTRA_API_IDENTIFIER_URI:-}"
+  export TF_VAR_entra_api_scope_id="${ENTRA_API_SCOPE_ID:-}"
   export TF_VAR_entra_api_scope="${ENTRA_API_SCOPE:-access_as_user}"
   export TF_VAR_entra_stack_a_redirect_uris="$(csv_to_json "${ENTRA_STACK_A_REDIRECT_URIS:-}")"
   export TF_VAR_entra_stack_b_redirect_uris="$(csv_to_json "${ENTRA_STACK_B_REDIRECT_URIS:-}")"
   export TF_VAR_entra_create_role_groups="$(bool_to_tf "${ENTRA_CREATE_ROLE_GROUPS:-FALSE}")"
   export TF_VAR_entra_bootstrap_admin_object_id="${ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID:-}"
 
+  # Separate multi-tenant delegated authorization-code connector. It is never the product API
+  # registration and has no application permission, site grant, password, or certificate.
+  if [[ "${MICROSOFT365_SOURCE_MODE:-}" == "graph" ]]; then
+    export TF_VAR_source_connector_enabled="true"
+  else
+    export TF_VAR_source_connector_enabled="false"
+  fi
+  export TF_VAR_reuse_source_connector="$(bool_to_tf "${MICROSOFT365_SOURCE_REUSE:-FALSE}")"
+  export TF_VAR_existing_source_connector_client_id="${MICROSOFT365_SOURCE_CLIENT_ID:-}"
+  export TF_VAR_source_connector_redirect_uris="$(csv_to_json "${MICROSOFT365_SOURCE_REDIRECT_URIS:-}")"
+  export TF_VAR_bulk_auth_key_name="${BULK_AUTH_KEY_NAME:-bulk-auth}"
+
+  # Blank-by-default non-secret Stack B connector policy. Concrete values come only from the
+  # untracked environment profile.
+  export TF_VAR_product_environment="${PRODUCT_ENVIRONMENT:-}"
+  export TF_VAR_microsoft365_source_mode="${MICROSOFT365_SOURCE_MODE:-}"
+  export TF_VAR_microsoft365_source_publisher_verified="${MICROSOFT365_SOURCE_PUBLISHER_VERIFIED:-}"
+  export TF_VAR_microsoft365_source_client_id="${MICROSOFT365_SOURCE_CLIENT_ID:-}"
+  export TF_VAR_microsoft365_source_callback_path="${MICROSOFT365_SOURCE_CALLBACK_PATH:-}"
+  export TF_VAR_microsoft365_source_admin_consent_callback_path="${MICROSOFT365_SOURCE_ADMIN_CONSENT_CALLBACK_PATH:-}"
+  export TF_VAR_microsoft365_source_authority="${MICROSOFT365_SOURCE_AUTHORITY:-}"
+  export TF_VAR_microsoft365_source_scopes="${MICROSOFT365_SOURCE_SCOPES:-}"
+  export TF_VAR_microsoft_graph_base_uri="${MICROSOFT_GRAPH_BASE_URI:-}"
+  export TF_VAR_microsoft365_source_max_concurrency="${MICROSOFT365_SOURCE_MAX_CONCURRENCY:-}"
+  export TF_VAR_bulk_source_idle_ttl_minutes="${BULK_SOURCE_IDLE_TTL_MINUTES:-}"
+  export TF_VAR_bulk_source_absolute_ttl_minutes="${BULK_SOURCE_ABSOLUTE_TTL_MINUTES:-}"
+  export TF_VAR_bulk_discovery_step_files="${BULK_DISCOVERY_STEP_FILES:-}"
+  export TF_VAR_bulk_discovery_step_max_entries="${BULK_DISCOVERY_STEP_MAX_ENTRIES:-}"
+  export TF_VAR_bulk_discovery_step_max_seconds="${BULK_DISCOVERY_STEP_MAX_SECONDS:-}"
+  export TF_VAR_bulk_max_total_bytes="${BULK_MAX_TOTAL_BYTES:-}"
+  export TF_VAR_bulk_pending_connections_per_actor="${BULK_PENDING_CONNECTIONS_PER_ACTOR:-}"
+  export TF_VAR_bulk_connection_starts_per_actor_per_minute="${BULK_CONNECTION_STARTS_PER_ACTOR_PER_MINUTE:-}"
+  export TF_VAR_bulk_connection_starts_per_ip_per_minute="${BULK_CONNECTION_STARTS_PER_IP_PER_MINUTE:-}"
+  export TF_VAR_bulk_callbacks_per_ip_per_minute="${BULK_CALLBACKS_PER_IP_PER_MINUTE:-}"
+  export TF_VAR_bulk_admission_hmac_key_uri="${BULK_ADMISSION_HMAC_KEY_URI:-}"
+  export TF_VAR_bulk_import_concurrency="${BULK_IMPORT_CONCURRENCY:-}"
+  export TF_VAR_bulk_convert_concurrency="${BULK_CONVERT_CONCURRENCY:-}"
+  export TF_VAR_bulk_raster_dpi="${BULK_RASTER_DPI:-}"
+
+  export TF_VAR_entra_app_role_ids="{}"
   if [[ -n "${ENTRA_ADMIN_APP_ROLE_ID:-}" && -n "${ENTRA_ORGANIZATION_ADMIN_APP_ROLE_ID:-}" \
     && -n "${ENTRA_RECRUITER_APP_ROLE_ID:-}" && -n "${ENTRA_BUSINESS_PANEL_APP_ROLE_ID:-}" ]]; then
     export TF_VAR_entra_app_role_ids="{\"admin\":\"$ENTRA_ADMIN_APP_ROLE_ID\",\"organization_admin\":\"$ENTRA_ORGANIZATION_ADMIN_APP_ROLE_ID\",\"recruiter\":\"$ENTRA_RECRUITER_APP_ROLE_ID\",\"business_panel\":\"$ENTRA_BUSINESS_PANEL_APP_ROLE_ID\"}"
@@ -174,12 +275,14 @@ export_tf_vars() {
   export TF_VAR_apim_publisher_email="${APIM_PUBLISHER_EMAIL:-admin@example.com}"
 
   # Runtime settings (non-secret, safe to export)
+  export TF_VAR_app_auth_mode="${APP_AUTH_MODE:-entra}"
   export TF_VAR_storage_provider="${STORAGE_PROVIDER:-azuresql}"
   export TF_VAR_awr_auth_mode="${AWR_AUTH_MODE:-none}"
   export TF_VAR_awr_aad_audience="${AWR_AAD_AUDIENCE:-}"
   export TF_VAR_awr_api_client_id="${AWR_API_CLIENT_ID:-}"
   export TF_VAR_awr_api_app_role_value="${AWR_API_APP_ROLE_VALUE:-TalentMatch.Access}"
   export TF_VAR_awr_max_parallel="${AWR_MAX_PARALLEL:-1}"
+  export TF_VAR_awr_scoring_lease_seconds="${AWR_SCORING_LEASE_SECONDS:-240}"
   export TF_VAR_awr_seq_api_endpoint="${AWR_SEQ_API_ENDPOINT:-}"
   export TF_VAR_cors_allowed_origins="${CORS_ALLOWED_ORIGINS:-}"
   export TF_VAR_api_mode="${API_MODE:-mock}"
@@ -220,6 +323,7 @@ bool_to_tf() {
   [[ "$val" == "TRUE" ]] && echo "true" || echo "false"
 }
 
+
 csv_to_json() {
   local value="${1:-}"
   local items=()
@@ -241,7 +345,18 @@ csv_to_json() {
 # validate_reuse_coordinates — Check that reuse-enabled resources have coords
 # ---------------------------------------------------------------------------
 validate_reuse_coordinates() {
+  validate_app_insights_config
+
   local errors=()
+  local stack_target="${STACK_TARGET:-both}"
+  local stack_a_enabled=false
+  local stack_b_enabled=false
+  [[ "$stack_target" == "stack-a" || "$stack_target" == "both" ]] && stack_a_enabled=true
+  [[ "$stack_target" == "stack-b" || "$stack_target" == "both" ]] && stack_b_enabled=true
+
+  if [[ "$stack_target" != "shared-only" && "$stack_a_enabled" != "true" && "$stack_b_enabled" != "true" ]]; then
+    errors+=("STACK_TARGET must be shared-only, stack-a, stack-b, or both")
+  fi
 
   if [[ "${AZ_APP_SERVICE_PLAN_REUSE:-FALSE}" == "TRUE" ]]; then
     [[ -z "${AZ_APP_SERVICE_PLAN_NAME:-}" ]] && errors+=("AZ_APP_SERVICE_PLAN_NAME required when AZ_APP_SERVICE_PLAN_REUSE=TRUE")
@@ -264,26 +379,36 @@ validate_reuse_coordinates() {
     [[ -z "${AZ_APIM_RG:-}" ]]   && errors+=("AZ_APIM_RG required when AZ_APIM_REUSE=TRUE")
   fi
   if [[ "${AZ_IDENTITIES_REUSE:-FALSE}" == "TRUE" ]]; then
-    [[ -z "${AZ_IDENTITY_STACK_A_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_A_NAME required when AZ_IDENTITIES_REUSE=TRUE")
-    [[ -z "${AZ_IDENTITY_STACK_B_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_B_NAME required when AZ_IDENTITIES_REUSE=TRUE")
-    [[ -z "${AZ_IDENTITIES_RG:-}" ]]         && errors+=("AZ_IDENTITIES_RG required when AZ_IDENTITIES_REUSE=TRUE")
+    [[ "$stack_a_enabled" == "true" && -z "${AZ_IDENTITY_STACK_A_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_A_NAME required when AZ_IDENTITIES_REUSE=TRUE and STACK_TARGET includes stack-a")
+    [[ "$stack_b_enabled" == "true" && -z "${AZ_IDENTITY_STACK_B_NAME:-}" ]] && errors+=("AZ_IDENTITY_STACK_B_NAME required when AZ_IDENTITIES_REUSE=TRUE and STACK_TARGET includes stack-b")
+    if [[ "$stack_a_enabled" == "true" || "$stack_b_enabled" == "true" ]]; then
+      [[ -z "${AZ_IDENTITIES_RG:-}" ]] && errors+=("AZ_IDENTITIES_RG required when AZ_IDENTITIES_REUSE=TRUE and STACK_TARGET includes an application stack")
+    fi
   fi
 
   if [[ "${APP_AUTH_MODE:-entra}" == "entra" ]]; then
+    local identifier_name identifier_value
+    for identifier_name in ENTRA_API_SCOPE_ID ENTRA_ADMIN_APP_ROLE_ID ENTRA_ORGANIZATION_ADMIN_APP_ROLE_ID \
+      ENTRA_RECRUITER_APP_ROLE_ID ENTRA_BUSINESS_PANEL_APP_ROLE_ID; do
+      identifier_value="${!identifier_name:-}"
+      if [[ ! "$identifier_value" =~ ^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$ ]]; then
+        errors+=("$identifier_name must contain an explicit UUID when APP_AUTH_MODE=entra")
+      fi
+    done
     [[ -z "${ENTRA_API_IDENTIFIER_URI:-}" ]] && errors+=("ENTRA_API_IDENTIFIER_URI is required when APP_AUTH_MODE=entra")
-    [[ -z "${ENTRA_STACK_A_REDIRECT_URIS:-}" ]] && errors+=("ENTRA_STACK_A_REDIRECT_URIS is required when APP_AUTH_MODE=entra")
-    [[ -z "${ENTRA_STACK_B_REDIRECT_URIS:-}" ]] && errors+=("ENTRA_STACK_B_REDIRECT_URIS is required when APP_AUTH_MODE=entra")
+    [[ "$stack_a_enabled" == "true" && -z "${ENTRA_STACK_A_REDIRECT_URIS:-}" ]] && errors+=("ENTRA_STACK_A_REDIRECT_URIS is required when APP_AUTH_MODE=entra and STACK_TARGET includes stack-a")
+    [[ "$stack_b_enabled" == "true" && -z "${ENTRA_STACK_B_REDIRECT_URIS:-}" ]] && errors+=("ENTRA_STACK_B_REDIRECT_URIS is required when APP_AUTH_MODE=entra and STACK_TARGET includes stack-b")
     [[ -z "${ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID:-}" ]] && errors+=("ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID is required when APP_AUTH_MODE=entra")
   fi
   if [[ "${AWR_AUTH_MODE:-none}" == "entra" ]]; then
     [[ -z "${AWR_AAD_AUDIENCE:-}" ]] && errors+=("AWR_AAD_AUDIENCE is required when AWR_AUTH_MODE=entra")
     [[ -z "${AWR_API_CLIENT_ID:-}" ]] && errors+=("AWR_API_CLIENT_ID is required when AWR_AUTH_MODE=entra")
   fi
-  if [[ "${ENTRA_REUSE:-FALSE}" == "TRUE" ]]; then
+  if [[ "${APP_AUTH_MODE:-entra}" == "entra" && "${ENTRA_REUSE:-FALSE}" == "TRUE" ]]; then
     [[ -z "${ENTRA_API_APP_CLIENT_ID:-}" ]] && errors+=("ENTRA_API_APP_CLIENT_ID required when ENTRA_REUSE=TRUE")
     [[ -z "${ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID:-}" ]] && errors+=("ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID required when ENTRA_REUSE=TRUE")
-    [[ -z "${ENTRA_STACK_A_CLIENT_ID:-}" ]] && errors+=("ENTRA_STACK_A_CLIENT_ID required when ENTRA_REUSE=TRUE")
-    [[ -z "${ENTRA_STACK_B_CLIENT_ID:-}" ]] && errors+=("ENTRA_STACK_B_CLIENT_ID required when ENTRA_REUSE=TRUE")
+    [[ "$stack_a_enabled" == "true" && -z "${ENTRA_STACK_A_CLIENT_ID:-}" ]] && errors+=("ENTRA_STACK_A_CLIENT_ID required when ENTRA_REUSE=TRUE and STACK_TARGET includes stack-a")
+    [[ "$stack_b_enabled" == "true" && -z "${ENTRA_STACK_B_CLIENT_ID:-}" ]] && errors+=("ENTRA_STACK_B_CLIENT_ID required when ENTRA_REUSE=TRUE and STACK_TARGET includes stack-b")
   fi
   if [[ "${AZ_SQL_REUSE:-FALSE}" != "TRUE" ]]; then
     [[ -z "${SQL_AAD_ADMIN_LOGIN:-}" ]] && errors+=("SQL_AAD_ADMIN_LOGIN is required when creating Azure SQL")

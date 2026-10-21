@@ -24,6 +24,7 @@ print_banner "Deploy Stack A App Artifact"
 cd "$REPO_ROOT"
 
 load_env_file "$ENV_FILE"
+validate_deployment_target stack-a
 validate_required "RESOURCE_GROUP" "AZURE_SUBSCRIPTION_ID"
 validate_azure_context
 

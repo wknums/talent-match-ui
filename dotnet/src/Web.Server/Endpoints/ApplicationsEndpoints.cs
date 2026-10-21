@@ -4,6 +4,7 @@ using TalentMatch.Application.Applications.Queries;
 using TalentMatch.Application.Authorization;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs;
+using TalentMatch.Application.Uploads;
 using TalentMatch.Domain.Interfaces;
 using TalentMatch.Application.Common.Services;
 
@@ -19,13 +20,29 @@ public static class ApplicationsEndpoints
         {
             var files = new List<UploadedFile>();
             var form = await request.ReadFormAsync(ct);
+            var validatedFiles = new List<(IFormFile File, string MimeType)>();
             foreach (var file in form.Files)
+            {
+                var mimeType = UploadValidators.NormalizeMimeType(file.FileName, null);
+                if (mimeType is null)
+                    return Results.ValidationProblem(new Dictionary<string, string[]>
+                    {
+                        ["files"] = ["Only PDF, Markdown, DOCX, TXT, JPG, and PNG files are supported."],
+                    });
+                if (file.Length > UploadValidators.LegacyMaxIndividualFileBytes)
+                    return Results.Problem(
+                        statusCode: StatusCodes.Status413PayloadTooLarge,
+                        title: "File size limit exceeded",
+                        detail: "Each file must be 15 MiB or smaller.");
+                validatedFiles.Add((file, mimeType));
+            }
+            foreach (var (file, mimeType) in validatedFiles)
             {
                 using var ms = new MemoryStream();
                 await file.CopyToAsync(ms, ct);
                 var bytes = ms.ToArray();
                 var fingerprint = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
-                files.Add(new UploadedFile(file.FileName, file.ContentType, file.Length, Convert.ToBase64String(bytes), fingerprint));
+                files.Add(new UploadedFile(file.FileName, mimeType, file.Length, Convert.ToBase64String(bytes), fingerprint));
             }
             try
             {
@@ -45,16 +62,16 @@ public static class ApplicationsEndpoints
         }).DisableAntiforgery();
 
         jobAppsGroup.MapGet("/", async (string jobId, string? list, string? applicantName, string? sortField, string? sortOrder,
-            double? varianceMin, int? page, int? pageSize, ISender mediator) =>
+            double? varianceMin, int? page, int? pageSize, ISender mediator, CancellationToken ct) =>
         {
             var apps = await mediator.Send(new GetApplicationsQuery(
-                jobId, list, applicantName, sortField, sortOrder, varianceMin, page ?? 1, pageSize ?? 50));
+                jobId, list, applicantName, sortField, sortOrder, varianceMin, page ?? 1, pageSize ?? 50), ct);
             return Results.Ok(apps);
         });
 
-        jobAppsGroup.MapGet("/summary", async (string jobId, ISender mediator) =>
+        jobAppsGroup.MapGet("/summary", async (string jobId, ISender mediator, CancellationToken ct) =>
         {
-            var counts = await mediator.Send(new GetApplicationCountsQuery(jobId));
+            var counts = await mediator.Send(new GetApplicationCountsQuery(jobId), ct);
             return Results.Ok(counts);
         });
 

@@ -2,17 +2,27 @@
 @using TalentMatch.Web.Client.Services
 @using System.Text.Json
 @using Microsoft.JSInterop
-@implements IDisposable
+@implements IAsyncDisposable
 @inject ApiClient Api
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
+@inject IServiceProvider Services
 
 <h3>Job Detail</h3>
+
+@if (bulkScoringAvailable)
+{
+    <BulkScoringRequestNotification JobId="@JobId" />
+}
 
 @if (job != null)
 {
     <div style="margin-bottom: 1rem;">
         <h4>@job.Title</h4>
+        <p class="job-identifiers">
+            <span><strong>Job code:</strong> @job.JobCode</span>
+            <span><strong>Job ID:</strong> <code>@job.Id</code></span>
+        </p>
         <p>@job.Organisation — @job.Department | Status: @job.Status</p>
         <div class="action-row">
             <button @onclick="() => showUpload = true"
@@ -21,6 +31,15 @@
                     style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
                 Upload Applications
             </button>
+            @if (bulkScoringAvailable)
+            {
+                <button @onclick="OpenNewBulkScoring"
+                        disabled="@(!CanUploadApplications)"
+                        title="@BulkScoringTitle"
+                        style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
+                    Start bulk scoring from SharePoint or OneDrive
+                </button>
+            }
             <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">
                 @(showPrompts ? "Close Prompt Manager" : "Manage Prompts")
             </button>
@@ -54,7 +73,22 @@
 
     <section class="pipeline-section">
         <h5>Pipeline Status</h5>
-        <PipelineVisualizer ApplicationCounts="applicationCounts" JobId="@JobId" />
+        <PipelineVisualizer ApplicationCounts="applicationCounts"
+                            BulkCounts="bulkPipelineCounts"
+                            JobId="@JobId" />
+        @if (bulkScoringAvailable)
+        {
+            <BulkScoringRequestsPanel @ref="bulkRequestsPanel"
+                                      JobId="@JobId"
+                                      InitialRequestId="@bulkDetailRequestId"
+                                      OnPipelineCountsChanged="OnBulkPipelineCountsChanged"
+                                      OnRetryRequested="OpenBulkRetry" />
+        }
+
+    @if (statusRefreshError is not null)
+    {
+        <p role="alert">@statusRefreshError</p>
+    }
 
     @if (processingErrors.Any() && HasFailedApps)
     {
@@ -230,6 +264,16 @@ else
     </FloatingPanel>
 }
 
+@if (showBulkScoring)
+{
+    <FloatingPanel Title="Bulk scoring from SharePoint or OneDrive" InitialWidth="860" InitialHeight="700" OnClose="() => showBulkScoring = false">
+        <BulkScoringRequestDialog JobId="@JobId"
+                                  RetryOfRequestId="@retryBulkRequestId"
+                                  OnStarted="OnBulkScoringStartedAsync"
+                                  OnClose="() => showBulkScoring = false" />
+    </FloatingPanel>
+}
+
 @if (showPrompts)
 {
     <FloatingPanel Title="Prompt Management" InitialWidth="1000" InitialHeight="760" OnClose="() => showPrompts = false">
@@ -277,6 +321,9 @@ else
 
     private JobDto? job;
     private JobApplicationCountsDto? applicationCounts;
+    private BulkCountsDto? bulkPipelineCounts;
+    private string? retryBulkRequestId;
+    private string? bulkDetailRequestId;
     private List<ApplicationDto> shortlistApps = new();
     private List<ApplicationDto> longlistApps = new();
     private List<ApplicationDto> excludedApps = new();
@@ -285,6 +332,9 @@ else
     private readonly HashSet<string> loadedTabs = [];
     private string activeTab = "shortlist";
     private bool showUpload;
+    private bool showBulkScoring;
+    private bool bulkScoringAvailable;
+    private BulkScoringRequestsPanel? bulkRequestsPanel;
     private bool showPrompts;
     private bool showHelp;
     private bool isProcessRequestInFlight;
@@ -307,8 +357,13 @@ else
     private string? productionPromptId;
     private JobConfigDto? jobConfig;
     private RubricEnvelopeDto? rubricEnvelope;
-    private System.Threading.Timer? _jobPollTimer;
-    private System.Threading.Timer? _bgRefreshTimer;
+    [CascadingParameter] public PollingSettingsState? PollingSettings { get; set; }
+    private AsyncRefreshLoop? statusRefresh;
+    private string? statusRefreshError;
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly SemaphoreSlim applicationRefreshGate = new(1, 1);
+    private bool initialStatusLoaded;
+    private TimeSpan StatusInterval => TimeSpan.FromSeconds(PollingSettings?.Current.StatusPollingIntervalSeconds ?? 60);
     private bool _jobDisposed;
 
     private double EffectiveLonglistThreshold => jobConfig?.LonglistThreshold ?? 70;
@@ -321,6 +376,23 @@ else
         : productionProfileStatus is { IsMatch: false }
             ? "Blocked until the production prompt is retested and approved with the current backend model and reasoning level."
             : "Available after the job rubric and scoring prompt are production-approved.";
+
+    private string BulkScoringTitle => CanUploadApplications
+        ? "Score every file in a SharePoint or OneDrive folder in the background"
+        : UploadApplicationsTitle;
+
+    // The action only appears when the environment has the feature switched on; any failure just hides it.
+    private async Task LoadBulkScoringAvailabilityAsync()
+    {
+        try
+        {
+            bulkScoringAvailable = (await Api.GetBulkScoringCapabilitiesAsync()).Enabled;
+        }
+        catch
+        {
+            bulkScoringAvailable = false;
+        }
+    }
 
     private List<ApplicationDto> currentList
     {
@@ -426,33 +498,90 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        var currentUser = await Api.GetCurrentUserAsync();
+        retryBulkRequestId = GetQueryValue("retryBulkRequestId");
+        bulkDetailRequestId = GetQueryValue("bulkRequestId");
+        showBulkScoring = HasSourceConnectionResume() || !string.IsNullOrWhiteSpace(retryBulkRequestId);
+
+        var currentUserTask = Api.GetCurrentUserAsync();
+        var jobTask = Api.GetJobAsync(JobId);
+        await Task.WhenAll(currentUserTask, jobTask);
+        if (_jobDisposed) return;
+
+        var currentUser = await currentUserTask;
         isAdmin = currentUser?.Role == "admin";
+        job = await jobTask;
 
-        job = await Api.GetJobAsync(JobId);
-        await RefreshApplicationDataAsync();
-        await LoadPromptStatus();
+        _ = LoadSecondaryDataAsync();
+    }
 
-        ReconcileProcessingErrors();
-        if (HasPendingApps)
-        {
-            StartJobPolling();
-        }
+    private async Task LoadSecondaryDataAsync()
+    {
+        var initialApplicationLoad = RefreshApplicationStatusAsync();
+        var otherLoads = Task.WhenAll(
+            TryLoadSecondaryAsync(LoadPromptStatus),
+            TryLoadSecondaryAsync(LoadBulkScoringAvailabilityAsync));
 
-        // Always run a background refresh every 15 seconds for status freshness
+        await initialApplicationLoad;
+        if (_jobDisposed) return;
+        initialStatusLoaded = true;
         StartBackgroundRefresh();
+        await otherLoads;
+        if (_jobDisposed) return;
+        await InvokeAsync(() =>
+        {
+            ReconcileProcessingErrors();
+            if (HasPendingApps)
+            {
+                StartBackgroundRefresh();
+            }
+            StateHasChanged();
+        });
+    }
+
+    private static async Task TryLoadSecondaryAsync(Func<Task> load)
+    {
+        try
+        {
+            await load();
+        }
+        catch
+        {
+            // Each secondary surface remains independently retryable through its normal refresh path.
+        }
+    }
+
+    private bool HasSourceConnectionResume()
+    {
+        return !string.IsNullOrWhiteSpace(GetQueryValue("sourceConnectionId"))
+            || GetQueryValue("resumeBulkScoring") == "1";
+    }
+
+    private string? GetQueryValue(string name)
+    {
+        var query = Navigation.ToAbsoluteUri(Navigation.Uri).Query.TrimStart('?');
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            if (Uri.UnescapeDataString(parts[0]).Equals(name, StringComparison.OrdinalIgnoreCase))
+                return parts.Length == 2 ? Uri.UnescapeDataString(parts[1].Replace("+", " ")) : "";
+        }
+        return null;
     }
 
     private async Task LoadPromptStatus()
     {
-        var config = await Api.GetJobConfigAsync(JobId);
+        var configTask = Api.GetJobConfigAsync(JobId);
+        var promptsTask = Api.GetPromptsAsync(JobId);
+        await Task.WhenAll(configTask, promptsTask);
+
+        var config = await configTask;
         jobConfig = config;
         rubricEnvelope = TryParseRubricEnvelope(config?.RubricJson);
         hasApprovedRubric =
             !string.IsNullOrWhiteSpace(config?.RubricJson) &&
             string.Equals(config?.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase);
 
-        promptVersions = await Api.GetPromptsAsync(JobId);
+        promptVersions = await promptsTask;
         var productionPrompt = promptVersions.FirstOrDefault(p => p.Status == "production-approved");
         hasProductionApprovedPrompt = productionPrompt is not null;
         productionPromptId = productionPrompt?.Id;
@@ -507,7 +636,7 @@ else
     {
         if (!force && loadedTabs.Contains(tab))
             return;
-        var applications = await Api.GetApplicationsAsync(JobId, tab);
+        var applications = await Api.GetApplicationsAsync(JobId, tab, cancellationToken: lifetime.Token);
         switch (tab)
         {
             case "longlist":
@@ -526,13 +655,62 @@ else
         loadedTabs.Add(tab);
     }
 
+    private async Task OnBulkScoringStartedAsync()
+    {
+        StartBackgroundRefresh();
+        try
+        {
+            await RefreshApplicationDataAsync();
+            if (HasPendingApps)
+            {
+                StartBackgroundRefresh();
+            }
+            if (bulkRequestsPanel is not null) await bulkRequestsPanel.RefreshAsync();
+        }
+        catch
+        {
+            // The periodic refreshes keep both pipeline and request progress live after acceptance.
+        }
+    }
+
+    private void OnBulkPipelineCountsChanged(BulkCountsDto? counts)
+    {
+        bulkPipelineCounts = counts;
+    }
+
+    private void OpenBulkRetry(string requestId)
+    {
+        retryBulkRequestId = requestId;
+        showBulkScoring = true;
+    }
+
+    private void OpenNewBulkScoring()
+    {
+        retryBulkRequestId = null;
+        bulkDetailRequestId = null;
+        Navigation.NavigateTo(
+            Navigation.ToAbsoluteUri(Navigation.Uri).GetLeftPart(UriPartial.Path),
+            replace: true);
+        showBulkScoring = true;
+    }
+
     private async Task RefreshApplicationDataAsync()
     {
-        applicationCounts = await Api.GetJobApplicationCountsAsync(JobId);
-        await LoadTabAsync(activeTab, force: true);
-        failedApps = applicationCounts.Failed > 0
-            ? await Api.GetApplicationsAsync(JobId, "failed")
-            : [];
+        await applicationRefreshGate.WaitAsync(lifetime.Token);
+        try
+        {
+            var countsTask = Api.GetJobApplicationCountsAsync(JobId, lifetime.Token);
+            var tabTask = LoadTabAsync(activeTab, force: true);
+            await Task.WhenAll(countsTask, tabTask);
+            applicationCounts = await countsTask;
+            failedApps = applicationCounts.Failed > 0
+                ? await Api.GetApplicationsAsync(JobId, "failed", cancellationToken: lifetime.Token)
+                : [];
+        }
+        finally
+        {
+            applicationRefreshGate.Release();
+        }
     }
 
     private async Task OnUploadCompleted()
@@ -564,7 +742,7 @@ else
 
         await RefreshApplicationDataAsync();
         ReconcileProcessingErrors();
-        StartJobPolling();
+        StartBackgroundRefresh();
     }
 
     private bool isReAggregating;
@@ -604,57 +782,37 @@ else
                 .ToList();
     }
 
-    private void StartJobPolling()
-    {
-        if (_jobPollTimer != null) return;
-        _jobPollTimer = new System.Threading.Timer(async _ =>
-        {
-            if (_jobDisposed) return;
-            try
-            {
-                await InvokeAsync(async () =>
-                {
-                    await RefreshApplicationDataAsync();
-                    ReconcileProcessingErrors();
-                    StateHasChanged();
-                    if (!HasPendingApps)
-                    {
-                        StopJobPolling();
-                    }
-                });
-            }
-            catch { }
-        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
-    }
-
-    private void StopJobPolling()
-    {
-        _jobPollTimer?.Dispose();
-        _jobPollTimer = null;
-    }
-
     private void StartBackgroundRefresh()
     {
-        _bgRefreshTimer = new System.Threading.Timer(async _ =>
+        if (statusRefresh is not null || _jobDisposed || !initialStatusLoaded) return;
+        statusRefresh = new(StatusInterval, Services.GetService<TimeProvider>() ?? TimeProvider.System, _ => InvokeAsync(async () =>
         {
             if (_jobDisposed) return;
-            try
-            {
-                await InvokeAsync(async () =>
-                {
-                    await RefreshApplicationDataAsync();
-                    ReconcileProcessingErrors();
-                    // If fast poll isn't running but there are now pending apps, start it
-                    if (HasPendingApps && _jobPollTimer == null)
-                    {
-                        StartJobPolling();
-                    }
-                    StateHasChanged();
-                });
-            }
-            catch { }
-        }, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+            await RefreshApplicationStatusAsync();
+            if (!_jobDisposed)
+                StateHasChanged();
+        }), DispatchExceptionAsync);
+        statusRefresh.Start();
     }
+
+    private async Task RefreshApplicationStatusAsync()
+    {
+        try
+        {
+            await RefreshApplicationDataAsync();
+            ReconcileProcessingErrors();
+            statusRefreshError = null;
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            statusRefreshError = $"Status refresh failed: {exception.Message}";
+        }
+    }
+
+    protected override void OnParametersSet() => statusRefresh?.UpdateInterval(StatusInterval);
 
     private void OpenDeleteDialog()
     {
@@ -742,12 +900,15 @@ else
         StateHasChanged();
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
+        if (_jobDisposed)
+            return;
         _jobDisposed = true;
-        StopJobPolling();
-        _bgRefreshTimer?.Dispose();
-        _bgRefreshTimer = null;
+        var stopping = statusRefresh?.DisposeAsync() ?? ValueTask.CompletedTask;
+        await lifetime.CancelAsync();
+        await stopping;
+        lifetime.Dispose();
     }
 }
 

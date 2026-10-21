@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage;
 using TalentMatch.Application.Common.Services;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Entities;
@@ -346,31 +347,184 @@ public sealed class SequentialScoringQueueRepositoryTests
     }
 
     [Fact]
-    public async Task Finalize_FencesWrongAndExpiredOwnersAndCommitsCallbackInSameContext()
+    public async Task Finalize_ReplaysRolledBackDeadlockedCommitsWithoutDuplicatingResults()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using (var claiming = database.Open())
+            await new SequentialScoringQueueRepository(claiming).TryClaimAsync("owner", DateTime.UtcNow, Lease);
+        var commits = new CommitFailures(1205, 2);
+        await using var context = database.OpenWithDeadlockRetries(commits);
+        var prepared = Finalization(id, "Candidate") with
+        {
+            Runs = Enumerable.Range(1, 3).Select(index =>
+                new ScoringRun { ApplicationId = id, RunIndex = index, TotalScore = 82 }).ToArray()
+        };
+
+        (await new SequentialScoringQueueRepository(context).FinalizeAsync(id, "owner", prepared)).Should().BeTrue();
+
+        commits.Attempts.Should().Be(3);
+        var application = await context.Applications.AsNoTracking().SingleAsync();
+        application.Status.Should().Be("Completed");
+        application.CandidateName.Should().Be("Candidate");
+        application.ScoringOwner.Should().BeNull();
+        (await context.ScoringRuns.AsNoTracking().Select(run => run.Id).ToListAsync())
+            .Should().BeEquivalentTo(prepared.Runs.Select(run => run.Id));
+        (await context.AggregatedResults.AsNoTracking().SingleAsync()).Id.Should().Be(prepared.Aggregate.Id);
+    }
+
+    [Theory]
+    [InlineData(1205, 7)]
+    [InlineData(2601, 1)]
+    public async Task Finalize_PropagatesExhaustedOrPermanentSqlFailuresWithoutPartialWrites(int error, int attempts)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using (var claiming = database.Open())
+            await new SequentialScoringQueueRepository(claiming).TryClaimAsync("owner", DateTime.UtcNow, Lease);
+        var commits = new CommitFailures(error, 10);
+        await using var context = database.OpenWithDeadlockRetries(commits);
+        Func<Task> finalize = () => new SequentialScoringQueueRepository(context).FinalizeAsync(id, "owner", Finalization(id));
+
+        if (error == 1205)
+            await finalize.Should().ThrowAsync<RetryLimitExceededException>();
+        else
+            await finalize.Should().ThrowAsync<Microsoft.Data.SqlClient.SqlException>();
+
+        commits.Attempts.Should().Be(attempts);
+        context.ChangeTracker.Entries().Should().BeEmpty();
+        var application = await context.Applications.AsNoTracking().SingleAsync();
+        application.Status.Should().Be("Scoring");
+        application.ScoringOwner.Should().Be("owner");
+        (await context.ScoringRuns.CountAsync()).Should().Be(0);
+        (await context.AggregatedResults.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Finalize_CancellationStopsDeadlockBackoffAndLeavesNoResults()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using (var claiming = database.Open())
+            await new SequentialScoringQueueRepository(claiming).TryClaimAsync("owner", DateTime.UtcNow, Lease);
+        using var cancellation = new CancellationTokenSource();
+        var commits = new CommitFailures(1205, 10, cancellation);
+        await using var context = database.OpenWithDeadlockRetries(commits);
+        Func<Task> finalize = () => new SequentialScoringQueueRepository(context)
+            .FinalizeAsync(id, "owner", Finalization(id), cancellation.Token);
+
+        await finalize.Should().ThrowAsync<OperationCanceledException>();
+
+        commits.Attempts.Should().Be(1);
+        (await context.Applications.AsNoTracking().SingleAsync()).Status.Should().Be("Scoring");
+        (await context.ScoringRuns.CountAsync()).Should().Be(0);
+        (await context.AggregatedResults.CountAsync()).Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task Finalize_UpdatesExistingAggregateWithoutReplacingCandidateWithBlankName(string? candidateName)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using var context = database.Open();
+        await context.Applications.ExecuteUpdateAsync(setters => setters.SetProperty(app => app.CandidateName, "Original candidate"));
+        var original = new AggregatedResult { ApplicationId = id, FinalScore = 10, Decision = "Excluded" };
+        context.AggregatedResults.Add(original);
+        await context.SaveChangesAsync();
+        var queue = new SequentialScoringQueueRepository(context);
+        await queue.TryClaimAsync("owner", DateTime.UtcNow, Lease);
+
+        (await queue.FinalizeAsync(id, "owner", Finalization(id, candidateName))).Should().BeTrue();
+
+        var aggregate = await context.AggregatedResults.AsNoTracking().SingleAsync();
+        aggregate.Id.Should().Be(original.Id);
+        aggregate.CreatedAt.Should().Be(original.CreatedAt);
+        aggregate.FinalScore.Should().Be(82);
+        aggregate.Decision.Should().Be("Eligible");
+        (await context.Applications.AsNoTracking().SingleAsync()).CandidateName.Should().Be("Original candidate");
+    }
+
+    [Fact]
+    public async Task Finalize_RechecksOwnershipAfterDeadlockBeforePublishingResults()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using (var claiming = database.Open())
+            await new SequentialScoringQueueRepository(claiming).TryClaimAsync("owner", DateTime.UtcNow, Lease);
+        var reads = new BeforeAggregateRead(async (attempt, ct) =>
+        {
+            if (attempt != 2)
+                return;
+            await using var competing = database.Open();
+            await new SequentialScoringQueueRepository(competing).FailAsync(id, "owner", "ownership revoked", 0, ct);
+        });
+        var commits = new CommitFailures(1205, 1);
+        await using var context = database.OpenWithDeadlockRetries(commits, reads);
+
+        (await new SequentialScoringQueueRepository(context).FinalizeAsync(id, "owner", Finalization(id))).Should().BeFalse();
+
+        var application = await context.Applications.AsNoTracking().SingleAsync();
+        application.Status.Should().Be("ScoringFailed");
+        application.ScoringOwner.Should().BeNull();
+        (await context.FailureQueueItems.CountAsync()).Should().Be(1);
+        (await context.ScoringRuns.CountAsync()).Should().Be(0);
+        (await context.AggregatedResults.CountAsync()).Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(10)]
+    public async Task Finalize_BatchesResultPersistenceAndCombinesTerminalTransitionWithRelease(int runCount)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var id = await database.SeedAsync();
+        await using (var claiming = database.Open())
+            await new SequentialScoringQueueRepository(claiming).TryClaimAsync("owner", DateTime.UtcNow, Lease);
+        var saves = new FinalizationSaves();
+        var commands = new FinalizationCommands();
+        await using var context = database.Open(saves, commands);
+        var repository = new ApplicationRepository(context);
+        var finalizer = new ApplicationScoringFinalizer(repository);
+        var runs = Enumerable.Range(1, runCount)
+            .Select(index => new ScoringRun { ApplicationId = id, RunIndex = index, TotalScore = 82 })
+            .ToArray();
+
+        var prepared = finalizer.Prepare(id, runs, runCount, 12, 65, "Scored candidate");
+        (await new SequentialScoringQueueRepository(context).FinalizeAsync(id, "owner", prepared)).Should().BeTrue();
+
+        saves.Count.Should().Be(1, "all runs and the aggregate should be saved in one batch");
+        commands.ApplicationUpdates.Should().Be(1, "the ownership fence, terminal update and release share one write");
+        commands.AggregateReads.Should().Be(1);
+        commands.AggregateReadInsideTransaction.Should().BeFalse();
+        var saved = await context.Applications.AsNoTracking().SingleAsync();
+        saved.CandidateName.Should().Be("Scored candidate");
+        saved.Status.Should().Be("Completed");
+        saved.ScoringOwner.Should().BeNull();
+        (await context.ScoringRuns.CountAsync()).Should().Be(runCount);
+        (await context.AggregatedResults.SingleAsync()).FinalScore.Should().Be(82);
+    }
+
+    [Fact]
+    public async Task Finalize_FencesWrongExpiredAndAlreadyReleasedOwners()
     {
         await using var database = await TestDatabase.CreateAsync();
         var id = await database.SeedAsync();
         await using var context = database.Open();
         var queue = new SequentialScoringQueueRepository(context);
         await queue.TryClaimAsync("owner", DateTime.UtcNow, Lease);
-        var calls = 0;
-        async Task Persist(CancellationToken ct)
-        {
-            calls++;
-            context.Database.CurrentTransaction.Should().NotBeNull();
-            var application = await context.Applications.SingleAsync(ct);
-            application.Status = "Scored";
-            application.FinalScore = 82;
-            await context.SaveChangesAsync(ct);
-        }
-
-        (await queue.FinalizeAsync(id, "wrong", Persist)).Should().BeFalse();
-        calls.Should().Be(0);
-        (await queue.FinalizeAsync(id, "owner", Persist)).Should().BeTrue();
-        (await queue.FinalizeAsync(id, "owner", Persist)).Should().BeFalse();
-        calls.Should().Be(1);
+        var prepared = Finalization(id);
+        (await queue.FinalizeAsync(id, "wrong", prepared)).Should().BeFalse();
+        (await context.ScoringRuns.CountAsync()).Should().Be(0);
+        context.ChangeTracker.Entries().Should().BeEmpty();
+        (await queue.FinalizeAsync(id, "owner", prepared)).Should().BeTrue();
+        (await queue.FinalizeAsync(id, "owner", prepared)).Should().BeFalse();
+        (await context.ScoringRuns.CountAsync()).Should().Be(1);
         var saved = await context.Applications.AsNoTracking().SingleAsync();
-        saved.Status.Should().Be("Scored");
+        saved.Status.Should().Be("Completed");
         saved.FinalScore.Should().Be(82);
         saved.ScoringOwner.Should().BeNull();
         saved.ScoringLeaseUntil.Should().BeNull();
@@ -378,12 +532,12 @@ public sealed class SequentialScoringQueueRepositoryTests
             .SetProperty(row => row.Status, "Scoring")
             .SetProperty(row => row.ScoringOwner, "expired")
             .SetProperty(row => row.ScoringLeaseUntil, DateTime.UtcNow.AddMinutes(-1)));
-        (await queue.FinalizeAsync(id, "expired", Persist)).Should().BeFalse();
-        calls.Should().Be(1);
+        (await queue.FinalizeAsync(id, "expired", prepared)).Should().BeFalse();
+        (await context.ScoringRuns.CountAsync()).Should().Be(1);
     }
 
     [Fact]
-    public async Task Finalize_RollsBackEarlierCallbackSavesAndCanRetryInSameScope()
+    public async Task Finalize_RollsBackTerminalTransitionAndAllResultsWhenBatchFails()
     {
         await using var database = await TestDatabase.CreateAsync();
         var id = await database.SeedAsync();
@@ -391,24 +545,24 @@ public sealed class SequentialScoringQueueRepositoryTests
         var queue = new SequentialScoringQueueRepository(context);
         await queue.TryClaimAsync("owner", DateTime.UtcNow, Lease);
 
-        var failure = () => queue.FinalizeAsync(id, "owner", async ct =>
-        {
-            var application = await context.Applications.SingleAsync(ct);
-            application.Status = "Scored";
-            application.FinalScore = 90;
-            context.ScoringRuns.Add(new ScoringRun { ApplicationId = id });
-            await context.SaveChangesAsync(ct);
-            throw new InvalidOperationException("callback persistence failed");
-        });
-        await failure.Should().ThrowAsync<InvalidOperationException>();
-        (await context.Applications.AsNoTracking().SingleAsync()).Status.Should().Be("Scoring");
+        await context.Database.ExecuteSqlRawAsync("""
+            CREATE TRIGGER reject_aggregate BEFORE INSERT ON AggregatedResults
+            BEGIN SELECT RAISE(ABORT, 'simulated result persistence failure'); END;
+            """);
+        var prepared = Finalization(id, candidateName: "Candidate");
+        var failure = () => queue.FinalizeAsync(id, "owner", prepared);
+        await failure.Should().ThrowAsync<DbUpdateException>();
+        var application = await context.Applications.AsNoTracking().SingleAsync();
+        application.Status.Should().Be("Scoring");
+        application.ScoringOwner.Should().Be("owner");
+        application.CandidateName.Should().BeNull();
+        application.FinalScore.Should().BeNull();
         (await context.ScoringRuns.CountAsync()).Should().Be(0);
+        (await context.AggregatedResults.CountAsync()).Should().Be(0);
         context.ChangeTracker.Entries().Should().BeEmpty();
-        (await queue.FinalizeAsync(id, "owner", async ct =>
-        {
-            var application = await context.Applications.SingleAsync(ct);
-            application.Status = "Scored";
-        })).Should().BeTrue();
+        await context.Database.ExecuteSqlRawAsync("DROP TRIGGER reject_aggregate;");
+        (await queue.FinalizeAsync(id, "owner", prepared)).Should().BeTrue();
+        (await context.ScoringRuns.SingleAsync()).Id.Should().Be(prepared.Runs[0].Id);
     }
 
     [Fact]
@@ -494,43 +648,40 @@ public sealed class SequentialScoringQueueRepositoryTests
     }
 
     [Fact]
-    public async Task Finalize_UsesExistingFinalizerAndDoesNotReleaseAnIncompleteCallback()
+    public async Task Finalize_UsesExistingFinalizerAndRejectsIncompleteOrMismatchedResults()
     {
         await using var database = await TestDatabase.CreateAsync();
         var id = await database.SeedAsync();
         await using var context = database.Open();
         var queue = new SequentialScoringQueueRepository(context);
         var work = await queue.TryClaimAsync("owner", DateTime.UtcNow, Lease);
-        Func<Task> incomplete = () => queue.FinalizeAsync(id, "owner", _ => Task.CompletedTask);
-        await incomplete.Should().ThrowAsync<DbUpdateConcurrencyException>();
+        Func<Task> incomplete = () => queue.FinalizeAsync(id, "owner", Finalization(id) with { Status = "Scoring" });
+        await incomplete.Should().ThrowAsync<ArgumentException>();
+        Func<Task> mismatched = () => queue.FinalizeAsync(id, "owner", Finalization("different-application"));
+        await mismatched.Should().ThrowAsync<ArgumentException>();
+        var wrongRun = Finalization(id) with { Runs = [new ScoringRun { ApplicationId = "different-application" }] };
+        Func<Task> mismatchedRun = () => queue.FinalizeAsync(id, "owner", wrongRun);
+        await mismatchedRun.Should().ThrowAsync<ArgumentException>();
         (await context.Applications.AsNoTracking().SingleAsync()).ScoringOwner.Should().Be("owner");
 
         var repository = new ApplicationRepository(context);
         var finalizer = new ApplicationScoringFinalizer(repository);
         var run = new ScoringRun { ApplicationId = id, TotalScore = 82 };
-        (await queue.FinalizeAsync(id, "owner", async ct =>
-        {
-            await repository.AddScoringRunAsync(run, ct);
-            await finalizer.FinalizeAsync(id, work!.JobId, [run], 1, 12, 65, ct);
-        })).Should().BeTrue();
+        (await queue.FinalizeAsync(id, "owner", finalizer.Prepare(id, [run], 1, 12, 65))).Should().BeTrue();
         (await context.Applications.AsNoTracking().SingleAsync()).Status.Should().Be("Completed");
         (await context.AggregatedResults.SingleAsync()).FinalScore.Should().Be(82);
         (await context.ScoringRuns.CountAsync()).Should().Be(1);
     }
 
     [Fact]
-    public async Task Finalize_LockPreventsRecoveryFromRevokingOwnershipDuringCallback()
+    public async Task Finalize_LockPreventsRecoveryFromRevokingOwnershipBeforeResultsCommit()
     {
         await using var database = await TestDatabase.CreateAsync();
         var id = await database.SeedAsync();
-        await using var context = database.Open();
-        var queue = new SequentialScoringQueueRepository(context);
         var now = DateTime.UtcNow;
-        await queue.TryClaimAsync("owner", now, Lease);
         var startedRecovery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Task? recovery = null;
-
-        (await queue.FinalizeAsync(id, "owner", async ct =>
+        var afterWrite = new AfterApplicationWrite(async ct =>
         {
             recovery = Task.Run(async () =>
             {
@@ -539,10 +690,12 @@ public sealed class SequentialScoringQueueRepositoryTests
                 await new SequentialScoringQueueRepository(competing).RecoverExpiredAsync(now.AddHours(1));
             });
             await startedRecovery.Task.WaitAsync(TimeSpan.FromSeconds(5), ct);
-            var application = await context.Applications.SingleAsync(ct);
-            application.Status = "Completed";
-            await context.SaveChangesAsync(ct);
-        })).Should().BeTrue();
+        });
+        await using (var claiming = database.Open())
+            await new SequentialScoringQueueRepository(claiming).TryClaimAsync("owner", now, Lease);
+        await using var context = database.Open(afterWrite);
+        var queue = new SequentialScoringQueueRepository(context);
+        (await queue.FinalizeAsync(id, "owner", Finalization(id))).Should().BeTrue();
         await recovery!;
         (await context.Applications.AsNoTracking().SingleAsync()).Status.Should().Be("Completed");
         (await context.FailureQueueItems.CountAsync()).Should().Be(0);
@@ -570,11 +723,7 @@ public sealed class SequentialScoringQueueRepositoryTests
         await context.SaveChangesAsync();
         (await queue.RetryAsync(staleFailure.Id)).Should().BeFalse();
         (await context.Applications.AsNoTracking().SingleAsync()).ScoringOwner.Should().Be("next-owner");
-        (await queue.FinalizeAsync(id, "next-owner", async ct =>
-        {
-            var row = await context.Applications.SingleAsync(ct);
-            row.Status = "Completed";
-        })).Should().BeTrue();
+        (await queue.FinalizeAsync(id, "next-owner", Finalization(id))).Should().BeTrue();
         (await queue.RetryAsync(staleFailure.Id)).Should().BeFalse();
     }
 
@@ -739,10 +888,16 @@ public sealed class SequentialScoringQueueRepositoryTests
     }
 
     [Fact]
-    public async Task CancellationRollsBackCallbackAndNeverPublishesOrFailsWork()
+    public async Task CancellationRollsBackFinalizationAndNeverPublishesOrFailsWork()
     {
         await using var database = await TestDatabase.CreateAsync();
         var id = await database.SeedAsync();
+        using var duringFinalization = new CancellationTokenSource();
+        var afterWrite = new AfterApplicationWrite(_ =>
+        {
+            duringFinalization.Cancel();
+            return Task.CompletedTask;
+        });
         await using var context = database.Open();
         var queue = new SequentialScoringQueueRepository(context);
         using var cancellation = new CancellationTokenSource();
@@ -752,17 +907,13 @@ public sealed class SequentialScoringQueueRepositoryTests
         (await context.Applications.SingleAsync()).Status.Should().Be("Queued");
 
         await queue.TryClaimAsync("owner", DateTime.UtcNow, Lease);
-        using var duringCallback = new CancellationTokenSource();
-        Func<Task> finalize = () => queue.FinalizeAsync(id, "owner", async ct =>
-        {
-            var application = await context.Applications.SingleAsync(ct);
-            application.Status = "Scored";
-            await context.SaveChangesAsync(ct);
-            duringCallback.Cancel();
-            ct.ThrowIfCancellationRequested();
-        }, duringCallback.Token);
+        await using var finalizing = database.Open(afterWrite);
+        Func<Task> finalize = () => new SequentialScoringQueueRepository(finalizing)
+            .FinalizeAsync(id, "owner", Finalization(id), duringFinalization.Token);
         await finalize.Should().ThrowAsync<OperationCanceledException>();
         (await context.Applications.AsNoTracking().SingleAsync()).Status.Should().Be("Scoring");
+        (await context.ScoringRuns.CountAsync()).Should().Be(0);
+        (await context.AggregatedResults.CountAsync()).Should().Be(0);
         Func<Task> fail = () => queue.FailAsync(id, "owner", "cancelled", 0, cancellation.Token);
         await fail.Should().ThrowAsync<OperationCanceledException>();
         Func<Task> recover = () => queue.RecoverExpiredAsync(DateTime.UtcNow.AddHours(1), cancellation.Token);
@@ -770,12 +921,109 @@ public sealed class SequentialScoringQueueRepositoryTests
         (await context.FailureQueueItems.CountAsync()).Should().Be(0);
     }
 
+    private static ApplicationScoringFinalization Finalization(string applicationId, string? candidateName = null) =>
+        new([new ScoringRun { ApplicationId = applicationId, TotalScore = 82 }],
+            new AggregatedResult { ApplicationId = applicationId, FinalScore = 82, Decision = "Eligible", Confidence = 1 },
+            "Completed", candidateName);
+
     private static string FindRepositoryRoot()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "server", "storage", "schema-sqlite.sql")))
+        while (root is not null
+               && (!File.Exists(Path.Combine(root.FullName, "package.json"))
+                   || !File.Exists(Path.Combine(root.FullName, "server", "storage", "schema-sqlite.sql"))))
             root = root.Parent;
         return root?.FullName ?? throw new DirectoryNotFoundException("Repository root not found.");
+    }
+
+    private sealed class AfterApplicationWrite(Func<CancellationToken, Task> action) : DbCommandInterceptor
+    {
+        public override async ValueTask<int> NonQueryExecutedAsync(
+            DbCommand command, CommandExecutedEventData eventData, int result, CancellationToken cancellationToken = default)
+        {
+            if (result == 1 && command.CommandText.StartsWith("UPDATE \"Applications\"", StringComparison.Ordinal))
+                await action(cancellationToken);
+            return result;
+        }
+    }
+
+    private sealed class CommitFailures(int number, int count, CancellationTokenSource? cancellation = null) : DbTransactionInterceptor
+    {
+        public int Attempts { get; private set; }
+
+        public override ValueTask<InterceptionResult> TransactionCommittingAsync(
+            DbTransaction transaction, TransactionEventData eventData, InterceptionResult result,
+            CancellationToken cancellationToken = default)
+        {
+            Attempts++;
+            if (Attempts <= count)
+            {
+                cancellation?.Cancel();
+                throw SqlServerTestErrors.Create(number);
+            }
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class BeforeAggregateRead(Func<int, CancellationToken, Task> action) : DbCommandInterceptor
+    {
+        private int _reads;
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.StartsWith("SELECT", StringComparison.Ordinal)
+                && command.CommandText.Contains("FROM \"AggregatedResults\"", StringComparison.Ordinal))
+                await action(++_reads, cancellationToken);
+            return result;
+        }
+    }
+
+    private sealed class DeadlockStrategyFactory(ExecutionStrategyDependencies dependencies) : IExecutionStrategyFactory
+    {
+        public IExecutionStrategy Create() => new SequentialScoringExecutionStrategy(dependencies.CurrentContext.Context);
+    }
+
+    private sealed class FinalizationSaves : SaveChangesInterceptor
+    {
+        public int Count { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
+        {
+            Count++;
+            return ValueTask.FromResult(result);
+        }
+    }
+
+    private sealed class FinalizationCommands : DbCommandInterceptor
+    {
+        public int ApplicationUpdates { get; private set; }
+        public int AggregateReads { get; private set; }
+        public bool AggregateReadInsideTransaction { get; private set; }
+
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.StartsWith("UPDATE \"Applications\"", StringComparison.Ordinal))
+                ApplicationUpdates++;
+            return ValueTask.FromResult(result);
+        }
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.StartsWith("SELECT", StringComparison.Ordinal)
+                && command.CommandText.Contains("FROM \"AggregatedResults\"", StringComparison.Ordinal))
+            {
+                AggregateReads++;
+                AggregateReadInsideTransaction |= command.Transaction is not null;
+            }
+            return ValueTask.FromResult(result);
+        }
     }
 
     private sealed class ClaimBarrier : DbCommandInterceptor
@@ -825,6 +1073,12 @@ public sealed class SequentialScoringQueueRepositoryTests
         public AppDbContext Open(params IInterceptor[] interceptors) => new(
             new DbContextOptionsBuilder<AppDbContext>()
                 .UseSqlite($"Data Source={_path};Pooling=False;Default Timeout=15")
+                .AddInterceptors(interceptors).Options);
+
+        public AppDbContext OpenWithDeadlockRetries(params IInterceptor[] interceptors) => new(
+            new DbContextOptionsBuilder<AppDbContext>()
+                .UseSqlite($"Data Source={_path};Pooling=False;Default Timeout=15")
+                .ReplaceService<IExecutionStrategyFactory, DeadlockStrategyFactory>()
                 .AddInterceptors(interceptors).Options);
 
         public async Task<string> SeedAsync(DateTime? createdAt = null, string? rubric = null, string? blobUri = null)

@@ -140,19 +140,20 @@
         Includes all jobs you are authorized to access, regardless of the job-list filters below.
         Each production application is counted once, when its first aggregate score is persisted;
         scoring runs, retries, reaggregation and test applications do not add to this count.
-        Refreshes independently every 10 seconds.
+        Refreshes independently every @RefreshInterval.TotalSeconds.ToString("0", CultureInfo.InvariantCulture) seconds after each completed refresh.
     </p>
     </div>
     }
 </section>
 
 @code {
-    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+    [CascadingParameter] public PollingSettingsState? PollingSettings { get; set; }
+    private TimeSpan RefreshInterval => TimeSpan.FromSeconds(PollingSettings?.Current.ThroughputRefreshIntervalSeconds ?? 60);
     private readonly CancellationTokenSource lifetime = new();
     private readonly string panelId = $"scoring-throughput-{Guid.NewGuid():N}";
     private ScoringThroughputDto? snapshot;
     private string? loadError;
-    private Task? refreshTask;
+    private AsyncRefreshLoop? refresh;
     private bool disposed;
     private bool expanded = true;
     private long tickStep = 1;
@@ -164,33 +165,17 @@
         if (!disposed)
         {
             var clock = Services.GetService<TimeProvider>() ?? TimeProvider.System;
-            refreshTask = RefreshAsync(clock, lifetime.Token);
+            refresh = new(RefreshInterval, clock, token => InvokeAsync(async () =>
+            {
+                await LoadAsync(token);
+                if (!disposed)
+                    StateHasChanged();
+            }), DispatchExceptionAsync);
+            refresh.Start();
         }
     }
 
-    private async Task RefreshAsync(TimeProvider clock, CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var timer = new PeriodicTimer(RefreshInterval, clock);
-            while (await timer.WaitForNextTickAsync(cancellationToken))
-            {
-                await InvokeAsync(async () =>
-                {
-                    await LoadAsync(cancellationToken);
-                    if (!disposed)
-                        StateHasChanged();
-                });
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-        }
-        catch (Exception ex)
-        {
-            await DispatchExceptionAsync(ex);
-        }
-    }
+    protected override void OnParametersSet() => refresh?.UpdateInterval(RefreshInterval);
 
     private async Task LoadAsync(CancellationToken cancellationToken)
     {
@@ -238,8 +223,8 @@
 
         disposed = true;
         await lifetime.CancelAsync();
-        if (refreshTask is not null)
-            await refreshTask;
+        if (refresh is not null)
+            await refresh.DisposeAsync();
         lifetime.Dispose();
     }
 }

@@ -264,6 +264,19 @@ public class EntraAuthEndpointsTests : IClassFixture<EntraAuthEndpointsTests.Ent
     }
 
     [Fact]
+    public async Task ClientConfig_StackBOnly_DoesNotRequireStackARegistration()
+    {
+        using var factory = new EntraAuthFactory { StackAClientId = "" };
+        using var client = factory.CreateClient();
+
+        var response = await client.GetAsync("/api/auth/config");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var payload = await response.Content.ReadFromJsonAsync<JsonElement>();
+        payload.GetProperty("clientId").GetString().Should().Be("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    }
+
+    [Fact]
     public async Task Startup_InEntraMode_DoesNotSeedPasswordAdmin()
     {
         using var scope = _factory.Services.CreateScope();
@@ -288,6 +301,8 @@ public class EntraAuthEndpointsTests : IClassFixture<EntraAuthEndpointsTests.Ent
     {
         private SqliteConnection? _connection;
 
+        public string StackAClientId { get; init; } = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Testing");
@@ -296,7 +311,7 @@ public class EntraAuthEndpointsTests : IClassFixture<EntraAuthEndpointsTests.Ent
             builder.UseSetting("ENTRA_API_APP_CLIENT_ID", "99999999-9999-9999-9999-999999999999");
             builder.UseSetting("ENTRA_API_IDENTIFIER_URI", "api://tenant.example/talent-api");
             builder.UseSetting("ENTRA_API_SCOPE", "access_as_user");
-            builder.UseSetting("ENTRA_STACK_A_CLIENT_ID", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+            builder.UseSetting("ENTRA_STACK_A_CLIENT_ID", StackAClientId);
             builder.UseSetting("ENTRA_STACK_B_CLIENT_ID", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
             builder.UseSetting("ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID", AssignedObjectId);
             builder.ConfigureAppConfiguration((_, configuration) =>
@@ -308,7 +323,7 @@ public class EntraAuthEndpointsTests : IClassFixture<EntraAuthEndpointsTests.Ent
                     ["ENTRA_API_APP_CLIENT_ID"] = "99999999-9999-9999-9999-999999999999",
                     ["ENTRA_API_IDENTIFIER_URI"] = "api://tenant.example/talent-api",
                     ["ENTRA_API_SCOPE"] = "access_as_user",
-                    ["ENTRA_STACK_A_CLIENT_ID"] = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                    ["ENTRA_STACK_A_CLIENT_ID"] = StackAClientId,
                     ["ENTRA_STACK_B_CLIENT_ID"] = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
                 });
             });

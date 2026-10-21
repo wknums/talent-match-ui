@@ -38,7 +38,7 @@ Allow each environment (local dev, QA/staging, production) to **selectively reus
 | `AZ_KEY_VAULT_REUSE` | `reuse_key_vault` | `modules/key_vault` | `azurerm_key_vault` |
 | `AZ_APIM_REUSE` | `reuse_apim` | `modules/apim` | `azurerm_api_management` |
 | `AZ_LOGANALYTICS_REUSE` | `reuse_loganalytics` | `modules/log_analytics` | `azurerm_log_analytics_workspace` |
-| `AZ_IDENTITIES_REUSE` | `reuse_identities` | `modules/identities` | `azurerm_user_assigned_identity` (×2) |
+| `AZ_IDENTITIES_REUSE` | `reuse_identities` | `modules/identities` | `azurerm_user_assigned_identity` for stacks selected by `STACK_TARGET` |
 
 ### 3.3 Existing Resource Details
 
@@ -280,5 +280,4 @@ Each module gained `reuse`, `existing_name`, `existing_resource_group` variables
 | Deprovision dry run (`-DryRun`) | Shows `terraform plan -destroy` output but destroys nothing |
 | Deprovision confirmation mismatch | User types wrong env name → script aborts |
 | Raw `terraform destroy` (no wrapper) | All resources destroyed (expected — no reuse flags set); documented as unsupported |
-
 

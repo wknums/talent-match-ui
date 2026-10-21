@@ -39,9 +39,25 @@ variable "stack_target" {
   description = "Deployment target (shared-only, stack-a, stack-b, both)"
   type        = string
   default     = "both"
+
+  validation {
+    condition     = contains(["shared-only", "stack-a", "stack-b", "both"], var.stack_target)
+    error_message = "stack_target must be shared-only, stack-a, stack-b, or both."
+  }
 }
 
 # --- Microsoft Entra applications ---
+variable "app_auth_mode" {
+  description = "Product authentication mode; simple does not provision product Entra objects"
+  type        = string
+  default     = "entra"
+
+  validation {
+    condition     = contains(["simple", "entra"], var.app_auth_mode)
+    error_message = "app_auth_mode must be simple or entra."
+  }
+}
+
 variable "reuse_entra" {
   description = "Reuse existing protected API and SPA applications"
   type        = bool
@@ -75,12 +91,13 @@ variable "existing_entra_stack_b_client_id" {
 variable "entra_api_identifier_uri" {
   description = "Unique identifier URI for the protected API"
   type        = string
+  default     = ""
 }
 
 variable "entra_api_scope_id" {
-  description = "Stable UUID for the delegated protected-API scope"
+  description = "Explicit stable UUID from ENTRA_API_SCOPE_ID; preserve the deployed value"
   type        = string
-  default     = "a3217e97-d4d2-4baa-b9f8-0e9ac6b05f31"
+  default     = ""
 }
 
 variable "entra_api_scope" {
@@ -90,14 +107,9 @@ variable "entra_api_scope" {
 }
 
 variable "entra_app_role_ids" {
-  description = "Stable protected-API role UUIDs keyed by persisted role value"
+  description = "Explicit stable protected-API role UUIDs from the environment profile"
   type        = map(string)
-  default = {
-    admin              = "52d6f322-c719-49a5-97a4-b7d78fc60af0"
-    organization_admin = "fea2562e-d6f0-49b6-93a5-e666b51310f6"
-    recruiter          = "edc0d4d0-bf46-4e88-b0e1-a2b465252a0c"
-    business_panel     = "a98b2c62-70a4-41ab-95f4-960ea96ce06d"
-  }
+  default     = {}
 }
 
 variable "entra_stack_a_redirect_uris" {
@@ -128,6 +140,17 @@ variable "entra_bootstrap_admin_object_id" {
   description = "Entra user object ID assigned the protected API admin role"
   type        = string
   default     = ""
+}
+
+variable "awr_auth_mode" {
+  description = "AWReason authentication mode; only entra provisions managed-identity app-role assignments"
+  type        = string
+  default     = "none"
+
+  validation {
+    condition     = contains(["none", "apikey", "entra"], var.awr_auth_mode)
+    error_message = "awr_auth_mode must be none, apikey, or entra."
+  }
 }
 
 variable "awr_api_client_id" {
@@ -231,13 +254,13 @@ variable "reuse_key_vault" {
 }
 
 variable "existing_key_vault_name" {
-  description = "Existing Key Vault name (when reuse = true)"
+  description = "Key Vault name: required for reuse; when reuse is false, a non-empty value overrides the generated managed-vault name"
   type        = string
   default     = ""
 }
 
 variable "existing_key_vault_rg" {
-  description = "Existing Key Vault resource group (when reuse = true)"
+  description = "Key Vault resource group: required for reuse; when reuse is false, a non-empty value selects an existing target resource group for the new managed vault"
   type        = string
   default     = ""
 }
@@ -263,6 +286,31 @@ variable "existing_apim_name" {
 
 variable "existing_apim_rg" {
   description = "Existing APIM resource group (when reuse = true)"
+  type        = string
+  default     = ""
+}
+
+# --- Application Insights ---
+variable "enable_app_insights" {
+  description = "Enable Application Insights for the selected application stacks"
+  type        = bool
+  default     = false
+}
+
+variable "reuse_app_insights" {
+  description = "Reuse an existing Application Insights component when enabled"
+  type        = bool
+  default     = false
+}
+
+variable "existing_app_insights_name" {
+  description = "Existing Application Insights component name, required for reuse"
+  type        = string
+  default     = ""
+}
+
+variable "existing_app_insights_rg" {
+  description = "Existing Application Insights resource group, required for reuse"
   type        = string
   default     = ""
 }
@@ -345,4 +393,34 @@ variable "allowed_ips" {
   description = "Allowed public IPs for App Service access"
   type        = list(string)
   default     = []
+}
+
+variable "source_connector_enabled" {
+  description = "Provision or adopt the separate delegated Microsoft 365 source connector"
+  type        = bool
+  default     = false
+}
+
+variable "reuse_source_connector" {
+  description = "Adopt an existing delegated Microsoft 365 source connector"
+  type        = bool
+  default     = false
+}
+
+variable "existing_source_connector_client_id" {
+  description = "Existing source connector application client ID when reuse_source_connector is true"
+  type        = string
+  default     = ""
+}
+
+variable "source_connector_redirect_uris" {
+  description = "Exact Stack B and future Stack A Web callbacks for the source connector"
+  type        = list(string)
+  default     = []
+}
+
+variable "bulk_auth_key_name" {
+  description = "Key Vault key that wraps bulk scoring authorization data keys"
+  type        = string
+  default     = "bulk-auth"
 }

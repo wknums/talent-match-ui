@@ -163,6 +163,156 @@ public sealed class SequentialScoringPoolTests
             },
             NullLogger<SequentialScoringPool>.Instance);
 
+    // Fast heartbeat and a short lease so renewal behaviour can be observed in well under a second.
+    private static SequentialScoringPool CreateRenewalPool(
+        ServiceProvider services, TimeSpan lease, int renewAttempts = 3)
+        => new(
+            services.GetRequiredService<IServiceScopeFactory>(), new SequentialScoringSignal(),
+            new SequentialScoringOptions
+            {
+                MaxParallel = 1,
+                PollInterval = TimeSpan.FromMilliseconds(20),
+                HeartbeatInterval = TimeSpan.FromMilliseconds(30),
+                LeaseDuration = lease,
+                RenewAttempts = renewAttempts,
+                RenewRetryDelay = TimeSpan.FromMilliseconds(5),
+                RenewRetryMaxDelay = TimeSpan.FromMilliseconds(20),
+            },
+            NullLogger<SequentialScoringPool>.Instance);
+
+    private static async Task<(TestQueue Queue, ControlledScorer Scorer, ServiceProvider Services)> StartOneApplication(
+        Func<int, Task<bool>> renew)
+    {
+        var queue = new TestQueue { Renew = renew };
+        var scorer = new ControlledScorer();
+        var services = new ServiceCollection()
+            .AddSingleton<ISequentialScoringQueueRepository>(queue)
+            .AddSingleton<ISequentialApplicationScorer>(scorer)
+            .BuildServiceProvider();
+        queue.Upload(1, 1);
+        await Task.CompletedTask;
+        return (queue, scorer, services);
+    }
+
+    [Fact]
+    public async Task Lease_renewal_that_fails_briefly_is_retried_and_scoring_continues()
+    {
+        var (queue, scorer, services) = await StartOneApplication(call =>
+            call <= 2 ? throw new TimeoutException("sql busy") : Task.FromResult(true));
+        using var _ = services;
+        using var pool = CreateRenewalPool(services, lease: TimeSpan.FromSeconds(10));
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => scorer.Started.Count == 1);
+            await Eventually(() => queue.RenewCalls >= 4);
+
+            scorer.Complete("app-1");
+            await Eventually(() => scorer.Active == 0);
+            queue.Failures.Should().BeEmpty();
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Lease_renewal_that_fails_for_a_whole_retry_set_is_tried_again_while_the_lease_is_valid()
+    {
+        // Three attempts per set: the whole first set fails, the next heartbeat succeeds.
+        var (queue, scorer, services) = await StartOneApplication(call =>
+            call <= 4 ? throw new TimeoutException("sql busy") : Task.FromResult(true));
+        using var _ = services;
+        using var pool = CreateRenewalPool(services, lease: TimeSpan.FromSeconds(10));
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => scorer.Started.Count == 1);
+            await Eventually(() => queue.RenewCalls >= 6);
+
+            scorer.Complete("app-1");
+            await Eventually(() => scorer.Active == 0);
+            queue.Failures.Should().BeEmpty();
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Scoring_is_stopped_when_the_lease_can_no_longer_be_renewed_before_it_expires()
+    {
+        var (queue, scorer, services) = await StartOneApplication(_ => throw new TimeoutException("sql down"));
+        using var _ = services;
+        using var pool = CreateRenewalPool(services, lease: TimeSpan.FromMilliseconds(300));
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => queue.Failures.Contains("app-1"));
+            queue.RenewCalls.Should().BeGreaterThanOrEqualTo(3, "a whole retry set was used before giving up");
+            await Eventually(() => scorer.Active == 0);
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task A_lease_that_is_no_longer_owned_is_not_retried()
+    {
+        var (queue, scorer, services) = await StartOneApplication(_ => Task.FromResult(false));
+        using var _ = services;
+        using var pool = CreateRenewalPool(services, lease: TimeSpan.FromSeconds(10), renewAttempts: 5);
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => queue.Failures.Contains("app-1"));
+            queue.RenewCalls.Should().Be(1);
+            await Eventually(() => scorer.Active == 0);
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, 240)]
+    [InlineData("", 240)]
+    [InlineData("  ", 240)]
+    [InlineData("60", 60)]
+    [InlineData("300", 300)]
+    [InlineData("1800", 1800)]
+    public void Lease_duration_defaults_to_four_minutes_and_reads_the_variable(string? configured, int expectedSeconds)
+        => SequentialScoringOptions.ResolveLeaseDuration(configured).Should().Be(TimeSpan.FromSeconds(expectedSeconds));
+
+    [Theory]
+    [InlineData("30")]
+    [InlineData("59")]
+    [InlineData("1801")]
+    [InlineData("0")]
+    [InlineData("-5")]
+    [InlineData("four")]
+    [InlineData("2.5")]
+    public void Lease_duration_outside_the_supported_range_is_refused(string configured)
+    {
+        var action = () => SequentialScoringOptions.ResolveLeaseDuration(configured);
+
+        action.Should().Throw<InvalidOperationException>().WithMessage("*AWR_SCORING_LEASE_SECONDS*60*1800*");
+    }
+
+    [Fact]
+    public void The_default_lease_is_four_minutes_and_longer_than_the_heartbeat()
+    {
+        var options = new SequentialScoringOptions();
+
+        options.LeaseDuration.Should().Be(TimeSpan.FromMinutes(4));
+        options.LeaseDuration.Should().BeGreaterThan(options.HeartbeatInterval * 6);
+    }
+
     private static async Task Eventually(Func<bool> condition)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -175,6 +325,11 @@ public sealed class SequentialScoringPoolTests
         public ConcurrentQueue<string> Pending { get; } = new();
         public ConcurrentBag<string> Failures { get; } = new();
         public int Recoveries;
+        private int _renewCalls;
+
+        // Scripts RenewLeaseAsync by call number (1-based); null means always renewed.
+        public Func<int, Task<bool>>? Renew { get; init; }
+        public int RenewCalls => Volatile.Read(ref _renewCalls);
 
         public void Upload(int start, int count)
         {
@@ -190,14 +345,14 @@ public sealed class SequentialScoringPoolTests
 
         public Task<bool> RenewLeaseAsync(
             string applicationId, string owner, DateTime now, TimeSpan leaseDuration, CancellationToken ct)
-            => Task.FromResult(true);
-
-        public async Task<bool> FinalizeAsync(
-            string applicationId, string owner, Func<CancellationToken, Task> persistResult, CancellationToken ct)
         {
-            await persistResult(ct);
-            return true;
+            var call = Interlocked.Increment(ref _renewCalls);
+            return Renew is null ? Task.FromResult(true) : Renew(call);
         }
+
+        public Task<bool> FinalizeAsync(
+            string applicationId, string owner, ApplicationScoringFinalization result, CancellationToken ct)
+            => Task.FromResult(true);
 
         public Task FailAsync(
             string applicationId, string owner, string error, int failureCount, CancellationToken ct)

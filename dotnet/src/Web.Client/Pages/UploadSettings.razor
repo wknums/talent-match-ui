@@ -18,13 +18,27 @@ else if (settings is not null)
             <InputNumber id="file-concurrency" @bind-Value="model.FileConcurrency" />
         </div>
         <div class="upload-settings-field">
-            <label for="individual-bytes">Maximum individual file bytes</label>
-            <InputNumber id="individual-bytes" @bind-Value="model.MaxIndividualFileBytes" />
+            <label for="individual-mb">Maximum individual file size (MiB)</label>
+            <InputNumber id="individual-mb" step="any" @bind-Value="model.MaxIndividualFileMb" />
         </div>
         <div class="upload-settings-field">
-            <label for="inflight-bytes">Maximum raw bytes in flight</label>
-            <InputNumber id="inflight-bytes" @bind-Value="model.MaxInFlightBytes" />
+            <label for="inflight-mb">Maximum in-flight size (MiB)</label>
+            <InputNumber id="inflight-mb" step="any" @bind-Value="model.MaxInFlightMb" />
         </div>
+        <h4>Dashboard and status refresh</h4>
+        <div class="upload-settings-field">
+            <label for="throughput-refresh-seconds">Throughput graph refresh interval (seconds)</label>
+            <InputNumber id="throughput-refresh-seconds" min="1" max="4294967" @bind-Value="model.ThroughputRefreshIntervalSeconds" />
+        </div>
+        <div class="upload-settings-field">
+            <label for="status-polling-seconds">Scoring status polling interval (seconds)</label>
+            <InputNumber id="status-polling-seconds" min="1" max="4294967" @bind-Value="model.StatusPollingIntervalSeconds" />
+        </div>
+        <p class="upload-settings-hint">
+            Both default to 60 seconds after the immediate first load. Status covers job applications,
+            bulk requests and dashboard status. Open pages check for saved changes every 60 seconds;
+            a running refresh finishes before the next interval begins.
+        </p>
         <button type="submit" disabled="@saving">@(saving ? "Saving…" : "Save")</button>
     </EditForm>
 }
@@ -33,26 +47,52 @@ else if (settings is not null)
 {
     <p role="alert">@message</p>
 }
+
+@if (settings is not null)
+{
+    <h4 id="bulk-settings-title" class="upload-settings-subtitle">Bulk scoring from SharePoint or OneDrive</h4>
+    @if (bulk is not null)
+    {
+        <EditForm class="upload-settings-form" Model="bulkModel" OnValidSubmit="SaveBulkAsync" aria-labelledby="bulk-settings-title">
+            <div class="upload-settings-field">
+                <label for="bulk-max-files">Maximum files per bulk scoring request</label>
+                <InputNumber id="bulk-max-files" @bind-Value="bulkModel.MaxFilesPerRequest" />
+            </div>
+            <p class="upload-settings-hint">
+                Default 30,000. A new request uses the value saved at the time it starts; requests already running keep theirs.
+            </p>
+            <button type="submit" disabled="@bulkSaving">@(bulkSaving ? "Saving…" : "Save")</button>
+        </EditForm>
+    }
+    @if (!string.IsNullOrWhiteSpace(bulkMessage))
+    {
+        <p role="alert">@bulkMessage</p>
+    }
+}
 </section>
 
 @code {
+    [CascadingParameter] public PollingSettingsState? PollingSettings { get; set; }
+    // Sizes are shown in MiB (1 MiB = 1,048,576 bytes) and stored in bytes. A value the admin did not change is
+    // sent back as the exact bytes that were loaded, so saving never rounds an existing setting.
+    private const decimal BytesPerMb = 1_048_576m;
+
     private UploadSettingsDto? settings;
     private SettingsModel model = new();
     private bool loading = true;
     private bool saving;
     private string? message;
+    private BulkSettingsDto? bulk;
+    private BulkModel bulkModel = new();
+    private bool bulkSaving;
+    private string? bulkMessage;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
             settings = await Api.GetUploadSettingsAsync();
-            model = new()
-            {
-                FileConcurrency = settings.FileConcurrency,
-                MaxIndividualFileBytes = settings.MaxIndividualFileBytes,
-                MaxInFlightBytes = settings.MaxInFlightBytes,
-            };
+            model = ModelFrom(settings);
         }
         catch (Exception ex)
         {
@@ -62,17 +102,52 @@ else if (settings is not null)
         {
             loading = false;
         }
+
+        if (settings is null)
+            return;
+        try
+        {
+            bulk = await Api.GetBulkScoringSettingsAsync();
+            bulkModel = new() { MaxFilesPerRequest = bulk.MaxFilesPerRequest };
+        }
+        catch (Exception ex)
+        {
+            bulkMessage = ex.Message;
+        }
     }
 
     private async Task SaveAsync()
     {
         if (settings is null)
             return;
-        if (model.FileConcurrency <= 0
-            || model.MaxIndividualFileBytes <= 0
-            || model.MaxInFlightBytes < model.MaxIndividualFileBytes)
+        if (model.ThroughputRefreshIntervalSeconds is < 1 or > 4_294_967
+            || model.StatusPollingIntervalSeconds is < 1 or > 4_294_967)
         {
-            message = "Enter positive limits; total in-flight bytes must be at least the individual file limit.";
+            message = "Enter positive whole seconds from 1 through 4,294,967 for both refresh intervals.";
+            return;
+        }
+        if (model.FileConcurrency <= 0
+            || model.MaxIndividualFileMb <= 0
+            || model.MaxInFlightMb <= 0)
+        {
+            message = "Enter positive limits for concurrent uploads, the maximum individual file size (MiB) and the maximum in-flight size (MiB).";
+            return;
+        }
+        if (model.MaxIndividualFileMb > long.MaxValue / BytesPerMb || model.MaxInFlightMb > long.MaxValue / BytesPerMb)
+        {
+            message = "The size (MiB) is too large.";
+            return;
+        }
+
+        if (!TryToBytes(model.MaxIndividualFileMb, settings.MaxIndividualFileBytes, out var individualBytes)
+            || !TryToBytes(model.MaxInFlightMb, settings.MaxInFlightBytes, out var inFlightBytes))
+        {
+            message = "Each size in MiB must convert to whole bytes.";
+            return;
+        }
+        if (inFlightBytes < individualBytes)
+        {
+            message = "The maximum in-flight size (MiB) must be at least the maximum individual file size (MiB).";
             return;
         }
         saving = true;
@@ -81,9 +156,13 @@ else if (settings is not null)
         {
             settings = await Api.UpdateUploadSettingsAsync(new(
                 model.FileConcurrency,
-                model.MaxIndividualFileBytes,
-                model.MaxInFlightBytes,
-                settings.ConcurrencyVersion));
+                individualBytes,
+                inFlightBytes,
+                settings.ConcurrencyVersion,
+                model.ThroughputRefreshIntervalSeconds,
+                model.StatusPollingIntervalSeconds));
+            model = ModelFrom(settings);
+            PollingSettings?.Update(new(settings.ThroughputRefreshIntervalSeconds, settings.StatusPollingIntervalSeconds));
             message = "Upload settings saved.";
         }
         catch (Exception ex)
@@ -96,10 +175,72 @@ else if (settings is not null)
         }
     }
 
+    private async Task SaveBulkAsync()
+    {
+        if (bulk is null)
+            return;
+        if (bulkModel.MaxFilesPerRequest is < 1 or > 100_000)
+        {
+            bulkMessage = "Enter a whole number from 1 through 100,000 for the maximum files per bulk scoring request.";
+            return;
+        }
+        bulkSaving = true;
+        bulkMessage = null;
+        try
+        {
+            bulk = await Api.UpdateBulkScoringSettingsAsync(new(bulkModel.MaxFilesPerRequest, bulk.ConcurrencyVersion));
+            bulkModel = new() { MaxFilesPerRequest = bulk.MaxFilesPerRequest };
+            bulkMessage = "Bulk scoring settings saved.";
+        }
+        catch (Exception ex)
+        {
+            bulkMessage = ex.Message;
+        }
+        finally
+        {
+            bulkSaving = false;
+        }
+    }
+
+    private static SettingsModel ModelFrom(UploadSettingsDto source) => new()
+    {
+        FileConcurrency = source.FileConcurrency,
+        MaxIndividualFileMb = source.MaxIndividualFileBytes / BytesPerMb,
+        MaxInFlightMb = source.MaxInFlightBytes / BytesPerMb,
+        ThroughputRefreshIntervalSeconds = source.ThroughputRefreshIntervalSeconds,
+        StatusPollingIntervalSeconds = source.StatusPollingIntervalSeconds,
+    };
+
+    private static bool TryToBytes(decimal mebibytes, long loadedBytes, out long bytes)
+    {
+        if (mebibytes == loadedBytes / BytesPerMb)
+        {
+            bytes = loadedBytes;
+            return true;
+        }
+
+        var converted = mebibytes * BytesPerMb;
+        if (converted != decimal.Truncate(converted))
+        {
+            bytes = 0;
+            return false;
+        }
+
+        bytes = (long)converted;
+        return true;
+    }
+
     private sealed class SettingsModel
     {
         public int FileConcurrency { get; set; }
-        public long MaxIndividualFileBytes { get; set; }
-        public long MaxInFlightBytes { get; set; }
+        public decimal MaxIndividualFileMb { get; set; }
+        public decimal MaxInFlightMb { get; set; }
+        public int ThroughputRefreshIntervalSeconds { get; set; }
+        public int StatusPollingIntervalSeconds { get; set; }
+    }
+
+    private sealed class BulkModel
+    {
+        public int MaxFilesPerRequest { get; set; }
     }
 }

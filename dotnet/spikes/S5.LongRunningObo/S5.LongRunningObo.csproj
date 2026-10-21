@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Spike S5 harness (specs/001-sharepoint-bulk-scoring, T008A). Deliberately NOT part of TalentMatch.slnx:
+       it stores token material in plain files under a per-user folder and exists only to measure
+       long-running on-behalf-of behavior. Delete the project and the state folder when the spike is closed. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>S5.LongRunningObo</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.*" />
+  </ItemGroup>
+
+</Project>

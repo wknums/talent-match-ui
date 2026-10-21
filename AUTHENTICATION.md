@@ -22,10 +22,35 @@ mode, and Entra tokens are never accepted in simple mode.
   hold no client secret.
 - One protected API registration exposes the delegated scope `access_as_user`. Only the two
   registered SPA client IDs may request it.
-- Access tokens older than 15 minutes are rejected with `token_stale`. The client performs exactly
-  one silent refresh before surfacing the error.
-- Microsoft Graph is never called on a request path. All authorization state is resolved from the
-  application database.
+- Access tokens older than 15 minutes are rejected with `token_stale`. Stack B attempts one silent
+  refresh for reads and explicitly opted-in bulk source/request mutations. Only the canonical
+  pre-endpoint `401 token_stale` denial permits replay; the original JSON body and content headers
+  are preserved. Timeouts, transport failures, other authorization denials, and server errors do
+  not trigger mutation replay.
+- If renewal requires interaction or a product session still cannot be renewed, the Stack B bulk
+  dialog offers **Sign in again**. It saves the folder link, opaque connection/request references,
+  and review choices in this tab's session storage, then returns to the same job after product
+  sign-in. The saved form is consumed on return; no source credentials are stored and the folder
+  URL is not placed in the sign-in return URL. Existing drafts reload through authorized reads,
+  without creating another preview or automatically confirming scoring. Missing or blocked
+  browser storage produces explicit recovery instructions. Product sign-in remains separate
+  from Microsoft 365 source consent.
+- Microsoft Graph is never used for product authorization decisions. All roles, organizations, job
+  access, and departments come from the application database. Stack B bulk scoring uses a separate
+  confidential `AzureADMultipleOrgs` connector for delegated SharePoint/work-school OneDrive
+  content access (`specs/001-sharepoint-bulk-scoring`). The recruiter completes authorization code
+  + PKCE and the worker continues only through an encrypted connection/request-bound cache for that
+  delegated user. The product access token is not exchanged for Graph access. There is no
+  application-only reader, `Sites.Selected`, source allow-list, client password/certificate, or
+  fallback identity. See `MICROSOFT365_SOURCE_*` and `BULK_*` in `.env.example` and
+  `docs/SHAREPOINT_BULK_SCORING_APP_REGISTRATION.md`.
+- Starting a live Microsoft 365 connection also sets a short-lived, protected, `HttpOnly`,
+  `Secure`, `SameSite=Lax`, host-only correlation cookie. The anonymous OAuth callback requires
+  that cookie in the initiating browser before redeeming a code, then consumes it. Missing,
+  expired, modified, or mismatched cookies fail closed with `source_connection_invalid_or_expired`.
+  Use HTTPS for live source callbacks, and share a persistent ASP.NET Core Data Protection key
+  ring between API replicas handling connection starts and callbacks. Mock connections do not
+  require an external callback.
 
 ### Application roles
 

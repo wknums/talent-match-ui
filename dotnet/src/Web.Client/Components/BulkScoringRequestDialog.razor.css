@@ -1,0 +1,35 @@
+.bulk-dialog { display: grid; gap: 0.75rem; min-width: 22rem; }
+.bulk-dialog h4, .bulk-dialog h5 { margin: 0; }
+.bulk-help { margin: 0; color: #475569; font-size: 0.9rem; }
+.bulk-consent { padding: 0.7rem 0.85rem; background: #eff6ff; border: 1px solid #93c5fd; border-radius: 6px; color: #1e3a8a; }
+.bulk-consent p { margin: 0; }
+.bulk-consent p + p { margin-top: 0.4rem; }
+.bulk-muted { color: #475569; font-size: 0.85rem; display: block; }
+.bulk-folder .bulk-muted, .bulk-headline .bulk-muted { display: inline; }
+.bulk-field label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+.bulk-row { display: flex; gap: 0.5rem; }
+.bulk-row input { flex: 1 1 auto; min-width: 0; padding: 0.45rem 0.6rem; border: 1px solid #94a3b8; border-radius: 6px; }
+.bulk-dialog button { padding: 0.45rem 1rem; border-radius: 4px; border: 1px solid #94a3b8; background: white; cursor: pointer; }
+.bulk-dialog button:disabled { opacity: 0.6; cursor: not-allowed; }
+.bulk-dialog button.bulk-primary { background: #1d4ed8; border-color: #1d4ed8; color: white; }
+.bulk-error { padding: 0.6rem 0.8rem; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; color: #7f1d1d; }
+.bulk-error:focus { outline: 3px solid #2563eb; outline-offset: 2px; }
+.bulk-loading { color: #1e3a8a; font-weight: 600; }
+.bulk-warning { padding: 0.6rem 0.8rem; background: #fef9c3; border: 1px solid #facc15; border-radius: 6px; color: #713f12; }
+.bulk-warning p { margin: 0 0 0.5rem; }
+.bulk-link-button { display: inline-block; margin-right: 0.5rem; padding: 0.45rem 1rem; background: #1d4ed8; color: white; border-radius: 4px; text-decoration: none; }
+.bulk-summary { display: grid; gap: 0.75rem; }
+.bulk-frozen { padding: 0.7rem 0.85rem; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; }
+.bulk-frozen ul { margin: 0.4rem 0 0 1.25rem; padding: 0; }
+.bulk-headline { margin: 0; font-size: 1.1rem; }
+.bulk-excluded ul { margin: 0.25rem 0 0 1.25rem; padding: 0; }
+.bulk-options { display: grid; gap: 0.6rem; }
+.bulk-options label { display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; }
+.bulk-files table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.bulk-files th, .bulk-files td { text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid #e2e8f0; }
+.bulk-row-excluded { color: #64748b; }
+.bulk-badge { margin-left: 0.5rem; padding: 0.05rem 0.4rem; background: #e2e8f0; border-radius: 4px; font-size: 0.75rem; }
+.bulk-pager { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+.bulk-pager span { flex: 1 1 auto; color: #475569; font-size: 0.85rem; }
+.bulk-actions { display: flex; gap: 0.5rem; }
+.bulk-started { display: grid; gap: 0.75rem; }

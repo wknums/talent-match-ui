@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Spike S2 harness (specs/001-sharepoint-bulk-scoring, T007): PDFium throughput, memory and converted-size
+       distribution for the raster-PDF step. Deliberately NOT part of TalentMatch.slnx. Delete when the spike is closed. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>S2.PdfiumBenchmark</RootNamespace>
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Infrastructure\TalentMatch.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

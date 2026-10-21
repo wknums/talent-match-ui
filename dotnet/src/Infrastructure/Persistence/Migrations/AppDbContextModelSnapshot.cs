@@ -183,6 +183,827 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.ToTable("ApplicationDocuments");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkAuditEvent", b =>
+                {
+                    b.Property<string>("AuditEventId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActorType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Boundary")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InitiatedByActorId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SafeFactsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SchemaVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SubjectId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubjectType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("AuditEventId");
+
+                    b.HasIndex("CorrelationId");
+
+                    b.HasIndex("SubjectId", "EventType");
+
+                    b.HasIndex("SubjectType", "SubjectId", "OccurredAt");
+
+                    b.ToTable("BulkAuditEvents", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkAuditEvents_ActorType", "ActorType IN ('user', 'service')");
+
+                            t.HasCheckConstraint("CK_BulkAuditEvents_Boundary", "Boundary IN ('transactional', 'durable_outbox', 'reconciliation')");
+
+                            t.HasCheckConstraint("CK_BulkAuditEvents_SchemaVersion", "SchemaVersion > 0");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkImportSettings", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ConfigurationVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MaxFilesPerRequest")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UpdatedByActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("BulkImportSettings", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkImportSettings_MaxFiles", "MaxFilesPerRequest > 0");
+
+                            t.HasCheckConstraint("CK_BulkImportSettings_MaxFilesV3", "MaxFilesPerRequest <= 100000");
+
+                            t.HasCheckConstraint("CK_BulkImportSettings_Singleton", "Id = 1");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkRequestAuthorization", b =>
+                {
+                    b.Property<string>("RequestId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DiscardedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KeyVersion")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LapseReason")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LapsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ObtainedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Payload")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("ProductActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceAccountBindingHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceDriveId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFolderItemId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceTenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("WrappedDataKey")
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("RequestId");
+
+                    b.HasIndex("Status", "ObtainedAt");
+
+                    b.ToTable("BulkRequestAuthorizations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkRequestAuthorizations_NoMaterialWhenInactive", "Status = 'active' OR (Payload IS NULL AND WrappedDataKey IS NULL)");
+
+                            t.HasCheckConstraint("CK_BulkRequestAuthorizations_Status", "Status IN ('active', 'lapsed', 'revoked', 'accessLost', 'discarded', 'unavailableHistorical')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringItem", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ApplicationCreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApplicationId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("ConvertedPageCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("ConvertedSizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ConvertedStoredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DocumentId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ExcludedWhenRasterized")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Fingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("FingerprintClaimed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("HandedOffAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LeaseUntil")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("MinimumPageSsim")
+                        .HasPrecision(6, 5)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("NextAttemptAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Ordinal")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("OriginalPageCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("RasterDpiUsed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("RasterFidelityValidatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasonCode")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReasonMessage")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RetryOfItemId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScoredVersion")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScoringConfigVersionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceDriveId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceDriveItemId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceETag")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourcePath")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SourceStoredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("TerminalAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RetryOfItemId");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("IX_BulkScoringItems_Scoring")
+                        .HasFilter("[Status] = 'scoring'");
+
+                    b.HasIndex("RequestId", "Fingerprint")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BulkScoringItems_Request_Fingerprint")
+                        .HasFilter("[FingerprintClaimed] = 1");
+
+                    b.HasIndex("RequestId", "Ordinal");
+
+                    b.HasIndex("RequestId", "SourceDriveItemId")
+                        .IsUnique();
+
+                    b.HasIndex("RequestId", "Status");
+
+                    b.HasIndex("Status", "NextAttemptAt")
+                        .HasFilter("[Status] IN ('waiting', 'importing', 'converting')");
+
+                    b.ToTable("BulkScoringItems", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkScoringItems_Reason", "ReasonCode IS NULL OR ReasonCode IN ('unsupported_type', 'file_too_large', 'limit_exceeded', 'empty_file', 'not_convertible', 'access_denied', 'authorization_lapsed', 'source_missing', 'source_changed', 'duplicate_in_request', 'duplicate_in_job', 'conversion_failed', 'conversion_timeout', 'converted_type_invalid', 'converted_magic_invalid', 'converted_document_invalid', 'converted_too_large', 'conversion_page_mismatch', 'conversion_page_invalid', 'conversion_dimension_mismatch', 'conversion_ssim_below_threshold', 'conversion_blank_page', 'conversion_cropped_page', 'scoring_failed', 'cancelled_by_user', 'transient_exhausted')");
+
+                            t.HasCheckConstraint("CK_BulkScoringItems_ScoredVersion", "ScoredVersion IS NULL OR ScoredVersion IN ('original', 'converted')");
+
+                            t.HasCheckConstraint("CK_BulkScoringItems_Sizes", "SizeBytes >= 0 AND Attempt >= 0");
+
+                            t.HasCheckConstraint("CK_BulkScoringItems_Status", "Status IN ('waiting', 'importing', 'converting', 'scoring', 'completed', 'failed', 'skipped', 'cancelled')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringItemContent", b =>
+                {
+                    b.Property<string>("ItemId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BlobUri")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CleanupReasonCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContentBase64")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletionRequestedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("ItemId", "Kind");
+
+                    b.ToTable("BulkScoringItemContents", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkScoringItemContents_Kind", "Kind IN ('original', 'converted', 'transient')");
+
+                            t.HasCheckConstraint("CK_BulkScoringItemContents_OneLocation", "(BlobUri IS NOT NULL AND ContentBase64 IS NULL) OR (BlobUri IS NULL AND ContentBase64 IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_BulkScoringItemContents_Size", "SizeBytes >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringRequest", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("AcknowledgedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AcknowledgedByActorId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("AllowDuplicates")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CancelRequestedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CancelledByActorId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CancelledCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CapturedScoringConfigVersionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CompletedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ConfirmedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ConnectionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("ConvertToRasterPdf")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ConvertingCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DiscoveredCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DiscoveryCursorJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DiscoveryStatus")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DiscoveryStepCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DiscoveryStepMaxEntries")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DiscoveryStepMaxFiles")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DiscoveryStepMaxSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("DraftReviewVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("EntriesScanned")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ExcludedByReasonJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ExcludedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FailedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ImportingCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("InaccessibleCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("IncludedBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("IncludedItemCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("JobId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("MaxBytesPerFile")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("MaxFilesPerRequest")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("MaxTotalBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Outcome")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OwnerActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RasterDpi")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RetryOfRequestId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ScoringCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("SkippedCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceAccountBindingHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceDriveId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFolderItemId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFolderName")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFolderPath")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceTenantId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceWebUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("TerminalAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("TotalEligibleBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("WaitingCount")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId")
+                        .IsUnique()
+                        .HasFilter("[ConnectionId] IS NOT NULL");
+
+                    b.HasIndex("RetryOfRequestId");
+
+                    b.HasIndex("JobId", "CreatedAt");
+
+                    b.HasIndex("Status", "TerminalAt");
+
+                    b.HasIndex("OwnerActorId", "Status", "AcknowledgedAt");
+
+                    b.ToTable("BulkScoringRequests", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkScoringRequests_Acknowledgment", "(AcknowledgedAt IS NULL AND AcknowledgedByActorId IS NULL) OR (AcknowledgedAt IS NOT NULL AND AcknowledgedByActorId = OwnerActorId)");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_Counts", "DiscoveredCount >= 0 AND ExcludedCount >= 0 AND InaccessibleCount >= 0 AND WaitingCount >= 0 AND ImportingCount >= 0 AND ConvertingCount >= 0 AND ScoringCount >= 0 AND CompletedCount >= 0 AND FailedCount >= 0 AND SkippedCount >= 0 AND CancelledCount >= 0 AND TotalEligibleBytes >= 0 AND EntriesScanned >= 0 AND DiscoveryStepCount >= 0");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_DiscoveryStatus", "DiscoveryStatus IN ('more_available', 'complete', 'limit_reached')");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_FrozenLimits", "MaxFilesPerRequest BETWEEN 1 AND 100000 AND MaxBytesPerFile > 0 AND MaxTotalBytes BETWEEN 1048576 AND 1099511627776 AND DiscoveryStepMaxFiles BETWEEN 1 AND 1000 AND DiscoveryStepMaxEntries > 0 AND DiscoveryStepMaxSeconds > 0");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_IncludedLimits", "IncludedItemCount >= 0 AND IncludedItemCount <= MaxFilesPerRequest AND IncludedBytes >= 0 AND IncludedBytes <= MaxTotalBytes");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_Outcome", "Outcome IS NULL OR Outcome IN ('all_succeeded', 'partial', 'failed', 'cancelled')");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_OutcomeIffCompleted", "(Outcome IS NULL AND Status <> 'completed') OR (Outcome IS NOT NULL AND Status = 'completed')");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_SourceKind", "SourceKind IN ('sharepoint', 'onedrive_business')");
+
+                            t.HasCheckConstraint("CK_BulkScoringRequests_Status", "Status IN ('draft', 'active', 'completed')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkSourceAdmissionEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("OccurredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubjectHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("Kind", "SubjectHash", "ExpiresAt");
+
+                    b.ToTable("BulkSourceAdmissionEvents", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkSourceAdmissionEvents_Expiry", "ExpiresAt > OccurredAt");
+
+                            t.HasCheckConstraint("CK_BulkSourceAdmissionEvents_Kind", "Kind IN ('connection_actor', 'connection_ip', 'callback_ip')");
+                        });
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkSourceConnection", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CanonicalUrlHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ConcurrencyVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ConsumedByRequestId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DiscardedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("JobId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KeyVersion")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastActivityAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ObtainedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("PendingFolderUrlEncrypted")
+                        .HasColumnType("BLOB");
+
+                    b.Property<byte[]>("PkceVerifierEncrypted")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("ProductActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("ProtectedPayload")
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("RedirectAfterPath")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceAccountBindingHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceAccountDisplay")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceCloud")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceDriveId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFolderItemId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFolderName")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceFolderPath")
+                        .HasMaxLength(2000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceKind")
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceTenantId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceWebUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StateHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("WrappedDataKey")
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("JobId");
+
+                    b.HasIndex("StateHash")
+                        .IsUnique()
+                        .HasFilter("[StateHash] IS NOT NULL");
+
+                    b.HasIndex("ProductActorId", "JobId", "Status", "ExpiresAt");
+
+                    b.ToTable("BulkSourceConnections", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BulkSourceConnections_Consumed", "(Status <> 'consumed') OR (ConsumedByRequestId IS NOT NULL AND PendingFolderUrlEncrypted IS NULL AND StateHash IS NULL AND PkceVerifierEncrypted IS NULL AND ProtectedPayload IS NULL AND WrappedDataKey IS NULL)");
+
+                            t.HasCheckConstraint("CK_BulkSourceConnections_Expiry", "ExpiresAt >= LastActivityAt AND ExpiresAt >= ObtainedAt");
+
+                            t.HasCheckConstraint("CK_BulkSourceConnections_SourceKind", "SourceKind IS NULL OR SourceKind IN ('sharepoint', 'onedrive_business')");
+
+                            t.HasCheckConstraint("CK_BulkSourceConnections_Status", "Status IN ('authorizing', 'authorized', 'verified', 'consumed', 'expired', 'abandoned', 'failed')");
+                        });
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.Department", b =>
                 {
                     b.Property<string>("Id")
@@ -1644,6 +2465,16 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<long>("MaxIndividualFileBytes")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("StatusPollingIntervalSeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(60);
+
+                    b.Property<int>("ThroughputRefreshIntervalSeconds")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(60);
+
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("TEXT");
 
@@ -1663,6 +2494,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                             t.HasCheckConstraint("CK_UploadSettings_MaxIndividualFileBytes", "MaxIndividualFileBytes > 0");
 
                             t.HasCheckConstraint("CK_UploadSettings_Singleton", "Id = 'optional-file-upload'");
+
+                            t.HasCheckConstraint("CK_UploadSettings_StatusPolling", "StatusPollingIntervalSeconds BETWEEN 1 AND 4294967");
+
+                            t.HasCheckConstraint("CK_UploadSettings_ThroughputRefresh", "ThroughputRefreshIntervalSeconds BETWEEN 1 AND 4294967");
                         });
                 });
 
@@ -1779,6 +2614,69 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Application");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkRequestAuthorization", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringRequest", "Request")
+                        .WithOne("Authorization")
+                        .HasForeignKey("TalentMatch.Domain.Entities.BulkScoringRequests.BulkRequestAuthorization", "RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Request");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringItem", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringRequest", "Request")
+                        .WithMany("Items")
+                        .HasForeignKey("RequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringItem", null)
+                        .WithMany()
+                        .HasForeignKey("RetryOfItemId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("Request");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringItemContent", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringItem", "Item")
+                        .WithMany("Contents")
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Item");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringRequest", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Job", "Job")
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringRequest", null)
+                        .WithMany()
+                        .HasForeignKey("RetryOfRequestId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkSourceConnection", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.Job", null)
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Department", b =>
@@ -2024,6 +2922,18 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("ManualReview");
 
                     b.Navigation("ScoringRuns");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringItem", b =>
+                {
+                    b.Navigation("Contents");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.BulkScoringRequests.BulkScoringRequest", b =>
+                {
+                    b.Navigation("Authorization");
+
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Department", b =>

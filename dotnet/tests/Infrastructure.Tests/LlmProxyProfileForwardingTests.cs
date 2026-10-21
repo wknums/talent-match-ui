@@ -163,10 +163,87 @@ public sealed class LlmProxyProfileForwardingTests
         }
     }
 
+    [Fact]
+    public async Task An_empty_reply_is_retried_for_that_run_only_after_a_pause()
+    {
+        var previous = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
+        Environment.SetEnvironmentVariable("AWR_SEQ_API_ENDPOINT", "https://awr.example");
+        try
+        {
+            var handler = new SequenceHandler(string.Empty, "  ", "{\"score\":1}");
+            var pauses = new List<int>();
+            var service = new LlmProxyService(
+                new HttpClient(handler),
+                NullLogger<LlmProxyService>.Instance,
+                new FixedProfileProvider(new ScoringProfile("model-42", "high")),
+                emptyResponseDelay: (attempt, _) =>
+                {
+                    pauses.Add(attempt);
+                    return Task.CompletedTask;
+                });
+
+            var responses = await service.ScoreWithDocumentAsync(
+                "score prompt", [1, 2, 3], "candidate.pdf", "application/pdf");
+
+            responses.Should().Equal("{\"score\":1}");
+            handler.Calls.Should().Be(3);
+            pauses.Should().Equal(1, 2);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AWR_SEQ_API_ENDPOINT", previous);
+        }
+    }
+
+    [Fact]
+    public async Task A_reply_that_stays_empty_fails_with_a_clear_message()
+    {
+        var previous = Environment.GetEnvironmentVariable("AWR_SEQ_API_ENDPOINT");
+        Environment.SetEnvironmentVariable("AWR_SEQ_API_ENDPOINT", "https://awr.example");
+        try
+        {
+            var handler = new SequenceHandler(string.Empty);
+            var service = new LlmProxyService(
+                new HttpClient(handler),
+                NullLogger<LlmProxyService>.Instance,
+                new FixedProfileProvider(new ScoringProfile("model-42", "high")),
+                emptyResponseDelay: (_, _) => Task.CompletedTask);
+
+            var action = () => service.ScoreWithDocumentAsync(
+                "score prompt", [1, 2, 3], "candidate.pdf", "application/pdf");
+
+            await action.Should().ThrowAsync<HttpRequestException>()
+                .WithMessage("*empty response*run 1 of 1*candidate.pdf*");
+            handler.Calls.Should().Be(3);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AWR_SEQ_API_ENDPOINT", previous);
+        }
+    }
+
     private sealed class FixedProfileProvider(ScoringProfile profile)
         : IScoringProfileProvider
     {
         public ScoringProfile Current { get; } = profile;
+    }
+
+    // Answers each call with the next body; the last one repeats.
+    private sealed class SequenceHandler(params string[] bodies) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var body = bodies[Math.Min(Calls, bodies.Length - 1)];
+            Calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body),
+            });
+        }
     }
 
     private sealed class MockReasoningModelCatalog(ScoringProfile resolved)

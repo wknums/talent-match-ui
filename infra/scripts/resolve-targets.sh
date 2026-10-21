@@ -55,6 +55,18 @@ map_environment() {
 GH_ENVIRONMENT="$(resolve_environment)"
 read -r TF_ENV ENV_FILE <<< "$(map_environment "$GH_ENVIRONMENT")"
 
+profile="$ENV_FILE"
+if [[ "${GITHUB_ACTIONS:-false}" == true ]]; then
+  write_ci_env_file "$profile"
+else
+  [[ -f "$profile" ]] || profile="$ENV_FILE.example"
+fi
+load_env_file "$profile"
+[[ "${ENVIRONMENT:-}" == "$TF_ENV" ]] \
+  || log_fatal "The profile's ENVIRONMENT does not match the selected GitHub environment."
+STACK_TARGET="${STACK_TARGET:-both}"
+validate_deployment_target shared-only
+
 # Defaults
 DEPLOY_SHARED=false
 DEPLOY_STACK_A=false
@@ -65,6 +77,7 @@ PACKAGE_STACK_B=false
 if [[ "${GITHUB_EVENT_NAME:-}" == "workflow_dispatch" && -n "${INPUT_TARGET:-}" ]]; then
   # --- Manual target override ---
   log_info "Manual target override: ${INPUT_TARGET}"
+  validate_deployment_target "$INPUT_TARGET"
   case "${INPUT_TARGET}" in
     shared-only)
       DEPLOY_SHARED=true
@@ -94,25 +107,29 @@ else
   if [[ "${CHANGED_SHARED:-false}" == "true" ]]; then
     DEPLOY_SHARED=true
   fi
-  if [[ "${CHANGED_STACK_A:-false}" == "true" ]]; then
+  if [[ "${CHANGED_STACK_A:-false}" == "true" && ( "$STACK_TARGET" == "stack-a" || "$STACK_TARGET" == "both" ) ]]; then
     DEPLOY_SHARED=true
     DEPLOY_STACK_A=true
     PACKAGE_STACK_A=true
   fi
-  if [[ "${CHANGED_STACK_B:-false}" == "true" ]]; then
+  if [[ "${CHANGED_STACK_B:-false}" == "true" && ( "$STACK_TARGET" == "stack-b" || "$STACK_TARGET" == "both" ) ]]; then
     DEPLOY_SHARED=true
     DEPLOY_STACK_B=true
     PACKAGE_STACK_B=true
   fi
 
   # If nothing changed specifically, deploy all (safety net for infra changes)
-  if [[ "$DEPLOY_SHARED" == "false" && "$DEPLOY_STACK_A" == "false" && "$DEPLOY_STACK_B" == "false" ]]; then
-    log_warn "No specific changes detected — defaulting to deploy all"
+  if [[ "${CHANGED_SHARED:-false}" != "true" && "${CHANGED_STACK_A:-false}" != "true" && "${CHANGED_STACK_B:-false}" != "true" ]]; then
+    log_warn "No specific changes detected — defaulting to the stacks enabled by the profile"
     DEPLOY_SHARED=true
-    DEPLOY_STACK_A=true
-    DEPLOY_STACK_B=true
-    PACKAGE_STACK_A=true
-    PACKAGE_STACK_B=true
+    if [[ "$STACK_TARGET" == "stack-a" || "$STACK_TARGET" == "both" ]]; then
+      DEPLOY_STACK_A=true
+      PACKAGE_STACK_A=true
+    fi
+    if [[ "$STACK_TARGET" == "stack-b" || "$STACK_TARGET" == "both" ]]; then
+      DEPLOY_STACK_B=true
+      PACKAGE_STACK_B=true
+    fi
   fi
 fi
 

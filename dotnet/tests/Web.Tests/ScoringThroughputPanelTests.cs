@@ -221,7 +221,7 @@ public sealed class ScoringThroughputPanelTests : BunitContext
         var cut = Render<ScoringThroughputPanel>();
         cut.WaitForAssertion(() => cut.Find(".throughput-metric").TextContent.Should().Be("2"));
 
-        await cut.InvokeAsync(() => clock.Advance(TimeSpan.FromSeconds(10)));
+        await cut.InvokeAsync(() => clock.Advance(TimeSpan.FromSeconds(60)));
 
         cut.WaitForAssertion(() => cut.Find("[role=alert]").TextContent.Should().Contain("Stale data"));
         cut.Find(".throughput-metric").TextContent.Should().Be("2");
@@ -230,7 +230,7 @@ public sealed class ScoringThroughputPanelTests : BunitContext
         cut.Find(".throughput-updated").TextContent.Should().Contain("Last successful update:");
         cut.Find(".throughput-updated time").GetAttribute("datetime").Should().Be(AsOf.ToString("O"));
 
-        await cut.InvokeAsync(() => clock.Advance(TimeSpan.FromSeconds(10)));
+        await cut.InvokeAsync(() => clock.Advance(TimeSpan.FromSeconds(60)));
 
         cut.WaitForAssertion(() => cut.Find(".throughput-metric").TextContent.Should().Be("3"));
         cut.FindAll("[role=alert]").Should().BeEmpty();
@@ -238,7 +238,7 @@ public sealed class ScoringThroughputPanelTests : BunitContext
     }
 
     [Fact]
-    public async Task Panel_RefreshIsEvery10SecondsNonoverlappingAndCancelledOnDispose()
+    public async Task Panel_RefreshIsEvery60SecondsNonoverlappingAndCancelledOnDispose()
     {
         var completion = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
@@ -247,8 +247,9 @@ public sealed class ScoringThroughputPanelTests : BunitContext
             : completion.Task.WaitAsync(token));
         var cut = Render<ScoringThroughputPanel>();
         cut.WaitForAssertion(() => clock.ActiveTimers.Should().Be(1));
+        clock.TimeUntilNextTick.Should().Be(TimeSpan.FromSeconds(60));
 
-        await cut.InvokeAsync(() => clock.Advance(TimeSpan.FromSeconds(9)));
+        await cut.InvokeAsync(() => clock.Advance(TimeSpan.FromSeconds(59)));
         handler.RequestCount.Should().Be(1);
         await cut.InvokeAsync(() => clock.Advance(TimeSpan.FromSeconds(1)));
         cut.WaitForAssertion(() => handler.RequestCount.Should().Be(2));
@@ -339,11 +340,13 @@ public sealed class ScoringThroughputPanelTests : BunitContext
         }
     }
 
-    private sealed class ManualTimeProvider : TimeProvider
+    internal sealed class ManualTimeProvider : TimeProvider
     {
         private readonly List<ManualTimer> timers = [];
         private DateTimeOffset now = AsOf;
         public int ActiveTimers => timers.Count(timer => !timer.Disposed);
+        public TimeSpan TimeUntilNextTick => timers.Where(timer => !timer.Disposed)
+            .Min(timer => timer.Next - now);
 
         public override DateTimeOffset GetUtcNow() => now;
 
@@ -365,6 +368,7 @@ public sealed class ScoringThroughputPanelTests : BunitContext
         private sealed class ManualTimer(ManualTimeProvider clock, TimerCallback callback, object? state) : ITimer
         {
             private DateTimeOffset next;
+            public DateTimeOffset Next => next;
             private TimeSpan period;
             public bool Disposed { get; private set; }
 

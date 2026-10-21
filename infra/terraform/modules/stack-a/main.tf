@@ -7,11 +7,13 @@
 module "app_service" {
   source = "../foundation/app-service"
 
-  name                = "app-${var.project_name}-node-${var.environment}"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  service_plan_id     = var.app_service_plan_id
-  identity_id         = var.identity_id
+  name                           = "app-${var.project_name}-node-${var.environment}"
+  location                       = var.location
+  resource_group_name            = var.resource_group_name
+  service_plan_id                = var.app_service_plan_id
+  identity_id                    = var.identity_id
+  identity_client_id             = var.identity_client_id
+  app_insights_connection_string = var.app_insights_connection_string
 
   node_version     = "22-lts"
   always_on        = var.environment != "dev"

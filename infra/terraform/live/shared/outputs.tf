@@ -83,6 +83,17 @@ output "apim_gateway_url" {
   value       = module.apim.gateway_url
 }
 
+output "app_insights_id" {
+  description = "Created or reused Application Insights ID, or empty when disabled"
+  value       = module.app_insights.id
+}
+
+output "app_insights_connection_string" {
+  description = "Shared Application Insights connection string for both application stacks"
+  value       = module.app_insights.connection_string
+  sensitive   = true
+}
+
 output "identity_stack_a_id" {
   description = "Stack A managed identity resource ID"
   value       = module.identities.stack_a_id
@@ -131,4 +142,19 @@ output "integration_subnet_id" {
 output "sql_private_endpoint_id" {
   description = "Created SQL private endpoint ID, or empty when reusing one"
   value       = var.reuse_vnet ? module.networking[0].sql_private_endpoint_id : ""
+}
+
+output "bulk_auth_key_uri" {
+  description = "Versionless URI of the bulk scoring wrapping key (BULK_AUTH_KEY_URI); empty when bulk scoring is not enabled"
+  value       = module.key_vault.bulk_auth_key_uri
+}
+
+output "key_vault_private_endpoint_id" {
+  description = "Key Vault private endpoint ID; empty when VNet integration is disabled"
+  value       = var.reuse_vnet ? module.networking[0].key_vault_private_endpoint_id : ""
+}
+
+output "source_connector_client_id" {
+  description = "Client ID of the multi-tenant delegated Microsoft 365 source connector"
+  value       = module.entra.source_connector_client_id
 }

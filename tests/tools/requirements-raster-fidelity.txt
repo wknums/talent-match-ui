@@ -1,0 +1,4 @@
+# Poppler is an external executable dependency. Validation is pinned to pdftoppm 25.07.0.
+scikit-image==0.24.0
+pypdf==5.1.0
+Pillow==11.1.0

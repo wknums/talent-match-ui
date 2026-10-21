@@ -27,10 +27,12 @@ Path: `infra/terraform/live/shared`
 | `sql_database_name` | string | SQL database name |
 | `key_vault_uri` | string | Key Vault URI |
 | `apim_gateway_url` | string | APIM gateway URL |
-| `identity_stack_a_id` | string | Identity resource ID for Stack A |
-| `identity_stack_b_id` | string | Identity resource ID for Stack B |
+| `identity_stack_a_id` | string | Identity resource ID for Stack A, or empty when Stack A is not selected |
+| `identity_stack_b_id` | string | Identity resource ID for Stack B, or empty when Stack B is not selected |
 
 All outputs must remain stable whether the backing resource is created or reused.
+Stack-specific identity outputs are empty only when that stack is excluded by
+`stack_target`.
 
 ---
 
@@ -52,6 +54,10 @@ Paths:
 | `reuse` | bool | Whether to look up the resource instead of creating it |
 | `existing_name` | string | Existing resource name when reuse is enabled |
 | `existing_resource_group` | string | Existing resource group when reuse is enabled |
+
+The identities module additionally accepts `enable_stack_a` and
+`enable_stack_b`. Reuse requires a name only for each enabled stack; disabled
+stacks are neither looked up nor created.
 
 ### Standard Output Rule
 

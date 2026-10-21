@@ -86,13 +86,17 @@ public sealed record UploadSettingsDto(
     int ConcurrencyVersion,
     bool Persisted,
     DateTime? UpdatedAt,
-    string? UpdatedBy);
+    string? UpdatedBy,
+    int ThroughputRefreshIntervalSeconds = UploadSettings.DefaultRefreshIntervalSeconds,
+    int StatusPollingIntervalSeconds = UploadSettings.DefaultRefreshIntervalSeconds);
 
 public sealed record UpdateUploadSettingsRequest(
     int FileConcurrency,
     long MaxIndividualFileBytes,
     long MaxInFlightBytes,
-    int ExpectedConcurrencyVersion);
+    int ExpectedConcurrencyVersion,
+    int? ThroughputRefreshIntervalSeconds = null,
+    int? StatusPollingIntervalSeconds = null);
 
 public sealed record UpdateUploadItemStatusRequest(
     Guid OccurrenceKey,

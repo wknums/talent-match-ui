@@ -28,6 +28,26 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
         var app = await _appRepo.GetByIdAsync(applicationId, ct)
             ?? throw new InvalidOperationException($"Application {applicationId} not found");
 
+        var prepared = Prepare(applicationId, runs, runCountTarget, varianceThreshold, longlistThreshold);
+        app.FinalScore = prepared.Aggregate.FinalScore;
+        app.Variance = prepared.Aggregate.Variance;
+        app.Status = prepared.Status;
+        app.FinalDecision = prepared.Aggregate.Decision;
+        await _appRepo.UpdateAsync(app, ct);
+        await _appRepo.SetAggregatedResultAsync(prepared.Aggregate, ct);
+
+        return new ApplicationScoringFinalizerResult(
+            prepared.Aggregate.FinalScore, prepared.Aggregate.Variance, prepared.Aggregate.Decision, prepared.Status);
+    }
+
+    public ApplicationScoringFinalization Prepare(
+        string applicationId,
+        IReadOnlyList<ScoringRun> runs,
+        int runCountTarget,
+        double varianceThreshold,
+        double longlistThreshold,
+        string? candidateName = null)
+    {
         var scores = runs.Select(r => r.TotalScore).ToList();
         var unroundedAverage = scores.Any() ? scores.Average() : 0;
         var unroundedVariance = scores.Any()
@@ -53,9 +73,6 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
         var finalSubScores = categoryTotals.ToDictionary(
             kv => kv.Key, kv => ScorePrecision.Round(kv.Value.Average()));
         var finalSubScoresJson = JsonSerializer.Serialize(finalSubScores);
-
-        app.FinalScore = avgScore;
-        app.Variance = variance;
 
         var gatePassVotes = 0;
         var gateFailVotes = 0;
@@ -85,11 +102,7 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
         else if (avgScore >= longlistThreshold){ status = "Completed";          decision = "Eligible"; }
         else                       { status = "Completed";          decision = "Excluded"; }
 
-        app.Status = status;
-        app.FinalDecision = decision;
-        await _appRepo.UpdateAsync(app, ct);
-
-        await _appRepo.SetAggregatedResultAsync(new AggregatedResult
+        return new ApplicationScoringFinalization(runs, new AggregatedResult
         {
             ApplicationId = applicationId,
             FinalScore = avgScore,
@@ -103,9 +116,7 @@ public class ApplicationScoringFinalizer : IApplicationScoringFinalizer
                     ? $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F3}, Variance: {variance:F3}. Eligibility votes: passed {gatePassVotes}, failed {gateFailVotes}."
                     : $"Aggregated {scores.Count} scoring run(s). Mean score: {avgScore:F3}, Variance: {variance:F3}",
             FinalSubScoresJson = finalSubScoresJson,
-        }, ct);
-
-        return new ApplicationScoringFinalizerResult(avgScore, variance, decision, status);
+        }, status, candidateName);
     }
 
     private static bool TryReadGatePassed(string? mustHaveEvaluationJson, out bool passed)

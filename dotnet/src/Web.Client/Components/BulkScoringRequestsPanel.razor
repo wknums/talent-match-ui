@@ -1,0 +1,576 @@
+@using TalentMatch.Web.Client.Services
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject ApiClient Api
+@inject IJSRuntime JS
+@inject IServiceProvider Services
+
+<section class="bulk-panel" data-testid="bulk-requests-panel" aria-label="Bulk scoring requests">
+    <button type="button" class="bulk-panel-toggle" aria-expanded="@(expanded ? "true" : "false")" @onclick="ToggleAsync">
+        Bulk scoring requests (@total.ToString("N0"))
+    </button>
+
+    @if (LatestRequest is { } latest)
+    {
+        var hasFailures = latest.Counts.Failed + latest.Counts.Cancelled > 0;
+        <div class="@(hasFailures ? "bulk-panel-error" : "bulk-panel-muted")"
+             role="@(hasFailures ? "alert" : "status")"
+             aria-live="polite"
+             data-testid="bulk-pipeline-status">
+            <strong>Bulk source processing:</strong> @PipelineStatus(latest)
+        </div>
+    }
+
+    @if (expanded)
+    {
+        @if (!string.IsNullOrEmpty(loadError))
+        {
+            <div class="bulk-panel-error" role="alert">@loadError</div>
+        }
+
+        @if (requests.Count == 0 && string.IsNullOrEmpty(loadError))
+        {
+            <p class="bulk-panel-muted">No bulk scoring requests yet for this job.</p>
+        }
+
+        @foreach (var request in requests)
+        {
+            var colors = BulkScoringStatusColors.For(request.Status == "completed" ? "completed" : "active");
+            <article class="bulk-request" data-testid="bulk-request" data-request-id="@request.RequestId">
+                <header>
+                    <strong>@request.FolderName</strong>
+                    <span class="bulk-status" data-testid="request-status"
+                          style="color:@colors.Foreground;background:@colors.Background"
+                          aria-live="polite" aria-atomic="true">@StatusText(request)</span>
+                </header>
+                <p class="bulk-panel-muted">
+                    Submitted by @SubmittedBy(request) on @SubmittedAt(request).ToLocalTime().ToString("g")
+                    @(request.ConvertToRasterPdf ? " · converted to image-based PDFs" : "")
+                    @(request.RetryOfRequestId is not null ? " · retry of an earlier request" : "")
+                </p>
+
+                <div class="bulk-progress" role="progressbar" aria-valuemin="0" aria-valuemax="@request.Counts.Discovered"
+                     aria-valuenow="@Processed(request)" aria-label="Files processed">
+                    <div class="bulk-progress-fill" style="width:@ProgressPercent(request)%"></div>
+                </div>
+                <ul class="bulk-counts" data-testid="request-counts">
+                    <li>@request.Counts.Discovered.ToString("N0") files</li>
+                    @foreach (var (label, count) in CountLines(request.Counts))
+                    {
+                        <li>@count.ToString("N0") @label</li>
+                    }
+                </ul>
+
+                @if (request.AuthorizationState == "lapsed")
+                {
+                    <div class="bulk-panel-warning" role="status" data-testid="lapsed">
+                        Your sign-in for this request expired, so the remaining files could not be imported.
+                        Sign in again, then use <strong>Retry failed</strong>.
+                    </div>
+                }
+
+                @if (request.CancelRequested && request.Status == "active")
+                {
+                    <p class="bulk-panel-muted" data-testid="cancelling">
+                        Cancelling. @request.Counts.Scoring.ToString("N0") @(request.Counts.Scoring == 1 ? "file" : "files") already being scored will finish.
+                    </p>
+                }
+
+                @if (errors.TryGetValue(request.RequestId, out var error))
+                {
+                    <div class="bulk-panel-error" role="alert" data-testid="action-error">@error</div>
+                }
+
+                <div class="bulk-request-actions">
+                    @if (request.Status == "active" && !request.CancelRequested)
+                    {
+                        @if (confirmingCancel == request.RequestId)
+                        {
+                            <span class="bulk-panel-muted" data-testid="cancel-copy">
+                                Stop this request? Files already being scored will finish.
+                            </span>
+                            <button type="button" @onclick="() => CancelAsync(request)" disabled="@IsBusy(request)">
+                                @(IsBusy(request) ? "Cancelling…" : "Yes, cancel")
+                            </button>
+                            <button type="button" @onclick="() => confirmingCancel = null" disabled="@IsBusy(request)">Keep running</button>
+                        }
+                        else
+                        {
+                            <button type="button" data-testid="cancel" @onclick="() => AskCancel(request)">Cancel request</button>
+                        }
+                    }
+                    @if (request.Status == "completed" && request.Counts.Failed + request.Counts.Cancelled > 0)
+                    {
+                        <button type="button" data-testid="retry" @onclick="() => RetryAsync(request)" disabled="@IsBusy(request)">
+                            @(IsBusy(request) ? "Retrying…" : "Retry failed")
+                        </button>
+                        <span class="bulk-panel-muted">Retries the files that failed before scoring, and the cancelled ones, in a new request. Files that failed while being scored are retried from the Failure Queue.</span>
+                    }
+                    <button type="button" data-testid="details" aria-expanded="@(openRequestId == request.RequestId ? "true" : "false")"
+                            @onclick="() => ToggleDetailsAsync(request)">
+                        @(openRequestId == request.RequestId ? "Hide files" : "Show files")
+                    </button>
+                </div>
+
+                @if (openRequestId == request.RequestId)
+                {
+                    @if (detail is { ConfigChangedSinceAcceptance: true })
+                    {
+                        <div class="bulk-panel-warning" role="status" data-testid="config-changed">
+                            The job's scoring configuration changed after this request was accepted.
+                            Files scored after the change use the current configuration.
+                        </div>
+                    }
+
+                    <div class="bulk-item-filters">
+                        <label>Status
+                            <select @onchange="OnStatusChanged" data-testid="status-filter">
+                                <option value="">All</option>
+                                @foreach (var status in ItemStatuses)
+                                {
+                                    <option value="@status" selected="@(statusFilter == status)">@status</option>
+                                }
+                            </select>
+                        </label>
+                        <label>File name
+                            <input type="search" data-testid="name-filter" value="@nameFilter" @onchange="OnNameChanged" />
+                        </label>
+                    </div>
+
+                    @if (itemError is not null)
+                    {
+                        <div class="bulk-panel-error" role="alert">@itemError</div>
+                    }
+
+                    <table class="bulk-items" data-testid="items">
+                        <thead><tr><th>File</th><th>Status</th><th>Details</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var item in items)
+                            {
+                                var itemColors = BulkScoringStatusColors.For(item.Status);
+                                <tr data-testid="item-row">
+                                    <td>@item.FileName</td>
+                                    <td>
+                                        <span class="bulk-status" style="color:@itemColors.Foreground;background:@itemColors.Background">@item.Status</span>
+                                    </td>
+                                    <td data-testid="item-reason">@ItemDetail(item)</td>
+                                    <td>
+                                        @if (item.HasRetainedOriginal)
+                                        {
+                                            <button type="button" class="bulk-link" data-testid="download-original"
+                                                    @onclick="() => DownloadOriginalAsync(request, item)">Download original</button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    @if (items.Count == 0 && itemError is null)
+                    {
+                        <p class="bulk-panel-muted">No files match.</p>
+                    }
+                    <div class="bulk-panel-pager">
+                        <span data-testid="item-range">@ItemRange</span>
+                        <button type="button" @onclick="() => GoToItemPageAsync(itemPage - 1)" disabled="@(itemPage <= 1)">Previous</button>
+                        <button type="button" @onclick="() => GoToItemPageAsync(itemPage + 1)" disabled="@(itemPage >= ItemPageCount)">Next</button>
+                    </div>
+                }
+            </article>
+        }
+        @if (total > RequestPageSize)
+        {
+            <div class="bulk-panel-pager" aria-label="Bulk scoring request pages">
+                <span data-testid="request-range">@RequestRange</span>
+                <button type="button" @onclick="() => GoToRequestPageAsync(requestPage - 1)" disabled="@(requestPage <= 1)">Previous requests</button>
+                <button type="button" @onclick="() => GoToRequestPageAsync(requestPage + 1)" disabled="@(requestPage >= RequestPageCount)">Next requests</button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    public static readonly TimeSpan DefaultRefreshInterval = TimeSpan.FromSeconds(60);
+    private const int RequestPageSize = 20;
+    private const int ItemPageSize = 50;
+    private static readonly string[] ItemStatuses = ["waiting", "importing", "converting", "scoring", "completed", "failed", "skipped", "cancelled"];
+
+    [Parameter, EditorRequired] public string JobId { get; set; } = "";
+    [Parameter] public TimeSpan? RefreshInterval { get; set; }
+    [CascadingParameter] public PollingSettingsState? PollingSettings { get; set; }
+    [Parameter] public string? InitialRequestId { get; set; }
+    [Parameter] public EventCallback<BulkCountsDto?> OnPipelineCountsChanged { get; set; }
+    [Parameter] public EventCallback<string> OnRetryRequested { get; set; }
+
+    private List<BulkRequestSummaryDto> requests = [];
+    private readonly Dictionary<string, BulkRequestDetailDto> requestDetails = [];
+    private int requestPage = 1;
+    private int total;
+    private bool expanded;
+    private string? loadError;
+    private string? confirmingCancel;
+    private readonly HashSet<string> busy = [];
+    private readonly Dictionary<string, string> errors = [];
+
+    private string? openRequestId;
+    private BulkRequestDetailDto? detail;
+    private List<BulkItemDto> items = [];
+    private int itemPage = 1;
+    private int itemTotal;
+    private string? statusFilter;
+    private string nameFilter = "";
+    private string? itemError;
+
+    private AsyncRefreshLoop? refresh;
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly SemaphoreSlim loadGate = new(1, 1);
+    private TimeSpan EffectiveInterval => RefreshInterval
+        ?? TimeSpan.FromSeconds(PollingSettings?.Current.StatusPollingIntervalSeconds ?? 60);
+    private bool disposed;
+
+    private int ItemPageCount => Math.Max(1, (int)Math.Ceiling(itemTotal / (double)ItemPageSize));
+    private int RequestPageCount => Math.Max(1, (int)Math.Ceiling(total / (double)RequestPageSize));
+
+    private string ItemRange => itemTotal == 0
+        ? ""
+        : $"Showing {(itemPage - 1) * ItemPageSize + 1:N0}–{Math.Min(itemPage * ItemPageSize, itemTotal):N0} of {itemTotal:N0}";
+    private string RequestRange => total == 0
+        ? ""
+        : $"Showing requests {(requestPage - 1) * RequestPageSize + 1:N0}–{Math.Min(requestPage * RequestPageSize, total):N0} of {total:N0}";
+    private BulkRequestSummaryDto? LatestRequest => requests.FirstOrDefault();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        if (disposed) return;
+        if (!string.IsNullOrWhiteSpace(InitialRequestId)
+            && requests.Any(request => request.RequestId == InitialRequestId))
+        {
+            expanded = true;
+            await ToggleDetailsAsync(requests.Single(request => request.RequestId == InitialRequestId));
+        }
+        if (!disposed)
+        {
+            refresh = new(EffectiveInterval, Services.GetService<TimeProvider>() ?? TimeProvider.System,
+                _ => InvokeAsync(TickAsync), DispatchExceptionAsync);
+            refresh.Start();
+        }
+    }
+
+    protected override void OnParametersSet() => refresh?.UpdateInterval(EffectiveInterval);
+
+    // Public so the job page can refresh the list straight after a request is started.
+    public Task RefreshAsync() => InvokeAsync(async () =>
+    {
+        await LoadAsync();
+        StateHasChanged();
+    });
+
+    private async Task TickAsync()
+    {
+        if (disposed) return;
+        await LoadAsync();
+        if (openRequestId is not null) await LoadItemsAsync();
+        if (!disposed) StateHasChanged();
+    }
+
+    private async Task LoadAsync()
+    {
+        await loadGate.WaitAsync(lifetime.Token);
+        try
+        {
+            var page = await Api.ListBulkScoringRequestsAsync(JobId, requestPage, RequestPageSize, lifetime.Token);
+            requests = page.Items.ToList();
+            total = page.Total;
+            if (requestPage > RequestPageCount)
+            {
+                requestPage = RequestPageCount;
+                page = await Api.ListBulkScoringRequestsAsync(JobId, requestPage, RequestPageSize, lifetime.Token);
+                requests = page.Items.ToList();
+                total = page.Total;
+            }
+            await LoadAuthorizedActorDetailsAsync(requests);
+            await OnPipelineCountsChanged.InvokeAsync(requests.FirstOrDefault()?.Counts);
+            loadError = null;
+            if (openRequestId is not null)
+                detail = await Api.GetBulkScoringRequestAsync(openRequestId, lifetime.Token);
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            loadError = ApiMessage(exception, "Bulk scoring requests could not be loaded.");
+        }
+        finally
+        {
+            loadGate.Release();
+        }
+    }
+
+    private async Task ToggleAsync()
+    {
+        expanded = !expanded;
+        if (expanded) await LoadAsync();
+    }
+
+    private async Task LoadAuthorizedActorDetailsAsync(IEnumerable<BulkRequestSummaryDto> summaries)
+    {
+        foreach (var request in summaries)
+        {
+            if (!string.IsNullOrWhiteSpace(request.SubmittedBy) && request.SubmittedAt != default)
+                continue;
+
+            try
+            {
+                var authorizedDetail = await Api.GetBulkScoringRequestAsync(request.RequestId, lifetime.Token);
+                if (authorizedDetail.RequestId == request.RequestId)
+                    requestDetails[request.RequestId] = authorizedDetail;
+            }
+            catch
+            {
+                requestDetails.Remove(request.RequestId);
+            }
+        }
+    }
+
+    private async Task GoToRequestPageAsync(int target)
+    {
+        requestPage = Math.Clamp(target, 1, RequestPageCount);
+        openRequestId = null;
+        detail = null;
+        await LoadAsync();
+    }
+
+    private bool IsBusy(BulkRequestSummaryDto request) => busy.Contains(request.RequestId);
+
+    private void AskCancel(BulkRequestSummaryDto request)
+    {
+        errors.Remove(request.RequestId);
+        confirmingCancel = request.RequestId;
+    }
+
+    private async Task CancelAsync(BulkRequestSummaryDto request)
+    {
+        busy.Add(request.RequestId);
+        errors.Remove(request.RequestId);
+        try
+        {
+            await Api.CancelBulkScoringRequestAsync(request.RequestId, request.ConcurrencyVersion);
+            confirmingCancel = null;
+        }
+        catch (Exception exception)
+        {
+            errors[request.RequestId] = IsConflict(exception)
+                ? "The request changed while you were looking at it. It has been reloaded; try again if it is still running."
+                : ApiMessage(exception, "The request could not be cancelled.");
+        }
+        finally
+        {
+            busy.Remove(request.RequestId);
+        }
+        await LoadAsync();
+    }
+
+    private async Task RetryAsync(BulkRequestSummaryDto request)
+    {
+        if (OnRetryRequested.HasDelegate)
+        {
+            await OnRetryRequested.InvokeAsync(request.RequestId);
+            return;
+        }
+
+        busy.Add(request.RequestId);
+        errors.Remove(request.RequestId);
+        try
+        {
+            await Api.RetryFailedBulkScoringRequestItemsAsync(request.RequestId);
+        }
+        catch (Exception exception)
+        {
+            errors[request.RequestId] = ApiMessage(exception, "The files could not be retried.");
+        }
+        finally
+        {
+            busy.Remove(request.RequestId);
+        }
+        await LoadAsync();
+    }
+
+    private async Task ToggleDetailsAsync(BulkRequestSummaryDto request)
+    {
+        if (openRequestId == request.RequestId)
+        {
+            openRequestId = null;
+            detail = null;
+            return;
+        }
+
+        openRequestId = request.RequestId;
+        detail = null;
+        items = [];
+        itemPage = 1;
+        itemTotal = 0;
+        statusFilter = null;
+        nameFilter = "";
+        try { detail = await Api.GetBulkScoringRequestAsync(request.RequestId, lifetime.Token); }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return; }
+        catch (Exception exception) { loadError = ApiMessage(exception, "The request details could not be loaded."); }
+        await LoadItemsAsync();
+    }
+
+    private async Task LoadItemsAsync()
+    {
+        if (openRequestId is null || disposed) return;
+        try
+        {
+            var result = await Api.GetBulkScoringRequestItemsAsync(openRequestId, itemPage, ItemPageSize, statusFilter, nameFilter, lifetime.Token);
+            items = result.Items.ToList();
+            itemTotal = result.Total;
+            itemError = null;
+        }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            itemError = ApiMessage(exception, "The files could not be loaded.");
+        }
+    }
+
+    private async Task GoToItemPageAsync(int target)
+    {
+        itemPage = Math.Clamp(target, 1, ItemPageCount);
+        await LoadItemsAsync();
+    }
+
+    private async Task OnStatusChanged(ChangeEventArgs args)
+    {
+        statusFilter = string.IsNullOrEmpty(args.Value?.ToString()) ? null : args.Value!.ToString();
+        itemPage = 1;
+        await LoadItemsAsync();
+    }
+
+    private async Task OnNameChanged(ChangeEventArgs args)
+    {
+        nameFilter = args.Value?.ToString() ?? "";
+        itemPage = 1;
+        await LoadItemsAsync();
+    }
+
+    private async Task DownloadOriginalAsync(BulkRequestSummaryDto request, BulkItemDto item)
+    {
+        try
+        {
+            var bytes = await Api.DownloadBulkScoringOriginalAsync(request.RequestId, item.ItemId);
+            await JS.InvokeVoidAsync("talentMatchDownloadBase64", item.FileName, "application/octet-stream", Convert.ToBase64String(bytes));
+        }
+        catch (Exception exception)
+        {
+            itemError = ApiMessage(exception, "The original file could not be downloaded.");
+        }
+    }
+
+    private static int Processed(BulkRequestSummaryDto request) =>
+        request.Counts.Excluded + request.Counts.Unreadable + request.Counts.Completed
+        + request.Counts.Failed + request.Counts.Skipped + request.Counts.Cancelled;
+
+    private static int ProgressPercent(BulkRequestSummaryDto request) =>
+        request.Counts.Discovered == 0 ? 0 : (int)Math.Floor(Processed(request) * 100.0 / request.Counts.Discovered);
+
+    private static string PipelineStatus(BulkRequestSummaryDto request)
+    {
+        var counts = request.Counts;
+        var parts = new[]
+        {
+            (counts.Waiting, "waiting"),
+            (counts.Importing, "importing"),
+            (counts.Converting, "converting"),
+            (counts.Scoring, "being scored"),
+            (counts.Completed, "scored"),
+            (counts.Failed, "failed"),
+            (counts.Skipped, "skipped"),
+            (counts.Cancelled, "cancelled"),
+        }
+        .Where(part => part.Item1 > 0)
+        .Select(part => $"{part.Item1:N0} {part.Item2}")
+        .ToList();
+
+        var progress = parts.Count == 0 ? "no files are currently processing" : string.Join(", ", parts);
+        return request.Status == "completed"
+            ? $"finished — {progress}."
+            : $"{progress}.";
+    }
+
+    private static IEnumerable<(string Label, int Count)> CountLines(BulkCountsDto counts)
+    {
+        (string, int)[] lines =
+        [
+            ("excluded", counts.Excluded), ("unreadable", counts.Unreadable),
+            ("waiting", counts.Waiting), ("importing", counts.Importing), ("converting", counts.Converting),
+            ("being scored", counts.Scoring), ("scored", counts.Completed), ("failed", counts.Failed),
+            ("skipped", counts.Skipped), ("cancelled", counts.Cancelled),
+        ];
+        return lines;
+    }
+
+    private string SubmittedBy(BulkRequestSummaryDto request) =>
+        !string.IsNullOrWhiteSpace(request.SubmittedBy)
+            ? request.SubmittedBy
+            : requestDetails.TryGetValue(request.RequestId, out var authorizedDetail)
+                ? authorizedDetail.SubmittedBy
+                : "Unavailable";
+
+    private DateTime SubmittedAt(BulkRequestSummaryDto request) =>
+        request.SubmittedAt != default
+            ? request.SubmittedAt
+            : requestDetails.TryGetValue(request.RequestId, out var authorizedDetail)
+                ? authorizedDetail.SubmittedAt
+                : request.TerminalAt ?? DateTime.UtcNow;
+
+    private static string StatusText(BulkRequestSummaryDto request) => request.Status switch
+    {
+        "completed" => request.Outcome switch
+        {
+            "all_succeeded" => "Finished: all files scored",
+            "partial" => "Finished: some files not scored",
+            "failed" => "Finished: no files scored",
+            "cancelled" => "Cancelled",
+            _ => "Finished",
+        },
+        _ => request.CancelRequested ? "Cancelling" : "In progress",
+    };
+
+    private static string ItemDetail(BulkItemDto item) =>
+        item.Status is "failed" or "cancelled" or "skipped"
+            ? item.ReasonMessage ?? ReasonText(item.ReasonCode)
+            : "";
+
+    private static string ReasonText(string? code) => code switch
+    {
+        "authorization_lapsed" => "Your sign-in lapsed. Sign in again, then use Retry failed.",
+        "cancelled_by_user" => "Cancelled before it was imported.",
+        "duplicate_in_job" => "The same file was already imported for this job.",
+        "duplicate_in_request" => "The same file appears more than once in this request.",
+        "source_missing" => "The file no longer exists in the folder.",
+        "source_changed" => "The file changed after it was discovered.",
+        "access_denied" => "You no longer have access to this file.",
+        "transient_exhausted" => "The file could not be read after several attempts.",
+        _ => code is null ? "" : code.Replace('_', ' '),
+    };
+
+    private static bool IsConflict(Exception exception) => exception is ApiException { StatusCode: 409 };
+
+    private static string ApiMessage(Exception exception, string fallback) =>
+        exception is ApiException { Message.Length: > 0 } api ? api.Message : fallback;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed)
+            return;
+        disposed = true;
+        var stopping = refresh?.DisposeAsync() ?? ValueTask.CompletedTask;
+        await lifetime.CancelAsync();
+        await stopping;
+        lifetime.Dispose();
+    }
+}

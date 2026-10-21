@@ -38,4 +38,20 @@ public interface IBlobStore
     /// provider cannot read remote blobs.
     /// </summary>
     Task<byte[]?> ReadByUriAsync(string blobUri, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Writes bytes under an exact blob name (used for bulk scoring staging and retained originals).
+    /// Inline stores only compute the hash and return no URI.
+    /// </summary>
+    Task<BlobUploadResult> PutObjectAsync(
+        string blobName,
+        string mimeType,
+        byte[] bytes,
+        CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+    /// <summary>Deletes every blob whose name starts with the prefix. No-op for inline stores.</summary>
+    Task DeleteByPrefixAsync(string prefix, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    /// <summary>Deletes the blob at an absolute Blob URI if it exists. No-op for inline stores.</summary>
+    Task DeleteByUriAsync(string blobUri, CancellationToken cancellationToken = default) => Task.CompletedTask;
 }

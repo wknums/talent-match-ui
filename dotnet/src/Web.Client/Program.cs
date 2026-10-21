@@ -55,6 +55,8 @@ else if (authConfiguration.IsEntra)
 
 builder.Services.AddScoped(sp => sp.GetRequiredService<IHttpClientFactory>().CreateClient("API"));
 builder.Services.AddScoped<ApiClient>();
+builder.Services.AddScoped(sp => new BuildInfoService(
+    sp.GetRequiredService<IHttpClientFactory>().CreateClient("Public")));
 builder.Services.AddScoped<UploadCoordinator>();
 builder.Services.AddScoped<INavigationAuditClient>(sp => sp.GetRequiredService<ApiClient>());
 builder.Services.AddScoped<INavigationShellBrowser, NavigationShellBrowser>();
@@ -112,8 +114,6 @@ static async Task LogBuildStampAsync(WebAssemblyHost host)
         await js.InvokeVoidAsync("console.warn", $"[TalentMatch Build] unable to read build-info.json: {ex.Message}");
     }
 }
-
-public sealed record BuildStamp(string? Version, string? CreatedAtUtc, string? Source);
 
 // Ensures browser fetch sends cookies with every request
 public class CookieHandler : DelegatingHandler

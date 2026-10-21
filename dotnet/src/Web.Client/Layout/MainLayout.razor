@@ -4,7 +4,9 @@
 @using TalentMatch.Web.Client.Services
 @inject NavigationShellState ShellState
 @inject NavigationManager Navigation
+@inject BuildInfoService BuildInfo
 
+<PollingSettingsProvider>
 <div class="page @ShellStateClass">
     <div class="sidebar" id="@ShellState.RegionElementId" inert="@(!ShellState.NavigationVisible)">
         <NavMenu />
@@ -21,7 +23,15 @@
                     @onclick="ToggleAsync">
                 <span class="navigation-toggle-icon" aria-hidden="true"></span>
             </button>
-            <UserMenu />
+            <div class="top-row-actions">
+                <button type="button"
+                        class="about-button"
+                        data-testid="about-button"
+                        @onclick="OpenAboutAsync">
+                    About
+                </button>
+                <UserMenu />
+            </div>
         </div>
 
         @if (ShellState.Notification is { } notification)
@@ -52,9 +62,48 @@
              aria-hidden="true"
              @onclick="CloseOverlay"></div>
     }
+
+    @if (showAbout)
+    {
+        <div class="about-backdrop" @onclick="CloseAbout">
+            <section class="about-dialog"
+                     role="dialog"
+                     aria-modal="true"
+                     aria-labelledby="about-title"
+                     @onclick:stopPropagation="true">
+                <header>
+                    <h2 id="about-title">About TalentMatch</h2>
+                    <button type="button" aria-label="Close About" @onclick="CloseAbout">X</button>
+                </header>
+                @if (loadingBuildStamp)
+                {
+                    <p role="status">Loading build information...</p>
+                }
+                else if (buildStamp is not null)
+                {
+                    <dl>
+                        <dt>Release</dt>
+                        <dd data-testid="about-release">@buildStamp.Version</dd>
+                        <dt>Build date</dt>
+                        <dd data-testid="about-build-date">@FormatBuildDate(buildStamp.CreatedAtUtc)</dd>
+                    </dl>
+                }
+                else
+                {
+                    <p role="alert">@buildStampError</p>
+                }
+            </section>
+        </div>
+    }
 </div>
+</PollingSettingsProvider>
 
 @code {
+    private bool showAbout;
+    private bool loadingBuildStamp;
+    private BuildStamp? buildStamp;
+    private string buildStampError = "Build information is unavailable.";
+
     private string ShellStateClass => ShellState.IsCompact
         ? (ShellState.CompactOverlayOpen ? "navigation-overlay-open" : "navigation-overlay-closed")
         : (ShellState.DesktopCollapsed ? "navigation-collapsed" : "navigation-expanded");
@@ -69,6 +118,40 @@
     private Task ToggleAsync() => ShellState.ToggleAsync();
 
     private void CloseOverlay() => ShellState.CloseCompactOverlay();
+
+    private async Task OpenAboutAsync()
+    {
+        showAbout = true;
+        if (buildStamp is not null || loadingBuildStamp) return;
+
+        loadingBuildStamp = true;
+        try
+        {
+            buildStamp = await BuildInfo.GetBuildStampAsync();
+            if (buildStamp is null
+                || string.IsNullOrWhiteSpace(buildStamp.Version)
+                || string.IsNullOrWhiteSpace(buildStamp.CreatedAtUtc))
+            {
+                buildStamp = null;
+                buildStampError = "Build information is incomplete.";
+            }
+        }
+        catch (Exception ex)
+        {
+            buildStampError = ex.Message;
+        }
+        finally
+        {
+            loadingBuildStamp = false;
+        }
+    }
+
+    private void CloseAbout() => showAbout = false;
+
+    private static string FormatBuildDate(string? value) =>
+        DateTimeOffset.TryParse(value, out var date)
+            ? date.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+            : value ?? "Unavailable";
 
     private void OnShellStateChanged() => InvokeAsync(StateHasChanged);
 

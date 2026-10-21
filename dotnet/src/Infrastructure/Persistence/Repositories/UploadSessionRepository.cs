@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using TalentMatch.Application.Common.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -138,13 +139,15 @@ public sealed class UploadSessionRepository(AppDbContext context) : IUploadSessi
                         && x.ContentFingerprint == fingerprint
                         && (x.Status == UploadItemStatus.Succeeded || x.Status == UploadItemStatus.Uploading),
                     ct);
+                var compatibleFingerprints = ContentFingerprint.LookupCandidatesFromBase64(contentBase64);
                 var existingForJob = await context.ApplicationDocuments
                     .Join(
-                        context.Applications,
+                        context.Applications.Where(application => application.TestRunId == null),
                         document => document.ApplicationId,
                         application => application.Id,
                         (document, application) => new { document.Fingerprint, application.JobId })
-                    .AnyAsync(x => x.JobId == item.Session.JobId && x.Fingerprint == fingerprint, ct);
+                    .AnyAsync(x => x.JobId == item.Session.JobId
+                        && compatibleFingerprints.Contains(x.Fingerprint), ct);
                 if (earlierClaim || existingForJob)
                 {
                     var priorStatus = item.Status;

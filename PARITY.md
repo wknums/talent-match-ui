@@ -27,6 +27,7 @@ new metric; the visualization and time-window semantics are not yet at parity.
 | 002 — Edit User Departments | ✅ Implemented | ✅ Complete | 🔶 Re-review required | [parity.md](specs/002-edit-user-departments/checklists/parity.md) |
 | 003 — Delete Jobs + Enhanced Cards | ✅ Implemented | ✅ Implemented | 🔶 Re-review required | [parity.md](specs/003-delete-jobs-enhanced-cards/checklists/parity.md) |
 | 005 — Recruiter Analytics | ✅ Complete | ✅ Implemented | 🔶 Re-review required | No parity checklist yet |
+| 001 — SharePoint / OneDrive Bulk Scoring | 🔶 Implemented; B-GATE pending (spikes S3/S4/S5 open) | ⬜ Not started (follows B-GATE) | 🔶 Rows below; shared fixtures in `tests/fixtures/bulk-scoring-requests/` | [parity rows](#001--sharepoint--onedrive-bulk-scoring) |
 
 ### Legend
 
@@ -71,6 +72,28 @@ new metric; the visualization and time-window semantics are not yet at parity.
   - Authorization & Security: 4/4 ✅
 - **Important Note**: The linked checklist is directionally correct, but its prior summary/commentary overstated Stack B user-management parity. Treat this feature as needing re-verification rather than fully verified.
 - **Critical Note**: The `tasks.md` still marks the original feature work as unchecked, but the actual implementation state is far ahead of the task file.
+
+### 001 — SharePoint / OneDrive Bulk Scoring
+
+- **Status**: 🔶 Stack B implemented and tested; Stack A not started. The contract is `specs/001-sharepoint-bulk-scoring/contracts/openapi.yaml`; both stacks must prove each row against the **shared fixtures** in `tests/fixtures/bulk-scoring-requests/` (`contract-fixtures.json`, `graph-tree.json`, `files/`). A row is parity-verified only when both stacks' tests read the same fixture.
+- **Stack B**: see [BulkScoringRequestsEndpoints.cs](dotnet/src/Web.Server/Endpoints/BulkScoringRequestsEndpoints.cs), `dotnet/src/Application/BulkScoringRequests/`, and `dotnet/src/Infrastructure/{SharePoint,Rasterization,HostedServices}`.
+
+| Area | Parity definition | Shared fixture | Stack B | Stack A |
+| --- | --- | --- | --- | --- |
+| Raster parity | Same output contract: an image-only PDF with the page count and order of the source, at 150 DPI / JPEG quality 80 by default, failing (never falling back to the original) when it cannot convert or exceeds the size limit. The two stacks may use different libraries; they need not be byte-identical | `files/pdf-1page.pdf`, `pdf-2page.pdf`, `corrupt.pdf`, `encrypted.pdf`, `cv.docx`, `cv.md` | ✅ `PdfiumRasterizer` | ⬜ |
+| TXT exemption | TXT is eligible, never converted, scored as the original, nothing retained | `files/cv.txt`, `contract-fixtures.json` → `eligibility` | ✅ | ⬜ |
+| Eligibility and exclusion tallies | Same included/excluded split and the same four exclusion categories; excluded entries are counted, never named | `graph-tree.json`, `contract-fixtures.json` → `eligibility`, `exclusionCategories` | ✅ | ⬜ |
+| Discovery steps | Resumable steps (default 1,000 eligible files), signed re-list tallies, `more_available` / `limit_reached` / `complete` | `graph-tree.json`, `contract-fixtures.json` → `defaults`, `discoveryStatuses` | ✅ | ⬜ |
+| State machine | Identical request, item and authorization transitions | `contract-fixtures.json` → `requestTransitions`, `itemTransitions`, `authorizationTransitions` | ✅ | ⬜ |
+| Reason codes | Same wire names, including `authorization_lapsed` | `contract-fixtures.json` → `reasonCodes` | ✅ | ⬜ |
+| Retryable table | Same retryable reasons; `source_missing` / `access_denied` only when they resolve again; scoring-stage failures never | `contract-fixtures.json` → `retryableReasons`, `retryableOnlyWhenResolved`, `notRetryableReasons` | ✅ | ⬜ |
+| Fingerprint standard | SHA-256 of the original bytes; the candidate-set lookup also matches the pre-change base64 hash | `files/*` (hashes asserted in each stack's tests) | ✅ `ContentFingerprint`, `DuplicateFingerprintTests` | ⬜ |
+| Settings | Admin-only "maximum files per bulk scoring request"; versioned, audited, snapshotted per request | `contract-fixtures.json` → `settingsValidation`, `defaults` | ✅ | ⬜ |
+| Blob deletion | Deleting a job removes the request rows, the `bulk/{requestId}/` blobs and the authorization rows; audit entries stay | none (fake blob store in each stack) | ✅ `BulkRetentionTests` | ⬜ |
+| Schema | Five additive tables including `BulkRequestAuthorizations`; no change to existing tables | migration tests | ✅ `AddBulkScoring` | ⬜ |
+| Source kinds and link classification | SharePoint and OneDrive for Business folder links only; personal and unknown links rejected | `contract-fixtures.json` → `linkClassification`, `sourceKinds` | ✅ `SourceLinkClassifier` | ⬜ |
+| Authorization lifecycle and owning stack | Per-request encrypted authorization, lapse handling, discard on completion; a same-tenant request is processed only by the stack that owns it (`OwningStack`) | `contract-fixtures.json` → `authorizationStates`, `authorizationStatuses`, `accessModels` | ✅ mock store; Key Vault store pending (T041A) | ⬜ |
+| Observability | Audit entry per hand-off/terminal item state, request completion and authorization created/lapsed/discarded; actor `system` for the worker | none | ✅ `BulkTelemetry` | ⬜ |
 
 ### 002 — Edit User Departments
 

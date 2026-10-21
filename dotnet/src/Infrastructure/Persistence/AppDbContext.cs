@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using TalentMatch.Domain.Entities;
+using TalentMatch.Domain.Entities.BulkScoringRequests;
 
 namespace TalentMatch.Infrastructure.Persistence;
 
@@ -38,6 +39,39 @@ public class AppDbContext : DbContext
     public DbSet<UploadSettings> UploadSettings => Set<UploadSettings>();
     public DbSet<UploadSession> UploadSessions => Set<UploadSession>();
     public DbSet<UploadItem> UploadItems => Set<UploadItem>();
+    public DbSet<BulkScoringRequest> BulkScoringRequests => Set<BulkScoringRequest>();
+    public DbSet<BulkScoringItem> BulkScoringItems => Set<BulkScoringItem>();
+    public DbSet<BulkScoringItemContent> BulkScoringItemContents => Set<BulkScoringItemContent>();
+    public DbSet<BulkImportSettings> BulkImportSettings => Set<BulkImportSettings>();
+    public DbSet<BulkRequestAuthorization> BulkRequestAuthorizations => Set<BulkRequestAuthorization>();
+    public DbSet<BulkSourceConnection> BulkSourceConnections => Set<BulkSourceConnection>();
+    public DbSet<BulkSourceAdmissionEvent> BulkSourceAdmissionEvents => Set<BulkSourceAdmissionEvent>();
+    public DbSet<BulkAuditEvent> BulkAuditEvents => Set<BulkAuditEvent>();
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        ValidateBulkAuditChanges();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateBulkAuditChanges();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void ValidateBulkAuditChanges()
+    {
+        foreach (var entry in ChangeTracker.Entries<BulkAuditEvent>())
+        {
+            if (entry.State is EntityState.Modified or EntityState.Deleted)
+                throw new InvalidOperationException("Bulk audit events are append-only.");
+            if (entry.State == EntityState.Added)
+                entry.Entity.Validate();
+        }
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -174,12 +208,16 @@ public class AppDbContext : DbContext
             e.Property(x => x.CreatedBy).HasMaxLength(128).IsRequired();
             e.Property(x => x.UpdatedBy).HasMaxLength(128).IsRequired();
             e.Property(x => x.ConcurrencyVersion).IsConcurrencyToken();
+            e.Property(x => x.ThroughputRefreshIntervalSeconds).HasDefaultValue(TalentMatch.Domain.Entities.UploadSettings.DefaultRefreshIntervalSeconds);
+            e.Property(x => x.StatusPollingIntervalSeconds).HasDefaultValue(TalentMatch.Domain.Entities.UploadSettings.DefaultRefreshIntervalSeconds);
             e.ToTable(t =>
             {
                 t.HasCheckConstraint("CK_UploadSettings_FileConcurrency", "FileConcurrency > 0");
                 t.HasCheckConstraint("CK_UploadSettings_MaxIndividualFileBytes", "MaxIndividualFileBytes > 0");
                 t.HasCheckConstraint("CK_UploadSettings_MaxInFlightBytes", "MaxInFlightBytes >= MaxIndividualFileBytes");
                 t.HasCheckConstraint("CK_UploadSettings_Singleton", "Id = 'optional-file-upload'");
+                t.HasCheckConstraint("CK_UploadSettings_ThroughputRefresh", "ThroughputRefreshIntervalSeconds BETWEEN 1 AND 4294967");
+                t.HasCheckConstraint("CK_UploadSettings_StatusPolling", "StatusPollingIntervalSeconds BETWEEN 1 AND 4294967");
             });
         });
 
@@ -239,6 +277,8 @@ public class AppDbContext : DbContext
                 t.HasCheckConstraint("CK_UploadItems_Application", "(Status = 'succeeded' AND ApplicationId IS NOT NULL) OR (Status <> 'succeeded' AND ApplicationId IS NULL)");
             });
         });
+
+        modelBuilder.ConfigureBulkScoring();
 
         // JobConfigVersion
         modelBuilder.Entity<JobConfigVersion>(e =>
@@ -410,6 +450,7 @@ public class AppDbContext : DbContext
             e.Property(x => x.EventType).HasColumnName("Action").HasMaxLength(50);
             e.Property(x => x.EntityType).HasMaxLength(50);
             e.Property(x => x.PayloadJson).HasColumnName("DetailsJson");
+            e.Property(x => x.Timestamp).HasConversion(value => value, value => DateTime.SpecifyKind(value, DateTimeKind.Utc));
             e.HasIndex(x => x.Timestamp);
         });
 

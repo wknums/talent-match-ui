@@ -1,3 +1,21 @@
+variable "enabled" {
+  description = "Whether product Entra authentication is enabled"
+  type        = bool
+  default     = true
+}
+
+variable "enable_stack_a" {
+  description = "Whether the environment includes the Stack A SPA"
+  type        = bool
+  default     = true
+}
+
+variable "enable_stack_b" {
+  description = "Whether the environment includes the Stack B SPA"
+  type        = bool
+  default     = true
+}
+
 variable "reuse" {
   description = "Whether to reuse existing Entra applications and API service principal"
   type        = bool
@@ -15,9 +33,14 @@ variable "api_identifier_uri" {
 }
 
 variable "api_scope_id" {
-  description = "Stable UUID for the delegated API scope"
+  description = "Explicit stable UUID for the delegated API scope; preserve the deployed value"
   type        = string
-  default     = "a3217e97-d4d2-4baa-b9f8-0e9ac6b05f31"
+  default     = ""
+
+  validation {
+    condition     = !var.enabled || can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", var.api_scope_id))
+    error_message = "api_scope_id must be an explicit UUID when product Entra authentication is enabled."
+  }
 }
 
 variable "api_scope_value" {
@@ -27,21 +50,17 @@ variable "api_scope_value" {
 }
 
 variable "app_role_ids" {
-  description = "Stable UUIDs keyed by persisted application role value"
+  description = "Explicit stable UUIDs keyed by persisted application role value; preserve deployed values"
   type        = map(string)
-  default = {
-    admin              = "52d6f322-c719-49a5-97a4-b7d78fc60af0"
-    organization_admin = "fea2562e-d6f0-49b6-93a5-e666b51310f6"
-    recruiter          = "edc0d4d0-bf46-4e88-b0e1-a2b465252a0c"
-    business_panel     = "a98b2c62-70a4-41ab-95f4-960ea96ce06d"
-  }
+  default     = {}
 
   validation {
-    condition = length(setsubtract(
-      toset(["admin", "organization_admin", "recruiter", "business_panel"]),
-      toset(keys(var.app_role_ids))
-    )) == 0
-    error_message = "app_role_ids must define admin, organization_admin, recruiter, and business_panel."
+    condition = !var.enabled || (
+      toset(keys(var.app_role_ids)) == toset(["admin", "organization_admin", "recruiter", "business_panel"])
+      && alltrue([for id in values(var.app_role_ids) : can(regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", id))])
+      && length(distinct([for id in values(var.app_role_ids) : lower(id)])) == 4
+    )
+    error_message = "app_role_ids must define four distinct explicit UUIDs for admin, organization_admin, recruiter, and business_panel when product Entra authentication is enabled."
   }
 }
 
@@ -115,4 +134,39 @@ variable "bootstrap_admin_object_id" {
   description = "Optional Entra user object ID assigned the protected API admin role"
   type        = string
   default     = ""
+}
+variable "source_connector_enabled" {
+  description = "Provision or adopt the separate delegated Microsoft 365 authorization-code connector"
+  type        = bool
+  default     = false
+}
+
+variable "reuse_source_connector" {
+  description = "Adopt an existing delegated source connector instead of creating it"
+  type        = bool
+  default     = false
+}
+
+variable "existing_source_connector_client_id" {
+  description = "Existing source connector application client ID when reuse_source_connector is true"
+  type        = string
+  default     = ""
+}
+
+variable "source_connector_display_name" {
+  description = "Display name of the delegated Microsoft 365 source connector"
+  type        = string
+  default     = "talent-microsoft365-source-connector"
+}
+
+variable "source_connector_redirect_uris" {
+  description = "Exact Web callbacks accepted by the delegated source connector"
+  type        = list(string)
+  default     = []
+}
+
+variable "source_connector_federated_identity_principal_ids" {
+  description = "Managed identity principal IDs allowed to authenticate the confidential source connector"
+  type        = map(string)
+  default     = {}
 }

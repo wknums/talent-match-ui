@@ -4,6 +4,8 @@ namespace TalentMatch.Application.Uploads;
 
 public static class UploadValidators
 {
+    public const long LegacyMaxIndividualFileBytes = 15 * 1024 * 1024;
+
     public static readonly IReadOnlySet<string> SupportedMimeTypes = new HashSet<string>(
         [
             "application/pdf",

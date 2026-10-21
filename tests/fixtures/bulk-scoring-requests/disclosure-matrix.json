@@ -1,0 +1,85 @@
+{
+  "$comment": "Allowed and forbidden fields for every public, diagnostic, telemetry, audit, and administrative surface.",
+  "allowedAuditFacts": [
+    "schemaVersion",
+    "safeStateCode",
+    "safeReasonCode",
+    "safeOutcomeCode",
+    "contentKind",
+    "itemCount",
+    "byteCount",
+    "configurationVersion",
+    "actorType",
+    "actorId",
+    "initiatedByActorId",
+    "opaqueSubjectReference"
+  ],
+  "forbiddenEverywhere": [
+    "authorizationCode",
+    "accessToken",
+    "refreshToken",
+    "idToken",
+    "pkceVerifier",
+    "tokenCache",
+    "dataKey",
+    "wrappedDataKey",
+    "clientAssertion",
+    "rawProviderError",
+    "providerPayload",
+    "rawSourceAccountId",
+    "sourceAccountEmail",
+    "sourceTenantEnvironmentIdentifier",
+    "rawFolderUrl",
+    "sourceWebUrl",
+    "folderPath",
+    "folderName",
+    "itemName",
+    "relativePath",
+    "fingerprint",
+    "documentContent",
+    "blobCredential",
+    "sasToken"
+  ],
+  "surfaces": [
+    {
+      "name": "source-connection-status",
+      "allowed": ["connectionId", "status", "expiresAt", "sourceKind", "sourceAccountDisplay", "folderName", "adminConsentRequired", "adminConsentUrl", "safeFailureCode"],
+      "forbidden": ["authorizationCode", "accessToken", "refreshToken", "pkceVerifier", "tokenCache", "wrappedDataKey", "rawProviderError"]
+    },
+    {
+      "name": "request-summary",
+      "allowed": ["requestId", "jobId", "status", "outcome", "sourceKind", "sourceAccountDisplay", "folderName", "counts", "authorizationState", "capturedScoringConfigVersionId", "currentScoringConfigVersionId", "configChangedSinceAcceptance", "createdAt", "terminalAt"],
+      "forbidden": ["submittedBy", "cancelledBy", "sourceWebUrl", "fingerprint", "tokenCache", "itemName"]
+    },
+    {
+      "name": "authorized-request-detail",
+      "allowed": ["submittedBy", "submittedAt", "cancelledBy", "cancelledAt", "sourceWebUrl", "excludedByReason", "totalEligibleBytes", "allowDuplicates", "limits", "concurrencyVersion"],
+      "forbidden": ["usernameFallback", "fingerprint", "tokenCache", "rawSourceAccountId", "sourceAccountEmail"]
+    },
+    {
+      "name": "terminal-notification",
+      "allowed": ["requestId", "outcome", "counts", "requestDetailPath", "terminalAt"],
+      "forbidden": ["itemName", "items", "folderName", "folderPath", "sourceWebUrl", "sourceAccountDisplay", "arbitraryLink", "submittedBy"]
+    },
+    {
+      "name": "problem-response",
+      "allowed": ["type", "title", "status", "detail", "code", "correlationId", "adminConsentUrl"],
+      "forbidden": ["rawProviderError", "authorizationCode", "tokenCache", "rawFolderUrl", "itemName", "sourceAccountEmail"]
+    },
+    {
+      "name": "audit-ledger",
+      "allowed": ["auditEventId", "eventType", "correlationId", "actorType", "actorId", "initiatedByActorId", "occurredAt", "subjectType", "subjectId", "safeFacts", "schemaVersion"],
+      "forbidden": ["rawFolderUrl", "sourceWebUrl", "folderName", "itemName", "fingerprint", "documentContent", "providerPayload", "sourceAccountEmail", "accessToken", "refreshToken", "pkceVerifier", "tokenCache", "wrappedDataKey"]
+    },
+    {
+      "name": "telemetry-log-alert",
+      "allowed": ["eventType", "correlationId", "safeStateCode", "safeReasonCode", "safeOutcomeCode", "count", "duration", "actorType"],
+      "forbidden": ["rawFolderUrl", "sourceWebUrl", "folderName", "itemName", "sourceAccountEmail", "sourceTenantEnvironmentIdentifier", "fingerprint", "documentContent", "authorizationCode", "accessToken", "refreshToken", "tokenCache", "rawProviderError"]
+    },
+    {
+      "name": "generic-admin-surface",
+      "allowed": ["safeStateCode", "safeReasonCode", "safeOutcomeCode", "count", "configurationVersion"],
+      "forbidden": ["submittedBy", "cancelledBy", "rawFolderUrl", "sourceWebUrl", "folderName", "itemName", "sourceAccountEmail", "fingerprint", "documentContent", "tokenCache"]
+    }
+  ]
+}

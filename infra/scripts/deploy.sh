@@ -8,7 +8,7 @@
 #   env-file        .env_local, .env_qa, or .env_prod
 #   tf-environment  dev, test, or prod
 #   action          plan or apply
-#   target          shared-only, stack-a, stack-b, or both
+#   target          shared-only, stack-a, stack-b, stack-b-only, or both
 # =============================================================================
 set -euo pipefail
 
@@ -31,12 +31,13 @@ TARGET="${4:?Usage: deploy.sh <env-file> <tf-environment> <action> <target>}"
 # ---------------------------------------------------------------------------
 validate_enum "TF_ENVIRONMENT" "dev" "test" "prod"
 validate_enum "ACTION" "plan" "apply"
-validate_enum "TARGET" "shared-only" "stack-a" "stack-b" "both"
+validate_enum "TARGET" "shared-only" "stack-a" "stack-b" "stack-b-only" "both"
 
 # ---------------------------------------------------------------------------
 # Load environment and export TF_VAR_*
 # ---------------------------------------------------------------------------
 load_env_file "$ENV_FILE"
+validate_deployment_target "$TARGET"
 validate_azure_context
 
 # Ensure secrets are not echoed
@@ -79,12 +80,54 @@ case "$TARGET" in
     DEPLOY_SHARED=true
     DEPLOY_STACK_B=true
     ;;
+  stack-b-only)
+    DEPLOY_STACK_B=true
+    ;;
   both)
     DEPLOY_SHARED=true
     DEPLOY_STACK_A=true
     DEPLOY_STACK_B=true
     ;;
 esac
+
+capture_shared_outputs() {
+  export TF_VAR_app_service_plan_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "app_service_plan_id")"
+  export TF_VAR_sql_server_fqdn="$(get_terraform_output "$TF_LIVE_DIR/shared" "sql_server_fqdn")"
+  export TF_VAR_sql_database_name="$(get_terraform_output "$TF_LIVE_DIR/shared" "sql_database_name")"
+  export TF_VAR_key_vault_uri="$(get_terraform_output "$TF_LIVE_DIR/shared" "key_vault_uri")"
+  export TF_VAR_apim_gateway_url="$(get_terraform_output "$TF_LIVE_DIR/shared" "apim_gateway_url")"
+  export TF_VAR_app_insights_connection_string=""
+  if [[ "$TF_VAR_enable_app_insights" == "true" ]]; then
+    TF_VAR_app_insights_connection_string="$(get_terraform_output "$TF_LIVE_DIR/shared" "app_insights_connection_string")"
+    [[ -n "$TF_VAR_app_insights_connection_string" ]] \
+      || log_fatal "Application Insights is enabled but its shared connection string is unavailable. Apply the shared root first."
+  fi
+  export TF_VAR_identity_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_id")"
+  export TF_VAR_identity_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_id")"
+  export TF_VAR_identity_client_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_client_id")"
+  export TF_VAR_identity_client_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_client_id")"
+  export TF_VAR_entra_api_app_client_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_app_client_id")"
+  export TF_VAR_entra_api_service_principal_object_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_service_principal_object_id")"
+  export TF_VAR_entra_api_identifier_uri="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_identifier_uri")"
+  export TF_VAR_entra_api_scope="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_scope")"
+  export TF_VAR_entra_spa_client_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_stack_a_client_id")"
+  export TF_VAR_entra_spa_client_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_stack_b_client_id")"
+  export TF_VAR_entra_app_role_ids="$(get_terraform_output_json "$TF_LIVE_DIR/shared" "entra_app_role_ids")"
+  export TF_VAR_bulk_auth_key_uri="$(get_terraform_output "$TF_LIVE_DIR/shared" "bulk_auth_key_uri")"
+  export TF_VAR_microsoft365_source_client_id="${MICROSOFT365_SOURCE_CLIENT_ID:-$(get_terraform_output "$TF_LIVE_DIR/shared" "source_connector_client_id")}"
+
+  if [[ "$ACTION" == "plan" && -z "$TF_VAR_app_service_plan_id" ]]; then
+    log_warn "Shared outputs are unavailable in this workspace; skipping downstream stack plan."
+    DEPLOY_STACK_A=false
+    DEPLOY_STACK_B=false
+  fi
+
+  subnet_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "integration_subnet_id")"
+  if [[ -n "$subnet_id" ]]; then
+    export TF_VAR_integration_subnet_id="$subnet_id"
+    log_info "Captured integration_subnet_id from shared root"
+  fi
+}
 
 # ---------------------------------------------------------------------------
 # Step 1: Shared infrastructure (always first when needed)
@@ -104,40 +147,11 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
   # Capture shared outputs for downstream stack roots.
   # For plan actions we still need these values to satisfy required variables.
   if [[ "$DEPLOY_STACK_A" == "true" || "$DEPLOY_STACK_B" == "true" ]]; then
-    export TF_VAR_app_service_plan_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "app_service_plan_id")"
-    export TF_VAR_sql_server_fqdn="$(get_terraform_output "$TF_LIVE_DIR/shared" "sql_server_fqdn")"
-    export TF_VAR_sql_database_name="$(get_terraform_output "$TF_LIVE_DIR/shared" "sql_database_name")"
-    export TF_VAR_key_vault_uri="$(get_terraform_output "$TF_LIVE_DIR/shared" "key_vault_uri")"
-    export TF_VAR_apim_gateway_url="$(get_terraform_output "$TF_LIVE_DIR/shared" "apim_gateway_url")"
-    export TF_VAR_identity_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_id")"
-    export TF_VAR_identity_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_id")"
-    export TF_VAR_identity_client_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_client_id")"
-    export TF_VAR_identity_client_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_client_id")"
-    export TF_VAR_entra_api_app_client_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_app_client_id")"
-    export TF_VAR_entra_api_service_principal_object_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_service_principal_object_id")"
-    export TF_VAR_entra_api_identifier_uri="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_identifier_uri")"
-    export TF_VAR_entra_api_scope="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_api_scope")"
-    export TF_VAR_entra_spa_client_id_stack_a="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_stack_a_client_id")"
-    export TF_VAR_entra_spa_client_id_stack_b="$(get_terraform_output "$TF_LIVE_DIR/shared" "entra_stack_b_client_id")"
-    export TF_VAR_entra_app_role_ids="$(get_terraform_output_json "$TF_LIVE_DIR/shared" "entra_app_role_ids")"
-
-    if [[ "$ACTION" == "plan" && -z "$TF_VAR_app_service_plan_id" ]]; then
-      log_warn "Shared outputs are unavailable in this new workspace until apply; skipping downstream stack plan."
-      DEPLOY_STACK_A=false
-      DEPLOY_STACK_B=false
-    fi
-
-    # Networking (US6): Capture integration subnet ID if networking is configured
-    subnet_id="$(get_terraform_output "$TF_LIVE_DIR/shared" "integration_subnet_id")"
-    if [[ -n "$subnet_id" ]]; then
-      export TF_VAR_integration_subnet_id="$subnet_id"
-      log_info "Captured integration_subnet_id from shared root"
-    fi
-
+    capture_shared_outputs
   fi
 
   if [[ "$ACTION" == "apply" ]]; then
-    if [[ "${AZ_SQL_BOOTSTRAP_ENABLED:-TRUE}" == "TRUE" ]]; then
+    if [[ "${AZ_SQL_BOOTSTRAP_ENABLED:-TRUE}" == "TRUE" && "${STACK_TARGET:-both}" != "shared-only" ]]; then
       export TF_VAR_identity_id_stack_a="${TF_VAR_identity_id_stack_a:-$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_a_id")}"
       export TF_VAR_identity_id_stack_b="${TF_VAR_identity_id_stack_b:-$(get_terraform_output "$TF_LIVE_DIR/shared" "identity_stack_b_id")}"
       export TF_VAR_sql_server_fqdn="${TF_VAR_sql_server_fqdn:-$(get_terraform_output "$TF_LIVE_DIR/shared" "sql_server_fqdn")}"
@@ -155,12 +169,20 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
       else
         bootstrap_script="$SCRIPT_DIR/bootstrap-sql-entra-users.mjs"
       fi
+
       node "$bootstrap_script"
-    else
+    elif [[ "${AZ_SQL_BOOTSTRAP_ENABLED:-TRUE}" != "TRUE" ]]; then
       log_warn "Azure SQL Entra user bootstrap is disabled by AZ_SQL_BOOTSTRAP_ENABLED=FALSE."
       log_warn "Run infra/scripts/bootstrap-sql-entra-users.mjs from a VNet-connected host before application use."
+    else
+      log_info "Skipping runtime SQL users because STACK_TARGET=shared-only."
     fi
   fi
+fi
+
+if [[ "$DEPLOY_SHARED" == "false" && ( "$DEPLOY_STACK_A" == "true" || "$DEPLOY_STACK_B" == "true" ) ]]; then
+  print_banner "Existing Shared Outputs"
+  capture_shared_outputs
 fi
 
 # ---------------------------------------------------------------------------

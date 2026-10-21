@@ -42,3 +42,12 @@ output "role_group_object_ids" {
   description = "Created security group object IDs keyed by application role value"
   value       = { for role, group in azuread_group.role : role => group.object_id }
 }
+output "source_connector_client_id" {
+  description = "Client ID of the multi-tenant delegated Microsoft 365 source connector"
+  value       = var.source_connector_enabled ? local.source_connector_client_id : ""
+}
+
+output "source_connector_federated_credential_ids" {
+  description = "Federated credential IDs created on the source connector, keyed by identity name"
+  value       = { for name, credential in azuread_application_federated_identity_credential.source_connector : name => credential.credential_id }
+}

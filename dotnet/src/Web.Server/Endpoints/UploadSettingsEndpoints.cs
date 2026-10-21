@@ -10,6 +10,17 @@ public static class UploadSettingsEndpoints
 {
     public static void MapUploadSettingsEndpoints(this WebApplication app)
     {
+        app.MapGet("/api/system-configuration/polling", async (ISender sender, HttpContext context, CancellationToken ct) =>
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            var settings = await sender.Send(new GetUploadSettingsQuery(), ct);
+            return Results.Ok(new
+            {
+                settings.ThroughputRefreshIntervalSeconds,
+                settings.StatusPollingIntervalSeconds,
+            });
+        }).RequireAuthorization().WithTags("System configuration");
+
         var group = app.MapGroup("/api/admin/upload-settings")
             .WithTags("Upload settings")
             .RequireAuthorization("AdminOnly");

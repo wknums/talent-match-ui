@@ -4,14 +4,26 @@ variable "reuse" {
   default     = false
 }
 
+variable "enable_stack_a" {
+  description = "Whether Stack A is part of this deployment topology"
+  type        = bool
+  default     = true
+}
+
+variable "enable_stack_b" {
+  description = "Whether Stack B is part of this deployment topology"
+  type        = bool
+  default     = true
+}
+
 variable "existing_stack_a_name" {
-  description = "Existing Stack A identity name (required when reuse = true)"
+  description = "Existing Stack A identity name (required when reuse and enable_stack_a are true)"
   type        = string
   default     = ""
 }
 
 variable "existing_stack_b_name" {
-  description = "Existing Stack B identity name (required when reuse = true)"
+  description = "Existing Stack B identity name (required when reuse and enable_stack_b are true)"
   type        = string
   default     = ""
 }

@@ -10,6 +10,33 @@ namespace TalentMatch.Infrastructure.Tests;
 public sealed class OptionalUploadPersistenceTests
 {
     [Fact]
+    public async Task PollingIntervals_PersistAcrossReadsAndUpdatesWithOptimisticConcurrency()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var repository = new UploadSettingsRepository(fixture.Context);
+        var saved = await repository.SaveAsync(new UploadSettings
+        {
+            ThroughputRefreshIntervalSeconds = 90,
+            StatusPollingIntervalSeconds = 120,
+        }, 0);
+        saved.ConcurrencyVersion.Should().Be(1);
+        var loaded = await repository.GetPersistedAsync();
+        loaded!.ThroughputRefreshIntervalSeconds.Should().Be(90);
+        loaded.StatusPollingIntervalSeconds.Should().Be(120);
+
+        await repository.SaveAsync(new UploadSettings
+        {
+            ThroughputRefreshIntervalSeconds = 180,
+            StatusPollingIntervalSeconds = 240,
+        }, 1);
+        loaded = await repository.GetPersistedAsync();
+        loaded!.ThroughputRefreshIntervalSeconds.Should().Be(180);
+        loaded.StatusPollingIntervalSeconds.Should().Be(240);
+        var stale = () => repository.SaveAsync(new UploadSettings(), 1);
+        await stale.Should().ThrowAsync<InvalidOperationException>().WithMessage("stale_version");
+    }
+
+    [Fact]
     public async Task UploadForeignKeys_UseSharedIdentifierWidths()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -209,7 +236,7 @@ public sealed class OptionalUploadPersistenceTests
         JobId = "job-1",
         OwnerActorId = "owner-1",
         FileConcurrency = 4,
-        MaxIndividualFileBytes = 4_194_304,
+        MaxIndividualFileBytes = 8_388_608,
         MaxInFlightBytes = 104_857_600,
     };
     private static UploadItem Item(string sessionId, string id, string occurrence, int ordinal) => new()

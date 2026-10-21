@@ -25,7 +25,8 @@ public sealed class MsalAccessTokenCacheInvalidator(IJSRuntime jsRuntime) : IAcc
 /// caches access tokens for their full lifetime, so a cached token becomes stale long before it
 /// expires. Dropping the cached token forces a silent renewal; if the session can no longer be
 /// renewed, the authorization handler raises the usual interactive sign-in requirement.
-/// Only idempotent methods are retried, matching the Stack A transport.
+/// Only idempotent methods and explicitly opted-in mutations are retried. An opted-in mutation
+/// must be rejected for authentication before its endpoint executes.
 /// </summary>
 public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalidator) : DelegatingHandler
 {
@@ -37,9 +38,13 @@ public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalida
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
+        var canRetry = CanRetry(request);
+        var body = canRetry && request.Content is not null
+            ? await request.Content.ReadAsByteArrayAsync(cancellationToken)
+            : null;
         var response = await base.SendAsync(request, cancellationToken);
 
-        if (response.StatusCode != HttpStatusCode.Unauthorized || !CanRetry(request))
+        if (response.StatusCode != HttpStatusCode.Unauthorized || !canRetry)
             return response;
 
         if (!await IsStaleTokenAsync(response, cancellationToken))
@@ -58,7 +63,7 @@ public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalida
 
         response.Dispose();
 
-        var retry = CloneWithoutAuthorization(request);
+        using var retry = CloneWithoutAuthorization(request, body);
         return await base.SendAsync(retry, cancellationToken);
     }
 
@@ -67,8 +72,7 @@ public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalida
 
     private static bool CanRetry(HttpRequestMessage request)
         => IsIdempotent(request.Method)
-           || (request.Content is null
-               && request.Options.TryGetValue(RetryOnStaleToken, out var enabled)
+           || (request.Options.TryGetValue(RetryOnStaleToken, out var enabled)
                && enabled);
 
     private static async Task<bool> IsStaleTokenAsync(
@@ -95,14 +99,20 @@ public sealed class StaleTokenRetryHandler(IAccessTokenCacheInvalidator invalida
         }
     }
 
-    private static HttpRequestMessage CloneWithoutAuthorization(HttpRequestMessage request)
+    private static HttpRequestMessage CloneWithoutAuthorization(HttpRequestMessage request, byte[]? body)
     {
-        // Only idempotent requests reach this path, so there is no body to rewind.
         var clone = new HttpRequestMessage(request.Method, request.RequestUri)
         {
             Version = request.Version,
             VersionPolicy = request.VersionPolicy,
         };
+
+        if (body is not null && request.Content is not null)
+        {
+            clone.Content = new ByteArrayContent(body);
+            foreach (var header in request.Content.Headers)
+                clone.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
 
         foreach (var header in request.Headers)
         {

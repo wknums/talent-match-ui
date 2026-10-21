@@ -45,3 +45,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "bulk_auth_key_name" {
+  description = "Name of the key that wraps bulk scoring authorization data keys. Empty means no key is created"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_auth_crypto_user_principal_ids" {
+  description = "Principal IDs given only wrap/unwrap (Key Vault Crypto User) on the bulk scoring key, keyed by a short name"
+  type        = map(string)
+  default     = {}
+}

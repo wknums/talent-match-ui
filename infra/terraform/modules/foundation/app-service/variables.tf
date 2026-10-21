@@ -23,6 +23,24 @@ variable "identity_id" {
   type        = string
 }
 
+variable "identity_client_id" {
+  description = "User-assigned managed identity client ID for authenticated telemetry ingestion"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.app_insights_connection_string == "" || trimspace(var.identity_client_id) != ""
+    error_message = "identity_client_id is required when Application Insights is enabled."
+  }
+}
+
+variable "app_insights_connection_string" {
+  description = "Application Insights connection string; empty disables App Service autoinstrumentation"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "always_on" {
   description = "Keep the app always on"
   type        = bool

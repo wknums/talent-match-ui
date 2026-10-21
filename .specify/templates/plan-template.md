@@ -31,6 +31,22 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
+[Confirm that every Azure resource identifier, environment-specific identifier, credential, key,
+token, connection string, and secret is supplied through a variable whose concrete value exists only
+in an untracked `.env` file. Code, tests, scripts, infrastructure definitions, checked-in
+configuration, and documentation must use variable names only. Committed environment templates may
+list variable names and descriptions but must leave environment-specific and secret values blank.]
+
+[For any Microsoft 365 folder-source feature, confirm that product authentication remains separate
+from source authorization; each work/school user uses an explicit multi-tenant authorization-code
+connection; Graph verifies the exact folder as that user; temporary and request caches are encrypted,
+fully scoped, never logged or returned, and lifecycle-discarded; background reads remain delegated
+as the confirming user; a delegated authorization lapse immediately stops every further source read
+and fails every non-terminal item that still requires source access, while securely imported content
+already handed to scoring finishes without Microsoft 365 authorization; admin-consent-required
+outcomes are actionable; personal Microsoft accounts, fallback identities, application-only access,
+and deployment-time source allow-lists are rejected.]
+
 [Gates determined based on constitution file]
 
 ## Project Structure

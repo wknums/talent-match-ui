@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text;
 using FluentAssertions;
 using Microsoft.JSInterop;
@@ -71,6 +72,135 @@ public class EntraTokenRefreshTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
         inner.Attempts.Should().Be(2);
+        invalidator.InvalidationCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExplicitlyRetryableJsonPost_PreservesTheBodyAndContentHeaders()
+    {
+        var invalidator = new RecordingInvalidator();
+        var inner = new ScriptedHandler(
+            StaleTokenResponse(),
+            new HttpResponseMessage(HttpStatusCode.OK));
+        using var client = CreateClient(invalidator, inner);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/jobs/job-1/source-connections")
+        {
+            Content = JsonContent.Create(new { folderUrl = "https://contoso.sharepoint.com/Candidates" }),
+        };
+        request.Content.Headers.Add("X-Test-Content", "preserved");
+        request.Headers.Add("X-Correlation-ID", "connection-correlation");
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+        var body = await request.Content.ReadAsStringAsync();
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        inner.Attempts.Should().Be(2);
+        inner.Bodies.Should().Equal(body, body);
+        inner.ContentTypes.Should().Equal("application/json; charset=utf-8", "application/json; charset=utf-8");
+        inner.ContentHeaders.Should().Equal("preserved", "preserved");
+        inner.CorrelationIds.Should().Equal("connection-correlation", "connection-correlation");
+        invalidator.InvalidationCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task ExplicitlyRetryableJsonPost_IsNotRetriedMoreThanOnce()
+    {
+        var invalidator = new RecordingInvalidator();
+        var inner = new ScriptedHandler(StaleTokenResponse(), StaleTokenResponse());
+        using var client = CreateClient(invalidator, inner);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/jobs/job-1/source-connections")
+        {
+            Content = JsonContent.Create(new { folderUrl = "https://contoso.sharepoint.com/Candidates" }),
+        };
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        inner.Attempts.Should().Be(2);
+        invalidator.InvalidationCount.Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError, "server_error")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "unavailable")]
+    [InlineData(HttpStatusCode.Conflict, "version_conflict")]
+    [InlineData(HttpStatusCode.Unauthorized, "wrong_tenant")]
+    public async Task ExplicitlyRetryableJsonPost_DoesNotReplayOtherFailures(
+        HttpStatusCode status,
+        string errorCode)
+    {
+        var invalidator = new RecordingInvalidator();
+        var failure = AuthErrorResponse(errorCode);
+        failure.StatusCode = status;
+        var inner = new ScriptedHandler(failure, new HttpResponseMessage(HttpStatusCode.OK));
+        using var client = CreateClient(invalidator, inner);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/jobs/job-1/source-connections")
+        {
+            Content = JsonContent.Create(new { folderUrl = "https://contoso.sharepoint.com/Candidates" }),
+        };
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+
+        var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(status);
+        inner.Attempts.Should().Be(1);
+        invalidator.InvalidationCount.Should().Be(0);
+        (await response.Content.ReadAsStringAsync()).Should().Contain(errorCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExplicitlyRetryableJsonPost_DoesNotReplayAnUnknownTransportOutcome(bool timeout)
+    {
+        var invalidator = new RecordingInvalidator();
+        var inner = new FailingTransport(timeout);
+        using var client = CreateClient(invalidator, inner);
+        var api = new ApiClient(client);
+
+        var action = () => api.BeginSourceConnectionAsync("job-1", "https://contoso.sharepoint.com/Candidates");
+
+        if (timeout)
+            await action.Should().ThrowAsync<OperationCanceledException>();
+        else
+            await action.Should().ThrowAsync<HttpRequestException>();
+        inner.Attempts.Should().Be(1);
+        invalidator.InvalidationCount.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("begin")]
+    [InlineData("preview")]
+    [InlineData("discover")]
+    [InlineData("confirm")]
+    [InlineData("retry")]
+    [InlineData("abandon")]
+    public async Task SourceConnectionMutations_OptIntoOnePreExecutionAuthenticationRetry(string operation)
+    {
+        var invalidator = new RecordingInvalidator();
+        var nextFailure = AuthErrorResponse("source_unavailable");
+        nextFailure.StatusCode = HttpStatusCode.ServiceUnavailable;
+        var inner = new ScriptedHandler(StaleTokenResponse(), nextFailure);
+        using var client = CreateClient(invalidator, inner);
+        var api = new ApiClient(client);
+        Func<Task> action = operation switch
+        {
+            "begin" => () => api.BeginSourceConnectionAsync("job-1", "https://contoso.sharepoint.com/Candidates"),
+            "preview" => () => api.PreviewSourceConnectionAsync("connection-1"),
+            "discover" => () => api.DiscoverMoreSourceItemsAsync("request-1"),
+            "confirm" => () => api.ConfirmBulkScoringRequestAsync("request-1", true, false, 7),
+            "retry" => () => api.RetryFailedBulkScoringRequestItemsAsync("request-1", "connection-1"),
+            "abandon" => () => api.AbandonBulkScoringRequestDraftAsync("request-1"),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+
+        var failure = await action.Should().ThrowAsync<ApiException>();
+
+        failure.Which.StatusCode.Should().Be(503, "only the explicit pre-execution authentication denial is retried");
+        inner.Attempts.Should().Be(2);
+        inner.Bodies.Distinct().Should().ContainSingle();
         invalidator.InvalidationCount.Should().Be(1);
     }
 
@@ -167,17 +297,44 @@ public class EntraTokenRefreshTests
     private sealed class ScriptedHandler(params HttpResponseMessage[] responses) : HttpMessageHandler
     {
         public int Attempts { get; private set; }
+        public List<string> Bodies { get; } = [];
+        public List<string?> ContentTypes { get; } = [];
+        public List<string?> ContentHeaders { get; } = [];
+        public List<string?> CorrelationIds { get; } = [];
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             request.Headers.Authorization.Should().BeNull(
                 "the authorization handler sits inside this one and is not exercised here");
 
+            Bodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
+            ContentTypes.Add(request.Content?.Headers.ContentType?.ToString());
+            ContentHeaders.Add(request.Content?.Headers.TryGetValues("X-Test-Content", out var contentHeaders) == true
+                ? contentHeaders.Single()
+                : null);
+            CorrelationIds.Add(request.Headers.TryGetValues("X-Correlation-ID", out var correlationIds)
+                ? correlationIds.Single()
+                : null);
             var response = responses[Math.Min(Attempts, responses.Length - 1)];
             Attempts++;
-            return Task.FromResult(response);
+            return response;
+        }
+    }
+
+    private sealed class FailingTransport(bool timeout) : HttpMessageHandler
+    {
+        public int Attempts { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Attempts++;
+            return timeout
+                ? Task.FromException<HttpResponseMessage>(new TaskCanceledException("The response timed out."))
+                : Task.FromException<HttpResponseMessage>(new HttpRequestException("The connection was lost."));
         }
     }
 }

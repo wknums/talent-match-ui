@@ -43,7 +43,22 @@ resource "azurerm_linux_web_app" "main" {
     }
   }
 
-  app_settings = var.app_settings
+  app_settings = merge(
+    var.app_settings,
+    var.app_insights_connection_string != "" ? merge(
+      {
+        APPLICATIONINSIGHTS_CONNECTION_STRING      = var.app_insights_connection_string
+        APPLICATIONINSIGHTS_AUTHENTICATION_STRING  = "Authorization=AAD;ClientId=${var.identity_client_id}"
+        ApplicationInsightsAgent_EXTENSION_VERSION = "~3"
+        APPINSIGHTS_JAVASCRIPT_ENABLED             = "false"
+        OTEL_SERVICE_NAME                          = var.name
+      },
+      var.dotnet_version != "" ? {
+        XDT_MicrosoftApplicationInsights_Mode       = "recommended"
+        XDT_MicrosoftApplicationInsights_PreemptSdk = "1"
+      } : {}
+    ) : {}
+  )
 
   tags = var.tags
 }

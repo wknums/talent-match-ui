@@ -9,4 +9,5 @@ public sealed record SequentialScoringWork(
     string JobDescription,
     string RubricJson,
     double VarianceThreshold,
-    double LonglistThreshold);
+    double LonglistThreshold,
+    string? ScoringConfigVersionId = null);

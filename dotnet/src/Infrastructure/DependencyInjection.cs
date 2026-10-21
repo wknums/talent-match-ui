@@ -9,7 +9,9 @@ using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Domain.Interfaces;
 using TalentMatch.Infrastructure.Persistence;
 using TalentMatch.Infrastructure.Persistence.Repositories;
+using TalentMatch.Infrastructure.Identity;
 using TalentMatch.Infrastructure.Services;
+using TalentMatch.Infrastructure.SharePoint;
 using TalentMatch.Application.JobExtraction.Services;
 using TalentMatch.Application.Rubrics.Services;
 
@@ -44,8 +46,17 @@ public static class DependencyInjection
         services.AddScoped<IJobSpecExtractionRepository, JobSpecExtractionRepository>();
         services.AddScoped<IApplicationRepository, ApplicationRepository>();
         services.AddScoped<IUploadSettingsRepository, UploadSettingsRepository>();
+        services.AddScoped<IBulkScoringRepository, BulkScoringRepository>();
+        services.AddScoped<BulkJobCleanupReconciler>();
+        services.AddScoped<IBulkImportSettingsRepository, BulkImportSettingsRepository>();
+        services.AddScoped<IBulkRequestAuthorizationRepository, BulkRequestAuthorizationRepository>();
+        services.AddScoped<IBulkSourceConnectionRepository, BulkSourceConnectionRepository>();
+        services.AddScoped<IBulkSourceAdmissionRepository, BulkSourceAdmissionRepository>();
+        services.AddScoped<IBulkAuditLedger, BulkAuditLedger>();
+        services.AddBulkScoring(configuration);
         services.AddScoped<IUploadSessionRepository, UploadSessionRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IUserDirectory, UserDirectory>();
         services.AddScoped<IOrganizationRepository, OrganizationRepository>();
         services.AddScoped<IRoleAssignmentRepository, RoleAssignmentRepository>();
         services.AddScoped<IEntraAccessManagementRepository, EntraAccessManagementRepository>();

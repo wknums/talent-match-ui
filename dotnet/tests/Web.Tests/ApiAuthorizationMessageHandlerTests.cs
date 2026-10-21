@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Json;
 using Bunit;
 using FluentAssertions;
 using Microsoft.AspNetCore.Components.WebAssembly.Authentication;
@@ -109,6 +110,81 @@ public class ApiAuthorizationMessageHandlerTests : BunitContext
 
         captureHandler.AuthorizationParameter.Should().Be("refreshed-token");
         tokenProvider.RequestCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task SourceConnectionRetry_RenewsTheTokenAndCreatesOnlyOneConnection()
+    {
+        var tokenProvider = new SuccessfulTokenProvider("stale-token");
+        var transport = new SourceConnectionTransport();
+        var configuration = new PublicAuthConfiguration(
+            "entra",
+            TenantId: "tenant-id",
+            ClientId: "client-id",
+            Authority: "https://login.microsoftonline.com/tenant-id",
+            ApiScope: "api://api-id/access_as_user",
+            ApiBaseAddress: "https://app.example/");
+        var authorization = new ApiAuthorizationMessageHandler(
+            tokenProvider,
+            Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>(),
+            configuration)
+        {
+            InnerHandler = transport,
+        };
+        var invalidator = new RenewingInvalidator(tokenProvider);
+        using var client = new HttpClient(new StaleTokenRetryHandler(invalidator) { InnerHandler = authorization })
+        {
+            BaseAddress = new Uri("https://app.example/"),
+        };
+        var api = new ApiClient(client, configuration);
+
+        var connection = await api.BeginSourceConnectionAsync("job-1", "https://contoso.sharepoint.com/Candidates");
+
+        connection.ConnectionId.Should().Be("connection-1");
+        transport.Tokens.Should().Equal("stale-token", "fresh-token");
+        transport.CreatedConnections.Should().Be(1);
+        tokenProvider.RequestCount.Should().Be(2);
+        invalidator.Count.Should().Be(1);
+    }
+
+    private sealed class RenewingInvalidator(SuccessfulTokenProvider provider) : IAccessTokenCacheInvalidator
+    {
+        public int Count { get; private set; }
+
+        public ValueTask InvalidateAsync(CancellationToken cancellationToken = default)
+        {
+            Count++;
+            provider.NextTokenValue = "fresh-token";
+            return ValueTask.CompletedTask;
+        }
+    }
+
+    private sealed class SourceConnectionTransport : HttpMessageHandler
+    {
+        public List<string?> Tokens { get; } = [];
+        public int CreatedConnections { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Tokens.Add(request.Headers.Authorization?.Parameter);
+            if (request.Headers.Authorization?.Parameter == "stale-token")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)
+                {
+                    Content = JsonContent.Create(new { error = "token_stale", message = "Renew the session." }),
+                });
+            }
+
+            CreatedConnections++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = JsonContent.Create(new BeginSourceConnectionResponseDto(
+                    "connection-1", "authorizing", "https://login.microsoftonline.com/organizations",
+                    DateTimeOffset.UtcNow.AddMinutes(30))),
+            });
+        }
     }
 
     private sealed class SuccessfulTokenProvider(string tokenValue) : IAccessTokenProvider

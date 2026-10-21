@@ -1,7 +1,7 @@
-using System.Security.Cryptography;
 using System.Text.Json;
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Common.Services;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Application.Uploads.Models;
 using TalentMatch.Application.Uploads.Services;
@@ -101,7 +101,7 @@ public sealed class UploadItemContentCommandHandler(
             return item.ToDto();
         }
 
-        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(command.Content));
+        var fingerprint = ContentFingerprint.Compute(command.Content);
         try
         {
             item = await sessionRepository.CompleteItemAsync(

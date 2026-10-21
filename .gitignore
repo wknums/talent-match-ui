@@ -117,6 +117,14 @@ x86/
 TestResult.xml
 [Rr]esult*/
 
+# Python fixture/oracle environments
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+*.egg-info/
+
 # Deployment profiles (concrete env files, not examples)
 .env_local
 .env_qa
@@ -131,6 +139,8 @@ tests/fixtures/
 !tests/fixtures/
 tests/fixtures/*
 !tests/fixtures/authorization-parity-cases.json
+!tests/fixtures/bulk-scoring-requests/
+!tests/fixtures/bulk-scoring-requests/**
 .npmrc
 
 # Local browser automation and Azure Storage emulator state
@@ -154,3 +164,5 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+gitadd.sh

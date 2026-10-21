@@ -33,6 +33,8 @@ public sealed class UploadSettingsRepository(AppDbContext context) : IUploadSett
                 existing.FileConcurrency = settings.FileConcurrency;
                 existing.MaxIndividualFileBytes = settings.MaxIndividualFileBytes;
                 existing.MaxInFlightBytes = settings.MaxInFlightBytes;
+                existing.ThroughputRefreshIntervalSeconds = settings.ThroughputRefreshIntervalSeconds;
+                existing.StatusPollingIntervalSeconds = settings.StatusPollingIntervalSeconds;
                 existing.UpdatedAt = settings.UpdatedAt;
                 existing.UpdatedBy = settings.UpdatedBy;
                 existing.ConcurrencyVersion++;

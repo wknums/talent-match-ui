@@ -70,6 +70,13 @@ variable "apim_gateway_url" {
   type        = string
 }
 
+variable "app_insights_connection_string" {
+  description = "Shared Application Insights connection string; empty disables monitoring"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "app_auth_mode" {
   description = "Application authentication mode"
   type        = string
@@ -116,7 +123,7 @@ variable "entra_app_role_ids" {
   type        = map(string)
 
   validation {
-    condition = length(setsubtract(
+    condition = var.app_auth_mode != "entra" || length(setsubtract(
       toset(["admin", "organization_admin", "recruiter", "business_panel"]),
       toset(keys(var.entra_app_role_ids))
     )) == 0
@@ -167,6 +174,17 @@ variable "awr_max_parallel" {
   default     = 1
 }
 
+variable "awr_scoring_lease_seconds" {
+  description = "Seconds a document being scored stays reserved before it counts as abandoned (AWR_SCORING_LEASE_SECONDS); the host renews it every 20 seconds"
+  type        = number
+  default     = 240
+
+  validation {
+    condition     = var.awr_scoring_lease_seconds >= 60 && var.awr_scoring_lease_seconds <= 1800 && floor(var.awr_scoring_lease_seconds) == var.awr_scoring_lease_seconds
+    error_message = "awr_scoring_lease_seconds must be a whole number from 60 to 1800."
+  }
+}
+
 variable "cors_allowed_origins" {
   description = "Comma-separated browser origins allowed to make credentialed requests to Stack B"
   type        = string
@@ -190,4 +208,154 @@ variable "allowed_ips" {
   description = "Allowed public IPs for IP restrictions"
   type        = list(string)
   default     = []
+}
+
+variable "bulk_auth_key_uri" {
+  description = "Versionless URI of the Key Vault key that wraps bulk scoring authorization data keys (shared output bulk_auth_key_uri). Empty leaves BULK_AUTH_KEY_URI unset"
+  type        = string
+  default     = ""
+}
+
+variable "product_environment" {
+  description = "Explicit product environment used by the publisher activation gate"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_mode" {
+  description = "Delegated connector mode; leave blank in checked-in roots and provide from an environment profile"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_publisher_verified" {
+  description = "Environment-owned publisher assertion; Production requires explicit true"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_client_id" {
+  description = "Delegated source connector client ID from the shared root"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_callback_path" {
+  description = "Local source authorization-code callback path"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_admin_consent_callback_path" {
+  description = "Local source admin-consent callback path"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_authority" {
+  description = "Commercial-cloud organizations authority supplied by an untracked environment profile"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_scopes" {
+  description = "Canonical delegated connector scopes"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft_graph_base_uri" {
+  description = "Commercial Microsoft Graph base URI supplied by an untracked environment profile"
+  type        = string
+  default     = ""
+}
+
+variable "microsoft365_source_max_concurrency" {
+  description = "Maximum concurrent Microsoft Graph source calls per Stack B app instance"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_source_idle_ttl_minutes" {
+  description = "Pending source connection idle TTL"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_source_absolute_ttl_minutes" {
+  description = "Pending source connection absolute TTL"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_discovery_step_files" {
+  description = "Maximum eligible files committed by one discovery step"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_discovery_step_max_entries" {
+  description = "Maximum provider entries inspected by one discovery step"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_discovery_step_max_seconds" {
+  description = "Maximum duration of one discovery step"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_max_total_bytes" {
+  description = "Aggregate request byte limit"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_pending_connections_per_actor" {
+  description = "Maximum pending source connections per product actor"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_connection_starts_per_actor_per_minute" {
+  description = "Per-actor source connection start rate"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_connection_starts_per_ip_per_minute" {
+  description = "HMAC-subject source connection start rate"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_callbacks_per_ip_per_minute" {
+  description = "HMAC-subject source callback rate"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_admission_hmac_key_uri" {
+  description = "Key reference for admission-subject HMAC protection"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_import_concurrency" {
+  description = "Bounded import worker concurrency"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_convert_concurrency" {
+  description = "Bounded conversion worker concurrency"
+  type        = string
+  default     = ""
+}
+
+variable "bulk_raster_dpi" {
+  description = "Configured raster fidelity DPI"
+  type        = string
+  default     = ""
 }

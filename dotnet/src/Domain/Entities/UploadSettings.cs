@@ -4,13 +4,17 @@ public sealed class UploadSettings
 {
     public const string SingletonId = "optional-file-upload";
     public const int DefaultFileConcurrency = 4;
-    public const long DefaultMaxIndividualFileBytes = 4_194_304;
+    public const long DefaultMaxIndividualFileBytes = 8_388_608;
     public const long DefaultMaxInFlightBytes = 104_857_600;
+    public const int DefaultRefreshIntervalSeconds = 60;
+    public const int MaxRefreshIntervalSeconds = 4_294_967;
 
     public string Id { get; set; } = SingletonId;
     public int FileConcurrency { get; set; } = DefaultFileConcurrency;
     public long MaxIndividualFileBytes { get; set; } = DefaultMaxIndividualFileBytes;
     public long MaxInFlightBytes { get; set; } = DefaultMaxInFlightBytes;
+    public int ThroughputRefreshIntervalSeconds { get; set; } = DefaultRefreshIntervalSeconds;
+    public int StatusPollingIntervalSeconds { get; set; } = DefaultRefreshIntervalSeconds;
     public int ConcurrencyVersion { get; set; } = 1;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public string CreatedBy { get; set; } = string.Empty;
@@ -38,6 +42,16 @@ public sealed class UploadSettings
             errors[nameof(MaxInFlightBytes)] = ["Maximum in-flight bytes must be positive."];
         else if (maxIndividualFileBytes > 0 && maxInFlightBytes < maxIndividualFileBytes)
             errors[nameof(MaxInFlightBytes)] = ["Maximum in-flight bytes must be at least the individual file limit."];
+        return errors;
+    }
+
+    public static IReadOnlyDictionary<string, string[]> ValidatePolling(int throughputSeconds, int statusSeconds)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (throughputSeconds is < 1 or > MaxRefreshIntervalSeconds)
+            errors[nameof(ThroughputRefreshIntervalSeconds)] = [$"Throughput refresh seconds must be between 1 and {MaxRefreshIntervalSeconds}."];
+        if (statusSeconds is < 1 or > MaxRefreshIntervalSeconds)
+            errors[nameof(StatusPollingIntervalSeconds)] = [$"Status polling seconds must be between 1 and {MaxRefreshIntervalSeconds}."];
         return errors;
     }
 }

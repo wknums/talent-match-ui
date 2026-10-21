@@ -61,7 +61,7 @@ public sealed class OptionalUploadSessionTests
             CancellationToken.None);
 
         result.Limits.FileConcurrency.Should().Be(4);
-        result.Limits.MaxIndividualFileBytes.Should().Be(4_194_304);
+        result.Limits.MaxIndividualFileBytes.Should().Be(8_388_608);
         result.Limits.MaxInFlightBytes.Should().Be(104_857_600);
         result.Items.Select(x => x.OccurrenceKey).Should()
             .Equal(occurrences.Select(x => x.OccurrenceKey));
@@ -145,7 +145,7 @@ public sealed class OptionalUploadSessionTests
             settings.Object, sessions.Object, jobs.Object, currentUser.Object);
 
         var act = () => handler.Handle(new CreateUploadSessionCommand(
-            "job-1", new(false, [Item(4_194_305)]), "correlation-1"), CancellationToken.None);
+            "job-1", new(false, [Item(8_388_609)]), "correlation-1"), CancellationToken.None);
 
         await act.Should().ThrowAsync<UploadValidationException>();
         sessions.VerifyNoOtherCalls();
@@ -225,7 +225,7 @@ public sealed class OptionalUploadSessionTests
             {
                 Id = "session-1",
                 OwnerActorId = "owner-1",
-                MaxIndividualFileBytes = 4_194_304,
+                MaxIndividualFileBytes = 8_388_608,
                 MaxInFlightBytes = 104_857_600,
                 FileConcurrency = 4,
             });

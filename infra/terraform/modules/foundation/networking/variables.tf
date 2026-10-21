@@ -72,6 +72,18 @@ variable "sql_server_name" {
   default     = ""
 }
 
+variable "key_vault_id" {
+  description = "Key Vault resource ID for private endpoint connectivity; empty disables the Key Vault private endpoint"
+  type        = string
+  default     = ""
+}
+
+variable "key_vault_name" {
+  description = "Key Vault name used for private endpoint naming"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Resource tags"
   type        = map(string)

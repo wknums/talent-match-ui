@@ -23,6 +23,8 @@ public sealed class GetUploadSettingsQueryHandler(IUploadSettingsRepository repo
             settings.ConcurrencyVersion,
             persisted is not null,
             persisted?.UpdatedAt,
-            persisted?.UpdatedBy);
+            persisted?.UpdatedBy,
+            settings.ThroughputRefreshIntervalSeconds,
+            settings.StatusPollingIntervalSeconds);
     }
 }

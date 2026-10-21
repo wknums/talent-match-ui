@@ -1,4 +1,5 @@
 using FluentAssertions;
+using System.Text.Json;
 using Moq;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Uploads.Commands;
@@ -21,7 +22,10 @@ public sealed class UploadSettingsTests
 
         var result = await handler.Handle(new GetUploadSettingsQuery(), CancellationToken.None);
 
-        result.Should().Be(new UploadSettingsDto(4, 4_194_304, 104_857_600, 0, false, null, null));
+        result.Should().Be(new UploadSettingsDto(4, 8_388_608, 104_857_600, 0, false, null, null));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        json.RootElement.GetProperty("throughputRefreshIntervalSeconds").GetInt32().Should().Be(60);
+        json.RootElement.GetProperty("statusPollingIntervalSeconds").GetInt32().Should().Be(60);
         repository.Verify(x => x.SaveAsync(
             It.IsAny<UploadSettings>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -73,5 +77,44 @@ public sealed class UploadSettingsTests
             It.Is<ProcessingEvent>(e => e.EventType == "upload-settings.updated"
                 && e.CorrelationId == "correlation-1"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(0, 60)]
+    [InlineData(60, -1)]
+    [InlineData(4_294_968, 60)]
+    public async Task Update_InvalidPollingIntervals_DoesNotPersist(int throughput, int status)
+    {
+        var repository = new Mock<IUploadSettingsRepository>();
+        var events = new Mock<IProcessingEventRepository>();
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.SetupGet(x => x.UserId).Returns("admin-1");
+        currentUser.SetupGet(x => x.IsAdmin).Returns(true);
+        var handler = new UpdateUploadSettingsCommandHandler(repository.Object, events.Object, currentUser.Object);
+
+        var action = () => handler.Handle(new(new(4, 8, 16, 0, throughput, status), "polling-test"), CancellationToken.None);
+
+        await action.Should().ThrowAsync<UploadValidationException>();
+        repository.Verify(x => x.SaveAsync(It.IsAny<UploadSettings>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+        events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Update_OldClientsPreservePreviouslyConfiguredIntervals()
+    {
+        var repository = new Mock<IUploadSettingsRepository>();
+        repository.Setup(x => x.GetPersistedAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UploadSettings { ThroughputRefreshIntervalSeconds = 90, StatusPollingIntervalSeconds = 120 });
+        repository.Setup(x => x.SaveAsync(It.IsAny<UploadSettings>(), 3, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((UploadSettings value, int _, CancellationToken _) => value);
+        var currentUser = new Mock<ICurrentUserService>();
+        currentUser.SetupGet(x => x.UserId).Returns("admin-1");
+        currentUser.SetupGet(x => x.IsAdmin).Returns(true);
+        var handler = new UpdateUploadSettingsCommandHandler(repository.Object, Mock.Of<IProcessingEventRepository>(), currentUser.Object);
+
+        var result = await handler.Handle(new(new(4, 8, 16, 3), "polling-test"), CancellationToken.None);
+
+        result.ThroughputRefreshIntervalSeconds.Should().Be(90);
+        result.StatusPollingIntervalSeconds.Should().Be(120);
     }
 }

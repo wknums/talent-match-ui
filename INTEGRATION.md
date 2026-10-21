@@ -20,6 +20,10 @@ A production-grade frontend for an Azure-hosted AI-powered job application scori
 - **Variance Analysis**: Identify applications requiring manual review based on score variance
 - **Audit Trail**: Complete traceability of all decisions and processing events
 
+The Stack B job detail header displays the job code and full unique job ID beneath the title,
+so recruiters can distinguish jobs with the same title. Both identifiers remain visible and
+wrap on smaller screens.
+
 ## Stack B continuous sequential scoring
 
 Set `AWR_MAX_PARALLEL` to the number of production document assessments allowed
@@ -50,8 +54,12 @@ No separate worker host, broker, or platform batch API is required.
   result persistence for one document. Failed assessments enter Failure Queue;
   use the existing retry action to return them to `Queued`. Polling is read-only
   and never deletes failed applications.
-- Application rows carry an owner and a two-minute lease, renewed every twenty
-  seconds. Conditional claims prevent two Stack B pools from selecting the same row.
+- Application rows carry an owner and a lease (`AWR_SCORING_LEASE_SECONDS`,
+  default four minutes), renewed every twenty seconds. A renewal that fails is
+  retried (five attempts with a growing pause) and then tried again at each
+  heartbeat while the lease is still valid, so a brief database or network
+  problem does not stop the scoring; a lease that is no longer owned stops it
+  at once. Conditional claims prevent two Stack B pools from selecting the same row.
   Expired owned assessments are marked `ScoringFailed` with an interruption
   message and a Failure Queue entry, not silently resubmitted. Graceful shutdown
   also records interruption. Queued work resumes automatically after restart.
@@ -88,6 +96,13 @@ Do not run the legacy Stack A scheduler against the same production queue as
 this Stack B pool; Stack A does not yet participate in its ownership protocol.
 
 ### Stack B large-upload reliability and large-job reads
+
+The legacy `POST /api/jobs/{jobId}/applications/upload` endpoint validates every file before
+copying any file into application memory or dispatching scoring. It uses the shared upload
+extension-to-MIME allowlist (PDF, Markdown, DOCX, TXT, JPEG, PNG), not the caller's MIME claim.
+Unsupported extensions return `400` validation problems, and files larger than 15 MiB
+(15,728,640 bytes, matching the legacy browser limit) return `413` problems. The exact limit is
+accepted. One invalid file rejects the entire batch. Optional session-upload limits are unchanged.
 
 Optional uploads create all durable item records before transfer, stage the
 selected browser bytes before the upload dialog closes, and renew the upload
@@ -276,6 +291,82 @@ Legacy conversion preview is explicit: recruiters can review the proposed `rubri
 - Audit payloads record safe metadata only: IDs, version numbers, states, and finding codes — never full prompt bodies or raw source documents.
 - Stack A extraction-instruction, extraction, config-save, and legacy-conversion failures return typed public errors with `correlationId`; invalid responses use `validation_failed`, concurrent saves use `stale_version`, and historical conversions reject `already_converted`.
 - Error responses carry correlation-aware IDs from the hosting stack while internal logs retain the diagnostic detail.
+
+## Bulk scoring from SharePoint / OneDrive
+
+Contract: `specs/001-sharepoint-bulk-scoring/contracts/openapi.yaml`. Stack B implements it in
+`dotnet/src/Web.Server/Endpoints/BulkScoringRequestsEndpoints.cs`; Stack A is implemented after the Stack B gate
+(`server/` routes and `src/lib/api.ts` methods are pending). Every route needs a signed-in product
+user and answers `503 feature_unavailable` while `MICROSOFT365_SOURCE_MODE=off`. Source access is a
+separate multi-tenant authorization-code + PKCE connection with delegated Graph read scopes only.
+There is no product-token exchange, application-only reader, source allow-list, or fallback
+identity. A job the caller cannot read looks like a job that does not exist (`404`).
+
+| HTTP | Endpoint | Auth | Success | Errors | Stack B implementation |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/api/bulk-scoring-requests/capabilities` | any user | 200 | 503 | `GetBulkScoringCapabilitiesHandler` |
+| GET | `/api/bulk-scoring-settings` | global admin | 200 | 403 | `GetBulkScoringSettingsHandler` |
+| PUT | `/api/bulk-scoring-settings` | global admin | 200 | 403, 409 `stale_version`, 422 | `UpdateBulkScoringSettingsHandler` |
+| POST | `/api/jobs/{jobId}/bulk-scoring-requests/preview` | can change the job | 201 | 401 `authorization_required`, 403 `sharepoint_access_denied` / `sharepoint_folder_not_permitted`, 404, 422 `unsupported_source` / `validation_failed`, 502 `source_unavailable` | `PreviewBulkScoringRequestHandler` |
+| POST | `/api/bulk-scoring-requests/{requestId}/discover-more` | preview owner | 200 | 404, 409 `discovery_finished` / `version_conflict`, 410 `draft_expired`, 403, 502 | `DiscoverMoreBulkScoringRequestHandler` |
+| GET | `/api/bulk-scoring-requests/{requestId}` | can read the job (previews: owner only) | 200 | 404 | `GetBulkScoringRequestHandler` |
+| DELETE | `/api/bulk-scoring-requests/{requestId}` | preview owner | 204 | 404, 409 `invalid_state` | `AbandonBulkScoringRequestDraftHandler` |
+| POST | `/api/bulk-scoring-requests/{requestId}/confirm` | preview owner | 201 (200 when repeated) | 401 `authorization_required`, 403, 404, 409 `version_conflict`, 410 `draft_expired`, 422 | `ConfirmBulkScoringRequestHandler` |
+| GET | `/api/bulk-scoring-requests/{requestId}/items` | can read the job | 200 (`pageSize` 1-100; `status`, `q` filters) | 404, 422 | `GetBulkScoringItemsHandler` |
+| GET | `/api/jobs/{jobId}/bulk-scoring-requests` | can read the job | 200 (previews excluded) | 404 | `ListBulkScoringRequestsHandler` |
+| GET | `/api/bulk-scoring-requests/notifications` | any user | 200 (own finished, not yet acknowledged) | - | `ListBulkScoringNotificationsHandler` |
+| POST | `/api/bulk-scoring-requests/{requestId}/acknowledge` | request owner | 204 | 404 | `AcknowledgeBulkScoringRequestHandler` |
+| GET | `/api/bulk-scoring-requests/{requestId}/items/{itemId}/original` | can read the job | 200 attachment + `nosniff` | 404 | `GetBulkScoringOriginalHandler` |
+| POST | `/api/bulk-scoring-requests/{requestId}/cancel` | can change the job | 202 | 403, 404, 409 `version_conflict` / `invalid_state` | `CancelBulkScoringRequestHandler` |
+| POST | `/api/bulk-scoring-requests/{requestId}/retry-failed` | can change the job | 201 | 401 `authorization_required`, 403 `sharepoint_access_denied`, 404, 409 `invalid_state`, 422 `validation_failed` | `RetryFailedBulkScoringRequestItemsHandler` |
+
+Error body: `{ "code", "message", "correlationId", "errors"? }`. Stable codes: `validation_failed`, `unsupported_source`,
+`sharepoint_access_denied`, `sharepoint_folder_not_permitted`, `authorization_required`, `draft_expired`, `version_conflict`,
+`stale_version`, `invalid_state`, `discovery_finished`, `source_unavailable`, `feature_unavailable`, `not_found`, `forbidden`.
+Per-file reason codes are listed in the contract (`ReasonCode`). The file size limit and the files-per-request limit are System
+Configuration settings, never environment variables.
+
+Production duplicate checks in Stack B consider only applications without a `TestRunId`, across
+legacy upload, optional parallel upload, and bulk source import. Prompt-test documents do not count
+as production imports: tests use the original without production conversion and remain separate
+from production results. A later production import creates its own application, applies the
+selected conversion setting, and leaves the test document and score unchanged. Genuine production
+and request-local duplicates are still skipped unless duplicates are allowed. Previously completed
+bulk requests are not rewritten; start a new import after rollout to score files previously skipped
+only because they appeared in prompt tests.
+
+### Bulk scoring timing and metrics (Stack B)
+
+Each file's work is timed in phases, so you can see where the time goes. Records carry identifiers and codes only, never file names.
+
+| Phase | What it covers |
+| --- | --- |
+| `download` | Reading the file from SharePoint or OneDrive |
+| `source_pdf` | SharePoint's own Word/Markdown-to-PDF conversion (only for those file types when converting) |
+| `rasterize` | The local conversion to an image-based PDF; the time covers both passes when the output had to be redone smaller |
+
+- **Logs** (`traces`): one line per phase, `bulk item phase completed …`, with `Phase`, `Kind` (`pdf`, `word`, `markdown`, `text`, `image`, `other`), `Outcome` (`ok`, `failed`, or `rejected` for a conversion that was not admitted), `DurationMs`, and the request and item identifiers. `rasterize` also carries `Pages`, `OutputBytes`, `Dpi` and `SteppedDown`. The existing `bulk item handed_off …` line keeps the whole-file `DurationMs`.
+- **Metrics** (`customMetrics`, meter `TalentMatch.BulkScoring`): `bulk.item.phase.duration` (ms, dimensions `phase`, `kind`, `outcome`), `bulk.rasterize.output.bytes`, `bulk.rasterize.stepdowns`, plus the existing `bulk.item.duration`, `bulk.items`, `bulk.item.retries`, `bulk.converted.pages` and `bulk.requests.completed`. They are exported to Application Insights only when the host has `APPLICATIONINSIGHTS_CONNECTION_STRING`; the identity named in `APPLICATIONINSIGHTS_AUTHENTICATION_STRING` needs *Monitoring Metrics Publisher* on the resource (the App Service setup already grants it). Metrics appear about two to three minutes after they are recorded, and a metric row summarizes a one-minute window (`valueCount`, `valueSum`, `valueMin`, `valueMax`).
+
+Average and worst time per phase:
+
+```kusto
+customMetrics
+| where name == 'bulk.item.phase.duration'
+| extend Phase = tostring(customDimensions.phase), Kind = tostring(customDimensions.kind), Outcome = tostring(customDimensions.outcome)
+| summarize Files = sum(valueCount), AvgMs = sum(valueSum) / sum(valueCount), MinMs = min(valueMin), MaxMs = max(valueMax) by Phase, Kind, Outcome
+| order by Phase asc, Kind asc
+```
+
+Individual files (slowest conversions first):
+
+```kusto
+traces
+| where message startswith 'bulk item phase completed rasterize'
+| extend Ms = tolong(customDimensions.DurationMs), Pages = toint(customDimensions.Pages), Kind = tostring(customDimensions.Kind),
+         SteppedDown = tostring(customDimensions.SteppedDown), RequestId = tostring(customDimensions.RequestId)
+| top 50 by Ms desc
+```
 
 ## Technology Stack
 

@@ -39,6 +39,12 @@ variable "key_vault_uri" {
   type        = string
 }
 
+variable "microsoft365_source_client_id" {
+  description = "Client ID of the separate delegated Microsoft 365 source connector"
+  type        = string
+  default     = ""
+}
+
 variable "sql_server_fqdn" {
   description = "SQL Server FQDN"
   type        = string
@@ -52,6 +58,13 @@ variable "sql_database_name" {
 variable "apim_gateway_url" {
   description = "APIM gateway URL"
   type        = string
+}
+
+variable "app_insights_connection_string" {
+  description = "Shared Application Insights connection string; empty disables monitoring"
+  type        = string
+  default     = ""
+  sensitive   = true
 }
 
 variable "use_key_vault_secret_refs" {

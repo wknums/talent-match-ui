@@ -131,7 +131,7 @@ public class ApplicationRepository : IApplicationRepository
         => await _context.ApplicationDocuments
             .AsNoTracking()
             .Join(
-                _context.Applications,
+                _context.Applications.Where(application => application.TestRunId == null),
                 document => document.ApplicationId,
                 application => application.Id,
                 (document, application) => new { document, application.JobId })
@@ -202,6 +202,9 @@ public class ApplicationRepository : IApplicationRepository
         persistedEntry.Property(app => app.ScoringLeaseUntil).IsModified = false;
         await _context.SaveChangesAsync(ct);
     }
+
+    public Task<bool> DocumentExistsAsync(string documentId, CancellationToken ct = default)
+        => _context.ApplicationDocuments.AsNoTracking().AnyAsync(d => d.Id == documentId, ct);
 
     public async Task AddDocumentAsync(ApplicationDocument document, CancellationToken ct = default)
     {

@@ -1,3 +1,24 @@
+<!--
+Sync Impact Report
+- Version change: 2.0.0 -> 3.0.0 (MAJOR: Principle VIII replaces blanket failure of
+  all remaining work after a delegated authorization lapse with phase-aware handling)
+- Modified principles:
+  - VIII. System Communication Architecture -> VIII. System Communication Architecture
+    (authorization lapse stops source access while permitting source-independent scoring to finish)
+- Added sections: None
+- Removed sections: None
+- Templates:
+  - ✅ .specify/templates/plan-template.md updated
+  - ✅ .specify/templates/spec-template.md updated
+  - ✅ .specify/templates/tasks-template.md updated
+  - ✅ .specify/templates/constitution-template.md reviewed; no project-specific change required
+  - ✅ .specify/templates/commands/*.md reviewed; directory is not present
+- Runtime guidance:
+  - ✅ README.md, AUTHENTICATION.md, INTEGRATION.md, and docs reviewed; no directly dependent
+    authorization-lapse wording found
+- Deferred items: None
+-->
+
 # Talent Matching Platform — Constitution
 
 ## Core Principles
@@ -45,7 +66,18 @@ may import a concrete storage implementation directly.
 - File uploads MUST be validated (type allowlist, size limit) on both client and server before
   processing.
 - No secrets (`API keys`, connection strings) are ever prefixed `VITE_` (client bundle exposure).
-- in the event of BLobs Storagebeing used , SAS tokens are forbidden by security policy - always use RBAC instead
+- All Azure resource identifiers, including tenant and subscription IDs, resource groups, resource
+  names, endpoints, URIs, application or object IDs, storage accounts, containers, and Key Vault
+  references, MUST have their concrete values defined only in untracked `.env` files.
+- All other environment-specific identifiers, credentials, API keys, tokens, connection strings,
+  and secret values MUST also exist only in untracked `.env` files. Code, tests, scripts,
+  infrastructure definitions, checked-in configuration, and documentation MUST reference only the
+  corresponding environment variable names and MUST NOT hardcode those values.
+- Committed environment templates such as `.env.example` MAY declare variable names and describe
+  their purpose, but environment-specific identifiers and secret values MUST remain blank.
+- Real `.env` files MUST remain excluded from version control. Sensitive or environment-specific
+  values MUST NOT be logged, copied into examples, or included in documentation.
+- When Blob Storage is used, SAS tokens are forbidden by security policy; RBAC MUST be used instead.
 
 ### V. LLM Integration Discipline
 All LLM calls MUST go through server-side proxy - in Stack A: `server/routes/llm.ts` equivalent for Stack B. The frontend calls
@@ -84,8 +116,38 @@ When building with the .NET stack, all code MUST follow Clean Architecture:
   `src/Infrastructure/`, `src/Web/` (or equivalent naming agreed at project start).
 
 ### VIII. System Communication Architecture
-The following diagram defines how this codebase (awr-client) interacts with the platform services when not in demo/mock api mode.
-All integrations MUST conform to these boundaries.
+The following diagram defines how this codebase (awr-client) interacts with the platform services
+when not in demo/mock API mode. All integrations MUST conform to these boundaries.
+
+- Product authentication and authorization MUST remain separate from Microsoft 365 source
+  authorization. Product identity authorizes product jobs and actions; it MUST NOT be treated as
+  permission to read a SharePoint or OneDrive source.
+- Each arbitrary work or school SharePoint or OneDrive folder journey MUST use an explicit,
+  per-user delegated authorization-code connection through a dedicated multi-tenant confidential
+  connector. The flow MUST use PKCE and organizational-tenant endpoints. Personal
+  Microsoft-account OneDrive sources MUST remain unsupported.
+- Before exposing folder content, names, or counts, the API MUST use Microsoft Graph with the
+  selecting source user's delegated access to resolve and verify the exact folder. Discovery and
+  reads MUST remain confined to that verified folder and its descendants.
+- Temporary pre-confirmation and request authorization caches MUST be encrypted and scoped to their
+  actor, source account, job, exact folder, lifecycle, and, after confirmation, request. Source
+  credentials and protected cache material MUST never be logged, audited as secrets, or returned
+  to a browser or other client. The material MUST be discarded when its connection is abandoned or
+  expires, when authorization becomes unusable, and when the request reaches its settled terminal
+  lifecycle.
+- Background processing MUST continue with delegated access as the source user who confirmed the
+  request. If that authorization lapses or access is lost, the system MUST immediately stop every
+  further source read and MUST fail every non-terminal item that still requires source access with
+  an actionable reconnect outcome. An item whose content was already securely imported and handed
+  to scoring MUST be allowed to finish because scoring no longer uses Microsoft 365 authorization.
+  The system MUST NOT use application-only access, another user's identity, or any other fallback
+  identity.
+- Deployment-time tenant, host, site, drive, root, or folder allow-lists and pre-granted
+  application-only source access are prohibited. The connected user's effective Graph access is
+  authoritative.
+- User consent MUST be used where tenant policy permits. A consent-policy failure that requires an
+  administrator MUST expose a clear admin-consent action and resumable connection outcome without
+  reading source content.
 
 ```mermaid
 sequenceDiagram
@@ -103,7 +165,9 @@ sequenceDiagram
     participant SBOUT as SB results
     participant SQL as Azure SQL
     participant SIG as Azure SignalR
-
+    participant EID as Entra ID
+    participant KV as Key Vault
+    participant GRAPH as Microsoft Graph (SharePoint / OneDrive)
     Client->>OAPI: create run
     OAPI->>APIM: POST /runs
     APIM->>API: forward
@@ -130,6 +194,30 @@ sequenceDiagram
     APIM->>API: forward
     API-->>OAPI: status + artifact links
     SIG-->>Client: live updates (optional)
+
+    Note over Client,GRAPH: Product auth and per-user Microsoft 365 source auth remain separate
+    Client->>API: begin source connection for pasted work/school folder
+    API->>EID: multi-tenant authorization code + PKCE (delegated read)
+    EID-->>API: callback or admin-consent-required outcome
+    API->>KV: wrap the temporary connection data key
+    API->>SQL: store encrypted, actor/job-bound authorization cache
+    API->>GRAPH: verify exact folder as the selecting source user
+    Client->>API: preview verified folder, then confirm request
+    API->>KV: re-encrypt/rewrap cache for the request binding
+    API->>SQL: atomically store request, items and request authorization
+    loop Background worker inside the API host (no client needed)
+        API->>SQL: claim items under a lease
+        API->>KV: unwrap the data key
+        API->>EID: silently acquire delegated access as confirming source user
+        API->>GRAPH: read only the verified folder and confirmed items
+        API->>BLOB: stage the original and the converted file
+        API->>SQL: create the Queued application (existing scoring pipeline continues)
+    end
+    Note over API,GRAPH: On delegated lapse, stop every further source read immediately
+    API->>SQL: fail non-terminal items that still require source access
+    Note over API,AOAI: Securely imported items already handed to scoring finish without Microsoft 365 auth
+    API->>SQL: discard protected authorization at lifecycle end
+    Note over API,GRAPH: No application-only fallback and no deployment-time tenant/folder allow-list
 ```
 
 ## Technology Stacks
@@ -188,11 +276,14 @@ This constitution supersedes all other practices; amendments require updating th
 the reason and date. All implementation tasks must be checked against these principles before
 execution. Complexity that violates YAGNI (YAGNI stands for “You Aren’t Gonna Need It.”) must be explicitly justified in the relevant `plan.md`.
 
-**Version**: 1.1.1 | **Ratified**: 2026-03-03 | **Last Amended**: 2026-04-16
+**Version**: 3.0.0 | **Ratified**: 2026-03-03 | **Last Amended**: 2026-10-13
 
 ### Amendment Log
 | Version | Date | Change |
 |---|---|---|
 | 1.1.0 | 2026-03-04 | Added Stack B (.NET Blazor WASM, Clean Architecture, EF Core); added Principle IX |
 | 1.1.1 | 2026-04-16 | Added Technology for Deployment and Infrastructure as Code (Bash and Terraform)|
-
+| 1.2.0 | 2026-10-05 | Required `.env`-only storage for Azure and environment-specific identifiers and secrets; prohibited hardcoded values in code and documentation |
+| 1.3.0 | 2026-10-06 | Principle VIII diagram: added Microsoft Graph (SharePoint/OneDrive), Entra ID and Key Vault for the bulk scoring feature (001-sharepoint-bulk-scoring). Graph is content access only. Same-tenant uses the recruiter's delegated on-behalf-of flow with a per-request encrypted authorization whose data key is wrapped by Key Vault; cross-tenant dev/QA uses app-only `Sites.Selected` read. Reason: the feature adds an external content source and a durable background authorization the diagram did not describe |
+| 2.0.0 | 2026-10-13 | Replaced Principle VIII's same-tenant OBO/cross-tenant app-only source model with explicit per-user multi-tenant authorization-code connections for arbitrary work/school SharePoint and OneDrive folders. Exact-folder Graph verification, scoped encrypted cache lifecycles, confirming-user delegated background access, admin-consent recovery, and the prohibitions on personal OneDrive, application-only fallback, and deployment-time source allow-lists are now mandatory. This is a major amendment because it incompatibly redefines the previously approved source-authorization boundary |
+| 3.0.0 | 2026-10-13 | Replaced Principle VIII's blanket requirement to fail all remaining work after delegated Microsoft 365 authorization lapses with phase-aware handling: stop every further source read immediately, fail non-terminal items that still require source access, and allow securely imported items already handed to source-independent scoring to finish. No fallback identity is permitted. This is a major amendment because it incompatibly redefines the required lapse behavior |

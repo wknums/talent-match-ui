@@ -33,6 +33,26 @@ public sealed class UploadSettingsEndpointsTests
         response.StatusCode.Should().Be(expected);
     }
 
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("recruiter")]
+    [InlineData("organization_admin")]
+    public async Task PollingSettings_AreReadableByAuthenticatedUsersWithoutExposingUploadLimits(string role)
+    {
+        var sender = new Mock<ISender>();
+        sender.Setup(x => x.Send(It.IsAny<GetUploadSettingsQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new UploadSettingsDto(4, 4_194_304, 104_857_600, 0, false, null, null));
+        await using var app = await CreateAppAsync(sender.Object, role);
+        using var response = await app.GetTestClient().GetAsync("/api/system-configuration/polling");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("\"throughputRefreshIntervalSeconds\":60")
+            .And.Contain("\"statusPollingIntervalSeconds\":60")
+            .And.NotContain("maxIndividualFileBytes")
+            .And.NotContain("updatedBy");
+    }
+
     private static async Task<WebApplication> CreateAppAsync(ISender sender, string role)
     {
         var builder = WebApplication.CreateBuilder();

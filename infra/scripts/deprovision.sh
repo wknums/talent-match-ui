@@ -63,7 +63,7 @@ declare -a PROTECTED_LIST=()
 check_resource() {
   local name="$1"
   local reuse_flag="$2"
-  if [[ "${!reuse_flag:-FALSE}" == "TRUE" ]]; then
+  if [[ "$(bool_to_tf "${!reuse_flag:-FALSE}")" == "true" ]]; then
     PROTECTED_LIST+=("$name")
   else
     DESTROY_LIST+=("$name")
@@ -75,6 +75,9 @@ if [[ "$TARGET" == "shared" || "$TARGET" == "both" ]]; then
   check_resource "Azure SQL"        "AZ_SQL_REUSE"
   check_resource "Key Vault"        "AZ_KEY_VAULT_REUSE"
   check_resource "API Management"   "AZ_APIM_REUSE"
+  if [[ "$TF_VAR_enable_app_insights" == "true" ]]; then
+    check_resource "Application Insights and managed workspace" "AZ_APP_INSIGHTS_REUSE"
+  fi
   check_resource "Identities"       "AZ_IDENTITIES_REUSE"
   DESTROY_LIST+=("Resource Group (if all resources destroyed)")
 fi

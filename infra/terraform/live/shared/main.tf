@@ -4,11 +4,29 @@
 # Provisions or reuses shared Azure resources consumed by both stacks.
 
 locals {
+  stack_a_enabled   = contains(["stack-a", "both"], var.stack_target)
+  stack_b_enabled   = contains(["stack-b", "both"], var.stack_target)
+  awr_entra_enabled = var.awr_auth_mode == "entra" && var.awr_api_client_id != ""
+  runtime_identity_principal_ids = merge(
+    local.stack_a_enabled ? { stack_a = module.identities.stack_a_principal_id } : {},
+    local.stack_b_enabled ? { stack_b = module.identities.stack_b_principal_id } : {}
+  )
+
   tags = {
     environment = var.environment
     project     = var.project_name
     managedBy   = "terraform"
   }
+
+  managed_key_vault_name = trimspace(var.existing_key_vault_name) != "" ? var.existing_key_vault_name : "kv-${var.project_name}-${var.environment}"
+  managed_key_vault_uses_external_rg = (
+    var.enable_key_vault
+    && !var.reuse_key_vault
+    && trimspace(var.existing_key_vault_rg) != ""
+    && var.existing_key_vault_rg != var.resource_group_name
+  )
+  managed_key_vault_resource_group = trimspace(var.existing_key_vault_rg) != "" ? var.existing_key_vault_rg : azurerm_resource_group.main.name
+  managed_key_vault_location       = local.managed_key_vault_uses_external_rg ? data.azurerm_resource_group.key_vault_managed_target[0].location : azurerm_resource_group.main.location
 }
 
 # --- Resource Group ---
@@ -18,9 +36,31 @@ resource "azurerm_resource_group" "main" {
   tags     = local.tags
 }
 
+resource "terraform_data" "validate_source_connector_network" {
+  input = var.source_connector_enabled
+
+  lifecycle {
+    precondition {
+      condition     = !var.source_connector_enabled || (var.enable_key_vault && var.reuse_vnet)
+      error_message = "The delegated source connector requires Key Vault and VNet integration so runtime authorization keys stay private-only."
+    }
+  }
+}
+
+# A custom resource group for a newly managed vault must already exist. The shared
+# root owns its main resource group but does not implicitly create arbitrary groups.
+data "azurerm_resource_group" "key_vault_managed_target" {
+  count = local.managed_key_vault_uses_external_rg ? 1 : 0
+  name  = var.existing_key_vault_rg
+}
+
 # --- Microsoft Entra applications ---
 module "entra" {
   source = "../../modules/foundation/entra"
+
+  enabled        = var.app_auth_mode == "entra"
+  enable_stack_a = local.stack_a_enabled
+  enable_stack_b = local.stack_b_enabled
 
   reuse                                    = var.reuse_entra
   existing_api_app_client_id               = var.existing_entra_api_app_client_id
@@ -40,6 +80,13 @@ module "entra" {
   create_role_groups        = var.entra_create_role_groups
   role_group_names          = var.entra_role_group_names
   bootstrap_admin_object_id = var.entra_bootstrap_admin_object_id
+
+  source_connector_enabled                          = var.source_connector_enabled
+  reuse_source_connector                            = var.reuse_source_connector
+  existing_source_connector_client_id               = var.existing_source_connector_client_id
+  source_connector_display_name                     = "${var.project_name}-${var.environment}-microsoft365-source"
+  source_connector_redirect_uris                    = var.source_connector_redirect_uris
+  source_connector_federated_identity_principal_ids = local.runtime_identity_principal_ids
 }
 
 # --- App Service Plan ---
@@ -89,9 +136,12 @@ module "key_vault" {
   existing_name           = var.existing_key_vault_name
   existing_resource_group = var.existing_key_vault_rg
 
-  name                = "kv-${var.project_name}-${var.environment}"
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
+  name                = local.managed_key_vault_name
+  location            = local.managed_key_vault_location
+  resource_group_name = local.managed_key_vault_resource_group
+
+  bulk_auth_key_name                  = var.source_connector_enabled ? var.bulk_auth_key_name : ""
+  bulk_auth_crypto_user_principal_ids = local.runtime_identity_principal_ids
 
   tags = local.tags
 }
@@ -112,11 +162,31 @@ module "apim" {
   tags = local.tags
 }
 
+# --- Application Insights ---
+module "app_insights" {
+  source = "../../modules/foundation/app-insights"
+
+  enabled                 = var.enable_app_insights
+  reuse                   = var.reuse_app_insights
+  existing_name           = var.existing_app_insights_name
+  existing_resource_group = var.existing_app_insights_rg
+
+  name                    = "appi-${var.project_name}-${var.environment}"
+  workspace_name          = "law-${var.project_name}-${var.environment}"
+  location                = azurerm_resource_group.main.location
+  resource_group_name     = azurerm_resource_group.main.name
+  publisher_principal_ids = local.runtime_identity_principal_ids
+
+  tags = local.tags
+}
+
 # --- Managed Identities ---
 module "identities" {
   source = "../../modules/foundation/identities"
 
   reuse                   = var.reuse_identities
+  enable_stack_a          = local.stack_a_enabled
+  enable_stack_b          = local.stack_b_enabled
   existing_stack_a_name   = var.existing_identity_stack_a_name
   existing_stack_b_name   = var.existing_identity_stack_b_name
   existing_resource_group = var.existing_identities_rg
@@ -130,13 +200,13 @@ module "identities" {
 }
 
 data "azuread_service_principal" "awr_api" {
-  count = var.awr_api_client_id != "" ? 1 : 0
+  count = local.awr_entra_enabled && (local.stack_a_enabled || local.stack_b_enabled) ? 1 : 0
 
   client_id = var.awr_api_client_id
 }
 
 resource "azuread_app_role_assignment" "awr_api_stack_a" {
-  count = var.awr_api_client_id != "" ? 1 : 0
+  count = local.awr_entra_enabled && local.stack_a_enabled ? 1 : 0
 
   app_role_id         = data.azuread_service_principal.awr_api[0].app_role_ids[var.awr_api_app_role_value]
   principal_object_id = module.identities.stack_a_principal_id
@@ -144,7 +214,7 @@ resource "azuread_app_role_assignment" "awr_api_stack_a" {
 }
 
 resource "azuread_app_role_assignment" "awr_api_stack_b" {
-  count = var.awr_api_client_id != "" ? 1 : 0
+  count = local.awr_entra_enabled && local.stack_b_enabled ? 1 : 0
 
   app_role_id         = data.azuread_service_principal.awr_api[0].app_role_ids[var.awr_api_app_role_value]
   principal_object_id = module.identities.stack_b_principal_id
@@ -166,6 +236,8 @@ module "networking" {
   sql_private_endpoint_subnet_cidr = var.sql_private_endpoint_subnet_cidr
   sql_server_id                    = module.sql.server_id
   sql_server_name                  = module.sql.server_name
+  key_vault_id                     = module.key_vault.id
+  key_vault_name                   = module.key_vault.name
 
   tags = local.tags
 }

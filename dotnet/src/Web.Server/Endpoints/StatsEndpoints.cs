@@ -12,8 +12,8 @@ public static class StatsEndpoints
     {
         var group = app.MapGroup("/api").WithTags("Stats").RequireAuthorization();
 
-        group.MapGet("/stats", async (ISender mediator) =>
-            Results.Ok(await mediator.Send(new GetSystemStatsQuery())));
+        group.MapGet("/stats", async (ISender mediator, CancellationToken ct) =>
+            Results.Ok(await mediator.Send(new GetSystemStatsQuery(), ct)));
 
         group.MapGet("/stats/scoring-throughput", async (ISender mediator, HttpContext context, CancellationToken ct) =>
         {

@@ -3,6 +3,7 @@
 @using System.Text.Json
 @inject ApiClient Api
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <div class="detail-header">
     <div class="detail-heading">
@@ -52,6 +53,20 @@
         @* Panel 1: Original Document (FR-058) - uses DocumentViewer component (T183) *@
         <div class="detail-panel">
             <h5 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">📄 Candidate Document</h5>
+            @if (bulkOriginal is not null)
+            {
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:0.75rem;">
+                    <span style="font-size:0.85rem; color:#4a5568;">Scored version: converted PDF</span>
+                    <button type="button" data-testid="download-application-original" @onclick="DownloadOriginalAsync"
+                            style="padding:0.35rem 0.7rem; background:#edf2f7; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">
+                        Download original
+                    </button>
+                </div>
+            }
+            @if (originalDownloadError is not null)
+            {
+                <div role="alert" style="color:#c53030; font-size:0.85rem; margin-bottom:0.75rem;">@originalDownloadError</div>
+            }
             <DocumentViewer Documents="@MapToDocumentDtos()" ApplicationId="@ApplicationId" />
         </div>
 
@@ -342,6 +357,8 @@ else
     private JobDto? job;
     private JobConfigDto? config;
     private List<DocumentDto> documents = new();
+    private BulkOriginalReference? bulkOriginal;
+    private string? originalDownloadError;
 
     private List<DocumentViewer.DocumentDto> MapToDocumentDtos()
     {
@@ -404,6 +421,7 @@ else
         {
             job = await Api.GetJobAsync(application.JobId);
             config = await Api.GetJobConfigAsync(application.JobId);
+            bulkOriginal = await FindRetainedOriginalAsync(application.JobId);
             if (config != null)
             {
                 if (!string.IsNullOrEmpty(config.RubricJson))
@@ -427,6 +445,61 @@ else
             }
         }
     }
+
+    private async Task<BulkOriginalReference?> FindRetainedOriginalAsync(string jobId)
+    {
+        const int pageSize = 100;
+        try
+        {
+            for (var requestPage = 1; ; requestPage++)
+            {
+                var requests = await Api.ListBulkScoringRequestsAsync(jobId, requestPage, pageSize);
+                foreach (var request in requests.Items)
+                {
+                    for (var itemPage = 1; ; itemPage++)
+                    {
+                        var itemsPage = await Api.GetBulkScoringRequestItemsAsync(
+                            request.RequestId, itemPage, pageSize);
+                        var item = itemsPage.Items.FirstOrDefault(candidate =>
+                            candidate.ApplicationId == ApplicationId
+                            && candidate.ScoredVersion == "converted"
+                            && candidate.HasRetainedOriginal);
+                        if (item is not null)
+                            return new(request.RequestId, item.ItemId, item.FileName);
+                        if (itemPage * pageSize >= itemsPage.Total) break;
+                    }
+                }
+                if (requestPage * pageSize >= requests.Total) break;
+            }
+        }
+        catch
+        {
+            // Application viewing remains available when bulk history is unavailable.
+        }
+        return null;
+    }
+
+    private async Task DownloadOriginalAsync()
+    {
+        if (bulkOriginal is null) return;
+        try
+        {
+            var bytes = await Api.DownloadBulkScoringOriginalAsync(
+                bulkOriginal.RequestId, bulkOriginal.ItemId);
+            await JS.InvokeVoidAsync(
+                "talentMatchDownloadBase64",
+                bulkOriginal.FileName,
+                "application/octet-stream",
+                Convert.ToBase64String(bytes));
+            originalDownloadError = null;
+        }
+        catch
+        {
+            originalDownloadError = "The original file could not be downloaded.";
+        }
+    }
+
+    private sealed record BulkOriginalReference(string RequestId, string ItemId, string FileName);
 
     private Dictionary<string, double>? ParseDict(string? json)
     {

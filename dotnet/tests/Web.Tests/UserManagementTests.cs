@@ -46,8 +46,9 @@ public class UserManagementTests : BunitContext
         await cut.InvokeAsync(() => cut.FindAll("button").First(b => b.TextContent.Trim() == "Create").Click());
 
         // Assert: error message is shown
-        cut.Markup.Should().Contain("already exists",
-            because: "the component should display the server error message");
+        cut.Markup.Should().Contain("Failed to create user.",
+            because: "the component should show a safe error without echoing raw server text");
+        cut.Markup.Should().NotContain("already exists");
 
         // Assert: form should still be open
         cut.Markup.Should().Contain("Create New User",

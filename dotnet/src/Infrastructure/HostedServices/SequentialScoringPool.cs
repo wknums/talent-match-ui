@@ -30,8 +30,8 @@ public sealed class SequentialScoringPool(
             throw new InvalidOperationException("Invalid sequential scoring pool capacity or timing configuration.");
 
         logger.LogInformation(
-            "Sequential scoring pool started with {Slots} document slots per app instance (owner={Owner}).",
-            options.MaxParallel, _owner);
+            "Sequential scoring pool started with {Slots} document slots per app instance (lease {LeaseSeconds}s, renewed every {HeartbeatSeconds}s, owner={Owner}).",
+            options.MaxParallel, (int)options.LeaseDuration.TotalSeconds, (int)options.HeartbeatInterval.TotalSeconds, _owner);
         var active = new List<Task>();
         var nextRecovery = DateTime.MinValue;
         try
@@ -131,17 +131,37 @@ public sealed class SequentialScoringPool(
 
     private async Task MaintainLeaseAsync(SequentialScoringWork work, CancellationTokenSource workCancellation)
     {
+        // Latest moment the database is known to hold the lease for; the claim itself set it LeaseDuration ahead.
+        var leaseValidUntil = DateTime.UtcNow.Add(options.LeaseDuration);
         try
         {
             while (true)
             {
                 await Task.Delay(options.HeartbeatInterval, workCancellation.Token);
-                using var scope = scopeFactory.CreateScope();
-                var renewed = await scope.ServiceProvider.GetRequiredService<ISequentialScoringQueueRepository>()
-                    .RenewLeaseAsync(work.ApplicationId, work.Owner, DateTime.UtcNow,
-                        options.LeaseDuration, workCancellation.Token);
+                var attemptedAt = DateTime.UtcNow;
+                bool renewed;
+                try
+                {
+                    renewed = await RenewWithRetriesAsync(work, workCancellation.Token);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !workCancellation.IsCancellationRequested)
+                {
+                    // Every attempt failed. Scoring continues while the lease is still comfortably valid, because the
+                    // database may simply be briefly unavailable; the next heartbeat tries again.
+                    if (DateTime.UtcNow < leaseValidUntil - options.HeartbeatInterval)
+                    {
+                        logger.LogWarning(ex,
+                            "Could not renew the scoring lease for application {ApplicationId}; the lease is valid until {ValidUntil:O}, trying again at the next heartbeat.",
+                            work.ApplicationId, leaseValidUntil);
+                        continue;
+                    }
+
+                    throw;
+                }
+
                 if (!renewed)
                     throw new InvalidOperationException("The scoring lease is no longer owned by this process.");
+                leaseValidUntil = attemptedAt.Add(options.LeaseDuration);
             }
         }
         catch (OperationCanceledException) when (workCancellation.IsCancellationRequested) { }
@@ -149,6 +169,31 @@ public sealed class SequentialScoringPool(
         {
             logger.LogError(ex, "Unable to renew scoring lease for application {ApplicationId}.", work.ApplicationId);
             await workCancellation.CancelAsync();
+        }
+    }
+
+    // Returns false when the lease is no longer ours (never retried: another owner may hold it).
+    // Throws the last error when every attempt fails.
+    private async Task<bool> RenewWithRetriesAsync(SequentialScoringWork work, CancellationToken ct)
+    {
+        var attempts = Math.Max(1, options.RenewAttempts);
+        var delay = options.RenewRetryDelay;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                return await scope.ServiceProvider.GetRequiredService<ISequentialScoringQueueRepository>()
+                    .RenewLeaseAsync(work.ApplicationId, work.Owner, DateTime.UtcNow, options.LeaseDuration, ct);
+            }
+            catch (Exception ex) when (attempt < attempts && !ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex,
+                    "Scoring lease renewal for application {ApplicationId} failed (attempt {Attempt} of {Attempts}); retrying in {Delay}.",
+                    work.ApplicationId, attempt, attempts, delay);
+                await Task.Delay(delay, ct);
+                delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, options.RenewRetryMaxDelay.Ticks));
+            }
         }
     }
 }

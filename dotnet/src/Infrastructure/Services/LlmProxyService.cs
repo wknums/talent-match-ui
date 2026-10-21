@@ -11,17 +11,21 @@ public class LlmProxyService : ILlmProxyService
     private readonly ILogger<LlmProxyService> _logger;
     private readonly IScoringProfileProvider _profileProvider;
     private readonly IReasoningModelCatalog? _reasoningModels;
+    private readonly Func<int, CancellationToken, Task> _emptyResponseDelay;
 
     public LlmProxyService(
         HttpClient httpClient,
         ILogger<LlmProxyService> logger,
         IScoringProfileProvider profileProvider,
-        IReasoningModelCatalog? reasoningModels = null)
+        IReasoningModelCatalog? reasoningModels = null,
+        Func<int, CancellationToken, Task>? emptyResponseDelay = null)
     {
         _httpClient = httpClient;
         _logger = logger;
         _profileProvider = profileProvider;
         _reasoningModels = reasoningModels;
+        _emptyResponseDelay = emptyResponseDelay
+            ?? ((attempt, token) => Task.Delay(TimeSpan.FromSeconds(10 * attempt), token));
     }
 
     // FR-065: Prompt generation ALWAYS uses AWR_SEQ_API_ENDPOINT regardless of scoring mode
@@ -173,6 +177,10 @@ public class LlmProxyService : ILlmProxyService
             {
                 _logger.LogWarning(ex, "Scoring run {RunNumber} attempt {Attempt}/{MaxRetries} failed, retrying...",
                     runNumber, attempt, MaxRetriesPerRun);
+
+                // An empty reply usually means the scoring service was overloaded; retrying at once would meet the same load.
+                if (ex is EmptyScoringResponseException)
+                    await _emptyResponseDelay(attempt, cancellationToken);
             }
         }
 
@@ -224,7 +232,16 @@ public class LlmProxyService : ILlmProxyService
             throw new InvalidOperationException(failureMessage);
         }
 
-        return await response.Content.ReadAsStringAsync(cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            _logger.LogWarning(
+                "Scoring service answered HTTP {Status} with an empty body for run {RunNumber}/{TotalRuns} ({FileName}, {Size} bytes)",
+                (int)response.StatusCode, runNumber, totalRuns, fileName, documentBytes.Length);
+            throw new EmptyScoringResponseException(fileName, runNumber, totalRuns);
+        }
+
+        return body;
     }
 
     private static void AddProfile(MultipartFormDataContent formData, ScoringProfile profile)

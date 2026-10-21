@@ -27,7 +27,13 @@ internal static class AppDbContextTransactionExtensions
         Func<CancellationToken, Task<TResult>> operation,
         CancellationToken cancellationToken,
         IsolationLevel? isolationLevel = null)
-        => context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+    {
+        // Repository collaborators share the scoped DbContext. Joining an existing transaction
+        // lets confirmation include pending-cache transfer and audit writes without nesting.
+        if (context.Database.CurrentTransaction is not null)
+            return operation(cancellationToken);
+
+        return context.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
         {
             // A retry replays the delegate, so discard anything the previous attempt staged.
             context.ChangeTracker.Clear();
@@ -46,4 +52,5 @@ internal static class AppDbContextTransactionExtensions
                 throw;
             }
         });
+    }
 }

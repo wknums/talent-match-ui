@@ -1,0 +1,59 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+4 0 obj
+<< /Length 129 >>
+stream
+BT /F1 14 Tf 8 770 Td (P1-TOP-LEFT) Tj ET
+BT /F1 14 Tf 455 18 Td (P1-BOTTOM-RIGHT) Tj ET
+BT /F1 24 Tf 240 390 Td (PORTRAIT) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+6 0 obj
+<< /Length 0 >>
+stream
+
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 792 612] /Contents 6 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+8 0 obj
+<< /Length 160 >>
+stream
+BT /F1 14 Tf 8 678 Td (P3-TOP-LEFT) Tj ET
+BT /F1 14 Tf 340 18 Td (P3-BOTTOM-RIGHT) Tj ET
+BT /F1 24 Tf 175 345 Td (CUSTOM) Tj ET
+BT /F1 5 Tf 246 351 Td (.) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 500 700] /Contents 8 0 R /Resources << /Font << /F1 3 0 R >> >> >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000202 00000 n 
+0000000382 00000 n 
+0000000508 00000 n 
+0000000557 00000 n 
+0000000683 00000 n 
+0000000894 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1020
+%%EOF

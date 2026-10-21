@@ -7,9 +7,10 @@
 # --- Input Validation ---
 # Exactly one of existing_subnet_name or subnet_cidr must be non-empty
 locals {
-  reuse_subnet                = var.existing_subnet_name != ""
-  create_subnet               = var.subnet_cidr != ""
-  create_sql_private_endpoint = !var.reuse_sql_private_endpoint
+  reuse_subnet                      = var.existing_subnet_name != ""
+  create_subnet                     = var.subnet_cidr != ""
+  create_sql_private_endpoint       = !var.reuse_sql_private_endpoint
+  create_key_vault_private_endpoint = var.key_vault_id != ""
 }
 
 resource "terraform_data" "validate_subnet_mode" {
@@ -45,6 +46,15 @@ data "azurerm_virtual_network" "main" {
 data "azurerm_subnet" "existing" {
   count                = local.reuse_subnet ? 1 : 0
   name                 = var.existing_subnet_name
+  virtual_network_name = data.azurerm_virtual_network.main.name
+  resource_group_name  = var.vnet_resource_group
+}
+
+# When SQL Private Link is reused, resolve its dedicated endpoint subnet so
+# Key Vault can share that subnet without creating another address range.
+data "azurerm_subnet" "private_endpoint_existing" {
+  count                = local.create_key_vault_private_endpoint && var.reuse_sql_private_endpoint ? 1 : 0
+  name                 = var.sql_private_endpoint_subnet_name
   virtual_network_name = data.azurerm_virtual_network.main.name
   resource_group_name  = var.vnet_resource_group
 }
@@ -114,5 +124,48 @@ resource "azurerm_private_endpoint" "sql" {
   private_dns_zone_group {
     name                 = "sql"
     private_dns_zone_ids = [azurerm_private_dns_zone.sql[0].id]
+  }
+}
+
+# --- Key Vault Private Link ---
+resource "azurerm_private_dns_zone" "key_vault" {
+  count               = local.create_key_vault_private_endpoint ? 1 : 0
+  name                = "privatelink.vaultcore.azure.net"
+  resource_group_name = var.vnet_resource_group
+  tags                = var.tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "key_vault" {
+  count                 = local.create_key_vault_private_endpoint ? 1 : 0
+  name                  = "link-${data.azurerm_virtual_network.main.name}-key-vault"
+  resource_group_name   = var.vnet_resource_group
+  private_dns_zone_name = azurerm_private_dns_zone.key_vault[0].name
+  virtual_network_id    = data.azurerm_virtual_network.main.id
+  registration_enabled  = false
+  tags                  = var.tags
+}
+
+resource "azurerm_private_endpoint" "key_vault" {
+  count               = local.create_key_vault_private_endpoint ? 1 : 0
+  name                = "pe-${var.key_vault_name}"
+  location            = data.azurerm_virtual_network.main.location
+  resource_group_name = var.vnet_resource_group
+  subnet_id = (
+    var.reuse_sql_private_endpoint
+    ? data.azurerm_subnet.private_endpoint_existing[0].id
+    : azurerm_subnet.sql_private_endpoint[0].id
+  )
+  tags = var.tags
+
+  private_service_connection {
+    name                           = "psc-${var.key_vault_name}"
+    private_connection_resource_id = var.key_vault_id
+    subresource_names              = ["vault"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "key-vault"
+    private_dns_zone_ids = [azurerm_private_dns_zone.key_vault[0].id]
   }
 }

@@ -2,6 +2,7 @@ using FluentAssertions;
 using Moq;
 using TalentMatch.Application.Applications.Commands;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Common.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -9,6 +10,8 @@ namespace TalentMatch.Application.Tests;
 
 public class UploadApplicationsCommandTests
 {
+    private static readonly string CanonicalFingerprint = ContentFingerprint.Compute("cv"u8);
+
     [Fact]
     public async Task Handle_PublishesOnlyAfterAllDocumentsHaveBeenSaved()
     {
@@ -63,12 +66,12 @@ public class UploadApplicationsCommandTests
         var applications = new Mock<IApplicationRepository>();
         var jobs = CreateJobRepository();
         applications.Setup(x => x.FindDocumentByFingerprintAsync(
-                "job-1", "fingerprint-1", It.IsAny<CancellationToken>()))
+                "job-1", CanonicalFingerprint, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ApplicationDocument
             {
                 ApplicationId = "existing-app",
                 FileName = "existing.pdf",
-                Fingerprint = "fingerprint-1",
+                Fingerprint = CanonicalFingerprint,
             });
         var handler = new UploadApplicationsCommandHandler(applications.Object, jobs.Object);
 
@@ -100,7 +103,7 @@ public class UploadApplicationsCommandTests
             Times.Never);
         applications.Verify(
             x => x.AddDocumentAsync(
-                It.Is<ApplicationDocument>(document => document.Fingerprint == "fingerprint-1"),
+                It.Is<ApplicationDocument>(document => document.Fingerprint == CanonicalFingerprint),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }

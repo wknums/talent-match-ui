@@ -583,6 +583,8 @@ CREATE TABLE [talentmatch].UploadSettings (
     FileConcurrency         INT           NOT NULL,
     MaxIndividualFileBytes  BIGINT        NOT NULL,
     MaxInFlightBytes        BIGINT        NOT NULL,
+    ThroughputRefreshIntervalSeconds INT NOT NULL DEFAULT 60,
+    StatusPollingIntervalSeconds INT NOT NULL DEFAULT 60,
     ConcurrencyVersion      INT           NOT NULL,
     CreatedAt               DATETIME2     NOT NULL,
     CreatedBy               NVARCHAR(128) NOT NULL,
@@ -591,8 +593,17 @@ CREATE TABLE [talentmatch].UploadSettings (
     CONSTRAINT CK_UploadSettings_FileConcurrency CHECK (FileConcurrency > 0),
     CONSTRAINT CK_UploadSettings_MaxIndividualFileBytes CHECK (MaxIndividualFileBytes > 0),
     CONSTRAINT CK_UploadSettings_MaxInFlightBytes CHECK (MaxInFlightBytes >= MaxIndividualFileBytes),
-    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload')
+    CONSTRAINT CK_UploadSettings_Singleton CHECK (Id = 'optional-file-upload'),
+    CONSTRAINT CK_UploadSettings_ThroughputRefresh CHECK (ThroughputRefreshIntervalSeconds BETWEEN 1 AND 4294967),
+    CONSTRAINT CK_UploadSettings_StatusPolling CHECK (StatusPollingIntervalSeconds BETWEEN 1 AND 4294967)
 );
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'talentmatch.UploadSettings') AND name = 'ThroughputRefreshIntervalSeconds')
+    ALTER TABLE [talentmatch].UploadSettings ADD ThroughputRefreshIntervalSeconds INT NOT NULL DEFAULT 60
+        CONSTRAINT CK_UploadSettings_ThroughputRefresh CHECK (ThroughputRefreshIntervalSeconds BETWEEN 1 AND 4294967);
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID(N'talentmatch.UploadSettings') AND name = 'StatusPollingIntervalSeconds')
+    ALTER TABLE [talentmatch].UploadSettings ADD StatusPollingIntervalSeconds INT NOT NULL DEFAULT 60
+        CONSTRAINT CK_UploadSettings_StatusPolling CHECK (StatusPollingIntervalSeconds BETWEEN 1 AND 4294967);
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadSessions' AND schema_id = SCHEMA_ID('talentmatch'))
 CREATE TABLE [talentmatch].UploadSessions (
@@ -673,3 +684,186 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_OwnerAc
     CREATE INDEX IX_UploadSessions_OwnerActorId_CreatedAt ON [talentmatch].UploadSessions (OwnerActorId, CreatedAt);
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_UploadSessions_Status_LastHeartbeatAt' AND object_id = OBJECT_ID('talentmatch.UploadSessions'))
     CREATE INDEX IX_UploadSessions_Status_LastHeartbeatAt ON [talentmatch].UploadSessions (Status, LastHeartbeatAt);
+
+-- =============================================================================
+-- Bulk scoring from SharePoint / OneDrive (specs/001-sharepoint-bulk-scoring)
+-- Five additive tables. Generated from the EF model for SQL Server (AddBulkScoring); the test
+-- BulkSchemaFileTests keeps this section identical to the model. No existing table is touched.
+-- =============================================================================
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BulkImportSettings' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].[BulkImportSettings] (
+    [Id] int NOT NULL,
+    [MaxFilesPerRequest] int NOT NULL,
+    [ConcurrencyVersion] int NOT NULL,
+    [UpdatedAt] datetime2 NOT NULL,
+    [UpdatedByActorId] nvarchar(128) NOT NULL,
+    CONSTRAINT [PK_BulkImportSettings] PRIMARY KEY ([Id]),
+    CONSTRAINT [CK_BulkImportSettings_MaxFiles] CHECK (MaxFilesPerRequest > 0),
+    CONSTRAINT [CK_BulkImportSettings_Singleton] CHECK (Id = 1)
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BulkScoringRequests' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].[BulkScoringRequests] (
+    [Id] nvarchar(36) NOT NULL,
+    [JobId] nvarchar(36) NOT NULL,
+    [OwnerActorId] nvarchar(128) NOT NULL,
+    [Status] nvarchar(20) NOT NULL,
+    [Outcome] nvarchar(20) NULL,
+    [SourceKind] nvarchar(20) NOT NULL,
+    [SourceDriveId] nvarchar(200) NOT NULL,
+    [SourceFolderItemId] nvarchar(200) NOT NULL,
+    [SourceFolderName] nvarchar(500) NOT NULL,
+    [SourceFolderPath] nvarchar(2000) NOT NULL,
+    [SourceWebUrl] nvarchar(2048) NOT NULL,
+    [AccessModel] nvarchar(20) NOT NULL,
+    [SourceTenantId] nvarchar(64) NOT NULL,
+    [OwningStack] nvarchar(1) NULL,
+    [ConvertToRasterPdf] bit NOT NULL,
+    [AllowDuplicates] bit NOT NULL,
+    [JobConfigVersionId] nvarchar(36) NULL,
+    [LimitsJson] nvarchar(max) NOT NULL,
+    [DiscoveryStatus] nvarchar(20) NOT NULL,
+    [DiscoveryCursorJson] nvarchar(max) NULL,
+    [EntriesScanned] int NOT NULL,
+    [DiscoveryStepCount] int NOT NULL,
+    [ExcludedByReasonJson] nvarchar(max) NOT NULL,
+    [RetryOfRequestId] nvarchar(36) NULL,
+    [ExpiresAt] datetime2 NULL,
+    [CreatedAt] datetime2 NOT NULL,
+    [ConfirmedAt] datetime2 NULL,
+    [CancelRequestedAt] datetime2 NULL,
+    [CancelledByActorId] nvarchar(128) NULL,
+    [TerminalAt] datetime2 NULL,
+    [AcknowledgedAt] datetime2 NULL,
+    [ConcurrencyVersion] int NOT NULL,
+    [CorrelationId] nvarchar(64) NOT NULL,
+    [DiscoveredCount] int NOT NULL,
+    [ExcludedCount] int NOT NULL,
+    [InaccessibleCount] int NOT NULL,
+    [WaitingCount] int NOT NULL,
+    [ImportingCount] int NOT NULL,
+    [ConvertingCount] int NOT NULL,
+    [ScoringCount] int NOT NULL,
+    [CompletedCount] int NOT NULL,
+    [FailedCount] int NOT NULL,
+    [SkippedCount] int NOT NULL,
+    [CancelledCount] int NOT NULL,
+    [TotalEligibleBytes] bigint NOT NULL,
+    CONSTRAINT [PK_BulkScoringRequests] PRIMARY KEY ([Id]),
+    CONSTRAINT [CK_BulkScoringRequests_AccessModel] CHECK (AccessModel IN ('same_tenant', 'cross_tenant')),
+    CONSTRAINT [CK_BulkScoringRequests_Counts] CHECK (DiscoveredCount >= 0 AND ExcludedCount >= 0 AND InaccessibleCount >= 0 AND WaitingCount >= 0 AND ImportingCount >= 0 AND ConvertingCount >= 0 AND ScoringCount >= 0 AND CompletedCount >= 0 AND FailedCount >= 0 AND SkippedCount >= 0 AND CancelledCount >= 0 AND TotalEligibleBytes >= 0 AND EntriesScanned >= 0 AND DiscoveryStepCount >= 0),
+    CONSTRAINT [CK_BulkScoringRequests_DiscoveryStatus] CHECK (DiscoveryStatus IN ('more_available', 'complete', 'limit_reached')),
+    CONSTRAINT [CK_BulkScoringRequests_Outcome] CHECK (Outcome IS NULL OR Outcome IN ('all_succeeded', 'partial', 'failed', 'cancelled')),
+    CONSTRAINT [CK_BulkScoringRequests_OutcomeIffCompleted] CHECK ((Outcome IS NULL AND Status <> 'completed') OR (Outcome IS NOT NULL AND Status = 'completed')),
+    CONSTRAINT [CK_BulkScoringRequests_OwningStack] CHECK ((AccessModel = 'same_tenant' AND OwningStack IS NOT NULL AND OwningStack IN ('A', 'B')) OR (AccessModel = 'cross_tenant' AND OwningStack IS NULL)),
+    CONSTRAINT [CK_BulkScoringRequests_SourceKind] CHECK (SourceKind IN ('sharepoint', 'onedrive')),
+    CONSTRAINT [CK_BulkScoringRequests_Status] CHECK (Status IN ('draft', 'active', 'completed')),
+    CONSTRAINT [FK_BulkScoringRequests_BulkScoringRequests_RetryOfRequestId] FOREIGN KEY ([RetryOfRequestId]) REFERENCES [talentmatch].[BulkScoringRequests] ([Id]),
+    CONSTRAINT [FK_BulkScoringRequests_Jobs_JobId] FOREIGN KEY ([JobId]) REFERENCES [talentmatch].[Jobs] ([Id]) ON DELETE CASCADE
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BulkScoringItems' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].[BulkScoringItems] (
+    [Id] nvarchar(36) NOT NULL,
+    [RequestId] nvarchar(36) NOT NULL,
+    [Ordinal] int NOT NULL,
+    [SourceDriveId] nvarchar(200) NOT NULL,
+    [SourceDriveItemId] nvarchar(200) NOT NULL,
+    [SourceETag] nvarchar(200) NOT NULL,
+    [FileName] nvarchar(500) NOT NULL,
+    [SourcePath] nvarchar(2000) NOT NULL,
+    [MimeType] nvarchar(200) NOT NULL,
+    [SizeBytes] bigint NOT NULL,
+    [ExcludedWhenRasterized] bit NOT NULL,
+    [Status] nvarchar(20) NOT NULL,
+    [ReasonCode] nvarchar(40) NULL,
+    [ReasonMessage] nvarchar(1000) NULL,
+    [Fingerprint] nvarchar(64) NULL,
+    [FingerprintClaimed] bit NOT NULL,
+    [ApplicationId] nvarchar(36) NULL,
+    [DocumentId] nvarchar(36) NULL,
+    [ScoredVersion] nvarchar(20) NULL,
+    [PageCount] int NULL,
+    [ConvertedSizeBytes] bigint NULL,
+    [SourceStoredAt] datetime2 NULL,
+    [ConvertedStoredAt] datetime2 NULL,
+    [ApplicationCreatedAt] datetime2 NULL,
+    [HandedOffAt] datetime2 NULL,
+    [Attempt] int NOT NULL,
+    [NextAttemptAt] datetime2 NULL,
+    [LeaseOwner] nvarchar(100) NULL,
+    [LeaseUntil] datetime2 NULL,
+    [RetryOfItemId] nvarchar(36) NULL,
+    [CreatedAt] datetime2 NOT NULL,
+    [UpdatedAt] datetime2 NOT NULL,
+    [TerminalAt] datetime2 NULL,
+    CONSTRAINT [PK_BulkScoringItems] PRIMARY KEY ([Id]),
+    CONSTRAINT [CK_BulkScoringItems_Reason] CHECK (ReasonCode IS NULL OR ReasonCode IN ('unsupported_type', 'file_too_large', 'limit_exceeded', 'empty_file', 'not_convertible', 'access_denied', 'authorization_lapsed', 'source_missing', 'source_changed', 'duplicate_in_request', 'duplicate_in_job', 'conversion_failed', 'conversion_timeout', 'converted_too_large', 'scoring_failed', 'cancelled_by_user', 'transient_exhausted')),
+    CONSTRAINT [CK_BulkScoringItems_ScoredVersion] CHECK (ScoredVersion IS NULL OR ScoredVersion IN ('original', 'converted')),
+    CONSTRAINT [CK_BulkScoringItems_Sizes] CHECK (SizeBytes >= 0 AND Attempt >= 0),
+    CONSTRAINT [CK_BulkScoringItems_Status] CHECK (Status IN ('waiting', 'importing', 'converting', 'scoring', 'completed', 'failed', 'skipped', 'cancelled')),
+    CONSTRAINT [FK_BulkScoringItems_BulkScoringItems_RetryOfItemId] FOREIGN KEY ([RetryOfItemId]) REFERENCES [talentmatch].[BulkScoringItems] ([Id]),
+    CONSTRAINT [FK_BulkScoringItems_BulkScoringRequests_RequestId] FOREIGN KEY ([RequestId]) REFERENCES [talentmatch].[BulkScoringRequests] ([Id]) ON DELETE CASCADE
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BulkScoringItemContents' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].[BulkScoringItemContents] (
+    [ItemId] nvarchar(36) NOT NULL,
+    [Kind] nvarchar(20) NOT NULL,
+    [BlobUri] nvarchar(2048) NULL,
+    [ContentBase64] nvarchar(max) NULL,
+    [SizeBytes] bigint NOT NULL,
+    [Sha256] nvarchar(64) NOT NULL,
+    [CreatedAt] datetime2 NOT NULL,
+    CONSTRAINT [PK_BulkScoringItemContents] PRIMARY KEY ([ItemId], [Kind]),
+    CONSTRAINT [CK_BulkScoringItemContents_Kind] CHECK (Kind IN ('original', 'converted')),
+    CONSTRAINT [CK_BulkScoringItemContents_OneLocation] CHECK ((BlobUri IS NOT NULL AND ContentBase64 IS NULL) OR (BlobUri IS NULL AND ContentBase64 IS NOT NULL)),
+    CONSTRAINT [CK_BulkScoringItemContents_Size] CHECK (SizeBytes >= 0),
+    CONSTRAINT [FK_BulkScoringItemContents_BulkScoringItems_ItemId] FOREIGN KEY ([ItemId]) REFERENCES [talentmatch].[BulkScoringItems] ([Id]) ON DELETE CASCADE
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'BulkRequestAuthorizations' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].[BulkRequestAuthorizations] (
+    [RequestId] nvarchar(36) NOT NULL,
+    [RecruiterActorId] nvarchar(128) NOT NULL,
+    [Payload] varbinary(max) NULL,
+    [WrappedDataKey] varbinary(max) NULL,
+    [KeyVersion] nvarchar(200) NOT NULL,
+    [Status] nvarchar(20) NOT NULL,
+    [LapseReason] nvarchar(100) NULL,
+    [ObtainedAt] datetime2 NOT NULL,
+    [LastUsedAt] datetime2 NULL,
+    [LapsedAt] datetime2 NULL,
+    [DiscardedAt] datetime2 NULL,
+    CONSTRAINT [PK_BulkRequestAuthorizations] PRIMARY KEY ([RequestId]),
+    CONSTRAINT [CK_BulkRequestAuthorizations_NoMaterialWhenInactive] CHECK (Status = 'active' OR (Payload IS NULL AND WrappedDataKey IS NULL)),
+    CONSTRAINT [CK_BulkRequestAuthorizations_Status] CHECK (Status IN ('active', 'lapsed', 'discarded')),
+    CONSTRAINT [FK_BulkRequestAuthorizations_BulkScoringRequests_RequestId] FOREIGN KEY ([RequestId]) REFERENCES [talentmatch].[BulkScoringRequests] ([Id]) ON DELETE CASCADE
+);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringRequests_JobId_CreatedAt' AND object_id = OBJECT_ID('talentmatch.BulkScoringRequests'))
+    CREATE INDEX [IX_BulkScoringRequests_JobId_CreatedAt] ON [talentmatch].[BulkScoringRequests] ([JobId], [CreatedAt]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringRequests_OwnerActorId_Status_AcknowledgedAt' AND object_id = OBJECT_ID('talentmatch.BulkScoringRequests'))
+    CREATE INDEX [IX_BulkScoringRequests_OwnerActorId_Status_AcknowledgedAt] ON [talentmatch].[BulkScoringRequests] ([OwnerActorId], [Status], [AcknowledgedAt]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringRequests_RetryOfRequestId' AND object_id = OBJECT_ID('talentmatch.BulkScoringRequests'))
+    CREATE INDEX [IX_BulkScoringRequests_RetryOfRequestId] ON [talentmatch].[BulkScoringRequests] ([RetryOfRequestId]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringRequests_Status_ExpiresAt' AND object_id = OBJECT_ID('talentmatch.BulkScoringRequests'))
+    CREATE INDEX [IX_BulkScoringRequests_Status_ExpiresAt] ON [talentmatch].[BulkScoringRequests] ([Status], [ExpiresAt]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringRequests_Status_OwningStack' AND object_id = OBJECT_ID('talentmatch.BulkScoringRequests'))
+    CREATE INDEX [IX_BulkScoringRequests_Status_OwningStack] ON [talentmatch].[BulkScoringRequests] ([Status], [OwningStack]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringItems_RequestId_Ordinal' AND object_id = OBJECT_ID('talentmatch.BulkScoringItems'))
+    CREATE INDEX [IX_BulkScoringItems_RequestId_Ordinal] ON [talentmatch].[BulkScoringItems] ([RequestId], [Ordinal]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringItems_RequestId_SourceDriveItemId' AND object_id = OBJECT_ID('talentmatch.BulkScoringItems'))
+    CREATE UNIQUE INDEX [IX_BulkScoringItems_RequestId_SourceDriveItemId] ON [talentmatch].[BulkScoringItems] ([RequestId], [SourceDriveItemId]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringItems_RequestId_Status' AND object_id = OBJECT_ID('talentmatch.BulkScoringItems'))
+    CREATE INDEX [IX_BulkScoringItems_RequestId_Status] ON [talentmatch].[BulkScoringItems] ([RequestId], [Status]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringItems_RetryOfItemId' AND object_id = OBJECT_ID('talentmatch.BulkScoringItems'))
+    CREATE INDEX [IX_BulkScoringItems_RetryOfItemId] ON [talentmatch].[BulkScoringItems] ([RetryOfItemId]);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringItems_Scoring' AND object_id = OBJECT_ID('talentmatch.BulkScoringItems'))
+    CREATE INDEX [IX_BulkScoringItems_Scoring] ON [talentmatch].[BulkScoringItems] ([Status]) WHERE [Status] = 'scoring';
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkScoringItems_Status_NextAttemptAt' AND object_id = OBJECT_ID('talentmatch.BulkScoringItems'))
+    CREATE INDEX [IX_BulkScoringItems_Status_NextAttemptAt] ON [talentmatch].[BulkScoringItems] ([Status], [NextAttemptAt]) WHERE [Status] IN ('waiting', 'importing', 'converting');
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_BulkScoringItems_Request_Fingerprint' AND object_id = OBJECT_ID('talentmatch.BulkScoringItems'))
+    CREATE UNIQUE INDEX [UX_BulkScoringItems_Request_Fingerprint] ON [talentmatch].[BulkScoringItems] ([RequestId], [Fingerprint]) WHERE [FingerprintClaimed] = 1;
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_BulkRequestAuthorizations_Status_ObtainedAt' AND object_id = OBJECT_ID('talentmatch.BulkRequestAuthorizations'))
+    CREATE INDEX [IX_BulkRequestAuthorizations_Status_ObtainedAt] ON [talentmatch].[BulkRequestAuthorizations] ([Status], [ObtainedAt]);

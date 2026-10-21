@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ARTIFACT_DIR="${REPO_ROOT}/artifacts/stack-b"
 ARTIFACT_DIR_DOTNET="$ARTIFACT_DIR"
 PROJECT_PATH="dotnet/src/Web.Server/TalentMatch.Web.Server.csproj"
+SOLUTION_PATH="dotnet/TalentMatch.slnx"
 
 source "$SCRIPT_DIR/lib/common.sh"
 
@@ -23,12 +24,16 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 1: Publish Stack B
+# Step 1: Audit dependencies and publish Stack B
 # ---------------------------------------------------------------------------
+log_info "Restoring and auditing all Stack B production and test dependencies..."
+dotnet restore "$SOLUTION_PATH" --force
+
 log_info "Publishing Stack B from $PROJECT_PATH..."
 dotnet publish "$PROJECT_PATH" \
   --configuration Release \
   --output "$ARTIFACT_DIR_DOTNET" \
+  --no-restore \
   --self-contained false
 
 # ---------------------------------------------------------------------------

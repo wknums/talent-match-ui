@@ -84,6 +84,37 @@ public sealed class UploadStatusSurfaceTests : BunitContext
         uploadAction.HasAttribute("href").Should().BeFalse();
     }
 
+    [Fact]
+    public void Pipeline_merges_bulk_waiting_and_importing_before_application_creation()
+    {
+        var api = new ApiClient(new HttpClient(new SessionHandler())
+        {
+            BaseAddress = new Uri("http://localhost"),
+        });
+        Services.AddSingleton(api);
+        Services.AddSingleton(new UploadCoordinator(api));
+
+        var cut = Render<PipelineVisualizer>(parameters => parameters
+            .Add(component => component.JobId, "job-1")
+            .Add(component => component.Applications, [])
+            .Add(component => component.BulkCounts, new BulkCountsDto(
+                Discovered: 68,
+                Excluded: 0,
+                Unreadable: 0,
+                Waiting: 52,
+                Importing: 14,
+                Converting: 2,
+                Scoring: 0,
+                Completed: 0,
+                Failed: 0,
+                Skipped: 0,
+                Cancelled: 0)));
+
+        cut.Find(".pipeline-upload-stage").TextContent.Should().Contain("Uploads (52 remaining)");
+        cut.FindAll(".pipeline-stage-label").Select(element => element.TextContent)
+            .Should().Contain("Uploading (16)");
+    }
+
     private static UploadSessionDetailDto CreateSession()
     {
         var createdAt = DateTime.UtcNow;

@@ -1,0 +1,21 @@
+.bulk-panel { margin: 1rem 0; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0.5rem 0.75rem; }
+.bulk-panel-toggle { background: none; border: none; font-weight: 600; font-size: 1rem; cursor: pointer; padding: 0.25rem 0; color: #1e293b; }
+.bulk-panel-muted { color: #475569; font-size: 0.85rem; margin: 0.25rem 0; }
+.bulk-panel-error { padding: 0.5rem 0.75rem; background: #fee2e2; border: 1px solid #fca5a5; border-radius: 6px; color: #7f1d1d; margin: 0.5rem 0; }
+.bulk-panel-warning { padding: 0.5rem 0.75rem; background: #fef9c3; border: 1px solid #facc15; border-radius: 6px; color: #713f12; margin: 0.5rem 0; }
+.bulk-request { border-top: 1px solid #e2e8f0; padding: 0.6rem 0; display: grid; gap: 0.25rem; }
+.bulk-request header { display: flex; gap: 0.75rem; align-items: center; }
+.bulk-status { display: inline-block; padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
+.bulk-progress { height: 0.5rem; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
+.bulk-progress-fill { height: 100%; background: #1d4ed8; }
+.bulk-counts { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; list-style: none; padding: 0; margin: 0.25rem 0; font-size: 0.85rem; }
+.bulk-request-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+.bulk-request-actions button, .bulk-panel-pager button { padding: 0.3rem 0.8rem; border-radius: 4px; border: 1px solid #94a3b8; background: white; cursor: pointer; }
+.bulk-request-actions button:disabled, .bulk-panel-pager button:disabled { opacity: 0.6; cursor: not-allowed; }
+.bulk-item-filters { display: flex; gap: 1rem; margin: 0.5rem 0; font-size: 0.85rem; }
+.bulk-item-filters label { display: grid; gap: 0.15rem; }
+.bulk-items { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.bulk-items th, .bulk-items td { text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid #e2e8f0; }
+.bulk-link { background: none; border: none; color: #1d4ed8; text-decoration: underline; cursor: pointer; padding: 0; }
+.bulk-panel-pager { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+.bulk-panel-pager span { flex: 1 1 auto; color: #475569; font-size: 0.85rem; }

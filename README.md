@@ -287,32 +287,16 @@ The application identity must have the `Cognitive Services OpenAI User` role on 
 
 ## Environment Variables
 
-Copy `.env.example` to `.env` and configure:
+> **Complete reference:** [CONFIGURATION.md](CONFIGURATION.md) inventories every
+> supported runtime, browser, deployment, connector, bulk-scoring, and test
+> variable, including defaults, validation, secret handling, profile precedence,
+> and removed settings.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PORT` | `3001` | Backend server port |
-| `API_MODE` | `mock` | Use `mock` data or the `real` application API |
-| `APP_AUTH_MODE` | `simple` | Use local credentials in Development/Testing or `entra` authentication elsewhere |
-| `STORAGE_PROVIDER` | `local` | Set to `azuresql` to use Azure SQL in Stack A |
-| `DATABASE_PROVIDER` | `sqlite` | Stack B database provider: `sqlite` or `sqlserver` |
-| `SQLITE_DB_PATH` | `shared-data/talentmatch.db` | Optional shared local database path |
-| `AZURE_SQL_AUTH_MODE` | - | Set to `entra` for managed-identity Azure SQL auth |
-| `AZURE_SQL_SERVER_FQDN` | - | Azure SQL server FQDN for Entra auth |
-| `AZURE_SQL_DATABASE_NAME` | - | Azure SQL database name for Entra auth |
-| `AZURE_CLIENT_ID` | - | User-assigned managed identity client ID used for Azure SQL and other Azure SDK auth |
-| `AWR_SEQ_API_ENDPOINT` | - | AWReason endpoint for extraction, prompt work, and sequential scoring |
-| `AWR_PLATFORM_API_ENDPOINT` | - | Optional asynchronous scoring platform endpoint |
-| `AWR_AUTH_MODE` | `none` | AWReason authentication mode: `none`, `apikey`, or `entra` |
-| `AWR_AAD_AUDIENCE` | - | AWReason API scope used for Entra client-credential tokens |
-| `AWR_BLOB_STORAGE_ACCOUNT` | - | Blob account required by platform mode |
-| `AWR_BLOB_CONTAINER` | `cv-uploads` | Blob container used to exchange CV documents |
-| `AZURE_SQL_WAKEUP_MAX_ATTEMPTS` | `8` | Stack A Azure SQL startup retry budget |
-| `AZURE_SQL_WAKEUP_INITIAL_DELAY_MS` | `2000` | Stack A initial Azure SQL retry delay |
-| `AZURE_SQL_WAKEUP_MAX_DELAY_MS` | `15000` | Stack A cap for Azure SQL retry backoff |
-| `AZURE_OPENAI_ENDPOINT` | - | Azure OpenAI endpoint URL; authentication uses Entra RBAC |
-
-See [.env.example](.env.example) for the complete configuration surface and platform-mode tuning settings.
+For local development, copy `.env.example` to the ignored `.env`. For Azure
+deployments, copy the matching `.env_local.example`, `.env_qa.example`, or
+`.env_prod.example` to its untracked profile and pass that file explicitly to
+the deployment script. Keep credentials, keys, tokens, connection strings, and
+environment-specific values out of committed files.
 
 ## Project Structure
 
@@ -404,6 +388,15 @@ For an environment whose `PROJECT_NAME` is `talentmatch` and whose
 Display names are for people; automation and handoff records must use the
 immutable IDs.
 
+Create or reuse only the objects selected by the environment file's
+`STACK_TARGET`: one protected API plus the Stack A SPA for `stack-a`, one API
+plus the Stack B SPA for `stack-b`, or one API plus both SPAs for `both`.
+Runtime managed identities and their grants follow the same selection.
+`ENTRA_REUSE` and `AZ_IDENTITIES_REUSE` are independent switches. The deployment
+command cannot enable a stack excluded by the profile. See the
+[manual identity guide](./docs/MANUAL_ENTRA_ID_RBAC_IMPLEMENTATION_GUIDE.md)
+for exact per-stack inventories and handoff examples.
+
 | Item | Purpose | Important configuration |
 | --- | --- | --- |
 | Protected API app registration (`<project>-<environment>-api`) | Represents the TalentMatch API and defines what browser clients may request | Single-tenant; access token version 2; identifier URI from `ENTRA_API_IDENTIFIER_URI`; delegated `ENTRA_API_SCOPE` (normally `access_as_user`) |
@@ -418,7 +411,7 @@ immutable IDs.
 | Stack A user-assigned managed identity | Runtime identity for Stack A | Becomes an Azure SQL contained user; optionally receives the AWReason API application role |
 | Stack B user-assigned managed identity | Runtime identity for Stack B | Becomes an Azure SQL contained user; optionally receives the AWReason API application role |
 | Azure SQL Microsoft Entra administrator | Control-plane and data-plane bootstrap identity for the SQL logical server | Selected with `SQL_AAD_ADMIN_LOGIN` and `SQL_AAD_ADMIN_OBJECT_ID` when this repository creates SQL |
-| AWReason API enterprise application, when enabled | External protected API called by the application workloads | Both managed identities receive `AWR_API_APP_ROLE_VALUE` (normally `TalentMatch.Access`) when `AWR_AUTH_MODE=entra` |
+| AWReason API enterprise application, when enabled | External protected API called by the application workloads | Each managed identity selected by `STACK_TARGET` receives `AWR_API_APP_ROLE_VALUE` (normally `TalentMatch.Access`) when `AWR_AUTH_MODE=entra` |
 
 The SPA registrations are public clients. **Do not create, request, store, or
 hand off client secrets for either SPA.** Client IDs, object IDs, scope IDs,
@@ -432,7 +425,7 @@ specific applications, groups, resource groups, or SQL resources.
 
 | Person or team | Responsibility | Practical minimum access |
 | --- | --- | --- |
-| Entra application administrator | Create or approve the three app registrations and enterprise applications, expose the API scope, create app roles, set owners, and grant delegated admin consent | Owner of the specific application/service-principal objects where sufficient; otherwise time-bound Cloud Application Administrator or Application Administrator |
+| Entra application administrator | Create or approve the protected API and selected SPA registrations/enterprise applications, expose the API scope, create app roles, set owners, and grant delegated admin consent | Owner of the specific application/service-principal objects where sufficient; otherwise time-bound Cloud Application Administrator or Application Administrator |
 | Entra group administrator | Create and maintain app-specific security groups | Owner of the specific groups; use Groups Administrator only when object ownership is insufficient |
 | Azure infrastructure operator | Run Terraform for the resource group, App Service plan/apps, managed identities, SQL, Key Vault, APIM, and networking selected by the profile | Contributor on the deployment resource scope; Network Contributor when creating/configuring network resources, or Reader for supported existing-subnet reuse |
 | SQL control-plane administrator | Select or change the SQL logical server's Microsoft Entra administrator | A role containing `Microsoft.Sql/servers/administrators/write` on that SQL server |
@@ -456,8 +449,10 @@ There are two supported operating models.
 
 Set `ENTRA_REUSE=FALSE`. The identity running the shared Terraform apply must be
 permitted to create applications, service principals, app roles, optional
-groups, and app-role assignments. Terraform creates the protected API and both
-SPA registrations. The deploying identity becomes an owner of the application
+groups, and app-role assignments. With `APP_AUTH_MODE=entra`, Terraform creates
+the protected API and only the SPA registration(s) selected by `STACK_TARGET`.
+Simple authentication does not provision product Entra objects.
+The deploying identity becomes an owner of the application
 registrations it creates.
 
 This is convenient for a small team, but it combines Azure deployment and Entra
@@ -468,8 +463,8 @@ directory role only for that change window.
 
 Use this model when directory and Azure duties are separated:
 
-1. The Entra administrator creates and validates the protected API and both SPA
-   registrations using the checklist below.
+1. The Entra administrator creates and validates the protected API and only the
+   selected SPA registration(s) using the checklist below.
 2. The Entra administrator records the immutable IDs and consent status in the
    approved handoff system.
 3. The infrastructure operator sets `ENTRA_REUSE=TRUE` and supplies all existing
@@ -480,12 +475,16 @@ Use this model when directory and Azure duties are separated:
 5. The Entra/SQL bootstrap operators complete their post-provisioning steps
    after the Azure managed identities and SQL server exist.
 
-When `ENTRA_REUSE=TRUE`, all four of these values are mandatory:
+When `APP_AUTH_MODE=entra` and `ENTRA_REUSE=TRUE`, the two shared API IDs and each
+selected SPA's client ID are mandatory (three values for one stack, four for
+both):
 
 ```ini
 ENTRA_API_APP_CLIENT_ID=<protected-api-application-client-id>
 ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID=<protected-api-enterprise-app-object-id>
+# Only when STACK_TARGET includes stack-a:
 ENTRA_STACK_A_CLIENT_ID=<stack-a-application-client-id>
+# Only when STACK_TARGET includes stack-b:
 ENTRA_STACK_B_CLIENT_ID=<stack-b-application-client-id>
 ```
 
@@ -503,7 +502,7 @@ ENTRA_BUSINESS_PANEL_APP_ROLE_ID=<business-panel-role-id>
 `ENTRA_REUSE=TRUE` is not a completely directory-read-only deployment mode.
 The shared apply still creates the bootstrap user's app-role assignment on the
 existing protected API enterprise application. If `AWR_AUTH_MODE=entra`, it
-also assigns both Azure managed identities to the configured AWReason API app
+also assigns only the selected Azure managed identities to the configured AWReason API app
 role. If optional Terraform-managed role groups are configured directly, it
 creates and assigns those as well. The shared deployment identity must therefore
 own the affected enterprise applications/groups or receive a time-bound
@@ -537,7 +536,8 @@ Perform these steps in the target tenant in the
 
 #### 2. Create or Verify Each SPA
 
-Repeat for Stack A and Stack B:
+Repeat only for the stack(s) selected by `STACK_TARGET`. Do not create an unused
+SPA, enterprise application or permission grant for a single-stack deployment:
 
 1. Create a single-tenant app registration.
 2. Under **Authentication**, add a **Single-page application** platform and
@@ -558,10 +558,10 @@ Adding `required_resource_access` declares the requested permission; it does not
 itself create a tenant-wide OAuth consent grant. An authorized consent
 administrator must therefore:
 
-1. Open each SPA under **App registrations > API permissions**.
+1. Open each selected SPA under **App registrations > API permissions**.
 2. Confirm that only the intended TalentMatch delegated scope is requested.
 3. Select **Grant admin consent for \<tenant\>**.
-4. Confirm that the permission status shows granted for both SPAs.
+4. Confirm that the permission status shows granted for each selected SPA.
 
 Cloud Application Administrator or Application Administrator can grant this
 delegated consent. Use Privileged Role Administrator only if tenant policy or a

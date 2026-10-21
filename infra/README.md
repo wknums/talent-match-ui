@@ -29,6 +29,7 @@ infra/terraform/modules/foundation/
 ├── sql/                # Azure SQL Server + Database
 ├── key-vault/          # Key Vault for secrets
 ├── apim/               # API Management gateway
+├── app-insights/       # Optional shared Application Insights; create or reuse
 ├── identities/         # User-assigned managed identities
 └── app-service/        # App Service building block (always created)
 ```
@@ -58,6 +59,81 @@ cp .env_local.example .env_local
 cp .env_qa.example .env_qa
 cp .env_prod.example .env_prod
 ```
+
+## Bulk Scoring SQL Plan Capture
+
+Run [capture-bulk-scoring-plans.sql](scripts/sql/capture-bulk-scoring-plans.sql)
+against the intended Azure SQL application database using an account with
+`VIEW DATABASE STATE`. It only reads catalog/Query Store data; it does not execute
+queue writes, enable capture, force plans, or add indexes.
+
+The three result sets contain Query Store configuration and the UTC capture window;
+classified query text, plan XML, execution-count-weighted runtime statistics, and
+regular-execution Query Store wait totals in `waits_json`;
+and the relevant live index definitions, row counts, and statistics timestamps.
+Save each non-null `query_plan` value as a `.sqlplan` file for inspection in the
+SQL execution-plan viewer. Exports can include compiled parameter values, so keep
+them in private diagnostic storage outside source control.
+
+The seven-day runtime window includes intersecting boundary intervals. Duration
+and CPU are milliseconds; logical I/O is 8 KiB pages. Wait totals are milliseconds
+by category, not a live blocking chain. These are stored compiled
+plans plus aggregated runtime measurements, **not actual execution plans with
+per-operator row counts**. Query Store `AUTO` capture can omit infrequent queries.
+Queries sharing a SQL shape are not proof that they ran in the same transaction.
+
+Check coverage against the deployed revision and the current
+`SequentialScoringQueueRepository` / `ApplicationRepository` implementations:
+claim needs both the candidate read and conditional write; finalization needs the
+ownership/lease-fenced application update and dependent result writes; summary
+also performs job/configuration and authorization reads. `*-review` classifications
+are candidates requiring source verification, not confirmed endpoint attribution.
+Missing plans, historical variants, or a finalizer without the current lease fence
+are coverage gaps, not evidence that the current implementation is fast.
+
+Before adding an index, inspect seek and residual predicates, joins, lookups,
+sorts, warnings, and existing index overlap. Validate a single candidate under a
+representative queue/backlog and worker-concurrency workload using actual plans,
+`STATISTICS IO/TIME`, and before/after latency, reads, CPU, blocking, and write cost.
+Do not replay claim, renewal, or finalization writes on a live queue just to
+collect actual plans; use a controlled non-production workload. Record the
+baseline and rollback before creating a migration.
+
+### Deadlock follow-up
+
+The live-configurable browser intervals described in
+[CONFIGURATION.md](../CONFIGURATION.md#dynamic-browser-refresh-intervals) reduce
+polling pressure and prevent a page's slow refreshes from overlapping. They do
+not establish that worker deadlocks have been eliminated or explain a reported
+percentage increase.
+
+Code-level contention risks, in priority order:
+
+1. [Item transitions](../dotnet/src/Infrastructure/Persistence/Repositories/BulkScoringRepository.cs)
+   retain child write locks while recomputing sibling counts and updating the
+   parent request. The same repository's serializable `TryFinalizeAsync` reads
+   the parent before reading children. This opposing order can form a deadlock
+   cycle; sibling scans also increase its lock footprint. Establish one
+   parent-before-child locking order across these paths before changing isolation.
+   Ordinary read-committed scan behavior also depends on the database's RCSI setting.
+2. Serializable claim/recovery transactions can touch several requests, items,
+   counters and audit records. Narrow work to per-request transactions where the
+   atomicity contract permits, and acquire multiple request/item locks in a
+   deterministic order. Preserve lease/owner fences and atomic audit writes.
+3. [The worker sweep](../dotnet/src/Application/BulkScoringRequests/Services/BulkScoringCycle.cs)
+   attempts finalization/count reconciliation for every active request every five
+   seconds, even while items are still running. Evaluate atomic counter deltas
+   with bounded reconciliation instead of repeated full sibling scans and
+   unchanged-state audit writes, without weakening completion or cleanup guarantees.
+
+These are source-supported risks, not identification of a production deadlock
+victim or blocker. Capture deadlock XML with both statements, lock resources and
+isolation levels; establish p95/p99 status/lease latency and deadlocks per 1,000
+completed items at comparable concurrency. Validate locking changes against a
+controlled multi-host Azure SQL workload, including concurrent claims, renewal,
+cancellation, finalization and retry. Query Store lock-wait totals alone cannot
+reconstruct a deadlock graph. Do not use `NOLOCK`, remove transactional fences,
+or add indexes as a substitute for this evidence.
 
 ## Deployment Commands
 
@@ -135,6 +211,13 @@ az account set --subscription "<subscription-id-or-name>"
 ./infra/scripts/deploy-stack-b-app.sh .env_qa artifacts/stack-b.zip
 ```
 
+Stack B packaging requires the SDK selected by the repository's `global.json`.
+It audits all solution dependencies and fails on any known NuGet advisory or
+unavailable audit data. The framework-dependent artifact requires .NET and
+ASP.NET Core 10.0.13 or a later 10.0 patch. Verify the target App Service runtime
+before deploying; the `10.0` platform stack setting alone is not patch evidence.
+See [dependency and runtime security](../CONFIGURATION.md#stack-b-dependency-and-runtime-security).
+
 Both artifact deployment scripts load the environment profile, validate the
 Azure context, resolve the app name from Terraform output, and verify Kudu
 deployment history if Azure CLI loses its OneDeploy polling connection. They
@@ -151,13 +234,37 @@ and `ENVIRONMENT`. This prevents local state from one subscription being reused
 by another deployment profile. If the profile's resource group already exists,
 the deployment wrapper imports it into a new workspace before planning.
 
+The environment file's `STACK_TARGET` (`stack-a`, `stack-b`, `both`, or
+`shared-only`) controls the shared provisioning inventory. Command targets can
+deploy a subset of that inventory but cannot enable an excluded stack. In
+particular, running a `shared-only` command with `STACK_TARGET=stack-b` prepares
+Stack B's shared dependencies; it does not change the profile to shared-only.
+GitHub target resolution materializes the complete `DEPLOYMENT_ENV_FILE`
+environment secret as the mapped untracked profile, filters automatic jobs to
+enabled stacks, and rejects manual targets outside that profile. CI never
+falls back to `.example` coordinates.
+
 For `APP_AUTH_MODE=entra`, set `ENTRA_API_IDENTIFIER_URI`,
-`ENTRA_STACK_A_REDIRECT_URIS`, `ENTRA_STACK_B_REDIRECT_URIS`, and
-`ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID`. Set `ENTRA_REUSE=TRUE` only when all existing
-application and service-principal IDs are present; otherwise Terraform creates
-the protected API and both SPA registrations and assigns the bootstrap user the
-API `admin` app role. Stack B receives both SPA client IDs because the protected
-API accepts delegated tokens issued to either frontend.
+`ENTRA_API_SCOPE_ID`, all four `ENTRA_*_APP_ROLE_ID` UUIDs,
+`ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID`, and redirect URI lists for selected SPAs only.
+Custom scope and role IDs have no built-in defaults. Preserve IDs already
+deployed; for new registrations select and record them once in the untracked
+profile before the first plan, never generate replacements on each run.
+With `ENTRA_REUSE=TRUE`, provide the shared API client/service-principal IDs and
+only the selected SPA client ID(s). Otherwise Terraform creates the protected
+API plus one SPA for a single-stack profile, or both SPAs for `both`, and
+assigns the bootstrap user the API `admin` app role. Unselected SPA outputs are
+empty. Stack B requires its own SPA ID; Stack A's ID is optional and is trusted
+only when configured. `APP_AUTH_MODE=simple` does not provision product Entra
+applications, role groups or the bootstrap API app-role assignment.
+
+`AZ_IDENTITIES_REUSE` is independent of `ENTRA_REUSE`: it reuses or creates only
+the identities selected by `STACK_TARGET`. A shared-only profile has no runtime
+identities or SPAs. Changing the selected inventory, authentication mode or
+create/reuse ownership can remove previously managed objects; review the plan
+and coordinate state migration before applying to an existing environment.
+See the [manual identity handoff guide](../docs/MANUAL_ENTRA_ID_RBAC_IMPLEMENTATION_GUIDE.md)
+for per-stack object counts, consent and configuration examples.
 
 Browser clients must request the delegated scope as
 `<ENTRA_API_IDENTIFIER_URI>/<ENTRA_API_SCOPE>`; do not synthesize it from
@@ -169,19 +276,56 @@ authorization request continues. Silent token refresh does not use this prompt.
 When creating Azure SQL, set `SQL_AAD_ADMIN_LOGIN` and
 `SQL_AAD_ADMIN_OBJECT_ID`. Leaving `SQL_ADMIN_PASSWORD` empty enables Entra-only
 administration. The token-based post-provisioning bootstrap creates the
-`talentmatch` schema and grants both managed identities their database roles.
+`talentmatch` schema and grants the selected managed identities their database roles.
 It runs by default. For a reused private-only database that the operator host
 cannot reach, set `AZ_SQL_BOOTSTRAP_ENABLED=FALSE`; then run
 `infra/scripts/bootstrap-sql-entra-users.mjs` with `SQL_SERVER_FQDN`,
-`SQL_DATABASE_NAME`, `STACK_A_IDENTITY_NAME`, and `STACK_B_IDENTITY_NAME` from
-a VNet-connected host before application use.
+`SQL_DATABASE_NAME`, and only the selected `STACK_A_IDENTITY_NAME` and/or
+`STACK_B_IDENTITY_NAME` from a VNet-connected host before application use.
+Unset the unselected name: this manual helper reads the name variables rather
+than `STACK_TARGET`. A shared-only profile skips runtime SQL-user bootstrap.
 
 API Management is optional. Set `AZ_APIM_ENABLED=FALSE` to skip both APIM
 creation and lookup. `AZ_APIM_REUSE` is considered only when APIM is enabled.
+
+### Optional Application Insights (Both Stacks)
+
+```env
+AZ_APP_INSIGHTS_ENABLED=TRUE
+AZ_APP_INSIGHTS_REUSE=TRUE
+AZ_APP_INSIGHTS_NAME=<existing-component-name>
+AZ_APP_INSIGHTS_RG=<existing-resource-group>
+```
+
+The existing component may be in another resource group in the deployment
+subscription. With `AZ_APP_INSIGHTS_REUSE=FALSE`, the shared root instead creates
+one `appi-<project>-<environment>` component and a 30-day
+`law-<project>-<environment>` workspace in `RESOURCE_GROUP`. Both App Services
+use the same destination. Leave both flags false to preserve existing behavior.
+See [the configuration reference](../CONFIGURATION.md#application-insights) for
+permissions, agent support, lifecycle and verification details.
+
+The integration uses Linux App Service autoinstrumentation and the existing
+stack managed identities, with component-scoped Monitoring Metrics Publisher
+roles. The deployer needs role-assignment permission on the component even in
+reuse mode. Node.js autoinstrumentation is public preview; browser monitoring is
+disabled. App Service names distinguish the stacks' default cloud roles.
+
+**Lifecycle warning:** Disabling removes monitoring settings and schedules any
+component/workspace managed by this deployment for destruction. Reused
+components/workspaces are never destroyed. Switching ownership modes requires
+an explicit state/data migration if the original resources must be retained.
+Review a Terraform plan before applying either change.
+
+For GitHub deployments, put these settings in the complete `DEPLOYMENT_ENV_FILE`
+environment secret, not separate GitHub variables. Profile examples keep
+monitoring disabled; populate and review an untracked profile to opt in.
+No live profile is modified automatically.
 For `AWR_AUTH_MODE=entra`, set `AWR_AAD_AUDIENCE` to the API's `.default`
 scope and `AWR_API_CLIENT_ID` to its application client ID. Shared Terraform
-assigns `AWR_API_APP_ROLE_VALUE` (default `TalentMatch.Access`) to both stack
-managed identities.
+assigns `AWR_API_APP_ROLE_VALUE` (default `TalentMatch.Access`) only to selected
+stack managed identities. `apikey` and `none` never create these assignments,
+even if an old `AWR_API_CLIENT_ID` is populated.
 New Azure SQL creation is fail-closed: `AZ_SQL_REUSE=FALSE` also requires the
 explicit `ALLOW_CREATE_AZURE_SQL=TRUE` opt-in. Existing-database profiles should
 keep `AZ_SQL_REUSE=TRUE` and provide `SQL_SERVER_NAME`, `SQL_DATABASE_NAME`, and
@@ -248,6 +392,19 @@ The workflow at `.github/workflows/selective-azure-deploy.yml` supports:
 
 - **Push triggers**: Automatically detects changed scopes and deploys only affected stacks.
 - **Manual dispatch**: Choose environment, target, and action explicitly.
+
+Configure each GitHub environment with OIDC secrets `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`, plus `DEPLOYMENT_ENV_FILE`.
+The latter is the full multiline contents of the approved untracked profile,
+not a filename or an unchanged example. Its `ENVIRONMENT` must match the
+selected environment, and its tenant/subscription must match the login secrets.
+CI writes it to a permission-restricted, untracked file; never log or upload it.
+Target resolution, infrastructure, and Stack A packaging use that profile.
+
+Artifact deployment resolves the App Service `app_name` from the selected
+subscription/environment Terraform workspace and uses `RESOURCE_GROUP` from
+the same profile. A missing target fails explicitly; names are not inferred
+from project/environment naming conventions.
 
 ### Changed-Path Detection
 
@@ -320,9 +477,9 @@ For existing databases with tables under `[dbo]`, run the idempotent migration:
 
 ```bash
 az sql db query \
-  --server sql-talentmatch-dev \
-  --name sqldb-talentmatch-dev \
-  --resource-group rg-talentmatch-dev \
+  --server "$SQL_SERVER_NAME" \
+  --name "$SQL_DATABASE_NAME" \
+  --resource-group "$SQL_RG" \
   --query "$(cat infra/scripts/sql/migrate-schema-dbo-to-talentmatch.sql)"
 ```
 
@@ -385,12 +542,14 @@ To reuse an existing resource, set the reuse flag and provide coordinates in you
 
 ```ini
 AZ_SQL_REUSE=TRUE
-SQL_SERVER_NAME=sql-shared-qa
-SQL_DATABASE_NAME=awrdb
-SQL_RG=rg-shared-platform
+SQL_SERVER_NAME=
+SQL_DATABASE_NAME=
+SQL_RG=
 ```
 
 The deploying identity needs at least `Reader` access on external resource groups containing reused resources.
+Fill the blank coordinates only in the untracked profile using the approved
+existing-resource values; these fields deliberately do not prescribe names.
 
 ## Private Network Connectivity (US6)
 
@@ -458,14 +617,18 @@ When `AZ_ALLOWED_IPS` is set, all App Services enforce a **deny-all default** wi
 ```ini
 # .env_qa or .env_prod
 AZ_VNET_REUSE=TRUE
-AZ_VNET_NAME=vnet-awr-platform
-AZ_VNET_RG=rg-awr-networking
-AZ_INTEGRATION_SUBNET_NAME=snet-appservice-integration
+AZ_VNET_NAME=
+AZ_VNET_RG=
+AZ_INTEGRATION_SUBNET_NAME=
 AZ_SQL_PRIVATE_ENDPOINT_REUSE=FALSE
-AZ_SQL_PRIVATE_ENDPOINT_SUBNET_NAME=snet-sql-private-endpoints
-AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR=10.200.3.0/27
-AZ_ALLOWED_IPS=203.0.113.10,198.51.100.20
+AZ_SQL_PRIVATE_ENDPOINT_SUBNET_NAME=
+AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR=
+AZ_ALLOWED_IPS=
 ```
+
+Populate network names, the approved private-endpoint CIDR, and allowed IPs
+only in the untracked profile. Illustrative values remain in the explicitly
+labelled deployment templates, not in this runbook.
 
 ### Backward Compatibility
 

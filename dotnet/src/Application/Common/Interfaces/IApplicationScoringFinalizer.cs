@@ -10,6 +10,15 @@ namespace TalentMatch.Application.Common.Interfaces;
 /// </summary>
 public interface IApplicationScoringFinalizer
 {
+    /// <summary>Computes the complete result without reading or writing persistence.</summary>
+    ApplicationScoringFinalization Prepare(
+        string applicationId,
+        IReadOnlyList<ScoringRun> runs,
+        int runCountTarget,
+        double varianceThreshold,
+        double longlistThreshold,
+        string? candidateName = null);
+
     Task<ApplicationScoringFinalizerResult> FinalizeAsync(
         string applicationId,
         string jobId,

@@ -81,7 +81,9 @@ public class ApiClient : INavigationAuditClient
                 var errorCode = root.TryGetProperty("error", out var error)
                     && error.ValueKind == JsonValueKind.String
                         ? error.GetString()
-                        : null;
+                        : root.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String
+                            ? code.GetString()
+                            : null;
 
                 if (root.TryGetProperty("message", out var canonicalMessage)
                     && canonicalMessage.ValueKind == JsonValueKind.String)
@@ -108,6 +110,9 @@ public class ApiClient : INavigationAuditClient
                         return new(string.Join(" ", messages), errorCode, correlationId);
                 }
 
+                if (root.TryGetProperty("detail", out var detail) && detail.ValueKind == JsonValueKind.String)
+                    return new(detail.GetString() ?? fallbackMessage, errorCode, correlationId);
+
                 if (root.TryGetProperty("title", out var title) && title.ValueKind == JsonValueKind.String)
                     return new(title.GetString() ?? fallbackMessage, errorCode, correlationId);
 
@@ -120,7 +125,7 @@ public class ApiClient : INavigationAuditClient
             // Fall back to the raw response body when it is not valid JSON.
         }
 
-        return new(body.Trim().Trim('"'), null, headerCorrelationId);
+        return new(fallbackMessage, null, headerCorrelationId);
     }
 
     // Auth
@@ -570,7 +575,8 @@ public class ApiClient : INavigationAuditClient
     }
 
     // Applications
-    public async Task<List<ApplicationDto>> GetApplicationsAsync(string jobId, string? list = null, string? applicantName = null)
+    public async Task<List<ApplicationDto>> GetApplicationsAsync(string jobId, string? list = null, string? applicantName = null,
+        CancellationToken cancellationToken = default)
     {
         var queryParts = new List<string>();
         if (!string.IsNullOrWhiteSpace(list))
@@ -582,18 +588,18 @@ public class ApiClient : INavigationAuditClient
             ? $"/api/jobs/{jobId}/applications"
             : $"/api/jobs/{jobId}/applications?{string.Join("&", queryParts)}";
 
-        var response = await _http.GetAsync(requestUri);
+        using var response = await _http.GetAsync(requestUri, cancellationToken);
         await EnsureSuccessOrThrowAsync(response, "Failed to load job applications.");
-        return await response.Content.ReadFromJsonAsync<List<ApplicationDto>>() ?? new();
+        return await response.Content.ReadFromJsonAsync<List<ApplicationDto>>(cancellationToken) ?? new();
     }
 
-    public async Task<JobApplicationCountsDto> GetJobApplicationCountsAsync(string jobId)
+    public async Task<JobApplicationCountsDto> GetJobApplicationCountsAsync(string jobId, CancellationToken cancellationToken = default)
     {
         using var response = await _http.GetAsync(
-            $"/api/jobs/{jobId}/applications/summary");
+            $"/api/jobs/{jobId}/applications/summary", cancellationToken);
         if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
-            var applications = await GetApplicationsAsync(jobId);
+            var applications = await GetApplicationsAsync(jobId, cancellationToken: cancellationToken);
             return new(
                 applications.Count,
                 applications.Count(application =>
@@ -616,7 +622,7 @@ public class ApiClient : INavigationAuditClient
                     application.Status is "Failed" or "ScoringFailed" or "ExtractionFailed"));
         }
         await EnsureSuccessOrThrowAsync(response, "Failed to load job application totals.");
-        return await response.Content.ReadFromJsonAsync<JobApplicationCountsDto>()
+        return await response.Content.ReadFromJsonAsync<JobApplicationCountsDto>(cancellationToken)
             ?? throw new JsonException("The job application totals response was empty.");
     }
 
@@ -735,6 +741,18 @@ public class ApiClient : INavigationAuditClient
             ?? throw new JsonException("The upload session response was empty.");
     }
 
+    public async Task<PollingSettingsDto> GetPollingSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync("/api/system-configuration/polling", cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to load refresh settings.");
+        var settings = await response.Content.ReadFromJsonAsync<PollingSettingsDto>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The refresh settings response was empty.");
+        if (settings.ThroughputRefreshIntervalSeconds is < 1 or > 4_294_967
+            || settings.StatusPollingIntervalSeconds is < 1 or > 4_294_967)
+            throw new JsonException("Refresh intervals must be positive whole seconds within the supported timer range.");
+        return settings;
+    }
+
     public async Task<UploadSettingsDto> GetUploadSettingsAsync(
         CancellationToken cancellationToken = default)
     {
@@ -753,6 +771,269 @@ public class ApiClient : INavigationAuditClient
         await EnsureSuccessOrThrowAsync(response, "Failed to save upload settings.");
         return await response.Content.ReadFromJsonAsync<UploadSettingsDto>(JsonOptions, cancellationToken)
             ?? throw new JsonException("The upload settings response was empty.");
+    }
+
+    // Bulk scoring from SharePoint / OneDrive (contracts/openapi.yaml)
+    public Task<BulkCapabilitiesDto> GetBulkScoringCapabilitiesAsync(CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkCapabilitiesDto>(
+            () => _http.GetAsync("/api/bulk-scoring-requests/capabilities", cancellationToken),
+            "Failed to load bulk scoring capabilities.", cancellationToken);
+
+    public Task<BulkSettingsDto> GetBulkScoringSettingsAsync(CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkSettingsDto>(
+            () => _http.GetAsync("/api/bulk-scoring-settings", cancellationToken),
+            "Failed to load bulk scoring settings.", cancellationToken);
+
+    public Task<BulkSettingsDto> UpdateBulkScoringSettingsAsync(
+        UpdateBulkSettingsRequest request, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkSettingsDto>(
+            () => _http.PutAsJsonAsync("/api/bulk-scoring-settings", request, cancellationToken),
+            "Failed to save bulk scoring settings.", cancellationToken);
+
+    public Task<BulkPreviewResponseDto> PreviewBulkScoringRequestAsync(
+        string jobId, string folderUrl, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkPreviewResponseDto>(
+            () => _http.PostAsJsonAsync(
+                $"/api/jobs/{Uri.EscapeDataString(jobId)}/bulk-scoring-requests/preview",
+                new BulkPreviewRequest(folderUrl), cancellationToken),
+            "Failed to preview the folder.", cancellationToken);
+
+    public Task<BeginSourceConnectionResponseDto> BeginSourceConnectionAsync(
+        string jobId,
+        string folderUrl,
+        string? retryOfRequestId = null,
+        CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BeginSourceConnectionResponseDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/jobs/{Uri.EscapeDataString(jobId)}/source-connections",
+                JsonContent.Create(new BeginSourceConnectionRequest(folderUrl, retryOfRequestId)),
+                cancellationToken),
+            "Failed to start the source connection.", cancellationToken);
+
+    public Task<SourceConnectionStatusDto> GetSourceConnectionAsync(
+        string connectionId, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<SourceConnectionStatusDto>(
+            () => _http.GetAsync(
+                $"/api/source-connections/{Uri.EscapeDataString(connectionId)}", cancellationToken),
+            "Failed to resume the source connection.", cancellationToken);
+
+    public Task<SourceConnectionPreviewDto> PreviewSourceConnectionAsync(
+        string connectionId, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<SourceConnectionPreviewDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/source-connections/{Uri.EscapeDataString(connectionId)}/preview", null, cancellationToken),
+            "Failed to preview the connected folder.", cancellationToken);
+
+    public Task<BulkDraftItemPageDto> GetBulkScoringDraftItemsAsync(
+        string requestId,
+        string? reviewCursor = null,
+        int pageSize = 100,
+        CancellationToken cancellationToken = default)
+    {
+        var url =
+            $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/draft-items?pageSize={pageSize}";
+        if (!string.IsNullOrWhiteSpace(reviewCursor))
+            url += $"&reviewCursor={Uri.EscapeDataString(reviewCursor)}";
+
+        return SendBulkAsync<BulkDraftItemPageDto>(
+            () => _http.GetAsync(url, cancellationToken),
+            "Failed to load the frozen review.", cancellationToken);
+    }
+
+    public Task<SourceConnectionPreviewDto> DiscoverMoreSourceItemsAsync(
+        string requestId, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<SourceConnectionPreviewDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/discover-more",
+                null,
+                cancellationToken),
+            "Failed to discover more files.", cancellationToken);
+
+    public Task<BulkDiscoveryStepDto> DiscoverMoreBulkScoringRequestAsync(
+        string requestId, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkDiscoveryStepDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/discover-more", null, cancellationToken),
+            "Failed to discover more files.", cancellationToken);
+
+    public Task<BulkRequestDetailDto> ConfirmBulkScoringRequestAsync(
+        string requestId, bool convertToRasterPdf, bool allowDuplicates, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkRequestDetailDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/confirm",
+                JsonContent.Create(new BulkConfirmRequest(convertToRasterPdf, allowDuplicates)), cancellationToken),
+            "Failed to start bulk scoring.", cancellationToken);
+
+    public Task<BulkRequestDetailDto> ConfirmBulkScoringRequestAsync(
+        string requestId,
+        bool convertToRasterPdf,
+        bool allowDuplicates,
+        int expectedConcurrencyVersion,
+        CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkRequestDetailDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/confirm",
+                JsonContent.Create(new BulkConfirmWithVersionRequest(
+                    convertToRasterPdf,
+                    allowDuplicates,
+                    expectedConcurrencyVersion)),
+                cancellationToken),
+            "Failed to start bulk scoring.", cancellationToken);
+
+    public Task<BulkRequestDetailDto> GetBulkScoringRequestAsync(
+        string requestId, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkRequestDetailDto>(
+            () => _http.GetAsync($"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}", cancellationToken),
+            "Failed to load the bulk scoring request.", cancellationToken);
+
+    public Task<BulkItemPageDto> GetBulkScoringRequestItemsAsync(
+        string requestId, int page = 1, int pageSize = 50, string? status = null, string? query = null,
+        CancellationToken cancellationToken = default)
+    {
+        var url = $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/items?page={page}&pageSize={pageSize}";
+        if (!string.IsNullOrWhiteSpace(status)) url += $"&status={Uri.EscapeDataString(status)}";
+        if (!string.IsNullOrWhiteSpace(query)) url += $"&q={Uri.EscapeDataString(query)}";
+        return SendBulkAsync<BulkItemPageDto>(
+            () => _http.GetAsync(url, cancellationToken), "Failed to load the files.", cancellationToken);
+    }
+
+    public Task<BulkRequestPageDto> ListBulkScoringRequestsAsync(
+        string jobId, int page = 1, int pageSize = 20, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkRequestPageDto>(
+            () => _http.GetAsync(
+                $"/api/jobs/{Uri.EscapeDataString(jobId)}/bulk-scoring-requests?page={page}&pageSize={pageSize}", cancellationToken),
+            "Failed to load the bulk scoring requests.", cancellationToken);
+
+    public async Task<List<BulkRequestSummaryDto>> GetBulkScoringNotificationsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var notifications = await GetBulkScoringTerminalNotificationsAsync(cancellationToken);
+        return notifications.Select(notification => new BulkRequestSummaryDto(
+            notification.RequestId,
+            string.Empty,
+            "completed",
+            notification.Outcome,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            notification.TerminalAt,
+            notification.TerminalAt,
+            false,
+            false,
+            false,
+            null,
+            false,
+            new BulkCountsDto(
+                notification.Counts.Completed
+                    + notification.Counts.Failed
+                    + notification.Counts.Skipped
+                    + notification.Counts.Cancelled,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                notification.Counts.Completed,
+                notification.Counts.Failed,
+                notification.Counts.Skipped,
+                notification.Counts.Cancelled),
+            0,
+            "not_applicable",
+            RecipientActorId: notification.RecipientActorId,
+            RequestDetailPath: notification.RequestDetailPath)).ToList();
+    }
+
+    public Task<IReadOnlyList<BulkTerminalNotificationDto>> GetBulkScoringTerminalNotificationsAsync(
+        CancellationToken cancellationToken = default) =>
+        SendBulkAsync<IReadOnlyList<BulkTerminalNotificationDto>>(
+            () => _http.GetAsync("/api/bulk-scoring-requests/notifications", cancellationToken),
+            "Failed to load notifications.", cancellationToken);
+
+    public async Task AcknowledgeBulkScoringRequestAsync(string requestId, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendBulkMutationAsync(
+            HttpMethod.Post,
+            $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/acknowledge", null, cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to dismiss the notification.");
+    }
+
+    public Task<BulkRequestDetailDto> CancelBulkScoringRequestAsync(
+        string requestId, int expectedConcurrencyVersion, CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkRequestDetailDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/cancel",
+                JsonContent.Create(new CancelBulkRequest(expectedConcurrencyVersion)), cancellationToken),
+            "Failed to cancel the request.", cancellationToken);
+
+    public Task<BulkRequestDetailDto> RetryFailedBulkScoringRequestItemsAsync(
+        string requestId,
+        string? connectionId = null,
+        CancellationToken cancellationToken = default) =>
+        SendBulkAsync<BulkRequestDetailDto>(
+            () => SendBulkMutationAsync(
+                HttpMethod.Post,
+                $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/retry-failed",
+                connectionId is null ? null : JsonContent.Create(new { connectionId }),
+                cancellationToken),
+            "Failed to retry the files.", cancellationToken);
+
+    public async Task<byte[]> DownloadBulkScoringOriginalAsync(
+        string requestId, string itemId, CancellationToken cancellationToken = default)
+    {
+        using var response = await _http.GetAsync(
+            $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/items/{Uri.EscapeDataString(itemId)}/original", cancellationToken);
+        await EnsureSuccessOrThrowAsync(response, "Failed to download the original file.");
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
+    }
+
+    // Discarding a draft that already expired or was abandoned is not an error worth surfacing.
+    public async Task AbandonBulkScoringRequestDraftAsync(string requestId, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendBulkMutationAsync(
+            HttpMethod.Delete,
+            $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}", null, cancellationToken);
+        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone) return;
+        await EnsureSuccessOrThrowAsync(response, "Failed to discard the preview.");
+    }
+
+    public async Task AbandonSourceConnectionAsync(
+        string connectionId,
+        CancellationToken cancellationToken = default)
+    {
+        using var response = await SendBulkMutationAsync(
+            HttpMethod.Delete,
+            $"/api/source-connections/{Uri.EscapeDataString(connectionId)}", null, cancellationToken);
+        if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone) return;
+        await EnsureSuccessOrThrowAsync(response, "Failed to discard the source connection.");
+    }
+
+    private async Task<HttpResponseMessage> SendBulkMutationAsync(
+        HttpMethod method,
+        string requestUri,
+        HttpContent? content,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, requestUri) { Content = content };
+        request.Options.Set(StaleTokenRetryHandler.RetryOnStaleToken, true);
+        return await _http.SendAsync(request, cancellationToken);
+    }
+
+    private static async Task<T> SendBulkAsync<T>(
+        Func<Task<HttpResponseMessage>> send, string fallbackMessage, CancellationToken cancellationToken)
+    {
+        using var response = await send();
+        await EnsureSuccessOrThrowAsync(response, fallbackMessage);
+        return await response.Content.ReadFromJsonAsync<T>(JsonOptions, cancellationToken)
+            ?? throw new JsonException("The server response was empty.");
     }
 
     // Scoring
@@ -791,8 +1072,8 @@ public class ApiClient : INavigationAuditClient
     }
 
     // Stats & DLQ
-    public async Task<SystemStatsDto?> GetSystemStatsAsync()
-        => await _http.GetFromJsonAsync<SystemStatsDto>("/api/stats");
+    public async Task<SystemStatsDto?> GetSystemStatsAsync(CancellationToken cancellationToken = default)
+        => await _http.GetFromJsonAsync<SystemStatsDto>("/api/stats", cancellationToken);
 
     public async Task<ScoringThroughputDto> GetScoringThroughputAsync(CancellationToken cancellationToken = default)
     {
@@ -1339,8 +1620,10 @@ public sealed record UploadItemDto(string Id, string SessionId, Guid OccurrenceK
 public sealed record UploadSessionSummaryDto(string Id, string JobId, string Status, bool AllowDuplicates, UploadLimitsSnapshotDto Limits, UploadAggregateCountsDto Counts, int ProgressPercent, string CorrelationId, DateTime CreatedAt, DateTime? StartedAt, DateTime LastHeartbeatAt, DateTime? CompletedAt, int ConcurrencyVersion);
 public sealed record UploadSessionDetailDto(string Id, string JobId, string Status, bool AllowDuplicates, UploadLimitsSnapshotDto Limits, UploadAggregateCountsDto Counts, int ProgressPercent, string CorrelationId, DateTime CreatedAt, DateTime? StartedAt, DateTime LastHeartbeatAt, DateTime? CompletedAt, int ConcurrencyVersion, IReadOnlyList<UploadItemDto> Items);
 public sealed record UpdateUploadItemStatusRequest(Guid OccurrenceKey, string Status, int ExpectedConcurrencyVersion, string? OutcomeCode = null, string? OutcomeMessage = null, DateTime? NextRetryAt = null, int? TransportAttemptCount = null);
-public sealed record UploadSettingsDto(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ConcurrencyVersion, bool Persisted, DateTime? UpdatedAt, string? UpdatedBy);
-public sealed record UpdateUploadSettingsRequest(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ExpectedConcurrencyVersion);
+public sealed record UploadSettingsDto(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ConcurrencyVersion, bool Persisted, DateTime? UpdatedAt, string? UpdatedBy,
+    int ThroughputRefreshIntervalSeconds = 60, int StatusPollingIntervalSeconds = 60);
+public sealed record UpdateUploadSettingsRequest(int FileConcurrency, long MaxIndividualFileBytes, long MaxInFlightBytes, int ExpectedConcurrencyVersion,
+    int? ThroughputRefreshIntervalSeconds = null, int? StatusPollingIntervalSeconds = null);
 public record ScoringRunDto(string Id, int RunIndex, double TotalScore, string CategoryScoresJson, string MustHaveEvaluationJson, string EvidenceCitationsJson, string ImprovementTipsJson, string AiModelId, string PromptVersion, int InputTokens, int OutputTokens, DateTime CreatedAt = default, string ReasoningLevel = "");
 public record ReparseScoringRunResultDto(ScoringRunDto ScoringRun, bool FallbackParsingActivated, bool EligibilityFallbackActivated, bool TotalScoreFallbackActivated, bool GateDetected, string EligibilityPath, string Source);
 public record AggregatedResultDto(string Id, double FinalScore, string Decision, double Variance, double Confidence, string ConsolidatedRationale, string MergedImprovementTipsJson);

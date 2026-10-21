@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.Extensions.Logging;
 using TalentMatch.Application.Common.Interfaces;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Interfaces;
@@ -12,15 +13,24 @@ public class DeleteJobCommandHandler : IRequestHandler<DeleteJobCommand, bool>
     private readonly IJobRepository _jobRepository;
     private readonly ICurrentUserService _currentUser;
     private readonly IOrganizationRepository? _organizationRepository;
+    private readonly IBulkScoringRepository? _bulkRepository;
+    private readonly IBulkContentStore? _bulkContent;
+    private readonly ILogger<DeleteJobCommandHandler>? _logger;
 
     public DeleteJobCommandHandler(
         IJobRepository jobRepository,
         ICurrentUserService currentUser,
-        IOrganizationRepository? organizationRepository = null)
+        IOrganizationRepository? organizationRepository = null,
+        IBulkScoringRepository? bulkRepository = null,
+        IBulkContentStore? bulkContent = null,
+        ILogger<DeleteJobCommandHandler>? logger = null)
     {
         _jobRepository = jobRepository;
         _currentUser = currentUser;
         _organizationRepository = organizationRepository;
+        _bulkRepository = bulkRepository;
+        _bulkContent = bulkContent;
+        _logger = logger;
     }
 
     public async Task<bool> Handle(DeleteJobCommand request, CancellationToken cancellationToken)
@@ -40,7 +50,52 @@ public class DeleteJobCommandHandler : IRequestHandler<DeleteJobCommand, bool>
                 job, authorizationState, _organizationRepository, cancellationToken);
         }
 
-        await _jobRepository.DeleteAsync(request.JobId, cancellationToken);
+        // The request rows go with the job; the staged and retained files they point to live outside the database.
+        var bulkRequestIds = _bulkRepository is null
+            ? []
+            : await _bulkRepository.ListRequestIdsForJobAsync(request.JobId, cancellationToken);
+
+        var deletingActorId = _currentUser.UserId;
+        if (string.IsNullOrWhiteSpace(deletingActorId))
+            deletingActorId = authorizationState?.Claims.ObjectId ?? "administrator";
+        var correlationId = Guid.NewGuid().ToString();
+        var utcNow = DateTime.UtcNow;
+        if (_bulkRepository is not null)
+            await _bulkRepository.BeginJobCleanupAsync(
+                request.JobId,
+                deletingActorId,
+                correlationId,
+                utcNow,
+                cancellationToken);
+
+        var cleanupFailed = false;
+        if (_bulkContent is not null)
+            foreach (var bulkRequestId in bulkRequestIds)
+            {
+                try
+                {
+                    await _bulkContent.DeleteByRequestAsync(bulkRequestId, cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    cleanupFailed = true;
+                    _logger?.LogError(ex, "Files of bulk request {RequestId} could not be deleted with job {JobId}", bulkRequestId, request.JobId);
+                }
+            }
+
+        if (cleanupFailed)
+            return false;
+
+        var deletedAtomically = _bulkRepository is not null
+            && await _bulkRepository.CompleteJobCleanupAsync(
+                request.JobId,
+                deletingActorId,
+                correlationId,
+                utcNow,
+                cancellationToken);
+        if (!deletedAtomically)
+            await _jobRepository.DeleteAsync(request.JobId, cancellationToken);
+
         return true;
     }
 }

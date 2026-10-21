@@ -263,6 +263,7 @@ public class ScoreApplicationCommandEvidenceParsingTests
     {
         var run = new TalentMatch.Domain.Entities.ScoringRun
         {
+            TotalScore = 80,
             CategoryScoresJson = """{"Technical":85,"Communication":72}"""
         };
 
@@ -282,6 +283,60 @@ public class ScoreApplicationCommandEvidenceParsingTests
         var scores = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson, JsonOpts);
         scores.Should().ContainKey("Technical Skills").WhoseValue.Should().Be(85);
         scores.Should().ContainKey("Communication").WhoseValue.Should().Be(72);
+        run.TotalScore.Should().Be(81.1);
+    }
+
+    [Fact]
+    public void RemapToRubricStatic_IdenticalCategoryScores_ProduceIdenticalWeightedTotals()
+    {
+        var firstRun = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            TotalScore = 95,
+            CategoryScoresJson =
+                """{"Literacy and Qualifications":100,"Safety and Compliance":66.67,"Work Conditions and Physical Capability":100}"""
+        };
+        var inconsistentRun = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            TotalScore = 80,
+            CategoryScoresJson = firstRun.CategoryScoresJson
+        };
+        var rubricJson = """
+            {
+              "schemaVersion": "rubric-v2",
+              "categories": [
+                { "id": "cat-1", "name": "Literacy and Qualifications", "weight": 0.40, "order": 0 },
+                { "id": "cat-2", "name": "Safety and Compliance", "weight": 0.15, "order": 1 },
+                { "id": "cat-3", "name": "Work Conditions and Physical Capability", "weight": 0.45, "order": 2 }
+              ],
+              "items": []
+            }
+            """;
+
+        ScoreApplicationCommandHandler.RemapToRubricStatic(firstRun, rubricJson);
+        ScoreApplicationCommandHandler.RemapToRubricStatic(inconsistentRun, rubricJson);
+
+        firstRun.TotalScore.Should().Be(95.001);
+        inconsistentRun.TotalScore.Should().Be(firstRun.TotalScore);
+    }
+
+    [Fact]
+    public void RemapToRubricStatic_IncompleteCategoryScores_PreserveParsedTotal()
+    {
+        var run = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            TotalScore = 80,
+            CategoryScoresJson = """{"Technical":85}"""
+        };
+        var rubricJson = """
+            [
+              { "name": "Technical Skills", "weight": 0.7 },
+              { "name": "Communication", "weight": 0.3 }
+            ]
+            """;
+
+        ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubricJson);
+
+        run.TotalScore.Should().Be(80);
     }
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };

@@ -70,6 +70,13 @@ variable "apim_gateway_url" {
   type        = string
 }
 
+variable "app_insights_connection_string" {
+  description = "Shared Application Insights connection string; empty disables monitoring"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "app_auth_mode" {
   description = "Application authentication mode"
   type        = string
@@ -111,7 +118,7 @@ variable "entra_app_role_ids" {
   type        = map(string)
 
   validation {
-    condition = length(setsubtract(
+    condition = var.app_auth_mode != "entra" || length(setsubtract(
       toset(["admin", "organization_admin", "recruiter", "business_panel"]),
       toset(keys(var.entra_app_role_ids))
     )) == 0
@@ -179,4 +186,10 @@ variable "allowed_ips" {
   description = "Allowed public IPs for IP restrictions"
   type        = list(string)
   default     = []
+}
+
+variable "bulk_auth_key_uri" {
+  description = "Versionless URI of the Key Vault key that wraps bulk scoring authorization data keys (shared output bulk_auth_key_uri). Empty leaves BULK_AUTH_KEY_URI unset"
+  type        = string
+  default     = ""
 }

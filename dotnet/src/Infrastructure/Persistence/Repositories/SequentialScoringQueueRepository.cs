@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using TalentMatch.Application.Rubrics.Services;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
@@ -36,8 +37,13 @@ public sealed class SequentialScoringQueueRepository(
             ct.ThrowIfCancellationRequested();
             var candidates = await (
                 from application in EligibleApplications
+                let scoringConfigVersionId = db.BulkScoringItems
+                    .Where(item => item.ApplicationId == application.Id
+                        && item.ScoringConfigVersionId != null)
+                    .Select(item => item.ScoringConfigVersionId)
+                    .FirstOrDefault() ?? application.Job!.CurrentConfigVersionId
                 join config in db.JobConfigVersions
-                    on application.Job!.CurrentConfigVersionId equals config.Id
+                    on scoringConfigVersionId equals config.Id
                 where config.JobId == application.JobId
                     && config.RubricApprovalStatus.ToLower() == "approved"
                     && config.ScoringRunCount > 0
@@ -85,7 +91,13 @@ public sealed class SequentialScoringQueueRepository(
                 var updated = await EligibleApplications
                     .Where(application => application.Id == candidate.ApplicationId
                         && (application.Job!.JobDescription ?? "") == candidate.JobDescription
-                        && application.Job.CurrentConfigVersionId == candidate.ConfigId
+                        && (db.BulkScoringItems.Any(item =>
+                                item.ApplicationId == application.Id
+                                && item.ScoringConfigVersionId == candidate.ConfigId)
+                            || (!db.BulkScoringItems.Any(item =>
+                                    item.ApplicationId == application.Id
+                                    && item.ScoringConfigVersionId != null)
+                                && application.Job.CurrentConfigVersionId == candidate.ConfigId))
                         && db.JobConfigVersions.Any(config =>
                             config.Id == candidate.ConfigId
                             && config.JobId == application.JobId
@@ -125,7 +137,8 @@ public sealed class SequentialScoringQueueRepository(
                     return new SequentialScoringWork(
                         candidate.ApplicationId, candidate.JobId, owner, candidate.PromptId,
                         candidate.ScoringRunCount, candidate.JobDescription, candidate.RubricJson,
-                        candidate.VarianceThreshold, candidate.LonglistThreshold);
+                        candidate.VarianceThreshold, candidate.LonglistThreshold,
+                        candidate.ConfigId);
                 }
             }
 
@@ -148,34 +161,60 @@ public sealed class SequentialScoringQueueRepository(
     }
 
     public Task<bool> FinalizeAsync(
-        string applicationId, string owner, Func<CancellationToken, Task> persistResult, CancellationToken ct = default)
+        string applicationId, string owner, ApplicationScoringFinalization result, CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(persistResult);
+        ArgumentNullException.ThrowIfNull(result);
+        if (result.Aggregate.ApplicationId != applicationId
+            || result.Runs.Any(run => run.ApplicationId != applicationId))
+            throw new ArgumentException("Scoring results must belong to the finalized application.", nameof(result));
+        if (result.Status is not ("Completed" or "NeedsManualReview"))
+            throw new ArgumentException("Scoring finalization requires a terminal scoring status.", nameof(result));
+
         return InTransactionAsync(async () =>
         {
             var now = DateTime.UtcNow;
-            // Even a no-op UPDATE obtains a write lock until commit. Recovery/failure cannot
-            // revoke ownership between this fence and the callback's writes on this DbContext.
+            var hasCandidateName = !string.IsNullOrWhiteSpace(result.CandidateName);
+            // The conditional terminal write is also the ownership fence and lease release.
+            // Dependent results commit with it, but preparation and reads hold no write locks.
             var fenced = await Owned(applicationId, owner)
                 .Where(application => application.ScoringLeaseUntil > now)
-                .ExecuteUpdateAsync(setters => setters.SetProperty(application => application.ScoringOwner, owner), ct);
-            if (fenced != 1)
-                return false;
-
-            DetachApplication(applicationId);
-            await persistResult(ct);
-            await db.SaveChangesAsync(ct);
-            var released = await db.Applications
-                .Where(application => application.Id == applicationId && application.ScoringOwner == owner
-                    && application.Status != "Scoring" && application.Status != "Queued" && application.Status != "Uploading")
                 .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(application => application.Status, result.Status)
+                    .SetProperty(application => application.FinalScore, result.Aggregate.FinalScore)
+                    .SetProperty(application => application.Variance, result.Aggregate.Variance)
+                    .SetProperty(application => application.FinalDecision, result.Aggregate.Decision)
+                    .SetProperty(application => application.CandidateName,
+                        application => hasCandidateName ? result.CandidateName : application.CandidateName)
                     .SetProperty(application => application.ScoringOwner, (string?)null)
-                    .SetProperty(application => application.ScoringLeaseUntil, (DateTime?)null), ct);
-            if (released != 1)
-                throw new DbUpdateConcurrencyException("Sequential scoring ownership was lost or the callback did not finalize the application.");
-            DetachApplication(applicationId);
+                    .SetProperty(application => application.ScoringLeaseUntil, (DateTime?)null)
+                    .SetProperty(application => application.UpdatedAt, now), ct);
+            if (fenced != 1)
+            {
+                db.ChangeTracker.Clear();
+                return false;
+            }
+
+            await db.SaveChangesAsync(ct);
             return true;
-        }, ct);
+        }, ct, async () =>
+        {
+            db.ChangeTracker.Clear();
+            var aggregate = result.Aggregate;
+            var existing = await db.AggregatedResults.SingleOrDefaultAsync(row => row.ApplicationId == applicationId, ct);
+            if (existing is null)
+                db.AggregatedResults.Add(aggregate);
+            else
+            {
+                existing.FinalScore = aggregate.FinalScore;
+                existing.Variance = aggregate.Variance;
+                existing.Decision = aggregate.Decision;
+                existing.Confidence = aggregate.Confidence;
+                existing.ConsolidatedRationale = aggregate.ConsolidatedRationale;
+                existing.MergedImprovementTipsJson = aggregate.MergedImprovementTipsJson;
+                existing.FinalSubScoresJson = aggregate.FinalSubScoresJson;
+            }
+            db.ScoringRuns.AddRange(result.Runs);
+        });
     }
 
     public async Task FailAsync(
@@ -275,13 +314,20 @@ public sealed class SequentialScoringQueueRepository(
         await db.SaveChangesAsync(ct);
     }
 
-    private Task<T> InTransactionAsync<T>(Func<Task<T>> action, CancellationToken ct) =>
-        db.Database.CreateExecutionStrategy().ExecuteAsync(action, async (operation, token) =>
+    private Task<T> InTransactionAsync<T>(
+        Func<Task<T>> action, CancellationToken ct, Func<Task>? prepare = null)
+    {
+        IExecutionStrategy strategy = db.Database.IsSqlServer()
+            ? new SequentialScoringExecutionStrategy(db)
+            : db.Database.CreateExecutionStrategy();
+        return strategy.ExecuteAsync(action, async (operation, token) =>
         {
             token.ThrowIfCancellationRequested();
-            await using var transaction = await db.Database.BeginTransactionAsync(token);
             try
             {
+                if (prepare is not null)
+                    await prepare();
+                await using var transaction = await db.Database.BeginTransactionAsync(token);
                 var result = await operation();
                 await transaction.CommitAsync(token);
                 return result;
@@ -294,6 +340,7 @@ public sealed class SequentialScoringQueueRepository(
                 throw;
             }
         }, ct);
+    }
 
     private void DetachApplication(string applicationId)
     {
