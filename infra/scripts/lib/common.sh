@@ -51,18 +51,31 @@ load_env_file() {
   [[ -f "$env_file" ]] || log_fatal "Environment file not found: $env_file"
 
   log_info "Loading environment file: $env_file"
-  while IFS='=' read -r key value; do
+  local line key value line_number=0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    line="${line%$'\r'}"
     # Skip comments and blank lines
-    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" == *=* ]] \
+      || log_fatal "Invalid environment entry at $env_file:$line_number: expected KEY=VALUE."
+    key="${line%%=*}"
+    value="${line#*=}"
     # Trim whitespace
-    key=$(echo "$key" | xargs)
-    value=$(echo "$value" | xargs)
+    key=$(printf '%s\n' "$key" | xargs 2>/dev/null) \
+      || log_fatal "Invalid environment entry at $env_file:$line_number: cannot parse variable name (check quoting)."
+    [[ "$key" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] \
+      || log_fatal "Invalid environment entry at $env_file:$line_number: invalid variable name; use letters, digits, and underscores, starting with a letter or underscore."
+    value=$(printf '%s\n' "$value" | xargs 2>/dev/null) \
+      || log_fatal "Invalid environment entry at $env_file:$line_number: cannot parse value (check quoting)."
     # Strip surrounding quotes
     value="${value%\"}"
     value="${value#\"}"
     value="${value%\'}"
     value="${value#\'}"
-    export "$key=$value"
+    # Some invalid assignments terminate Bash before an error handler can run.
+    (export "$key=$value") 2>/dev/null && export "$key=$value" 2>/dev/null \
+      || log_fatal "Invalid environment entry at $env_file:$line_number: cannot export variable '$key' (it may be read-only)."
   done < "$env_file"
 }
 

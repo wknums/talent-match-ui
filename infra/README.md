@@ -60,6 +60,22 @@ cp .env_qa.example .env_qa
 cp .env_prod.example .env_prod
 ```
 
+Each non-comment, non-blank line must be a `KEY=VALUE` assignment. Variable names
+must start with a letter or underscore and contain only letters, digits, and
+underscores. Empty values and whitespace around assignments are supported.
+The shared loader stops at the first malformed entry and reports the supplied
+file path, physical line number (including comments and blank lines), and reason:
+
+```text
+[ERROR] Invalid environment entry at .env.azure:42: invalid variable name; use letters, digits, and underscores, starting with a letter or underscore.
+```
+
+Open line 42 in the supplied environment file to correct the entry. Parsing and
+export errors, including unmatched quotes and read-only variables, also report
+their source line. Diagnostics omit assignment values so secrets are not logged.
+All deployment scripts using the shared loader receive the same diagnostics.
+Run the loader regression tests with `bash infra/scripts/tests/env-file-validation.sh`.
+
 ## Bulk Scoring SQL Plan Capture
 
 Run [capture-bulk-scoring-plans.sql](scripts/sql/capture-bulk-scoring-plans.sql)
