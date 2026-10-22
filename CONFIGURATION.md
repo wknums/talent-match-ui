@@ -506,6 +506,8 @@ Raster timeout is fixed at 120 seconds; it has no environment variable.
 | `ENVIRONMENT` | Required `dev`/`test`/`prod` | Resource suffix and Terraform workspace component. Must match the explicit deploy environment argument. |
 | `RESOURCE_GROUP` | Required name | Managed/reused resource group. Azure portal/CLI or naming policy. |
 | `PROJECT_NAME` | Optional Azure-safe prefix; `talentmatch` | Resource naming prefix. Changing it may create replacements. |
+| `APP_NAME_STACK_A_INFIX` | Optional lowercase letters/digits/internal hyphens; `node` | Replaces `node` in `app-<project>-<infix>-<environment>` for Stack A only. Unset/empty profile values preserve the default. Full app name must be at most 60 characters and globally available. Changing an existing name forces App Service replacement; update redirect URIs, callbacks, CORS origins and external URLs. Does not rename managed identities or shared resources. |
+| `APP_NAME_STACK_B_INFIX` | Optional lowercase letters/digits/internal hyphens; `blazor` | Replaces `blazor` in the Stack B App Service name, with the same naming/replacement constraints as Stack A. Choose distinct infixes when deploying both stacks. |
 | `STACK_TARGET` | Optional `shared-only`/`stack-a`/`stack-b`/`both`; `both` | Defines the shared provisioning inventory, including selected SPAs, identities and runtime grants. Command targets must be a subset of the profile. |
 | `APP_SERVICE_PLAN_SKU` | Optional valid App Service SKU; `B1` | Shared plan SKU (`B1` local template, `B2` QA, `S1` production). Validate region quota/pricing. |
 | `AZ_APP_SERVICE_PLAN_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Reuse plan. True requires `AZ_APP_SERVICE_PLAN_NAME` and `AZ_APP_SERVICE_PLAN_RG`. |

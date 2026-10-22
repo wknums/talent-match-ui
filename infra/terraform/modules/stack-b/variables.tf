@@ -19,6 +19,22 @@ variable "project_name" {
   default     = "talentmatch"
 }
 
+variable "app_name_infix" {
+  description = "App Service name segment between the project and environment"
+  type        = string
+  default     = "blazor"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$", var.app_name_infix))
+    error_message = "app_name_infix must contain lowercase letters, digits or internal hyphens, starting and ending with a letter or digit."
+  }
+
+  validation {
+    condition     = length("app-${var.project_name}-${var.app_name_infix}-${var.environment}") <= 60
+    error_message = "The generated Stack B App Service name must not exceed 60 characters."
+  }
+}
+
 variable "app_service_plan_id" {
   description = "Shared App Service plan ID"
   type        = string

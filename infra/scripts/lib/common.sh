@@ -179,6 +179,8 @@ export_tf_vars() {
   export TF_VAR_location="${AZURE_LOCATION:?}"
   export TF_VAR_resource_group_name="${RESOURCE_GROUP:?}"
   export TF_VAR_project_name="${PROJECT_NAME:-talentmatch}"
+  export TF_VAR_stack_a_app_name_infix="${APP_NAME_STACK_A_INFIX:-node}"
+  export TF_VAR_stack_b_app_name_infix="${APP_NAME_STACK_B_INFIX:-blazor}"
   export TF_VAR_stack_target="${STACK_TARGET:-both}"
 
   # App Service Plan

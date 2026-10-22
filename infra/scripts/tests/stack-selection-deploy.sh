@@ -7,6 +7,7 @@ export STACK_SELECTION_CAPTURE="$test_dir/terraform-calls"
 profile="$test_dir/.env_qa"
 log="$test_dir/deployment-log"
 output="$test_dir/github-output"
+unset APP_NAME_STACK_A_INFIX APP_NAME_STACK_B_INFIX
 trap 'echo "FAIL at line $LINENO: $BASH_COMMAND" >&2; [[ ! -f "$log" ]] || cat "$log" >&2' ERR
 trap 'rm -f "$profile" "$log" "$output" "$STACK_SELECTION_CAPTURE"; rmdir "$test_dir"' EXIT
 
@@ -26,7 +27,7 @@ terraform() {
       *) printf '""\n' ;;
     esac
   elif [[ "$1" == plan ]]; then
-    printf '%s|%s|%s\n' "${PWD##*/}" "$TF_VAR_stack_target" "$TF_VAR_app_auth_mode" >> "$STACK_SELECTION_CAPTURE"
+    printf '%s|%s|%s|%s|%s\n' "${PWD##*/}" "$TF_VAR_stack_target" "$TF_VAR_app_auth_mode" "${TF_VAR_stack_a_app_name_infix:-}" "${TF_VAR_stack_b_app_name_infix:-}" >> "$STACK_SELECTION_CAPTURE"
   fi
 }
 export -f az terraform
@@ -79,8 +80,15 @@ for stack in a b; do
     write_profile stack-b "" client-b "" https://stack-b.example.com/
   fi
   bash "$SCRIPT_DIR/../deploy.sh" "$profile" test plan "stack-$stack" > "$log" 2>&1 || { cat "$log" >&2; exit 1; }
-  grep -Fxq "shared|stack-$stack|entra" "$STACK_SELECTION_CAPTURE"
-  grep -Fxq "stack-$stack|stack-$stack|entra" "$STACK_SELECTION_CAPTURE"
+  grep -Fxq "shared|stack-$stack|entra|node|blazor" "$STACK_SELECTION_CAPTURE"
+  grep -Fxq "stack-$stack|stack-$stack|entra|node|blazor" "$STACK_SELECTION_CAPTURE"
+  [[ "$(wc -l < "$STACK_SELECTION_CAPTURE" | tr -d '[:space:]')" == 2 ]]
+
+  printf '\nAPP_NAME_STACK_A_INFIX=customer-api\nAPP_NAME_STACK_B_INFIX=customer-ui\n' >> "$profile"
+  : > "$STACK_SELECTION_CAPTURE"
+  bash "$SCRIPT_DIR/../deploy.sh" "$profile" test plan "stack-$stack" > "$log" 2>&1 || { cat "$log" >&2; exit 1; }
+  grep -Fxq "shared|stack-$stack|entra|customer-api|customer-ui" "$STACK_SELECTION_CAPTURE"
+  grep -Fxq "stack-$stack|stack-$stack|entra|customer-api|customer-ui" "$STACK_SELECTION_CAPTURE"
   [[ "$(wc -l < "$STACK_SELECTION_CAPTURE" | tr -d '[:space:]')" == 2 ]]
 
   : > "$STACK_SELECTION_CAPTURE"

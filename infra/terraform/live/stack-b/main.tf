@@ -72,6 +72,7 @@ module "stack_b" {
   location                       = var.location
   resource_group_name            = var.resource_group_name
   project_name                   = var.project_name
+  app_name_infix                 = var.stack_b_app_name_infix
   app_service_plan_id            = var.app_service_plan_id
   identity_id                    = var.identity_id
   identity_client_id             = var.identity_client_id

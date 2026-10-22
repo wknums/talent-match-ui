@@ -76,6 +76,34 @@ their source line. Diagnostics omit assignment values so secrets are not logged.
 All deployment scripts using the shared loader receive the same diagnostics.
 Run the loader regression tests with `bash infra/scripts/tests/env-file-validation.sh`.
 
+### App Service naming
+
+The profile can customize the name segment that previously identified the runtime:
+
+```dotenv
+APP_NAME_STACK_A_INFIX=customer-api
+APP_NAME_STACK_B_INFIX=customer-ui
+```
+
+With `PROJECT_NAME=talentmatch` and `ENVIRONMENT=test`, these generate
+`app-talentmatch-customer-api-test` and `app-talentmatch-customer-ui-test`.
+Unset or empty profile values retain `node` and `blazor`, respectively, so existing
+profiles keep their current names. Direct Terraform callers can set
+`stack_a_app_name_infix` or `stack_b_app_name_infix` in the corresponding live root;
+the composition modules expose `app_name_infix`.
+
+Use lowercase letters, digits and internal hyphens; infixes must start and end
+with a letter or digit. Terraform rejects a generated name longer than 60
+characters. Names must still be globally available in Azure, and the two stacks
+must have distinct names. These settings change only App Service names, not
+runtime versions, managed identities, Entra registrations or shared resource names.
+
+Changing an existing app's infix forces App Service replacement. Review the plan
+before applying, and update SPA redirect URIs, Microsoft 365 connector callbacks,
+CORS origins, E2E base URLs and external integrations to the new URL. Artifact
+deployment continues to resolve the name from Terraform outputs. For GitHub
+deployments, include the new settings in the `DEPLOYMENT_ENV_FILE` environment secret.
+
 ## Bulk Scoring SQL Plan Capture
 
 Run [capture-bulk-scoring-plans.sql](scripts/sql/capture-bulk-scoring-plans.sql)

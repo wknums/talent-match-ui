@@ -29,6 +29,12 @@ variable "project_name" {
   default     = "talentmatch"
 }
 
+variable "stack_a_app_name_infix" {
+  description = "App Service name segment between the project and environment for Stack A"
+  type        = string
+  default     = "node"
+}
+
 variable "tenant_id" {
   description = "Microsoft Entra tenant ID from the authoritative environment profile"
   type        = string

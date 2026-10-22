@@ -4,10 +4,20 @@
 # Composes a .NET Blazor WASM App Service host for Stack B using the shared
 # app-service building block and stable shared-root inputs.
 
+terraform {
+  required_version = ">= 1.9.0"
+
+  required_providers {
+    azurerm = {
+      source = "hashicorp/azurerm"
+    }
+  }
+}
+
 module "app_service" {
   source = "../foundation/app-service"
 
-  name                           = "app-${var.project_name}-blazor-${var.environment}"
+  name                           = "app-${var.project_name}-${var.app_name_infix}-${var.environment}"
   location                       = var.location
   resource_group_name            = var.resource_group_name
   service_plan_id                = var.app_service_plan_id
