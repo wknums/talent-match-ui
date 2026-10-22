@@ -252,6 +252,16 @@ and `ENVIRONMENT`. This prevents local state from one subscription being reused
 by another deployment profile. If the profile's resource group already exists,
 the deployment wrapper imports it into a new workspace before planning.
 
+If that import reports `Invalid for_each argument` for
+`azuread_app_role_assignment.role_group`, use the updated
+[Entra module](terraform/modules/foundation/entra/main.tf). Both groups and
+assignments must use the configuration-keyed `local.role_groups` map; only
+`principal_object_id` reads the created group's object ID. This keeps instance
+keys known during import even before Entra groups exist. Retry the same
+deployment command with the same profile and workspace after updating the module.
+Do not delete state, regenerate role UUIDs, or use a targeted apply to work around
+this error.
+
 The environment file's `STACK_TARGET` (`stack-a`, `stack-b`, `both`, or
 `shared-only`) controls the shared provisioning inventory. Command targets can
 deploy a subset of that inventory but cannot enable an excluded stack. In

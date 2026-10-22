@@ -234,10 +234,10 @@ resource "azuread_group" "role" {
 }
 
 resource "azuread_app_role_assignment" "role_group" {
-  for_each = azuread_group.role
+  for_each = local.role_groups
 
   app_role_id         = var.app_role_ids[each.key]
-  principal_object_id = each.value.object_id
+  principal_object_id = azuread_group.role[each.key].object_id
   resource_object_id  = local.api_service_principal_object_id
 }
 

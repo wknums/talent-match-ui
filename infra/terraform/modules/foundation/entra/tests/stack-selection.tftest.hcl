@@ -226,8 +226,101 @@ run "disabled_connector_ignores_stale_coordinates" {
       stack_a = "66666666-6666-6666-6666-666666666666"
     }
   }
+
   assert {
     condition     = length(azuread_application.source_connector) == 0 && length(data.azuread_application.existing_source_connector) == 0 && length(azuread_application_federated_identity_credential.source_connector) == 0 && output.source_connector_client_id == ""
     error_message = "Stale connector inputs must not enable connector provisioning or lookup."
+  }
+}
+
+run "plan_new_role_groups" {
+  command = plan
+  variables {
+    create_role_groups = true
+    role_group_names = {
+      admin     = "talentmatch-test-admin"
+      recruiter = "talentmatch-test-recruiter"
+    }
+  }
+  assert {
+    condition     = toset(keys(azuread_group.role)) == toset(["admin", "recruiter"]) && toset(keys(azuread_app_role_assignment.role_group)) == toset(keys(azuread_group.role))
+    error_message = "New groups and their assignments must have the configured role keys before object IDs are known."
+  }
+}
+
+run "plan_role_groups_with_reused_api" {
+  command = plan
+  variables {
+    reuse              = true
+    create_role_groups = true
+    role_group_names = {
+      business_panel = "talentmatch-test-business-panel"
+    }
+  }
+  assert {
+    condition     = toset(keys(azuread_app_role_assignment.role_group)) == toset(["business_panel"]) && azuread_app_role_assignment.role_group["business_panel"].resource_object_id == var.existing_api_service_principal_object_id
+    error_message = "Role groups must also be assigned when the protected API is reused."
+  }
+}
+
+run "disabled_role_groups_ignore_stale_names" {
+  command = plan
+  variables {
+    create_role_groups = false
+    role_group_names = {
+      admin = "talentmatch-test-admin"
+    }
+  }
+  assert {
+    condition     = length(azuread_group.role) == 0 && length(azuread_app_role_assignment.role_group) == 0
+    error_message = "Disabled group creation must not create groups or assignments from stale names."
+  }
+}
+
+run "disabled_auth_has_no_group_assignments" {
+  command = plan
+  variables {
+    enabled            = false
+    create_role_groups = true
+    role_group_names = {
+      admin = "talentmatch-test-admin"
+    }
+  }
+  assert {
+    condition     = length(azuread_group.role) == 0 && length(azuread_app_role_assignment.role_group) == 0
+    error_message = "Disabled product Entra authentication must not create role group assignments."
+  }
+}
+
+run "apply_role_group_bindings" {
+  command = apply
+  variables {
+    reuse              = true
+    create_role_groups = true
+    role_group_names = {
+      admin     = "talentmatch-test-admin"
+      recruiter = "talentmatch-test-recruiter"
+    }
+  }
+  override_resource {
+    target = azuread_group.role["admin"]
+    values = {
+      object_id = "66666666-6666-6666-6666-666666666666"
+    }
+  }
+  override_resource {
+    target = azuread_group.role["recruiter"]
+    values = {
+      object_id = "77777777-7777-7777-7777-777777777777"
+    }
+  }
+  assert {
+    condition = alltrue([
+      for role, assignment in azuread_app_role_assignment.role_group :
+      assignment.principal_object_id == azuread_group.role[role].object_id &&
+      assignment.app_role_id == var.app_role_ids[role] &&
+      assignment.resource_object_id == var.existing_api_service_principal_object_id
+    ])
+    error_message = "Each assignment must bind its own group object ID and role ID to the selected API service principal."
   }
 }

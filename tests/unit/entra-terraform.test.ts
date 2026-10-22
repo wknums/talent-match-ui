@@ -288,14 +288,17 @@ describe('Entra Terraform bootstrap admin assignment', () => {
     );
   });
 
-  it('assigns role groups against the same reuse-aware API service principal', () => {
+  it('keeps role group assignment keys known during import and first plan', () => {
     const assignment = block(
       moduleMain,
       'azuread_app_role_assignment',
       'role_group',
     );
 
-    expect(assignment).toMatch(/for_each\s*=\s*azuread_group\.role/);
+    expect(assignment).toMatch(/for_each\s*=\s*local\.role_groups/);
+    expect(assignment).toMatch(
+      /principal_object_id\s*=\s*azuread_group\.role\[each\.key\]\.object_id/,
+    );
     expect(assignment).toMatch(
       /app_role_id\s*=\s*var\.app_role_ids\[each\.key\]/,
     );
