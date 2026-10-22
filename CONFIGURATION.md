@@ -530,8 +530,8 @@ Raster timeout is fixed at 120 seconds; it has no environment variable.
 | `APIM_SKU` | Optional Terraform SKU; `Consumption_0` | Templates use `Consumption_0` local, `Developer_1` QA, `Basic_1` production. |
 | `APIM_PUBLISHER_NAME` | Optional text; `TalentMatch` | APIM publisher display name. |
 | `APIM_PUBLISHER_EMAIL` | Optional email; `admin@example.com` | APIM operational contact; replace placeholder for real deployments. |
-| `AZ_IDENTITIES_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Controls Terraform managed-identity ownership only, independently of `ENTRA_REUSE`. True looks up existing identities; false creates and manages them in Terraform. For separate provisioning, explicitly run `infra/scripts/setup-identity.sh` first, then record its reuse coordinates before deployment. |
-| `AZ_IDENTITY_STACK_A_NAME`, `AZ_IDENTITY_STACK_B_NAME`, `AZ_IDENTITIES_RG` | Conditional text | Terraform reuse requires `AZ_IDENTITIES_RG` plus the name for each stack selected by `STACK_TARGET`. Separate setup accepts these as overrides; absent names default to `id-<project>-node-<environment>` and `id-<project>-blazor-<environment>`, and its resource group defaults to `RESOURCE_GROUP`. Setup prints the resolved coordinates; it does not save them. `shared-only` requires no stack identity. |
+| `AZ_IDENTITIES_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Controls Terraform managed-identity ownership only, independently of `ENTRA_REUSE`. True looks up existing identities; false creates and manages them in Terraform. For separate provisioning, set true with the desired identity names/group, explicitly run `infra/scripts/setup-identity.sh`, then deploy using the same profile. No copy-back is needed when the profile is already complete. |
+| `AZ_IDENTITY_STACK_A_NAME`, `AZ_IDENTITY_STACK_B_NAME`, `AZ_IDENTITIES_RG` | Conditional text | Terraform reuse requires `AZ_IDENTITIES_RG` plus the name for each stack selected by `STACK_TARGET`. Setup uses those configured values as-is. Only absent names default to `id-<project>-node-<environment>` and `id-<project>-blazor-<environment>`, and an absent group defaults to `RESOURCE_GROUP`. Copy printed coordinates into the profile only if setup resolved defaults that were not already configured; setup does not save them. `shared-only` requires no stack identity. |
 
 ### Separate managed-identity setup
 
@@ -547,12 +547,15 @@ For a new environment using separately provisioned managed identities:
 
 1. Prepare the untracked deployment profile with `AZURE_TENANT_ID`,
    `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `ENVIRONMENT`, and `STACK_TARGET`.
+   Set `AZ_IDENTITIES_REUSE=TRUE` so the subsequent deployment reuses the
+   identities provisioned by setup. They do not need to exist before setup.
    `PROJECT_NAME` defaults to `talentmatch`.
 2. Choose an **existing** managed-identity resource group in that subscription.
-   Set `AZ_IDENTITIES_RG`, or let setup use `RESOURCE_GROUP`. The setup script
-   does not create resource groups. Optionally supply custom
+   Set `AZ_IDENTITIES_RG` and the desired
    `AZ_IDENTITY_STACK_A_NAME` and/or `AZ_IDENTITY_STACK_B_NAME` for the selected
-   stacks; otherwise setup uses the same generated names as Terraform.
+   stacks. Setup uses these exact configured names and resource group when
+   checking or creating the identities; it does not replace them with defaults.
+   The setup script does not create resource groups.
 3. Sign in with Azure CLI and select the profile's tenant and subscription.
    The script checks both against the active context and refuses a mismatch;
    it does not switch subscriptions. The operator needs resource-group read
@@ -568,8 +571,10 @@ For a new environment using separately provisioned managed identities:
    lookup confirms it is absent. Existing identities are left unchanged.
    Lookup/permission errors stop setup instead of being treated as absence.
    Re-running is safe. `STACK_TARGET=shared-only` is a no-op.
-5. After success, copy the printed assignments into the same untracked profile.
-   For a Stack B-only environment the handoff contains:
+5. After success, run the normal deployment command using the same profile.
+   **No copying or profile update is required** if `AZ_IDENTITIES_REUSE=TRUE`,
+   `AZ_IDENTITIES_RG`, and the names for all selected stacks were already set.
+   For a Stack B-only environment, those profile settings are:
 
    ```dotenv
    AZ_IDENTITIES_REUSE=TRUE
@@ -577,16 +582,23 @@ For a new environment using separately provisioned managed identities:
    AZ_IDENTITY_STACK_B_NAME=<resolved-identity-name>
    ```
 
-   For `both`, it also includes `AZ_IDENTITY_STACK_A_NAME`. Then use the normal
-   deployment command. Terraform reads those existing identities and continues
-   to manage the configured grants, federation, and application wiring.
+   For `both`, also set `AZ_IDENTITY_STACK_A_NAME`. Terraform reads those
+   existing identities and continues to manage the configured grants,
+   federation, and application wiring.
+
+**Optional defaults:** if identity names or `AZ_IDENTITIES_RG` are omitted,
+setup uses the generated names and `RESOURCE_GROUP` described in the table
+above. Only in that case, copy the resolved assignments printed by setup into
+the profile before deployment, because Terraform reuse requires explicit
+coordinates. The printed output is otherwise just confirmation of the settings
+already in the profile.
 
 Setup runs independently of both reuse flags: invoking it explicitly authorizes
 managed-identity provisioning, but does not change what a later Terraform
 deployment owns. It does not create or modify app registrations, assign roles,
 rewrite the profile, or touch Terraform state. Deployment and CI do not invoke
-it automatically; copy the resulting settings into the CI deployment profile
-secret as well when applicable.
+it automatically. CI must use the same completed profile; update its deployment
+profile secret only if the settings changed.
 
 **Existing deployments:** do not simply change `AZ_IDENTITIES_REUSE` from false
 to true for identities already owned by Terraform. The changed resource/data
