@@ -29,7 +29,9 @@ BEGIN
         ALTER TABLE [talentmatch].[BulkScoringRequests] DROP CONSTRAINT [CK_BulkScoringRequests_AccessModel];
     IF OBJECT_ID(N'[talentmatch].[CK_BulkScoringRequests_OwningStack]', N'C') IS NOT NULL
         ALTER TABLE [talentmatch].[BulkScoringRequests] DROP CONSTRAINT [CK_BulkScoringRequests_OwningStack];
-    IF OBJECT_ID(N'[talentmatch].[CK_BulkScoringRequests_SourceKind]', N'C') IS NOT NULL
+    IF EXISTS (SELECT 1 FROM sys.check_constraints
+        WHERE object_id = OBJECT_ID(N'[talentmatch].[CK_BulkScoringRequests_SourceKind]')
+          AND definition NOT LIKE N'%onedrive_business%')
         ALTER TABLE [talentmatch].[BulkScoringRequests] DROP CONSTRAINT [CK_BulkScoringRequests_SourceKind];
 
     IF COL_LENGTH('talentmatch.BulkScoringRequests', 'CapturedScoringConfigVersionId') IS NULL
@@ -78,11 +80,14 @@ GO
 
 IF OBJECT_ID(N'[talentmatch].[BulkScoringRequests]', N'U') IS NOT NULL
 BEGIN
-    UPDATE [talentmatch].[BulkScoringRequests]
-    SET [IncludedItemCount] = [DiscoveredCount],
-        [IncludedBytes] = [TotalEligibleBytes],
-        [AcknowledgedByActorId] = CASE WHEN [AcknowledgedAt] IS NULL THEN NULL ELSE [OwnerActorId] END,
-        [SourceKind] = CASE WHEN [SourceKind] = N'onedrive' THEN N'onedrive_business' ELSE [SourceKind] END;
+    IF COL_LENGTH('talentmatch.BulkScoringRequests', 'AccessModel') IS NOT NULL
+    BEGIN
+        UPDATE [talentmatch].[BulkScoringRequests]
+        SET [IncludedItemCount] = [DiscoveredCount],
+            [IncludedBytes] = [TotalEligibleBytes],
+            [AcknowledgedByActorId] = CASE WHEN [AcknowledgedAt] IS NULL THEN NULL ELSE [OwnerActorId] END,
+            [SourceKind] = CASE WHEN [SourceKind] = N'onedrive' THEN N'onedrive_business' ELSE [SourceKind] END;
+    END;
 
     IF COL_LENGTH('talentmatch.BulkScoringRequests', 'AccessModel') IS NOT NULL
         ALTER TABLE [talentmatch].[BulkScoringRequests] DROP COLUMN [AccessModel];
@@ -108,7 +113,9 @@ GO
 
 IF OBJECT_ID(N'[talentmatch].[BulkScoringItems]', N'U') IS NOT NULL
 BEGIN
-    IF OBJECT_ID(N'[talentmatch].[CK_BulkScoringItems_Reason]', N'C') IS NOT NULL
+    IF EXISTS (SELECT 1 FROM sys.check_constraints
+        WHERE object_id = OBJECT_ID(N'[talentmatch].[CK_BulkScoringItems_Reason]')
+          AND definition NOT LIKE N'%converted_magic_invalid%')
         ALTER TABLE [talentmatch].[BulkScoringItems] DROP CONSTRAINT [CK_BulkScoringItems_Reason];
 
     IF COL_LENGTH('talentmatch.BulkScoringItems', 'OriginalPageCount') IS NULL
@@ -128,9 +135,11 @@ END;
 GO
 
 IF OBJECT_ID(N'[talentmatch].[BulkScoringItems]', N'U') IS NOT NULL
+   AND OBJECT_ID(N'[talentmatch].[CK_BulkScoringItems_Reason]', N'C') IS NULL
 BEGIN
     UPDATE [talentmatch].[BulkScoringItems]
-    SET [ConvertedPageCount] = CASE WHEN [ScoredVersion] = N'converted' THEN [OriginalPageCount] ELSE [ConvertedPageCount] END;
+    SET [ConvertedPageCount] = [OriginalPageCount]
+    WHERE [ScoredVersion] = N'converted' AND [ConvertedPageCount] IS NULL AND [OriginalPageCount] IS NOT NULL;
 
     ALTER TABLE [talentmatch].[BulkScoringItems] ADD CONSTRAINT [CK_BulkScoringItems_Reason]
         CHECK (ReasonCode IS NULL OR ReasonCode IN ('unsupported_type', 'file_too_large', 'limit_exceeded', 'empty_file', 'not_convertible', 'access_denied', 'authorization_lapsed', 'source_missing', 'source_changed', 'duplicate_in_request', 'duplicate_in_job', 'conversion_failed', 'conversion_timeout', 'converted_type_invalid', 'converted_magic_invalid', 'converted_document_invalid', 'converted_too_large', 'conversion_page_mismatch', 'conversion_page_invalid', 'conversion_dimension_mismatch', 'conversion_ssim_below_threshold', 'conversion_blank_page', 'conversion_cropped_page', 'scoring_failed', 'cancelled_by_user', 'transient_exhausted'));
@@ -139,7 +148,9 @@ GO
 
 IF OBJECT_ID(N'[talentmatch].[BulkScoringItemContents]', N'U') IS NOT NULL
 BEGIN
-    IF OBJECT_ID(N'[talentmatch].[CK_BulkScoringItemContents_Kind]', N'C') IS NOT NULL
+    IF EXISTS (SELECT 1 FROM sys.check_constraints
+        WHERE object_id = OBJECT_ID(N'[talentmatch].[CK_BulkScoringItemContents_Kind]')
+          AND definition NOT LIKE N'%transient%')
         ALTER TABLE [talentmatch].[BulkScoringItemContents] DROP CONSTRAINT [CK_BulkScoringItemContents_Kind];
     IF COL_LENGTH('talentmatch.BulkScoringItemContents', 'DeletionRequestedAt') IS NULL
         ALTER TABLE [talentmatch].[BulkScoringItemContents] ADD [DeletionRequestedAt] datetime2 NULL;
@@ -147,14 +158,17 @@ BEGIN
         ALTER TABLE [talentmatch].[BulkScoringItemContents] ADD [DeletedAt] datetime2 NULL;
     IF COL_LENGTH('talentmatch.BulkScoringItemContents', 'CleanupReasonCode') IS NULL
         ALTER TABLE [talentmatch].[BulkScoringItemContents] ADD [CleanupReasonCode] nvarchar(max) NULL;
-    ALTER TABLE [talentmatch].[BulkScoringItemContents] ADD CONSTRAINT [CK_BulkScoringItemContents_Kind]
+    IF OBJECT_ID(N'[talentmatch].[CK_BulkScoringItemContents_Kind]', N'C') IS NULL
+        ALTER TABLE [talentmatch].[BulkScoringItemContents] ADD CONSTRAINT [CK_BulkScoringItemContents_Kind]
         CHECK (Kind IN ('original', 'converted', 'transient'));
 END;
 GO
 
 IF OBJECT_ID(N'[talentmatch].[BulkRequestAuthorizations]', N'U') IS NOT NULL
 BEGIN
-    IF OBJECT_ID(N'[talentmatch].[CK_BulkRequestAuthorizations_Status]', N'C') IS NOT NULL
+    IF EXISTS (SELECT 1 FROM sys.check_constraints
+        WHERE object_id = OBJECT_ID(N'[talentmatch].[CK_BulkRequestAuthorizations_Status]')
+          AND definition NOT LIKE N'%unavailableHistorical%')
         ALTER TABLE [talentmatch].[BulkRequestAuthorizations] DROP CONSTRAINT [CK_BulkRequestAuthorizations_Status];
     IF COL_LENGTH('talentmatch.BulkRequestAuthorizations', 'ProductActorId') IS NULL
        AND COL_LENGTH('talentmatch.BulkRequestAuthorizations', 'RecruiterActorId') IS NOT NULL
@@ -171,7 +185,8 @@ BEGIN
     IF COL_LENGTH('talentmatch.BulkRequestAuthorizations', 'SourceFolderItemId') IS NULL
         ALTER TABLE [talentmatch].[BulkRequestAuthorizations] ADD [SourceFolderItemId] nvarchar(200) NOT NULL
             CONSTRAINT [DF_BulkRequestAuthorizations_SourceFolderItemId] DEFAULT N'';
-    ALTER TABLE [talentmatch].[BulkRequestAuthorizations] ADD CONSTRAINT [CK_BulkRequestAuthorizations_Status]
+    IF OBJECT_ID(N'[talentmatch].[CK_BulkRequestAuthorizations_Status]', N'C') IS NULL
+        ALTER TABLE [talentmatch].[BulkRequestAuthorizations] ADD CONSTRAINT [CK_BulkRequestAuthorizations_Status]
         CHECK (Status IN ('active', 'lapsed', 'revoked', 'accessLost', 'discarded', 'unavailableHistorical'));
 END;
 GO

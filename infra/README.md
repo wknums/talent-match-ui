@@ -284,6 +284,26 @@ and coordinate state migration before applying to an existing environment.
 See the [manual identity handoff guide](../docs/MANUAL_ENTRA_ID_RBAC_IMPLEMENTATION_GUIDE.md)
 for per-stack object counts, consent and configuration examples.
 
+For separate managed-identity provisioning, run setup explicitly before the
+normal deployment:
+
+```bash
+bash infra/scripts/setup-identity.sh .env_qa
+```
+
+Setup checks or creates only the identities selected by `STACK_TARGET` in an
+existing resource group. It uses configured names/group when supplied, otherwise
+the Terraform naming defaults and `RESOURCE_GROUP`. It verifies the active
+Azure tenant/subscription and stops on lookup or permission errors. After
+success, record the printed `AZ_IDENTITIES_REUSE=TRUE`, `AZ_IDENTITIES_RG`, and
+selected identity-name assignments in the untracked profile before deployment.
+No profile, Terraform state, app registration, or grant is changed by setup.
+It is never invoked automatically by deployment or CI. `ENTRA_REUSE` continues
+to control app registrations independently. Existing Terraform-owned identities
+must not be switched to reuse without a reviewed state migration.
+See [separate managed-identity setup](../CONFIGURATION.md#separate-managed-identity-setup)
+for prerequisites, handoff steps, and ownership precautions.
+
 Browser clients must request the delegated scope as
 `<ENTRA_API_IDENTIFIER_URI>/<ENTRA_API_SCOPE>`; do not synthesize it from
 `ENTRA_API_APP_CLIENT_ID` when the registration uses a custom identifier URI.
@@ -671,6 +691,7 @@ The deploy script validates before any Terraform execution:
 |--------|---------|
 | `infra/scripts/deploy.sh` | Main deployment wrapper |
 | `infra/scripts/deprovision.sh` | Safe destroy with reuse protection |
+| `infra/scripts/setup-identity.sh` | Explicit idempotent managed-identity setup and reuse-coordinate handoff |
 | `infra/scripts/resolve-targets.sh` | Workflow target resolution |
 | `infra/scripts/package-stack-a.sh` | Build and package Stack A |
 | `infra/scripts/package-stack-b.sh` | Publish and package Stack B |

@@ -131,6 +131,60 @@ public sealed class BulkScoringSqlServerConcurrencyTests
     }
 
     [SqlServerFact]
+    public async Task Repeated_startup_upgrade_preserves_current_data_without_bulk_writes_or_constraint_rebuilds()
+    {
+        await using var f = await SqlFixture.CreateAsync();
+        var request = await f.CreateRequestAsync(2);
+        await using var db = f.Context();
+        await db.BulkScoringRequests.Where(r => r.Id == request.Id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(r => r.IncludedItemCount, 1)
+            .SetProperty(r => r.IncludedBytes, 1));
+        await db.BulkScoringItems.Where(i => i.RequestId == request.Id).ExecuteUpdateAsync(setters => setters
+            .SetProperty(i => i.ScoredVersion, BulkScoredVersion.Converted)
+            .SetProperty(i => i.OriginalPageCount, 3)
+            .SetProperty(i => i.ConvertedPageCount, 2));
+        await db.Database.OpenConnectionAsync();
+        foreach (var sql in new[]
+                 {
+                     """
+                     CREATE TRIGGER [talentmatch].[RejectRepeatedRequestUpdates]
+                     ON [talentmatch].[BulkScoringRequests] AFTER UPDATE
+                     AS THROW 51042, 'Startup must not update current bulk requests.', 1;
+                     """,
+                     """
+                     CREATE TRIGGER [talentmatch].[RejectRepeatedItemUpdates]
+                     ON [talentmatch].[BulkScoringItems] AFTER UPDATE
+                     AS THROW 51042, 'Startup must not update current bulk items.', 1;
+                     """,
+                     """
+                     CREATE TRIGGER [RejectRepeatedBulkAlter] ON DATABASE FOR ALTER_TABLE
+                     AS THROW 51042, 'Startup must not rebuild current bulk constraints.', 1;
+                     """,
+                 })
+        {
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = sql;
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var upgrade = File.ReadAllText(Path.Combine(RepositoryRoot(), "server", "storage", "schema-bulk-v3-upgrades.sql"));
+        for (var repeat = 0; repeat < 2; repeat++)
+            foreach (var batch in Regex.Split(upgrade, @"\r?\n\s*GO\s*(?:\r?\n|$)", RegexOptions.IgnoreCase))
+                if (!string.IsNullOrWhiteSpace(batch))
+                {
+                    await using var command = db.Database.GetDbConnection().CreateCommand();
+                    command.CommandText = batch;
+                    await command.ExecuteNonQueryAsync();
+                }
+
+        var retained = await db.BulkScoringRequests.AsNoTracking().SingleAsync(r => r.Id == request.Id);
+        retained.IncludedItemCount.Should().Be(1);
+        retained.IncludedBytes.Should().Be(1);
+        (await db.BulkScoringItems.AsNoTracking().Where(i => i.RequestId == request.Id).ToListAsync())
+            .Should().OnlyContain(i => i.OriginalPageCount == 3 && i.ConvertedPageCount == 2);
+    }
+
+    [SqlServerFact]
     public async Task Pending_scoring_API_holds_no_transaction_or_application_row_lock()
     {
         await using var f = await SqlFixture.CreateAsync();

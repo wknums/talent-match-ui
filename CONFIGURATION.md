@@ -194,7 +194,7 @@ separate from the delegated Microsoft 365 source connector.
 | `ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID` | Required only when `ENTRA_REUSE=TRUE`; GUID | Enterprise application object ID, not app object ID. Terraform output or `az ad sp show --id <client-id>`. |
 | `ENTRA_API_IDENTIFIER_URI` | Required for Entra deployment and Stack B auth metadata | Protected API Application ID URI, usually `api://<id>`. App registration **Expose an API**. |
 | `ENTRA_API_SCOPE` | Required by Stack A Entra runtime; Stack B default `access_as_user`; deployment default `access_as_user` | Delegated scope value, not the full URI. |
-| `ENTRA_API_SCOPE_ID` | Required for deployment when product auth is `entra`; explicit UUID, no default | Delegated scope UUID from the API manifest, distinct from the scope value. Preserve existing IDs; for a new registration select and persist once before the first plan. Deployment-only, mapped to `TF_VAR_entra_api_scope_id`. |
+| `ENTRA_API_SCOPE_ID` | Required for deployment when `APP_AUTH_MODE=entra`, regardless of `ENTRA_REUSE`; explicit UUID, no default | Protected API manifest `api.oauth2PermissionScopes[].id` for the entry whose `value` matches `ENTRA_API_SCOPE`. Not the API client ID or scope name. Preserve existing IDs; for a new registration select and persist once before the first plan. Deployment-only, mapped to `TF_VAR_entra_api_scope_id`. |
 | `ENTRA_STACK_A_CLIENT_ID` | Conditional non-secret GUID | Required for reuse when Stack A is selected. Stack A runtime accepts configured SPA clients; Stack B can additionally trust this ID when present but does not require it in a B-only deployment. |
 | `ENTRA_STACK_B_CLIENT_ID` | Conditional non-secret GUID | Required for reuse when Stack B is selected and for Stack B runtime Entra authentication. Omit for Stack A-only deployments. |
 | `ENTRA_STACK_A_REDIRECT_URIS` | Required by deployment when product auth is `entra` and Stack A is selected; CSV | Exact Stack A SPA redirects registered by Terraform. Include scheme and trailing path required by the app. |
@@ -209,6 +209,80 @@ separate from the delegated Microsoft 365 source connector.
 | `ENTRA_BOOTSTRAP_DEPARTMENT_NAME` | Conditional non-secret text | Required by the post-deployment admin data seed. Department to create/adopt. |
 
 No SPA client secret is supported or required.
+
+### Obtaining ENTRA_API_SCOPE_ID
+
+For an existing deployment, the scope UUID is inside the protected API app's
+**Manifest**, not among the application and tenant IDs on its Overview page.
+**Expose an API** identifies the scope name but is not the place to rely on
+for its UUID.
+
+#### Find the scope UUID in the portal
+
+1. Open **Microsoft Entra ID > App registrations > All applications** in the
+   deployment's tenant.
+2. Select the **protected API application** for the target environment, not
+   either SPA registration, the Microsoft 365 source connector, or the API's
+   entry under Enterprise applications.
+3. Under **Manage**, select **Manifest**.
+4. Search within the JSON for `oauth2PermissionScopes`.
+5. Find the entry whose `value` matches `ENTRA_API_SCOPE` (normally
+   `access_as_user`). Copy the `id` from that same entry:
+
+   ```json
+   {
+     "api": {
+       "oauth2PermissionScopes": [
+         {
+           "id": "<scope UUID to copy>",
+           "isEnabled": true,
+           "value": "access_as_user"
+         }
+       ]
+     }
+   }
+   ```
+
+   This is an illustrative excerpt; copy the actual UUID from the existing
+   manifest, not the placeholder above.
+6. Set it in the untracked deployment profile:
+
+   ```dotenv
+   ENTRA_API_SCOPE_ID=<copied-scope-UUID>
+   ```
+
+Do not use the manifest's top-level `id`, `appId`, tenant ID, or an ID under
+`appRoles`; those identify different things. This lookup is read-only: you do
+not need to edit or save the manifest.
+
+#### Find the scope UUID with Azure CLI
+
+Copy the protected API's **Application (client) ID** from its Overview page,
+then run this read-only command:
+
+```bash
+az ad app show --id "<protected-api-client-id>" --query "api.oauth2PermissionScopes[].{Scope:value,ScopeId:id}" --output table
+```
+
+Replace the client ID placeholder with that application ID. From the returned
+table, copy the **ScopeId** on the row whose **Scope** matches `ENTRA_API_SCOPE`
+(normally `access_as_user`) into `ENTRA_API_SCOPE_ID`. The application ID is
+only used to look up the registration; it is not the value to put in
+`ENTRA_API_SCOPE_ID`.
+
+If there are no rows or no matching scope entry, verify the signed-in tenant,
+API registration, and scope name before proceeding. Do not create a new scope
+or generate a replacement UUID merely because the lookup did not find it.
+
+#### New registrations and older deployment profiles
+
+For a genuinely new API registration, generate one UUID and persist it in the
+untracked profile before the first Terraform plan. Terraform uses it when
+creating the scope and the selected SPAs' delegated permission references.
+Never generate a replacement on each deployment or replace an existing scope's
+ID. Older deployment code supplied a built-in scope UUID; current code requires
+it explicitly, so an older working deployment may still need its profile updated
+with the existing scope ID before redeployment.
 
 ## AWReason and scoring
 
@@ -227,7 +301,7 @@ No SPA client secret is supported or required.
 | `AWR_REASONING_LEVEL` | Optional provider-supported reasoning value; scoring-profile default `medium` | Snapshotted with the model; changing it has the same approval implications. |
 | `AWR_MODEL`, `AWR_REASONING` | Compatibility aliases; primary names above win | Supported by both scoring-profile readers but should not be used for new configuration. |
 | `AWR_MAX_PARALLEL` | Optional positive integer; `1` | Per-instance sequential production document slots. Stack B fails startup on invalid values; Stack A clamps/falls back to at least one. Prompt tests have a separate override. |
-| `AWR_SCORING_LEASE_SECONDS` | Optional whole number of seconds from `60` to `1800`; `240` (4 minutes) | Stack B only. How long a document being scored stays reserved to its host before a sweep fails it with "Sequential scoring lease expired". The host renews it every 20 s and retries a failed renewal (5 attempts, 2 s doubling to 30 s), then keeps trying at each heartbeat while the lease is still valid. Stack B fails startup on an invalid value. Stack A has no equivalent lease and ignores it. |
+| `AWR_SCORING_LEASE_SECONDS` | Optional whole number of seconds from `60` to `1800`; `240` (4 minutes) | Stack B only. Renewable ownership window, not a scoring-call timeout. The host renews every 20 s; each renewal attempt is limited to 20 s, with up to 5 attempts and 2 s exponential backoff capped at 30 s. All attempts/backoff are bounded by the last known database lease deadline minus one heartbeat; scoring is cancelled before ownership expires. Brief outages can be retried at the next heartbeat while sufficient time remains. Invalid values fail startup. Stack A ignores this setting. |
 | `AWR_PLATFORM_BATCH_SIZE` | Optional positive integer; `2` | Applications per platform submission. Platform mode only. |
 | `AWR_PLATFORM_RECONCILE_INTERVAL_MS` | Optional integer; `15000`, minimum `2000` | Platform reconciler tick, both stacks. |
 | `AWR_PLATFORM_MAX_INFLIGHT_PER_TICK` | Optional integer; `50`, minimum `1` | Maximum due batches considered per tick, per replica. |
@@ -256,6 +330,39 @@ backoff. Each attempt reloads the aggregate and rechecks current ownership and l
 Cancellation interrupts the wait; exhausted and permanent failures propagate to the existing
 worker failure handling. Other transient SQL errors retain the existing six-retry/15-second
 maximum-delay policy. These retry limits are code-level defaults, not environment settings.
+
+### Stack B worker startup and lease failures
+
+Sequential scoring and bulk import wait for successful background database initialization before
+claiming or recovering work. The gate is registered even when the Microsoft 365 connector is off.
+If initialization exhausts its retries, the gate stays closed and the host stops; a successful SQL
+connection alone does not mean the schema is ready. Repeated delegated-v3 startup upgrades retain
+current constraints and do not rewrite request selections or validated conversion page counts.
+
+A scoring claim carries the database lease deadline. A delayed claim cannot start scoring after
+that deadline, and a blocked renewal cannot extend the local ownership budget merely by retrying.
+The general 180-second SQL command timeout does not override the shorter heartbeat cancellation
+budget.
+
+`Sequential scoring lease expired; scoring outcome is unknown` means the owning worker stopped
+renewing, not necessarily that the AI endpoint failed. A process kill, instance replacement,
+deployment, prolonged SQL outage, or thread-pool starvation can cause it. Recovery deliberately
+fails unknown outcomes instead of automatically resubmitting a possibly completed scoring call.
+Already failed applications require an explicit retry; deployment does not clear their errors.
+
+For a continuously running background workload:
+
+- Enable App Service Always On and verify the live setting matches the infrastructure declaration.
+- Budget concurrency across replicas: `AWR_MAX_PARALLEL=10` on two instances permits 20 production
+  scoring applications. Import and conversion concurrency are also per instance.
+- Reduce CPU-heavy conversion/import concurrency or increase per-instance CPU/memory when
+  heartbeats are starved. Adding replicas also increases SQL and scoring load.
+- Drain work before planned restarts or scale-in. A five-second container termination grace cannot
+  preserve a multi-minute in-flight scoring call. Increasing the lease only delays detection after
+  a kill; it cannot recover an unpersisted response.
+- To resume interrupted calls automatically without duplicates, the scoring provider must support
+  durable operation IDs or idempotency keys and outcome lookup. Do not replace the ownership fence
+  or explicit unknown-outcome retry with blind automatic resubmission.
 
 ## Delegated Microsoft 365 connector
 
@@ -423,8 +530,69 @@ Raster timeout is fixed at 120 seconds; it has no environment variable.
 | `APIM_SKU` | Optional Terraform SKU; `Consumption_0` | Templates use `Consumption_0` local, `Developer_1` QA, `Basic_1` production. |
 | `APIM_PUBLISHER_NAME` | Optional text; `TalentMatch` | APIM publisher display name. |
 | `APIM_PUBLISHER_EMAIL` | Optional email; `admin@example.com` | APIM operational contact; replace placeholder for real deployments. |
-| `AZ_IDENTITIES_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Reuse managed identities for the stacks selected by `STACK_TARGET`. A single-stack deployment requires only that stack's identity. |
-| `AZ_IDENTITY_STACK_A_NAME`, `AZ_IDENTITY_STACK_B_NAME`, `AZ_IDENTITIES_RG` | Conditional text | When identity reuse is enabled, provide `AZ_IDENTITIES_RG` plus `AZ_IDENTITY_STACK_A_NAME` only if `STACK_TARGET` includes `stack-a`, and `AZ_IDENTITY_STACK_B_NAME` only if it includes `stack-b`. `shared-only` requires neither stack identity. |
+| `AZ_IDENTITIES_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Controls Terraform managed-identity ownership only, independently of `ENTRA_REUSE`. True looks up existing identities; false creates and manages them in Terraform. For separate provisioning, explicitly run `infra/scripts/setup-identity.sh` first, then record its reuse coordinates before deployment. |
+| `AZ_IDENTITY_STACK_A_NAME`, `AZ_IDENTITY_STACK_B_NAME`, `AZ_IDENTITIES_RG` | Conditional text | Terraform reuse requires `AZ_IDENTITIES_RG` plus the name for each stack selected by `STACK_TARGET`. Separate setup accepts these as overrides; absent names default to `id-<project>-node-<environment>` and `id-<project>-blazor-<environment>`, and its resource group defaults to `RESOURCE_GROUP`. Setup prints the resolved coordinates; it does not save them. `shared-only` requires no stack identity. |
+
+### Separate managed-identity setup
+
+App registrations and runtime managed identities have independent controls:
+
+- `ENTRA_REUSE=TRUE` reuses the protected API and selected SPA app registrations.
+- `AZ_IDENTITIES_REUSE=TRUE` tells Terraform to look up managed identities that
+  already exist. It does not mean app-registration reuse.
+- `AZ_IDENTITIES_REUSE=FALSE` preserves the existing Terraform create/manage
+  workflow; a separate setup step is not required for that workflow.
+
+For a new environment using separately provisioned managed identities:
+
+1. Prepare the untracked deployment profile with `AZURE_TENANT_ID`,
+   `AZURE_SUBSCRIPTION_ID`, `AZURE_LOCATION`, `ENVIRONMENT`, and `STACK_TARGET`.
+   `PROJECT_NAME` defaults to `talentmatch`.
+2. Choose an **existing** managed-identity resource group in that subscription.
+   Set `AZ_IDENTITIES_RG`, or let setup use `RESOURCE_GROUP`. The setup script
+   does not create resource groups. Optionally supply custom
+   `AZ_IDENTITY_STACK_A_NAME` and/or `AZ_IDENTITY_STACK_B_NAME` for the selected
+   stacks; otherwise setup uses the same generated names as Terraform.
+3. Sign in with Azure CLI and select the profile's tenant and subscription.
+   The script checks both against the active context and refuses a mismatch;
+   it does not switch subscriptions. The operator needs resource-group read
+   access and managed-identity read/create permissions on the target group.
+4. Run setup explicitly from the repository root:
+
+   ```bash
+   bash infra/scripts/setup-identity.sh .env_qa
+   ```
+
+   Substitute the actual profile path, such as `.env.azure`. This is a
+   provisioning command: it creates each selected identity only if a successful
+   lookup confirms it is absent. Existing identities are left unchanged.
+   Lookup/permission errors stop setup instead of being treated as absence.
+   Re-running is safe. `STACK_TARGET=shared-only` is a no-op.
+5. After success, copy the printed assignments into the same untracked profile.
+   For a Stack B-only environment the handoff contains:
+
+   ```dotenv
+   AZ_IDENTITIES_REUSE=TRUE
+   AZ_IDENTITIES_RG=<resolved-resource-group>
+   AZ_IDENTITY_STACK_B_NAME=<resolved-identity-name>
+   ```
+
+   For `both`, it also includes `AZ_IDENTITY_STACK_A_NAME`. Then use the normal
+   deployment command. Terraform reads those existing identities and continues
+   to manage the configured grants, federation, and application wiring.
+
+Setup runs independently of both reuse flags: invoking it explicitly authorizes
+managed-identity provisioning, but does not change what a later Terraform
+deployment owns. It does not create or modify app registrations, assign roles,
+rewrite the profile, or touch Terraform state. Deployment and CI do not invoke
+it automatically; copy the resulting settings into the CI deployment profile
+secret as well when applicable.
+
+**Existing deployments:** do not simply change `AZ_IDENTITIES_REUSE` from false
+to true for identities already owned by Terraform. The changed resource/data
+selection can plan their destruction. Preserve existing ownership, or arrange a
+reviewed state migration and inspect the resulting plan before applying.
+Setup warns when the profile still selects Terraform create mode.
 
 ### Application Insights
 
@@ -493,8 +661,32 @@ References: [App Service monitoring](https://learn.microsoft.com/azure/app-servi
 | `AZ_INTEGRATION_SUBNET_CIDR` | Conditional CIDR, prefix `/26` or larger network | Create a delegated subnet in the reused VNet. Mutually exclusive with subnet name. |
 | `AZ_SQL_PRIVATE_ENDPOINT_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Asserts that SQL private endpoint/DNS already exists. If false while VNet is enabled, private-endpoint subnet CIDR is required. |
 | `AZ_SQL_PRIVATE_ENDPOINT_SUBNET_NAME` | Optional name; `snet-sql-private-endpoints` | Dedicated private endpoint subnet name. |
-| `AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR` | Conditional CIDR; empty | Required when VNet is enabled and an existing SQL private endpoint is not reused. |
+| `AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR` | Required when `AZ_VNET_REUSE=TRUE` and `AZ_SQL_PRIVATE_ENDPOINT_REUSE` is not `TRUE`; CIDR, no default | Approved unused subnet range within the target VNet address space, obtained from the network owner after checking VNet Address space and Subnets. Terraform creates a dedicated private-endpoint subnet; this must not overlap the App Service integration subnet or other allocated ranges. Not used when SQL Private Link is reused. |
 | `AZ_ALLOWED_IPS` | Required with VNet; comma-separated IPs; empty | App Service public allow-list. Use operator/public egress addresses; all other traffic is denied. |
+
+#### Obtaining AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR
+
+This is a network allocation to choose with the VNet owner, not a value from
+the SQL server's Overview page or its public IP address. In **Azure portal >
+Virtual networks > the VNet identified by `AZ_VNET_NAME` and `AZ_VNET_RG`**:
+
+1. Open **Address space** to identify the VNet's configured address ranges.
+2. Open **Subnets** to check ranges already allocated. Also confirm any planned
+   or reserved ranges with the network owner.
+3. Obtain approval for an unused range inside the VNet address space, separate
+   from the App Service integration subnet and non-overlapping with other
+   allocations. For example, `10.0.5.0/27` is illustrative only; use it only if
+   it belongs to this VNet and is available and approved.
+4. Set `AZ_SQL_PRIVATE_ENDPOINT_SUBNET_CIDR` to that approved CIDR in the
+   untracked profile when `AZ_VNET_REUSE=TRUE` and
+   `AZ_SQL_PRIVATE_ENDPOINT_REUSE=FALSE`. Terraform creates the subnet and SQL
+   private endpoint/DNS resources; do not pre-create the subnet for this mode.
+
+When `AZ_SQL_PRIVATE_ENDPOINT_REUSE=TRUE`, leave the CIDR empty or omit it:
+Terraform skips creating SQL Private Link and assumes the existing private
+endpoint and DNS configuration already provide connectivity. Do not switch to
+reuse merely to bypass validation or because a previous Terraform apply created
+the endpoint; preserve the intended resource ownership and Terraform state.
 
 ## Tests, packaging, and administration
 

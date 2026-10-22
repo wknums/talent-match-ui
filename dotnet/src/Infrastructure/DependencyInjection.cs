@@ -41,6 +41,7 @@ public static class DependencyInjection
                 options.UseSqlite(sqliteConnectionString));
         }
 
+        services.AddSingleton<HostedServices.DatabaseInitializationGate>();
         services.AddScoped<IJobRepository, JobRepository>();
         services.AddScoped<IExtractionInstructionRepository, ExtractionInstructionRepository>();
         services.AddScoped<IJobSpecExtractionRepository, JobSpecExtractionRepository>();

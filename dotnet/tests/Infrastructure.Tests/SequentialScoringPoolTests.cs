@@ -141,12 +141,72 @@ public sealed class SequentialScoringPoolTests
             services.GetRequiredService<IServiceScopeFactory>(),
             new SequentialScoringSignal(),
             new SequentialScoringOptions { Enabled = false },
+            new DatabaseInitializationGate(),
             NullLogger<SequentialScoringPool>.Instance);
 
         await pool.StartAsync(CancellationToken.None);
         await pool.StopAsync(CancellationToken.None);
 
         queue.Pending.Count.Should().Be(7);
+        queue.Recoveries.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Closed_database_gate_prevents_claims_and_recovery_until_initialization_succeeds()
+    {
+        var queue = new TestQueue();
+        queue.Upload(1, 1);
+        var scorer = new ControlledScorer();
+        var gate = new DatabaseInitializationGate();
+        gate.Close();
+        using var services = new ServiceCollection()
+            .AddSingleton(gate)
+            .AddSingleton<ISequentialScoringQueueRepository>(queue)
+            .AddSingleton<ISequentialApplicationScorer>(scorer)
+            .BuildServiceProvider();
+        using var pool = ActivatorUtilities.CreateInstance<SequentialScoringPool>(
+            services, new SequentialScoringSignal(), new SequentialScoringOptions
+            {
+                PollInterval = TimeSpan.FromMilliseconds(20),
+            }, NullLogger<SequentialScoringPool>.Instance);
+
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Task.Delay(100);
+            queue.Pending.Should().HaveCount(1);
+            queue.Recoveries.Should().Be(0);
+            scorer.Started.Should().BeEmpty();
+
+            gate.Open();
+            await Eventually(() => scorer.Started.Count == 1);
+            scorer.Complete("app-1");
+            await Eventually(() => scorer.Active == 0);
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Stopping_while_database_initialization_is_pending_does_not_touch_the_queue()
+    {
+        var queue = new TestQueue();
+        var gate = new DatabaseInitializationGate();
+        gate.Close();
+        using var services = new ServiceCollection()
+            .AddSingleton(gate)
+            .AddSingleton<ISequentialScoringQueueRepository>(queue)
+            .BuildServiceProvider();
+        using var pool = ActivatorUtilities.CreateInstance<SequentialScoringPool>(
+            services, new SequentialScoringSignal(), new SequentialScoringOptions(),
+            NullLogger<SequentialScoringPool>.Instance);
+
+        await pool.StartAsync(CancellationToken.None);
+        await Task.Delay(100);
+        await pool.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(2));
+
         queue.Recoveries.Should().Be(0);
     }
 
@@ -161,6 +221,7 @@ public sealed class SequentialScoringPoolTests
                 HeartbeatInterval = TimeSpan.FromSeconds(1),
                 LeaseDuration = TimeSpan.FromMinutes(2),
             },
+            new DatabaseInitializationGate(),
             NullLogger<SequentialScoringPool>.Instance);
 
     // Fast heartbeat and a short lease so renewal behaviour can be observed in well under a second.
@@ -178,6 +239,7 @@ public sealed class SequentialScoringPoolTests
                 RenewRetryDelay = TimeSpan.FromMilliseconds(5),
                 RenewRetryMaxDelay = TimeSpan.FromMilliseconds(20),
             },
+            new DatabaseInitializationGate(),
             NullLogger<SequentialScoringPool>.Instance);
 
     private static async Task<(TestQueue Queue, ControlledScorer Scorer, ServiceProvider Services)> StartOneApplication(
@@ -279,6 +341,95 @@ public sealed class SequentialScoringPoolTests
         }
     }
 
+    [Fact]
+    public async Task A_claim_returned_after_its_database_deadline_does_not_start_scoring()
+    {
+        var queue = new TestQueue { ClaimLeaseUntil = DateTime.UtcNow.AddSeconds(-1) };
+        var scorer = new ControlledScorer();
+        using var services = new ServiceCollection()
+            .AddSingleton<ISequentialScoringQueueRepository>(queue)
+            .AddSingleton<ISequentialApplicationScorer>(scorer)
+            .BuildServiceProvider();
+        queue.Upload(1, 1);
+        using var pool = CreateRenewalPool(services, TimeSpan.FromSeconds(2));
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => queue.Failures.Contains("app-1"));
+            scorer.Started.Should().BeEmpty();
+            queue.RenewCalls.Should().Be(0);
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task A_stalled_renewal_is_bounded_so_a_later_attempt_can_preserve_live_scoring()
+    {
+        var queue = new TestQueue
+        {
+            RenewWithCancellation = async (call, ct) =>
+            {
+                if (call == 1)
+                    await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return true;
+            },
+        };
+        var scorer = new ControlledScorer();
+        using var services = new ServiceCollection()
+            .AddSingleton<ISequentialScoringQueueRepository>(queue)
+            .AddSingleton<ISequentialApplicationScorer>(scorer)
+            .BuildServiceProvider();
+        queue.Upload(1, 1);
+        using var pool = CreateRenewalPool(services, TimeSpan.FromSeconds(2));
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => queue.RenewCalls >= 2).WaitAsync(TimeSpan.FromSeconds(1));
+            scorer.Active.Should().Be(1);
+            scorer.Complete("app-1");
+            await Eventually(() => scorer.Active == 0);
+            queue.Failures.Should().BeEmpty();
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Stalled_retry_sets_cannot_keep_scoring_alive_past_the_known_lease_deadline()
+    {
+        var queue = new TestQueue
+        {
+            RenewWithCancellation = async (_, ct) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+                return true;
+            },
+        };
+        var scorer = new ControlledScorer();
+        using var services = new ServiceCollection()
+            .AddSingleton<ISequentialScoringQueueRepository>(queue)
+            .AddSingleton<ISequentialApplicationScorer>(scorer)
+            .BuildServiceProvider();
+        queue.Upload(1, 1);
+        using var pool = CreateRenewalPool(services, TimeSpan.FromMilliseconds(300), renewAttempts: 1000);
+        await pool.StartAsync(CancellationToken.None);
+        try
+        {
+            await Eventually(() => queue.Failures.Contains("app-1")).WaitAsync(TimeSpan.FromSeconds(2));
+            await Eventually(() => scorer.Active == 0);
+            queue.RenewCalls.Should().BeGreaterThan(1);
+        }
+        finally
+        {
+            await pool.StopAsync(CancellationToken.None);
+        }
+    }
+
     [Theory]
     [InlineData(null, 240)]
     [InlineData("", 240)]
@@ -329,6 +480,8 @@ public sealed class SequentialScoringPoolTests
 
         // Scripts RenewLeaseAsync by call number (1-based); null means always renewed.
         public Func<int, Task<bool>>? Renew { get; init; }
+        public Func<int, CancellationToken, Task<bool>>? RenewWithCancellation { get; init; }
+        public DateTime? ClaimLeaseUntil { get; init; }
         public int RenewCalls => Volatile.Read(ref _renewCalls);
 
         public void Upload(int start, int count)
@@ -340,14 +493,17 @@ public sealed class SequentialScoringPoolTests
         public Task<SequentialScoringWork?> TryClaimAsync(
             string owner, DateTime now, TimeSpan leaseDuration, CancellationToken ct)
             => Task.FromResult(Pending.TryDequeue(out var id)
-                ? new SequentialScoringWork(id, "job-1", owner, "prompt-1", 3, "Job", "[]", 15, 70)
+                ? new SequentialScoringWork(id, "job-1", owner, "prompt-1", 3, "Job", "[]", 15, 70,
+                    LeaseUntil: ClaimLeaseUntil)
                 : null);
 
         public Task<bool> RenewLeaseAsync(
             string applicationId, string owner, DateTime now, TimeSpan leaseDuration, CancellationToken ct)
         {
             var call = Interlocked.Increment(ref _renewCalls);
-            return Renew is null ? Task.FromResult(true) : Renew(call);
+            return RenewWithCancellation is not null
+                ? RenewWithCancellation(call, ct)
+                : Renew is null ? Task.FromResult(true) : Renew(call);
         }
 
         public Task<bool> FinalizeAsync(

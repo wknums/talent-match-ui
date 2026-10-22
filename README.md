@@ -393,7 +393,12 @@ Create or reuse only the objects selected by the environment file's
 plus the Stack B SPA for `stack-b`, or one API plus both SPAs for `both`.
 Runtime managed identities and their grants follow the same selection.
 `ENTRA_REUSE` and `AZ_IDENTITIES_REUSE` are independent switches. The deployment
-command cannot enable a stack excluded by the profile. See the
+command cannot enable a stack excluded by the profile. To provision managed
+identities separately, explicitly run `bash infra/scripts/setup-identity.sh <env-file>`
+and record its printed reuse coordinates in the untracked profile before deployment.
+This does not change app registrations or migrate existing Terraform ownership.
+See [separate managed-identity setup](./CONFIGURATION.md#separate-managed-identity-setup)
+for the workflow. See the
 [manual identity guide](./docs/MANUAL_ENTRA_ID_RBAC_IMPLEMENTATION_GUIDE.md)
 for exact per-stack inventories and handoff examples.
 

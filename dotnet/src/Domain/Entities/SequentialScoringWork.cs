@@ -10,4 +10,5 @@ public sealed record SequentialScoringWork(
     string RubricJson,
     double VarianceThreshold,
     double LonglistThreshold,
-    string? ScoringConfigVersionId = null);
+    string? ScoringConfigVersionId = null,
+    DateTime? LeaseUntil = null);

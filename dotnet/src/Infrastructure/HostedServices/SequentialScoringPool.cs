@@ -13,6 +13,7 @@ public sealed class SequentialScoringPool(
     IServiceScopeFactory scopeFactory,
     IScoringQueueSignal signal,
     SequentialScoringOptions options,
+    DatabaseInitializationGate databaseGate,
     ILogger<SequentialScoringPool> logger) : BackgroundService
 {
     private readonly string _owner = $"{Environment.MachineName}-{Guid.NewGuid():N}";
@@ -28,6 +29,9 @@ public sealed class SequentialScoringPool(
         if (options.MaxParallel < 1 || options.PollInterval <= TimeSpan.Zero
             || options.HeartbeatInterval <= TimeSpan.Zero || options.LeaseDuration <= options.HeartbeatInterval)
             throw new InvalidOperationException("Invalid sequential scoring pool capacity or timing configuration.");
+
+        try { await databaseGate.WaitAsync(stoppingToken); }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
 
         logger.LogInformation(
             "Sequential scoring pool started with {Slots} document slots per app instance (lease {LeaseSeconds}s, renewed every {HeartbeatSeconds}s, owner={Owner}).",
@@ -93,6 +97,7 @@ public sealed class SequentialScoringPool(
         try
         {
             using var scope = scopeFactory.CreateScope();
+            workCancellation.Token.ThrowIfCancellationRequested();
             await scope.ServiceProvider.GetRequiredService<ISequentialApplicationScorer>()
                 .ScoreAsync(work, workCancellation.Token);
             logger.LogInformation("Sequential scoring completed for application {ApplicationId}.", work.ApplicationId);
@@ -131,12 +136,20 @@ public sealed class SequentialScoringPool(
 
     private async Task MaintainLeaseAsync(SequentialScoringWork work, CancellationTokenSource workCancellation)
     {
-        // Latest moment the database is known to hold the lease for; the claim itself set it LeaseDuration ahead.
-        var leaseValidUntil = DateTime.UtcNow.Add(options.LeaseDuration);
+        var leaseValidUntil = work.LeaseUntil ?? DateTime.UtcNow.Add(options.LeaseDuration);
         try
         {
             while (true)
             {
+                // Leave one heartbeat of headroom for cancellation and failure persistence.
+                // This deadline also bounds database retries and their backoff, not only the heartbeat delay.
+                var remaining = leaseValidUntil - options.HeartbeatInterval - DateTime.UtcNow;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    await workCancellation.CancelAsync();
+                    return;
+                }
+                workCancellation.CancelAfter(remaining);
                 await Task.Delay(options.HeartbeatInterval, workCancellation.Token);
                 var attemptedAt = DateTime.UtcNow;
                 bool renewed;
@@ -183,8 +196,19 @@ public sealed class SequentialScoringPool(
             try
             {
                 using var scope = scopeFactory.CreateScope();
-                return await scope.ServiceProvider.GetRequiredService<ISequentialScoringQueueRepository>()
-                    .RenewLeaseAsync(work.ApplicationId, work.Owner, DateTime.UtcNow, options.LeaseDuration, ct);
+                using var attemptCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attemptCancellation.CancelAfter(options.HeartbeatInterval);
+                try
+                {
+                    return await scope.ServiceProvider.GetRequiredService<ISequentialScoringQueueRepository>()
+                        .RenewLeaseAsync(work.ApplicationId, work.Owner, DateTime.UtcNow, options.LeaseDuration,
+                            attemptCancellation.Token);
+                }
+                catch (OperationCanceledException ex) when (!ct.IsCancellationRequested
+                    && attemptCancellation.IsCancellationRequested)
+                {
+                    throw new TimeoutException("The scoring lease renewal exceeded one heartbeat interval.", ex);
+                }
             }
             catch (Exception ex) when (attempt < attempts && !ct.IsCancellationRequested)
             {

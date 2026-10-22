@@ -194,8 +194,8 @@ if (useBackgroundAzureSqlWarmup)
 {
     Console.WriteLine("[startup] Azure SQL detected; continuing startup while database initialization runs in the background.");
     // Workers that need the tables wait for this gate instead of failing against a database that is not ready.
-    var databaseGate = app.Services.GetService<TalentMatch.Infrastructure.HostedServices.DatabaseInitializationGate>();
-    databaseGate?.Close();
+    var databaseGate = app.Services.GetRequiredService<TalentMatch.Infrastructure.HostedServices.DatabaseInitializationGate>();
+    databaseGate.Close();
     _ = Task.Run(async () =>
     {
         try
@@ -205,15 +205,14 @@ if (useBackgroundAzureSqlWarmup)
                 app.Environment.ContentRootPath,
                 app.Environment,
                 seedDefaultAdmin: !useEntraAuthentication));
-            Console.WriteLine("[startup] Background database initialization complete.");
+            databaseGate.Open();
+            app.Logger.LogInformation("[startup] Background database initialization complete.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[startup] Background Azure SQL initialization failed: {ex.Message}");
-        }
-        finally
-        {
-            databaseGate?.Open();
+            app.Logger.LogCritical(ex,
+                "[startup] Background Azure SQL initialization failed; workers remain gated and the host is stopping.");
+            app.Lifetime.StopApplication();
         }
     });
 }

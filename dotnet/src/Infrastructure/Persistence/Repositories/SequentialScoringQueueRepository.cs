@@ -138,7 +138,7 @@ public sealed class SequentialScoringQueueRepository(
                         candidate.ApplicationId, candidate.JobId, owner, candidate.PromptId,
                         candidate.ScoringRunCount, candidate.JobDescription, candidate.RubricJson,
                         candidate.VarianceThreshold, candidate.LonglistThreshold,
-                        candidate.ConfigId);
+                        candidate.ConfigId, until);
                 }
             }
 

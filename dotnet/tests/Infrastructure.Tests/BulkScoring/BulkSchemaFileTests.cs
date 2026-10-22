@@ -114,4 +114,32 @@ public sealed class BulkSchemaFileTests
         upgrade.Should().NotContain("DROP TABLE [talentmatch].[BulkScoringRequests]");
         upgrade.Should().NotContain("DROP TABLE [talentmatch].[BulkScoringItems]");
     }
+
+    [Fact]
+    public void Azure_SQL_upgrade_only_backfills_legacy_requests_and_missing_converted_page_counts()
+    {
+        var upgrade = Normalize(File.ReadAllText(UpgradeFile()));
+
+        upgrade.Should().Contain(
+            "IF COL_LENGTH('talentmatch.BulkScoringRequests', 'AccessModel') IS NOT NULL BEGIN UPDATE");
+        upgrade.Should().Contain(
+            "WHERE [ScoredVersion] = N'converted' AND [ConvertedPageCount] IS NULL AND [OriginalPageCount] IS NOT NULL");
+        upgrade.Should().NotContain(
+            "SET [ConvertedPageCount] = CASE WHEN [ScoredVersion]");
+    }
+
+    [Theory]
+    [InlineData("CK_BulkScoringRequests_SourceKind", "onedrive_business")]
+    [InlineData("CK_BulkScoringItems_Reason", "converted_magic_invalid")]
+    [InlineData("CK_BulkScoringItemContents_Kind", "transient")]
+    [InlineData("CK_BulkRequestAuthorizations_Status", "unavailableHistorical")]
+    public void Azure_SQL_upgrade_keeps_already_current_constraints(string constraint, string marker)
+    {
+        var upgrade = Normalize(File.ReadAllText(UpgradeFile()));
+
+        upgrade.Should().Contain(
+            $"FROM sys.check_constraints WHERE object_id = OBJECT_ID(N'[talentmatch].[{constraint}]') AND definition NOT LIKE N'%{marker}%'");
+        upgrade.Should().Contain(
+            $"OBJECT_ID(N'[talentmatch].[{constraint}]', N'C') IS NULL");
+    }
 }

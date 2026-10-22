@@ -124,6 +124,7 @@ public sealed class SequentialScoringQueueRepositoryTests
         results.Count(result => result is not null).Should().Be(1);
         var winner = results.Single(result => result is not null)!;
         winner.ApplicationId.Should().Be(id);
+        winner.LeaseUntil.Should().Be(now + Lease);
         await using var verify = database.Open();
         var application = await verify.Applications.SingleAsync();
         application.Status.Should().Be("Scoring");
