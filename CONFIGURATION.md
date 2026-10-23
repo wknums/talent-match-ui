@@ -339,6 +339,15 @@ If initialization exhausts its retries, the gate stays closed and the host stops
 connection alone does not mean the schema is ready. Repeated delegated-v3 startup upgrades retain
 current constraints and do not rewrite request selections or validated conversion page counts.
 
+On a fresh Azure SQL database, Stack B first reconciles existing shared base
+objects, creates missing schema/tables, and then applies the delegated-v3 bulk
+upgrade. Older startup ordering could stop with
+`Invalid object name 'talentmatch.BulkScoringRequests'` before even creating the
+`talentmatch` schema. Rebuild/redeploy the fixed Stack B ZIP and wait for
+`[startup] Background database initialization complete.` before administrator
+seeding; creating an empty schema alone is not a fix. Existing completed bulk
+history is preserved and active legacy work still requires drain/discard.
+
 A scoring claim carries the database lease deadline. A delayed claim cannot start scoring after
 that deadline, and a blocked renewal cannot extend the local ownership budget merely by retrying.
 The general 180-second SQL command timeout does not override the shorter heartbeat cancellation

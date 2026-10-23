@@ -1,5 +1,5 @@
 -- Stack B delegated Microsoft 365 bulk-scoring upgrade for Azure SQL.
--- This script is idempotent and runs before the shared additive schema batches.
+-- This script is idempotent and runs after shared base objects exist.
 -- It preserves completed history and refuses to translate active old-model work.
 
 IF OBJECT_ID(N'[talentmatch].[BulkScoringRequests]', N'U') IS NOT NULL

@@ -5,7 +5,7 @@ using TalentMatch.Infrastructure.Persistence;
 
 namespace TalentMatch.Infrastructure.Tests.BulkScoring;
 
-// Stack B owns its Azure SQL schema through EF migrations. Stack A continues to use
+// Stack B reconciles the shared base schema with its delegated-v3 upgrade. Stack A continues to use
 // server/storage/schema.sql and is intentionally not migrated to the v3 model until B-GATE T100
 // unlocks T101-T122. These assertions protect that sequencing without treating the pre-gate
 // Stack A schema as the Stack B provider schema.

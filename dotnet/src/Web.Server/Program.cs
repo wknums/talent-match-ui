@@ -890,14 +890,6 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
 
     try
     {
-        foreach (var upgrade in SplitSqlServerBatches(File.ReadAllText(bulkV3UpgradePath)))
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = upgrade;
-            command.CommandTimeout = 180;
-            command.ExecuteNonQuery();
-        }
-
         // Must precede the batch loop; see the header of the upgrades file for why.
         foreach (var upgrade in preBatchUpgrades)
         {
@@ -917,6 +909,15 @@ static void EnsureSharedAzureSqlSchemaIfNeeded(AppDbContext db, string contentRo
         {
             using var command = connection.CreateCommand();
             command.CommandText = batch;
+            command.CommandTimeout = 180;
+            command.ExecuteNonQuery();
+        }
+
+        // Fresh databases need the base schema, tables, and foreign-key targets before the v3 upgrade.
+        foreach (var upgrade in SplitSqlServerBatches(File.ReadAllText(bulkV3UpgradePath)))
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = upgrade;
             command.CommandTimeout = 180;
             command.ExecuteNonQuery();
         }

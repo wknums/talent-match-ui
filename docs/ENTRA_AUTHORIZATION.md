@@ -111,6 +111,17 @@ with the database owner. Do not create an empty `Users` table or manually insert
 an Admin row to work around the error. After successful application
 initialization, rerun `check`, then the normal `apply`/`check` convergence flow.
 
+If startup itself fails with `Invalid object name 'talentmatch.BulkScoringRequests'`
+and the database has no `talentmatch` schema, use the fixed Stack B startup
+ordering: older builds attempted the delegated bulk upgrade before creating
+base tables and their schema. Rebuild and deploy the application ZIP from the
+updated source; merely restarting the old ZIP, creating an empty schema, or
+changing Entra assignments does not resolve the ordering bug. The corrected
+startup reconciles existing base objects, creates missing shared objects, then
+upgrades the bulk model. Completed history is retained and active legacy work
+still requires explicit drain/discard. Wait for the successful initialization
+log before running the administrator seed.
+
 ## Partial Bootstrap Recovery
 
 Graph and SQL cannot share a transaction. The workflow therefore establishes the direct Graph app-role assignment before activating SQL authorization. A Graph-only partial result remains denied because runtime authorization also requires the active SQL assignment and valid memberships.

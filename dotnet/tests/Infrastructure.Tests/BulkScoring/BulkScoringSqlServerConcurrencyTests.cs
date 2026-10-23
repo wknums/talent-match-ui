@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Data.Common;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using MediatR;
@@ -23,6 +24,85 @@ namespace TalentMatch.Infrastructure.Tests.BulkScoring;
 public sealed class BulkScoringSqlServerConcurrencyTests
 {
     private const string ConnectionVariable = "BULK_SCORING_TEST_SQLSERVER";
+
+    [SqlServerTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Host_startup_initializes_an_empty_database_before_delegated_bulk_upgrades(bool schemaAlreadyExists)
+    {
+        await using var f = await SqlFixture.CreateAsync(initializeSchema: false);
+        await using var db = f.Context();
+        if (schemaAlreadyExists)
+            await db.Database.ExecuteSqlRawAsync("CREATE SCHEMA [talentmatch];");
+
+        InitializeHostSchema(db);
+        InitializeHostSchema(db);
+
+        (await db.Users.CountAsync()).Should().Be(0);
+        (await db.Jobs.CountAsync()).Should().Be(0);
+        (await db.BulkScoringRequests.CountAsync()).Should().Be(0);
+        (await db.BulkScoringItems.CountAsync()).Should().Be(0);
+        (await db.BulkScoringItemContents.CountAsync()).Should().Be(0);
+        (await db.BulkRequestAuthorizations.CountAsync()).Should().Be(0);
+        (await db.BulkSourceConnections.CountAsync()).Should().Be(0);
+        (await db.BulkSourceAdmissionEvents.CountAsync()).Should().Be(0);
+        (await db.BulkAuditEvents.CountAsync()).Should().Be(0);
+        (await db.BulkImportSettings.CountAsync()).Should().Be(0);
+    }
+
+    [SqlServerFact]
+    public async Task Host_startup_preserves_existing_delegated_bulk_requests_on_replay()
+    {
+        await using var f = await SqlFixture.CreateAsync();
+        var request = await f.CreateRequestAsync(2);
+        await using var db = f.Context();
+
+        InitializeHostSchema(db);
+        InitializeHostSchema(db);
+
+        var persisted = await db.BulkScoringRequests.SingleAsync(r => r.Id == request.Id);
+        persisted.Status.Should().Be(request.Status);
+        (await db.BulkScoringItems.CountAsync(i => i.RequestId == request.Id)).Should().Be(2);
+    }
+
+    [SqlServerFact]
+    public async Task Host_startup_upgrades_completed_legacy_bulk_history()
+    {
+        await using var f = await SqlFixture.CreateAsync(upgradeSchema: false);
+        await using var db = f.Context();
+        await InsertLegacyRequestAsync(db, "completed");
+
+        InitializeHostSchema(db);
+        InitializeHostSchema(db);
+
+        var request = await db.BulkScoringRequests.SingleAsync(r => r.Id == "legacy-request");
+        request.Status.Should().Be(BulkRequestStatus.Completed);
+        request.SourceKind.Should().Be(BulkSourceKind.OneDriveBusiness);
+        request.IncludedItemCount.Should().Be(1);
+        request.IncludedBytes.Should().Be(10);
+        request.AcknowledgedByActorId.Should().Be("actor");
+    }
+
+    [SqlServerTheory]
+    [InlineData("draft")]
+    [InlineData("active")]
+    public async Task Host_startup_still_requires_legacy_active_work_to_be_drained(string status)
+    {
+        await using var f = await SqlFixture.CreateAsync(upgradeSchema: false);
+        await using var db = f.Context();
+        await InsertLegacyRequestAsync(db, status);
+
+        var initialize = () => InitializeHostSchema(db);
+        var exception = initialize.Should().Throw<TargetInvocationException>().Which;
+        exception.InnerException.Should().BeOfType<SqlException>()
+            .Which.Number.Should().Be(51013);
+        exception.InnerException!.Message.Should().Contain("requires_drain_or_discard");
+
+        await db.Database.OpenConnectionAsync();
+        await using var command = db.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "SELECT COL_LENGTH('talentmatch.BulkScoringRequests', 'AccessModel');";
+        (await command.ExecuteScalarAsync()).Should().NotBe(DBNull.Value);
+    }
 
     [SqlServerTheory]
     [InlineData(1)]
@@ -232,6 +312,34 @@ public sealed class BulkScoringSqlServerConcurrencyTests
         throw new DirectoryNotFoundException("Shared SQL schema was not found.");
     }
 
+    private static void InitializeHostSchema(AppDbContext db) =>
+        typeof(Program).GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .Single(method => method.Name.Contains("g__EnsureSharedAzureSqlSchemaIfNeeded|", StringComparison.Ordinal))
+            .Invoke(null, [db, RepositoryRoot()]);
+
+    private static Task InsertLegacyRequestAsync(AppDbContext db, string status) =>
+        db.Database.ExecuteSqlRawAsync("""
+            INSERT INTO [talentmatch].[BulkScoringRequests] (
+                Id, JobId, OwnerActorId, Status, Outcome, SourceKind,
+                SourceDriveId, SourceFolderItemId, SourceFolderName, SourceFolderPath, SourceWebUrl,
+                AccessModel, SourceTenantId, OwningStack, ConvertToRasterPdf, AllowDuplicates,
+                LimitsJson, DiscoveryStatus, EntriesScanned, DiscoveryStepCount, ExcludedByReasonJson,
+                CreatedAt, TerminalAt, AcknowledgedAt, ConcurrencyVersion, CorrelationId,
+                DiscoveredCount, ExcludedCount, InaccessibleCount, WaitingCount, ImportingCount,
+                ConvertingCount, ScoringCount, CompletedCount, FailedCount, SkippedCount,
+                CancelledCount, TotalEligibleBytes
+            ) VALUES (
+                'legacy-request', 'job', 'actor', @status,
+                CASE WHEN @status = 'completed' THEN 'all_succeeded' ELSE NULL END, 'onedrive',
+                'drive', 'folder', 'Candidates', '/Candidates', 'https://example.test',
+                'cross_tenant', 'tenant', NULL, 0, 0,
+                '{{}}', 'complete', 1, 1, '{{}}', SYSUTCDATETIME(),
+                CASE WHEN @status = 'completed' THEN SYSUTCDATETIME() ELSE NULL END,
+                CASE WHEN @status = 'completed' THEN SYSUTCDATETIME() ELSE NULL END,
+                1, 'correlation', 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 10
+            );
+            """, new SqlParameter("@status", status));
+
     private sealed class SqlServerFactAttribute : FactAttribute
     {
         public SqlServerFactAttribute()
@@ -286,7 +394,7 @@ public sealed class BulkScoringSqlServerConcurrencyTests
         public BulkScoringRepository Repository(AppDbContext db) =>
             new(db, new BulkScoringRepositoryTests.FixedClock(Now));
 
-        public static async Task<SqlFixture> CreateAsync()
+        public static async Task<SqlFixture> CreateAsync(bool initializeSchema = true, bool upgradeSchema = true)
         {
             var connection = new SqlConnectionStringBuilder(Environment.GetEnvironmentVariable(ConnectionVariable))
             {
@@ -299,6 +407,8 @@ public sealed class BulkScoringSqlServerConcurrencyTests
                 db.Database.SetCommandTimeout(120);
                 await db.GetService<IRelationalDatabaseCreator>().CreateAsync();
                 await db.Database.OpenConnectionAsync();
+                if (!initializeSchema)
+                    return fixture;
                 async Task ExecuteBatchAsync(string batch)
                 {
                     await using var command = db.Database.GetDbConnection().CreateCommand();
@@ -312,7 +422,9 @@ public sealed class BulkScoringSqlServerConcurrencyTests
                              @"\r?\n(?=IF NOT EXISTS|CREATE (?:UNIQUE )?INDEX)"))
                     if (!string.IsNullOrWhiteSpace(batch))
                         await ExecuteBatchAsync(batch);
-                foreach (var file in new[] { "schema-bulk-v3-upgrades.sql", "schema-pre-batch-upgrades.sql" })
+                foreach (var file in upgradeSchema
+                             ? new[] { "schema-bulk-v3-upgrades.sql", "schema-pre-batch-upgrades.sql" }
+                             : Array.Empty<string>())
                     foreach (var batch in Regex.Split(File.ReadAllText(Path.Combine(storage, file)),
                                  @"\r?\n\s*GO\s*(?:\r?\n|$)", RegexOptions.IgnoreCase))
                         if (!string.IsNullOrWhiteSpace(batch))

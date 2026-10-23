@@ -441,6 +441,11 @@ a SQL connectivity health response alone is insufficient. For
 `Invalid object name 'talentmatch.Users'`, verify the seed profile targets the
 same database as the app and inspect startup logs; see
 [missing application tables](../docs/ENTRA_AUTHORIZATION.md#missing-application-tables).
+If startup instead fails with `Invalid object name 'talentmatch.BulkScoringRequests'`
+on an empty database, rebuild and redeploy Stack B from the fixed source.
+Older builds attempted the bulk upgrade before base schema creation. The fix
+requires a new application ZIP, not a Terraform apply or manual empty-table
+creation; it preserves existing completed history and the legacy active-work guard.
 
 API Management is optional. Set `AZ_APIM_ENABLED=FALSE` to skip both APIM
 creation and lookup. `AZ_APIM_REUSE` is considered only when APIM is enabled.
