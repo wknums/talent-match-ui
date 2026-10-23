@@ -47,6 +47,21 @@ output "source_connector_client_id" {
   value       = var.source_connector_enabled ? local.source_connector_client_id : ""
 }
 
+output "source_connector_redirect_uris" {
+  description = "Registered Web callbacks on the enabled Microsoft 365 source connector"
+  value       = var.source_connector_enabled ? (var.reuse_source_connector ? data.azuread_application.existing_source_connector[0].web[0].redirect_uris : azuread_application.source_connector[0].web[0].redirect_uris) : []
+}
+
+output "stack_a_redirect_uris" {
+  description = "Configured Stack A SPA callbacks, or empty when unselected"
+  value       = var.enabled && var.enable_stack_a ? var.stack_a_redirect_uris : []
+}
+
+output "stack_b_redirect_uris" {
+  description = "Configured Stack B SPA callbacks, or empty when unselected"
+  value       = var.enabled && var.enable_stack_b ? var.stack_b_redirect_uris : []
+}
+
 output "source_connector_federated_credential_ids" {
   description = "Federated credential IDs created on the source connector, keyed by identity name"
   value       = { for name, credential in azuread_application_federated_identity_credential.source_connector : name => credential.credential_id }

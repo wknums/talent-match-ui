@@ -649,7 +649,18 @@ standing privileges:
 
    The helper requires `SQL_SERVER_FQDN`, `SQL_DATABASE_NAME`,
    `STACK_A_IDENTITY_NAME`, and `STACK_B_IDENTITY_NAME` in its environment.
-6. **Application bootstrap operator:** in Git Bash, validate and then converge
+6. **Release operator:** package and deploy the application ZIP before seeding
+   the first administrator. Application startup creates/upgrades the shared
+   application tables; infrastructure and the SQL identity helper alone do not.
+   Wait for database initialization to finish successfully. In Stack B logs,
+   require `[startup] Background database initialization complete.` A successful
+   ZIP deployment or health response alone does not prove schema readiness.
+   Code-only ZIP deployment does not require Entra application-administrator rights.
+7. **Application bootstrap operator:** shared deployment fills missing generated
+   public IDs/resource coordinates in the selected profile. For an already
+   deployed environment, use the
+   [profile state-sync command](infra/README.md#generated-deployment-profile-settings)
+   to backfill them without applying resources. In Git Bash, validate and then converge
    the first administrator assignment:
 
    ```bash
@@ -664,8 +675,6 @@ standing privileges:
 
    The repeated `apply` is intentional and proves that the operation is
    idempotent.
-7. **Release operator:** package and deploy the application ZIP. Code-only ZIP
-   deployment does not require Entra application-administrator rights.
 8. **Application administrator:** sign in and perform all subsequent
    organization and department access changes through the application.
 

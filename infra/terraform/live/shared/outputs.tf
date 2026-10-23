@@ -78,6 +78,16 @@ output "key_vault_name" {
   value       = module.key_vault.name
 }
 
+output "key_vault_id" {
+  description = "Created or reused Key Vault resource ID, or empty when disabled"
+  value       = module.key_vault.id
+}
+
+output "apim_id" {
+  description = "Created or reused API Management resource ID, or empty when disabled"
+  value       = module.apim.id
+}
+
 output "apim_gateway_url" {
   description = "API Management gateway URL"
   value       = module.apim.gateway_url
@@ -157,4 +167,19 @@ output "key_vault_private_endpoint_id" {
 output "source_connector_client_id" {
   description = "Client ID of the multi-tenant delegated Microsoft 365 source connector"
   value       = module.entra.source_connector_client_id
+}
+
+output "source_connector_redirect_uris" {
+  description = "Registered Web callbacks on the created or reused Microsoft 365 source connector"
+  value       = module.entra.source_connector_redirect_uris
+}
+
+output "entra_stack_a_redirect_uris" {
+  description = "Configured Stack A SPA redirect URIs, or empty when unselected"
+  value       = module.entra.stack_a_redirect_uris
+}
+
+output "entra_stack_b_redirect_uris" {
+  description = "Configured Stack B SPA redirect URIs, or empty when unselected"
+  value       = module.entra.stack_b_redirect_uris
 }

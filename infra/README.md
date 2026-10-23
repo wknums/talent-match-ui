@@ -280,6 +280,77 @@ and `ENVIRONMENT`. This prevents local state from one subscription being reused
 by another deployment profile. If the profile's resource group already exists,
 the deployment wrapper imports it into a new workspace before planning.
 
+### Generated Deployment Profile Settings
+
+After a successful shared infrastructure `apply`, the wrapper saves `SQL_RG`,
+`SQL_SERVER_NAME`, `SQL_DATABASE_NAME`, and `SQL_SERVER_FQDN` from the shared
+Terraform outputs into the exact environment file passed to the command.
+This happens before database-user bootstrap and downstream stack deployment,
+including when runtime SQL bootstrap is disabled. Created and reused SQL are
+both supported; the SQL resource group comes from the server resource ID,
+which can differ from `RESOURCE_GROUP`. Existing coordinate entries are updated
+and missing ones appended, preserving unrelated settings, comments, line endings,
+and file permissions. `AZ_SQL_REUSE` and creation/ownership flags are not changed.
+Plans do not modify the profile. Missing or
+inconsistent SQL outputs stop deployment rather than writing guessed values.
+In CI, this updates only the generated local profile, not its GitHub secret.
+
+The same shared apply fills missing or empty **public, generated settings**:
+
+- SQL runtime aliases `AZURE_SQL_SERVER_FQDN` and `AZURE_SQL_DATABASE_NAME`.
+- App Service plan, selected managed identities, enabled Key Vault, API Management,
+  and Application Insights names/resource groups, resolved from their resource IDs.
+- Protected API client/service-principal IDs, scope/role IDs, selected SPA client
+  IDs, and configured SPA redirect lists when product Entra authentication is enabled.
+- `KEY_VAULT_URI`, `APIM_GATEWAY_URL`, `MICROSOFT365_SOURCE_CLIENT_ID`,
+  `BULK_AUTH_KEY_URI`, and existing connector Web redirects when their features are enabled.
+
+After application infrastructure apply, including `stack-b-only`, the wrapper
+also fills missing selected `E2E_STACK_A_BASE_URL`/`E2E_STACK_B_BASE_URL` values
+from the actual App Service URLs. In `graph` mode, if
+`MICROSOFT365_SOURCE_REDIRECT_URIS` is still empty, it composes the source OAuth
+and admin-consent callback URLs for the stacks applied by that command, using the
+configured callback paths or the runtime defaults. It never guesses App Service
+hostnames. Explicit URLs, custom domains, other nonempty settings, credentials,
+reuse/creation flags, publisher-verification assertions, consent, CORS, scopes,
+and policy limits are left unchanged. The four authoritative SQL coordinates
+above remain the deliberate exception: they are refreshed from state.
+
+**Callback registration is separate.** Generated source callback lists emit a
+warning to review/register those exact Web URLs in the source connector's Entra
+registration before sign-in. Profile persistence does not change Entra
+registrations or grant consent. It does not remove first-deployment requirements:
+approved product/source redirect URIs, stable role/scope IDs, and all other
+required operator inputs must still be supplied before an Entra-enabled first
+plan/apply. Later additions to a nonempty callback list, such as adding a second
+stack or a custom domain, require an explicit reviewed edit rather than an
+automatic merge.
+
+For an already deployed environment, backfill available settings without a
+resource plan/apply:
+
+```bash
+bash ./infra/scripts/sync-deployment-profile.sh "$ACTIVE_ENV_FILE"
+./infra/scripts/seed-entra-admin.sh "$ACTIVE_ENV_FILE" check
+```
+
+The sync command validates the active Azure context and reads only the existing
+Terraform workspace selected by `AZURE_SUBSCRIPTION_ID` and `ENVIRONMENT`, plus
+the stack states selected by `STACK_TARGET`. It changes the selected profile
+only, not Azure resources, Terraform state, registrations, or GitHub secrets.
+Use `STACK_TARGET=shared-only` only for an actual shared-only deployment; a
+selected application stack must have deployed state or the command fails
+explicitly. New optional output names absent from older state produce a warning;
+review/apply the updated shared configuration to expose those outputs, then sync
+again. Do not switch reuse flags to recover generated values.
+
+Run focused regressions with:
+
+```bash
+npx vitest run tests/unit/deployment-profile.test.ts
+bash infra/scripts/tests/deployment-profile-sync.sh
+```
+
 If that import reports `Invalid for_each argument` for
 `azuread_app_role_assignment.role_group`, use the updated
 [Entra module](terraform/modules/foundation/entra/main.tf). Both groups and
@@ -361,6 +432,16 @@ cannot reach, set `AZ_SQL_BOOTSTRAP_ENABLED=FALSE`; then run
 Unset the unselected name: this manual helper reads the name variables rather
 than `STACK_TARGET`. A shared-only profile skips runtime SQL-user bootstrap.
 
+This helper does **not** create application tables. Package/deploy the
+application ZIP next and wait for startup schema initialization before running
+`seed-entra-admin.sh`. Stack B performs Azure SQL initialization in the
+background and logs `[startup] Background database initialization complete.`
+only after the schema and startup data are ready. Successful ZIP deployment or
+a SQL connectivity health response alone is insufficient. For
+`Invalid object name 'talentmatch.Users'`, verify the seed profile targets the
+same database as the app and inspect startup logs; see
+[missing application tables](../docs/ENTRA_AUTHORIZATION.md#missing-application-tables).
+
 API Management is optional. Set `AZ_APIM_ENABLED=FALSE` to skip both APIM
 creation and lookup. `AZ_APIM_REUSE` is considered only when APIM is enabled.
 
@@ -396,7 +477,8 @@ Review a Terraform plan before applying either change.
 For GitHub deployments, put these settings in the complete `DEPLOYMENT_ENV_FILE`
 environment secret, not separate GitHub variables. Profile examples keep
 monitoring disabled; populate and review an untracked profile to opt in.
-No live profile is modified automatically.
+Monitoring opt-in settings are never changed automatically; shared apply only
+fills generated coordinates and identifiers as described above.
 For `AWR_AUTH_MODE=entra`, set `AWR_AAD_AUDIENCE` to the API's `.default`
 scope and `AWR_API_CLIENT_ID` to its application client ID. Shared Terraform
 assigns `AWR_API_APP_ROLE_VALUE` (default `TalentMatch.Access`) only to selected

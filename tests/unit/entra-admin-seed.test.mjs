@@ -7,6 +7,7 @@ import { describe, it } from 'node:test'
 import {
   buildBootstrapSql,
   validateBootstrapConfiguration,
+  validateBootstrapSchema,
 } from '../../infra/scripts/seed-entra-admin-data.mjs'
 
 const environmentFile = resolve(process.env.TALENTMATCH_ENV_FILE ?? '.env_qa')
@@ -115,5 +116,51 @@ describe('Entra bootstrap admin data seed', () => {
 
   it('rejects unsupported execution modes', () => {
     assert.throws(() => buildBootstrapSql('delete'), /Unsupported bootstrap mode/)
+  })
+
+  it('checks required tables with read-only metadata before seeding', async () => {
+    let query
+    const pool = {
+      request: () => ({
+        query: async text => {
+          query = text
+          return { recordset: [] }
+        },
+      }),
+    }
+    await validateBootstrapSchema(pool)
+    assert.doesNotMatch(query, /\b(?:INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP)\b/i)
+    assert.match(query, /OBJECT_ID/)
+    for (const table of ['Users', 'Organizations', 'Departments', 'OrganizationMemberships',
+      'DepartmentMemberships', 'RoleAssignments', 'ProcessingEvents']) {
+      assert.ok(query.includes(`'talentmatch.${table}'`))
+    }
+  })
+
+  it('reports missing tables with deployment and database-target recovery guidance', async () => {
+    const pool = {
+      request: () => ({
+        query: async () => ({
+          recordset: [{ tableName: 'talentmatch.Users' }, { tableName: 'talentmatch.RoleAssignments' }],
+        }),
+      }),
+    }
+    await assert.rejects(() => validateBootstrapSchema(pool), error => {
+      assert.match(error.message, /talentmatch\.Users/)
+      assert.match(error.message, /talentmatch\.RoleAssignments/)
+      assert.match(error.message, /deploy.*application ZIP/i)
+      assert.match(error.message, /initialization/i)
+      assert.match(error.message, /SQL_SERVER_FQDN.*SQL_DATABASE_NAME/)
+      assert.match(error.message, /does not create application tables/)
+      return true
+    })
+  })
+
+  it('propagates metadata-query failures instead of treating the schema as ready', async () => {
+    const failure = new Error('SQL metadata access failed')
+    const pool = {
+      request: () => ({ query: async () => { throw failure } }),
+    }
+    await assert.rejects(() => validateBootstrapSchema(pool), failure)
   })
 })

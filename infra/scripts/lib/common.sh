@@ -555,6 +555,41 @@ get_terraform_output_json() {
   echo "$output"
 }
 
+persist_deployment_profile() {
+  local env_file="${1:?}" phase="${2:?}"
+  local scripts_dir live_dir native_env_file native_helper
+  scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  live_dir="$scripts_dir/../terraform/live"
+  local roots=()
+  case "$phase" in
+    shared) roots=(shared) ;;
+    apps)
+      [[ "${3:-false}" == true ]] && roots+=(stack-a)
+      [[ "${4:-false}" == true ]] && roots+=(stack-b)
+      ;;
+    *) log_fatal "Profile sync phase must be shared or apps." ;;
+  esac
+  [[ ${#roots[@]} -gt 0 ]] || return 0
+
+  local root output snapshot='{' separator=''
+  for root in "${roots[@]}"; do
+    output="$(cd "$live_dir/$root" && TF_WORKSPACE="$(terraform_workspace_name)" terraform output -json)" \
+      || log_fatal "Unable to read $root Terraform outputs; deployment settings were not saved."
+    [[ -n "$output" ]] || log_fatal "No $root Terraform outputs are available; deployment settings were not saved."
+    snapshot+="${separator}\"${root}\":${output}"
+    separator=','
+  done
+  snapshot+='}'
+  native_env_file="$env_file"
+  native_helper="$scripts_dir/sync-deployment-profile.mjs"
+  if command -v cygpath >/dev/null 2>&1; then
+    native_env_file="$(cygpath -w "$env_file")"
+    native_helper="$(cygpath -w "$native_helper")"
+  fi
+  printf '%s\n' "$snapshot" | node "$native_helper" "$native_env_file" "$phase" \
+    || log_fatal "Unable to save $phase deployment settings to the environment profile: $env_file"
+}
+
 terraform_workspace_name() {
   local subscription="${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID is required}"
   local environment="${ENVIRONMENT:?ENVIRONMENT is required}"

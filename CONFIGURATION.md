@@ -376,8 +376,8 @@ grant, tenant allow-list, host allow-list, or fallback identity.
 | --- | --- | --- |
 | `MICROSOFT365_SOURCE_MODE` | Optional `off`/`mock`/`graph`; default `mock` in ASP.NET Development, otherwise `off` | Activates connector services and workers. Invalid values fail startup. `mock` is local deterministic testing only. |
 | `MICROSOFT365_SOURCE_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Deployment-only: adopt an existing connector registration. Requires its client ID. |
-| `MICROSOFT365_SOURCE_CLIENT_ID` | Required in `graph`; GUID | Separate connector app client ID. Obtain from Terraform `source_connector_client_id` output or the connector app registration. |
-| `MICROSOFT365_SOURCE_REDIRECT_URIS` | Conditional deployment CSV; empty | Exact Web callback URLs used when Terraform creates/adopts the connector. Include Stack B callback and any deliberately enabled future Stack A callback. |
+| `MICROSOFT365_SOURCE_CLIENT_ID` | Required in `graph`; GUID | Separate connector app client ID. Shared apply/profile sync fills it from `source_connector_client_id` when missing; explicit values are preserved. Supply it before first deployment when reusing a connector. |
+| `MICROSOFT365_SOURCE_REDIRECT_URIS` | Conditional deployment CSV; empty | Exact Web callbacks. Missing values are filled from registered connector callbacks in state, or composed from actual deployed selected-stack hosts and runtime callback paths after application apply/profile sync. Generated callbacks require explicit Entra registration review; sync does not register them or grant consent. Nonempty lists/custom URLs are never merged or overwritten. Approved redirects remain a first-deployment prerequisite. |
 | `MICROSOFT365_SOURCE_CALLBACK_PATH` | Optional local absolute path; `/api/source-connections/callback` | Runtime OAuth callback. Must start with `/` and must not be an absolute URI. Must match a registered redirect URI after host composition. |
 | `MICROSOFT365_SOURCE_ADMIN_CONSENT_CALLBACK_PATH` | Optional local absolute path; `/api/source-connections/admin-consent-callback` | Runtime admin-consent callback with the same path restrictions. |
 | `MICROSOFT365_SOURCE_AUTHORITY` | Required in `graph`; HTTPS URI ending `/organizations` | Normally `https://login.microsoftonline.com/organizations`; commercial multi-tenant organizational authority. |
@@ -386,7 +386,7 @@ grant, tenant allow-list, host allow-list, or fallback identity.
 | `MICROSOFT365_SOURCE_MAX_CONCURRENCY` | Optional integer `1..64`; `4` | Maximum concurrent Graph source calls per app instance. |
 | `MICROSOFT_GRAPH_BASE_URI` | Profile/Terraform input; empty | **Currently not consumed by runtime**; Graph is hard-coded to commercial `https://graph.microsoft.com/v1.0/`. See mismatch note. |
 | `PRODUCT_ENVIRONMENT` | Conditional `Development`/`QA`/`Production`; falls back to ASP.NET runtime environment | Controls connector rollout/publisher activation independently of the App Service runtime environment. Azure App Service normally runs with `ASPNETCORE_ENVIRONMENT=Production`; set `PRODUCT_ENVIRONMENT=QA` for controlled QA so publisher verification may remain false. `PRODUCT_ENVIRONMENT=Production` requires explicit publisher verification. |
-| `BULK_AUTH_KEY_URI` | Required in `graph` unless a non-production dev key path is used; non-secret Key Vault key URI | Versionless Key Vault key URI used to wrap per-request authorization data keys. Terraform creates the RSA key through the ARM control plane, so the deployment runner does not need Key Vault data-plane network access. When the delegated connector is enabled, shared infrastructure requires VNet integration and creates a Key Vault private endpoint plus `privatelink.vaultcore.azure.net` DNS link in the existing private-endpoint subnet. Runtime managed identities receive key-scoped `Key Vault Crypto User`. |
+| `BULK_AUTH_KEY_URI` | Required in `graph` unless a non-production dev key path is used; non-secret Key Vault key URI | Versionless Key Vault key URI used to wrap per-request authorization data keys; missing profile values are filled from `bulk_auth_key_uri` after shared apply/profile sync. Terraform creates the RSA key through the ARM control plane, so the deployment runner does not need Key Vault data-plane network access. When the delegated connector is enabled, shared infrastructure requires VNet integration and creates a Key Vault private endpoint plus `privatelink.vaultcore.azure.net` DNS link in the existing private-endpoint subnet. Runtime managed identities receive key-scoped `Key Vault Crypto User`. |
 | `BULK_AUTH_DEV_KEY_PATH` | Optional path to **secret key material**; unset; forbidden in Production | Local persistent 32-byte base64 AES key file. The runtime creates it if absent. Keep the file ignored and access-restricted. Without a persistent path, restarts invalidate stored mock/development authorizations. |
 | `BULK_AUTH_KEY_NAME` | Optional deployment-only Key Vault key name; `bulk-auth` | Used when provisioning the wrapping key. Set the profile source variable, not `TF_VAR_bulk_auth_key_name`. |
 
@@ -515,7 +515,8 @@ Raster timeout is fixed at 120 seconds; it has no environment variable.
 | `AZ_SQL_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Reuse SQL. True requires `SQL_SERVER_NAME`, `SQL_DATABASE_NAME`, and `SQL_RG`. False requires explicit creation approval and Entra admin. |
 | `ALLOW_CREATE_AZURE_SQL` | Conditional `TRUE`; `FALSE` | Destructive-cost guard required whenever `AZ_SQL_REUSE` is not true. |
 | `AZ_SQL_BOOTSTRAP_ENABLED` | Optional `TRUE`/`FALSE`; `TRUE` | Runs post-provision Entra database-user/schema bootstrap. Disable only when the operator host cannot reach reused private SQL, then run bootstrap from a connected host. |
-| `SQL_SERVER_NAME`, `SQL_DATABASE_NAME`, `SQL_RG` | Conditional text | Existing SQL coordinates from portal/CLI. These are deployment names; runtime uses FQDN/name outputs. |
+| `SQL_SERVER_NAME`, `SQL_DATABASE_NAME`, `SQL_RG` | Required for SQL reuse and authorization scripts | Supply existing SQL coordinates before reuse. Shared apply or `sync-deployment-profile.sh` writes the actual created/reused values into the selected profile for subsequent bootstrap/role commands; plans do not write them and SQL ownership flags stay unchanged. Runtime uses FQDN/name outputs. |
+| `SQL_SERVER_FQDN` | Deployment-generated text | Saved alongside SQL coordinates after shared apply. Used by the manual SQL/bootstrap helpers; application settings use the shared Terraform FQDN output. |
 | `SQL_ADMIN_LOGIN` | Optional text; `sqladmin` | SQL administrator login used only when applicable. |
 | `SQL_ADMIN_PASSWORD` | Optional **secret**; empty | Password admin secret. Empty supports Entra-only administration. Use Key Vault/GitHub secret if required. |
 | `SQL_AAD_ADMIN_LOGIN`, `SQL_AAD_ADMIN_OBJECT_ID` | Required when creating SQL | Entra SQL administrator display/login and object GUID; get from Entra user/group and verify with Azure CLI. |
@@ -534,6 +535,16 @@ Raster timeout is fixed at 120 seconds; it has no environment variable.
 | `APIM_PUBLISHER_EMAIL` | Optional email; `admin@example.com` | APIM operational contact; replace placeholder for real deployments. |
 | `AZ_IDENTITIES_REUSE` | Optional `TRUE`/`FALSE`; `FALSE` | Controls Terraform managed-identity ownership only, independently of `ENTRA_REUSE`. True looks up existing identities; false creates and manages them in Terraform. For separate provisioning, set true with the desired identity names/group, explicitly run `infra/scripts/setup-identity.sh`, then deploy using the same profile. No copy-back is needed when the profile is already complete. |
 | `AZ_IDENTITY_STACK_A_NAME`, `AZ_IDENTITY_STACK_B_NAME`, `AZ_IDENTITIES_RG` | Conditional text | Terraform reuse requires `AZ_IDENTITIES_RG` plus the name for each stack selected by `STACK_TARGET`. Setup uses those configured values as-is. Only absent names default to `id-<project>-node-<environment>` and `id-<project>-blazor-<environment>`, and an absent group defaults to `RESOURCE_GROUP`. Copy printed coordinates into the profile only if setup resolved defaults that were not already configured; setup does not save them. `shared-only` requires no stack identity. |
+
+Shared apply/profile sync fills missing public coordinates for the plan,
+selected identities, and enabled Key Vault/APIM/Application Insights resources,
+plus missing Entra IDs and selected SPA redirect lists. Application apply/profile
+sync fills missing selected browser acceptance base URLs from actual hosts.
+Explicit values, credentials, ownership flags, consent, publisher assertions,
+CORS, and policy limits are never inferred or replaced. See
+[generated deployment profile settings](infra/README.md#generated-deployment-profile-settings)
+for the complete field groups, callback registration boundary, and existing-state
+sync command.
 
 ### Separate managed-identity setup
 

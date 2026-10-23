@@ -37,6 +37,27 @@ and Azure roles are only for the one-time platform setup and for break-glass rec
 
 The bootstrap identity must be an enabled member user in the configured tenant and must exactly match the Azure SQL logical server's Microsoft Entra administrator object ID.
 
+The deployment wrapper records `SQL_RG`, `SQL_SERVER_NAME`, `SQL_DATABASE_NAME`,
+and `SQL_SERVER_FQDN` in the selected environment file after shared infrastructure
+is successfully applied. It also fills missing generated public Entra identifiers
+and resource coordinates. The bootstrap check remains read-only; it does not
+discover resources or rewrite the profile. For a previously deployed profile,
+run `bash ./infra/scripts/sync-deployment-profile.sh "$ACTIVE_ENV_FILE"` to backfill
+available state outputs without applying resources, then retry the check. See
+[generated deployment settings](../infra/README.md#generated-deployment-profile-settings)
+for missing-state diagnostics and callback registration review. Do not change
+`AZ_SQL_REUSE` merely to recover these values.
+
+**Application schema must exist before administrator seeding.** Deploy the
+application ZIP and let startup finish initializing the same SQL database named
+in this profile. Infrastructure deployment and `bootstrap-sql-entra-users.mjs`
+establish the database/schema and identity permissions, not the application
+tables. Stack B initializes Azure SQL in the background; require the log message
+`[startup] Background database initialization complete.` before seeding.
+Kudu deployment success and `/api/health` SQL connectivity alone do not prove that
+initialization completed. Entra-mode startup initializes tables without creating
+a local password administrator, so seeding afterward is the intended order.
+
 Run the read-only check first:
 
 ```bash
@@ -61,6 +82,34 @@ After reviewing the output, apply and prove convergence:
 ```
 
 The SQL operation uses a serializable transaction and application lock. It converges one Entra profile, one initial organization and department, active organization and department memberships, an explicit default department, one active bootstrap Admin assignment, an authorization version, and an immutable seed audit event. Repeated or concurrent runs do not duplicate authorization records.
+
+### Missing Application Tables
+
+`Invalid object name 'talentmatch.Users'` means SQL cannot resolve the expected
+table in the selected database. New versions of the seed helper list missing
+tables with recovery guidance before executing the seed SQL. Check:
+
+1. The profile's `SQL_SERVER_FQDN`/`SQL_DATABASE_NAME` agree with the App Service's
+   `AZURE_SQL_SERVER_FQDN`/`AZURE_SQL_DATABASE_NAME`, and Stack B uses
+   `DatabaseProvider=sqlserver`.
+2. The application ZIP, not just App Service infrastructure, has been deployed
+   and started. If tables are still absent after initialization should have
+   completed, inspect App Service Log stream for initialization failures
+   (including SQL identity permissions, network access, missing schema files, or
+   connector startup configuration failures).
+3. In the intended database's query editor or SQL client, run this read-only check:
+
+   ```sql
+   SELECT DB_NAME() AS databaseName,
+     OBJECT_ID(N'talentmatch.Users', N'U') AS talentmatchUsersObjectId,
+     OBJECT_ID(N'dbo.Users', N'U') AS dboUsersObjectId;
+   ```
+
+If the application table exists only under `dbo`, investigate the documented
+[legacy schema migration](../infra/README.md#migration-script-dbo--talentmatch)
+with the database owner. Do not create an empty `Users` table or manually insert
+an Admin row to work around the error. After successful application
+initialization, rerun `check`, then the normal `apply`/`check` convergence flow.
 
 ## Partial Bootstrap Recovery
 

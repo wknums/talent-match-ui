@@ -137,6 +137,10 @@ if [[ "$DEPLOY_SHARED" == "true" ]]; then
   import_existing_resource_group "$TF_LIVE_DIR/shared"
   run_terraform "$TF_LIVE_DIR/shared" "$ACTION"
 
+  if [[ "$ACTION" == "apply" ]]; then
+    persist_deployment_profile "$ENV_FILE" shared
+  fi
+
   if [[ "$ACTION" == "plan" && "$TERRAFORM_PLAN_HAS_CHANGES" == "true" && ( "$DEPLOY_STACK_A" == "true" || "$DEPLOY_STACK_B" == "true" ) ]]; then
     log_warn "Shared infrastructure has pending changes; skipping downstream stack plans that would use stale shared outputs."
     log_warn "Apply the reviewed shared plan first, then rerun this plan."
@@ -222,6 +226,10 @@ if [[ "$DEPLOY_STACK_B" == "true" ]]; then
     STACK_B_URL="$(get_terraform_output "$TF_LIVE_DIR/stack-b" "app_url")"
     STACK_B_NAME="$(get_terraform_output "$TF_LIVE_DIR/stack-b" "app_name")"
   fi
+fi
+
+if [[ "$ACTION" == "apply" ]]; then
+  persist_deployment_profile "$ENV_FILE" apps "$DEPLOY_STACK_A" "$DEPLOY_STACK_B"
 fi
 
 # ---------------------------------------------------------------------------

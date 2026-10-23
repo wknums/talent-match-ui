@@ -18,8 +18,22 @@ az() {
 
 terraform() {
   if [[ "$1" == output ]]; then
+    if [[ $# -eq 2 ]]; then
+      if [[ "${PWD##*/}" == shared ]]; then
+        cat <<'JSON'
+{"sql_server_id":{"value":"/subscriptions/test-subscription/resourceGroups/test-rg/providers/Microsoft.Sql/servers/test-server"},"sql_server_name":{"value":"test-server"},"sql_database_name":{"value":"test-db"},"sql_server_fqdn":{"value":"test-server.database.windows.net"},"app_service_plan_id":{"value":"/subscriptions/test-subscription/resourceGroups/test-rg/providers/Microsoft.Web/serverfarms/test-plan"},"identity_stack_a_id":{"value":"/subscriptions/test-subscription/resourceGroups/test-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/identity-a"},"identity_stack_b_id":{"value":"/subscriptions/test-subscription/resourceGroups/test-rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/identity-b"},"app_insights_id":{"value":"/subscriptions/test-subscription/resourceGroups/shared-monitoring-rg/providers/Microsoft.Insights/components/shared-insights"}}
+JSON
+      else
+        printf '{"app_url":{"value":"https://%s.azurewebsites.net"}}\n' "${PWD##*/}"
+      fi
+      return 0
+    fi
     case "$3" in
       app_insights_connection_string) printf '%s\n' "$MOCK_INSIGHTS_OUTPUT" ;;
+      sql_server_id) printf '"/subscriptions/test-subscription/resourceGroups/test-rg/providers/Microsoft.Sql/servers/test-server"\n' ;;
+      sql_server_name) printf '"test-server"\n' ;;
+      sql_database_name) printf '"test-db"\n' ;;
+      sql_server_fqdn) printf '"test-server.database.windows.net"\n' ;;
       *) printf '""\n' ;;
     esac
   elif [[ "$1" == plan && "${PWD##*/}" == stack-* ]]; then

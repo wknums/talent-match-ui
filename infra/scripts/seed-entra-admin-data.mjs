@@ -32,6 +32,30 @@ export function buildBootstrapSql(mode) {
   throw new Error(`Unsupported bootstrap mode: ${mode}`)
 }
 
+export async function validateBootstrapSchema(pool) {
+  const result = await pool.request().query(`
+SELECT required.tableName
+FROM (VALUES
+  ('talentmatch.Users'),
+  ('talentmatch.Organizations'),
+  ('talentmatch.Departments'),
+  ('talentmatch.OrganizationMemberships'),
+  ('talentmatch.DepartmentMemberships'),
+  ('talentmatch.RoleAssignments'),
+  ('talentmatch.ProcessingEvents')
+) AS required(tableName)
+WHERE OBJECT_ID(required.tableName, 'U') IS NULL;
+`)
+  if (result.recordset.length > 0) {
+    throw new Error(
+      `Application database schema is not ready. Missing tables: ${result.recordset.map(row => row.tableName).join(', ')}. `
+      + 'Verify SQL_SERVER_FQDN and SQL_DATABASE_NAME match the deployed application, deploy the application ZIP, '
+      + 'and wait for database initialization to complete before retrying. '
+      + 'bootstrap-sql-entra-users.mjs creates the schema and identity permissions; it does not create application tables.',
+    )
+  }
+}
+
 const checkSql = `
 SELECT
   CAST(CASE WHEN bootstrapUser.Id IS NOT NULL THEN 1 ELSE 0 END AS bit) AS userReady,
@@ -375,6 +399,7 @@ async function execute() {
   })
 
   try {
+    await validateBootstrapSchema(pool)
     const request = pool.request()
       .input('tenantId', sql.NVarChar, configuration.tenantId)
       .input('objectId', sql.NVarChar, configuration.objectId)
