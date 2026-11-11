@@ -1,0 +1,68 @@
+{
+  "$comment": "Canonical fingerprints are lowercase SHA-256 over the exact original bytes before decoding, normalization, conversion, or storage representation changes.",
+  "algorithm": "SHA-256",
+  "encoding": "lowercase-hex",
+  "cases": [
+    {
+      "name": "binary bytes",
+      "input": { "kind": "hex", "value": "00ff10807f42" },
+      "sizeBytes": 6,
+      "expected": "0241184661c4bbe3930a7716419e8834b6448fd4ac468568ba523205354d22f8"
+    },
+    {
+      "name": "multibyte UTF-8",
+      "input": { "kind": "fixture", "path": "files/multibyte.txt" },
+      "sizeBytes": 48,
+      "expected": "76ce36f9511f1d47059c49673f8f250263bd909a2033db0f9a48ffce4ccca9db"
+    },
+    {
+      "name": "empty",
+      "input": { "kind": "hex", "value": "" },
+      "sizeBytes": 0,
+      "expected": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "exact default file limit",
+      "input": { "kind": "repeat-byte", "byte": 165, "count": 8388608 },
+      "sizeBytes": 8388608,
+      "expected": "e474a45740e5efac02e9f7e0626b3f86111b293f8363e477786dfad64e98df3b"
+    }
+  ],
+  "compatiblePreChangeProviderValues": [
+    {
+      "provider": "sqlite",
+      "stored": "0241184661C4BBE3930A7716419E8834B6448FD4AC468568BA523205354D22F8",
+      "normalized": "0241184661c4bbe3930a7716419e8834b6448fd4ac468568ba523205354d22f8",
+      "verdict": "compatible"
+    },
+    {
+      "provider": "azure-sql",
+      "stored": "76ce36f9511f1d47059c49673f8f250263bd909a2033db0f9a48ffce4ccca9db",
+      "normalized": "76ce36f9511f1d47059c49673f8f250263bd909a2033db0f9a48ffce4ccca9db",
+      "verdict": "compatible"
+    },
+    {
+      "provider": "sqlite",
+      "stored": "metadata-derived-name-size-value",
+      "normalized": null,
+      "verdict": "unverifiable"
+    },
+    {
+      "provider": "azure-sql",
+      "stored": null,
+      "normalized": null,
+      "verdict": "unverifiable"
+    }
+  ],
+  "crossPathMatrix": [
+    "legacy-upload-to-optional-upload",
+    "legacy-upload-to-bulk-source",
+    "optional-upload-to-legacy-upload",
+    "optional-upload-to-bulk-source",
+    "bulk-source-to-legacy-upload",
+    "bulk-source-to-optional-upload",
+    "stack-a-to-stack-b",
+    "stack-b-to-stack-a"
+  ],
+  "publicDisclosure": "forbidden"
+}

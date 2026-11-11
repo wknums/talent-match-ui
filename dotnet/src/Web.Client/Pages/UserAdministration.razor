@@ -1,0 +1,55 @@
+@page "/users"
+@using TalentMatch.Web.Client.Components
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
+@implements IDisposable
+
+@if (AuthConfiguration.IsSimple)
+{
+    <UserManagement />
+}
+else if (isLoading)
+{
+    <main class="user-administration__state" aria-live="polite">
+        <h1>Access management</h1>
+        <p>Checking administrative authority...</p>
+    </main>
+}
+else if (!canManageAccess)
+{
+    <main class="user-administration__state">
+        <h1>Access management</h1>
+        <p role="alert">You do not have authority to manage application access.</p>
+    </main>
+}
+else
+{
+    <EntraAccessManagement GlobalAdmin="@isGlobalAdmin" />
+}
+
+@code {
+    private bool isLoading;
+    private bool isGlobalAdmin => Api.CurrentAuthorizationContext?.GlobalRole == "admin";
+    private bool canManageAccess => isGlobalAdmin
+        || Api.CurrentAuthorizationContext?.Authorizations.Any(x => x.Role == "organization_admin") == true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!AuthConfiguration.IsEntra)
+            return;
+
+        Api.AuthorizationChanged += AuthorizationChanged;
+        isLoading = true;
+        try
+        {
+            await Api.GetCurrentUserAsync();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+    private void AuthorizationChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Api.AuthorizationChanged -= AuthorizationChanged;
+}

@@ -1,0 +1,345 @@
+using System.Text.Json;
+using FluentAssertions;
+using TalentMatch.Application.Scoring.Commands;
+
+namespace TalentMatch.Application.Tests;
+
+public class ScoreApplicationCommandEvidenceParsingTests
+{
+    /// <summary>
+    /// Create a handler instance to access ParseSingleRun (now internal).
+    /// The handler constructor parameters are not needed for parsing tests.
+    /// </summary>
+    private ScoreApplicationCommandHandler CreateHandler()
+    {
+        return new ScoreApplicationCommandHandler(null!, null!, null!, null!);
+    }
+
+    [Fact]
+    public void ParseSingleRun_NestedObject_LowercaseEvidence_ExtractsCitations()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("nestedObjectLowercaseEvidence");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "5 years Java experience");
+        citations.Should().Contain(c => c.Category == "Communication" && c.Snippet == "Led team presentations");
+    }
+
+    [Fact]
+    public void ParseSingleRun_NestedObject_CapitalisedEvidence_ExtractsCitations()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("nestedObjectCapitalisedEvidence");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "5 years Java experience");
+        citations.Should().Contain(c => c.Category == "Communication" && c.Snippet == "Led team presentations");
+    }
+
+    [Fact]
+    public void ParseSingleRun_ArrayOfObjects_CategoryFirst_ExtractsCorrectCategoryAndSnippet()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("arrayOfObjectsCategoryFirst");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "5 years Java experience");
+        citations.Should().Contain(c => c.Category == "Communication" && c.Snippet == "Led team presentations");
+
+        var scores = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson);
+        scores.Should().ContainKey("Technical Skills").WhoseValue.Should().Be(85);
+    }
+
+    [Fact]
+    public void ParseSingleRun_ArrayOfObjects_EvidenceBeforeCategory_ExtractsCorrectCategoryAndSnippet()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("arrayOfObjectsEvidenceBeforeCategory");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet!.Contains("Java"));
+        citations.Should().Contain(c => c.Category == "Communication" && c.Snippet!.Contains("presentations"));
+
+        var scores = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson);
+        scores.Should().ContainKey("Technical Skills").WhoseValue.Should().Be(85);
+        scores.Should().ContainKey("Communication").WhoseValue.Should().Be(70);
+    }
+
+    [Fact]
+    public void ParseSingleRun_ArrayOfObjects_WithEvidenceArray_ExtractsAllSnippets()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("arrayOfObjectsWithEvidenceArray");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "5 years Java experience");
+        citations.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "AWS certified");
+    }
+
+    [Fact]
+    public void ParseSingleRun_EmptyEvidenceFields_DoesNotCrash()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("emptyEvidenceFields");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        // Should still extract scores even with empty/null evidence
+        var scores = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson);
+        scores.Should().ContainKey("Technical Skills");
+    }
+
+    [Fact]
+    public void ParseSingleRun_EmptySnippets_AreFilteredOut()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("emptySnippets");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations!.Should().OnlyContain(c => !string.IsNullOrWhiteSpace(c.Snippet));
+        citations.Should().Contain(c => c.Snippet == "Valid evidence");
+    }
+
+    [Fact]
+    public void ParseSingleRun_NonJsonResponse_HandledGracefully()
+    {
+        // ParseSingleRun expects a JsonElement, so non-JSON would be caught before calling it.
+        // Test with an empty JSON object instead.
+        using var doc = JsonDocument.Parse("{}");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(doc.RootElement, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ExtractCategoryName_PrefersCategoryNamedProperty()
+    {
+        using var doc = JsonDocument.Parse(@"{""evidence"": ""some long evidence text"", ""score"": 85, ""category_name"": ""Technical Skills""}");
+
+        var result = ScoreApplicationCommandHandler.ExtractCategoryName(doc.RootElement);
+
+        result.Should().Be("Technical Skills");
+    }
+
+    [Fact]
+    public void ExtractStringField_PrefersEvidenceNamedProperty()
+    {
+        using var doc = JsonDocument.Parse(@"{""category_name"": ""Technical Skills"", ""score"": 85, ""evidence"": ""5 years Java experience""}");
+
+        var result = ScoreApplicationCommandHandler.ExtractStringField(doc.RootElement);
+
+        result.Should().Be("5 years Java experience");
+    }
+
+    [Fact]
+    public void TryGetPropertyCaseInsensitive_MatchesVariousCases()
+    {
+        using var doc = JsonDocument.Parse(@"{""Evidence"": [""test""]}");
+
+        ScoreApplicationCommandHandler.TryGetPropertyCaseInsensitive(doc.RootElement, "evidence", out var value).Should().BeTrue();
+        value.ValueKind.Should().Be(JsonValueKind.Array);
+    }
+
+    [Fact]
+    public void ExtractCandidateName_TopLevelCandidateName_ReturnsName()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate_name"": ""Jane Doe"", ""overall_score"": 85}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().Be("Jane Doe");
+    }
+
+    [Fact]
+    public void ExtractCandidateName_NestedCandidateObject_ReturnsName()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate"": {""fullName"": ""John Q Public""}, ""overall_score"": 72}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().Be("John Q Public");
+    }
+
+    [Fact]
+    public void ExtractCandidateName_PlaceholderValue_ReturnsNull()
+    {
+        using var doc = JsonDocument.Parse(@"{""candidate_name"": ""Unknown"", ""overall_score"": 72}");
+
+        var candidateName = ScoreApplicationCommandHandler.ExtractCandidateName(doc.RootElement);
+
+        candidateName.Should().BeNull();
+    }
+
+    [Fact]
+    public void ParseSingleRun_MixedCasePropertyNames_ExtractsCorrectly()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("mixedCasePropertyNames");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        var citations = JsonSerializer.Deserialize<List<CitationDto>>(run.EvidenceCitationsJson, JsonOpts);
+        citations.Should().NotBeNull();
+        citations!.Should().Contain(c => c.Category == "Technical Skills" && c.Snippet == "5 years Java experience");
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_StringPositiveValues_AreMarkedPassed()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateStringPositive");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeTrue();
+        var missing = root.GetProperty("missing_criteria").EnumerateArray().ToList();
+        missing.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_StringNegativeValues_AreMarkedFailed()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateStringNegative");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeFalse();
+        root.GetProperty("missing_criteria").GetArrayLength().Should().Be(1);
+    }
+
+    [Fact]
+    public void ParseSingleRun_EligibilityGate_EntriesWithoutExplicitStatus_AreInferredFromEvidence()
+    {
+        var fixture = TestFixtureLoader.LoadFixture("eligibilityGateEntriesWithoutExplicitStatus");
+        var handler = CreateHandler();
+
+        var run = handler.ParseSingleRun(fixture, "app-1", "prompt-1", 1);
+
+        using var doc = JsonDocument.Parse(run.MustHaveEvaluationJson);
+        var root = doc.RootElement;
+
+        root.GetProperty("passed").GetBoolean().Should().BeTrue();
+        root.GetProperty("missing_criteria").GetArrayLength().Should().Be(0);
+
+        var entries = root.GetProperty("details").GetProperty("entries").EnumerateArray().ToList();
+        entries.Should().NotBeEmpty();
+        entries.Should().OnlyContain(e => e.GetProperty("passed").GetBoolean());
+    }
+
+    [Fact]
+    public void RemapToRubricStatic_ReadsRubricV2EnvelopeCategories()
+    {
+        var run = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            TotalScore = 80,
+            CategoryScoresJson = """{"Technical":85,"Communication":72}"""
+        };
+
+        var rubricJson = """
+            {
+              "schemaVersion": "rubric-v2",
+              "categories": [
+                { "id": "cat-1", "name": "Technical Skills", "weight": 0.7, "description": "Core technical match", "order": 0 },
+                { "id": "cat-2", "name": "Communication", "weight": 0.3, "description": "Clear communication", "order": 1 }
+              ],
+              "items": []
+            }
+            """;
+
+        ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubricJson);
+
+        var scores = JsonSerializer.Deserialize<Dictionary<string, double>>(run.CategoryScoresJson, JsonOpts);
+        scores.Should().ContainKey("Technical Skills").WhoseValue.Should().Be(85);
+        scores.Should().ContainKey("Communication").WhoseValue.Should().Be(72);
+        run.TotalScore.Should().Be(81.1);
+    }
+
+    [Fact]
+    public void RemapToRubricStatic_IdenticalCategoryScores_ProduceIdenticalWeightedTotals()
+    {
+        var firstRun = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            TotalScore = 95,
+            CategoryScoresJson =
+                """{"Literacy and Qualifications":100,"Safety and Compliance":66.67,"Work Conditions and Physical Capability":100}"""
+        };
+        var inconsistentRun = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            TotalScore = 80,
+            CategoryScoresJson = firstRun.CategoryScoresJson
+        };
+        var rubricJson = """
+            {
+              "schemaVersion": "rubric-v2",
+              "categories": [
+                { "id": "cat-1", "name": "Literacy and Qualifications", "weight": 0.40, "order": 0 },
+                { "id": "cat-2", "name": "Safety and Compliance", "weight": 0.15, "order": 1 },
+                { "id": "cat-3", "name": "Work Conditions and Physical Capability", "weight": 0.45, "order": 2 }
+              ],
+              "items": []
+            }
+            """;
+
+        ScoreApplicationCommandHandler.RemapToRubricStatic(firstRun, rubricJson);
+        ScoreApplicationCommandHandler.RemapToRubricStatic(inconsistentRun, rubricJson);
+
+        firstRun.TotalScore.Should().Be(95.001);
+        inconsistentRun.TotalScore.Should().Be(firstRun.TotalScore);
+    }
+
+    [Fact]
+    public void RemapToRubricStatic_IncompleteCategoryScores_PreserveParsedTotal()
+    {
+        var run = new TalentMatch.Domain.Entities.ScoringRun
+        {
+            TotalScore = 80,
+            CategoryScoresJson = """{"Technical":85}"""
+        };
+        var rubricJson = """
+            [
+              { "name": "Technical Skills", "weight": 0.7 },
+              { "name": "Communication", "weight": 0.3 }
+            ]
+            """;
+
+        ScoreApplicationCommandHandler.RemapToRubricStatic(run, rubricJson);
+
+        run.TotalScore.Should().Be(80);
+    }
+
+    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+
+    private record CitationDto(string? Category, string? Snippet);
+}

@@ -1,0 +1,72 @@
+{
+  "defaults": {
+    "fileConcurrency": 4,
+    "maxIndividualFileBytes": 4194304,
+    "maxInFlightBytes": 104857600,
+    "concurrencyVersion": 0,
+    "persisted": false
+  },
+  "itemStatuses": [
+    "waiting",
+    "throttled",
+    "uploading",
+    "retrying",
+    "succeeded",
+    "skipped_duplicate",
+    "failed",
+    "interrupted"
+  ],
+  "supportedMimeTypes": [
+    "application/pdf",
+    "text/markdown",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+    "image/jpeg",
+    "image/png"
+  ],
+  "mimeNormalization": [
+    { "extension": ".pdf", "input": "", "normalized": "application/pdf" },
+    { "extension": ".md", "input": "", "normalized": "text/markdown" },
+    {
+      "extension": ".docx",
+      "input": "",
+      "normalized": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    },
+    { "extension": ".txt", "input": "", "normalized": "text/plain" },
+    { "extension": ".jpg", "input": "", "normalized": "image/jpeg" },
+    { "extension": ".jpeg", "input": "", "normalized": "image/jpeg" },
+    { "extension": ".png", "input": "", "normalized": "image/png" }
+  ],
+  "sizeBoundaries": [
+    { "name": "empty", "rawSizeBytes": 0, "eligible": true },
+    { "name": "exact-limit", "rawSizeBytes": 4194304, "eligible": true },
+    {
+      "name": "one-byte-over",
+      "rawSizeBytes": 4194305,
+      "eligible": false,
+      "error": "size_limit"
+    }
+  ],
+  "authorization": {
+    "settings": {
+      "allowedGlobalRoles": ["admin"],
+      "deniedGlobalRoles": ["recruiter", "organization_admin"]
+    },
+    "sessions": {
+      "requiresAuthentication": true,
+      "requiresOwner": true,
+      "requiresJobAccess": true
+    }
+  },
+  "errors": {
+    "required": ["error", "message", "correlationId"],
+    "validationRequired": ["error", "message", "correlationId", "errors"],
+    "statuses": {
+      "unauthorized": 401,
+      "forbidden": 403,
+      "notFound": 404,
+      "stale": 409,
+      "validation": 422
+    }
+  }
+}

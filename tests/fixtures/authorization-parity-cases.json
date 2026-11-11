@@ -1,0 +1,1020 @@
+{
+  "schemaVersion": 1,
+  "description": "Shared Stack A and Stack B authorization parity cases for US5.",
+  "rules": {
+    "tokenFreshnessMinutes": 15,
+    "defaultDepartmentGrantsAuthority": false,
+    "pendingProfileAuthorizationVersion": 0,
+    "entraModeCapability": "entra_access_management",
+    "simpleModeCapability": "local_password_user_management"
+  },
+  "referenceState": {
+    "configuredTenantId": "11111111-1111-4111-8111-111111111111",
+    "primaryOrganizationId": "55555555-5555-4555-8555-555555555555",
+    "otherOrganizationId": "66666666-6666-4666-8666-666666666666",
+    "primaryDepartmentId": "77777777-7777-4777-8777-777777777777",
+    "replacementDepartmentId": "88888888-8888-4888-8888-888888888888",
+    "otherDepartmentId": "99999999-9999-4999-8999-999999999999",
+    "profiles": {
+      "assignedRecruiter": {
+        "objectId": "22222222-2222-4222-8222-222222222222",
+        "status": "active",
+        "isActive": true,
+        "authorizationVersion": 0,
+        "memberships": [
+          {
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentIds": [
+              "77777777-7777-4777-8777-777777777777",
+              "88888888-8888-4888-8888-888888888888"
+            ],
+            "defaultDepartmentId": "88888888-8888-4888-8888-888888888888"
+          }
+        ],
+        "assignments": [
+          {
+            "assignmentId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "role": "recruiter",
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentId": "77777777-7777-4777-8777-777777777777",
+            "source": "delegated",
+            "status": "active"
+          }
+        ]
+      },
+      "organizationAdmin": {
+        "objectId": "33333333-3333-4333-8333-333333333333",
+        "status": "active",
+        "isActive": true,
+        "authorizationVersion": 3,
+        "memberships": [
+          {
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentIds": [
+              "77777777-7777-4777-8777-777777777777"
+            ],
+            "defaultDepartmentId": "77777777-7777-4777-8777-777777777777"
+          }
+        ],
+        "assignments": [
+          {
+            "assignmentId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "organization_admin",
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentId": null,
+            "source": "delegated",
+            "status": "active"
+          }
+        ]
+      },
+      "multiOrganizationUser": {
+        "objectId": "44444444-4444-4444-8444-444444444444",
+        "status": "active",
+        "isActive": true,
+        "authorizationVersion": 8,
+        "memberships": [
+          {
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentIds": [
+              "77777777-7777-4777-8777-777777777777",
+              "88888888-8888-4888-8888-888888888888"
+            ],
+            "defaultDepartmentId": "88888888-8888-4888-8888-888888888888"
+          },
+          {
+            "organizationId": "66666666-6666-4666-8666-666666666666",
+            "departmentIds": [
+              "99999999-9999-4999-8999-999999999999"
+            ],
+            "defaultDepartmentId": "99999999-9999-4999-8999-999999999999"
+          }
+        ],
+        "assignments": [
+          {
+            "assignmentId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "role": "recruiter",
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentId": "77777777-7777-4777-8777-777777777777",
+            "source": "delegated",
+            "status": "active"
+          },
+          {
+            "assignmentId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+            "role": "business_panel",
+            "organizationId": "66666666-6666-4666-8666-666666666666",
+            "departmentId": "99999999-9999-4999-8999-999999999999",
+            "source": "delegated",
+            "status": "active"
+          }
+        ]
+      },
+      "pendingUser": {
+        "objectId": "99999999-9999-9999-9999-999999999999",
+        "status": "pending",
+        "isActive": true,
+        "authorizationVersion": 0,
+        "memberships": [],
+        "assignments": []
+      },
+      "disabledUser": {
+        "objectId": "88888888-8888-8888-8888-888888888888",
+        "status": "disabled",
+        "isActive": false,
+        "authorizationVersion": 6,
+        "memberships": [],
+        "assignments": []
+      },
+      "revokedUser": {
+        "objectId": "77777777-7777-7777-7777-777777777777",
+        "status": "active",
+        "isActive": true,
+        "authorizationVersion": 7,
+        "memberships": [
+          {
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentIds": [
+              "77777777-7777-4777-8777-777777777777"
+            ],
+            "defaultDepartmentId": "77777777-7777-4777-8777-777777777777"
+          }
+        ],
+        "assignments": [
+          {
+            "assignmentId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            "role": "recruiter",
+            "organizationId": "55555555-5555-4555-8555-555555555555",
+            "departmentId": "77777777-7777-4777-8777-777777777777",
+            "source": "delegated",
+            "status": "revoked"
+          }
+        ]
+      }
+    }
+  },
+  "cases": [
+    {
+      "id": "auth-assigned-explicit-default-and-version",
+      "area": "auth",
+      "category": "explicit-default",
+      "operationFromCase": "request",
+      "host": "auth",
+      "authScenario": "assigned",
+      "input": {
+        "mode": "entra",
+        "profile": "assignedRecruiter",
+        "authorizationVersion": 0,
+        "defaultDepartmentId": "88888888-8888-4888-8888-888888888888"
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/auth/me"
+      },
+      "expected": {
+        "status": 200,
+        "publicFields": [
+          "userId",
+          "tenantId",
+          "objectId",
+          "authorizationVersion",
+          "memberships",
+          "authorizations"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "allowed": true,
+          "authorizationVersion": 0,
+          "defaultDepartmentId": "88888888-8888-4888-8888-888888888888"
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "auth-first-sign-in-pending-profile",
+      "area": "auth",
+      "category": "pending-profile",
+      "operationFromCase": "request",
+      "host": "auth",
+      "authScenario": "new-unassigned",
+      "input": {
+        "mode": "entra",
+        "profileBeforeRequest": null,
+        "resultingProfile": "pendingUser",
+        "authorizationVersion": 0
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/auth/me"
+      },
+      "expected": {
+        "status": 403,
+        "error": "assignment_missing",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 403,
+          "allowed": false,
+          "error": "assignment_missing",
+          "pendingProfileCreated": true,
+          "authorizationVersion": 0
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "auth-disabled-profile",
+      "area": "auth",
+      "category": "authorization-denial",
+      "operationFromCase": "request",
+      "host": "auth",
+      "authScenario": "disabled",
+      "input": {
+        "mode": "entra",
+        "profile": "disabledUser",
+        "authorizationVersion": 6
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/auth/me"
+      },
+      "expected": {
+        "status": 403,
+        "error": "identity_disabled",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 403,
+          "allowed": false,
+          "error": "identity_disabled",
+          "authorizationVersion": 6
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "auth-wrong-tenant",
+      "area": "auth",
+      "category": "authorization-denial",
+      "operationFromCase": "request",
+      "host": "auth",
+      "authScenario": "wrong-tenant",
+      "input": {
+        "mode": "entra",
+        "tenantId": "00000000-0000-4000-8000-000000000002"
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/auth/me"
+      },
+      "expected": {
+        "status": 401,
+        "error": "wrong_tenant",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 401,
+          "allowed": false,
+          "error": "wrong_tenant",
+          "stateChanged": false
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "auth-stale-token",
+      "area": "auth",
+      "category": "authorization-denial",
+      "operationFromCase": "request",
+      "host": "auth",
+      "authScenario": "stale",
+      "input": {
+        "mode": "entra",
+        "tokenAgeMinutes": 16,
+        "silentRefreshSucceeds": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/auth/me"
+      },
+      "expected": {
+        "status": 401,
+        "error": "token_stale",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 401,
+          "allowed": false,
+          "error": "token_stale",
+          "stateChanged": false
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "access-list-pending-profiles",
+      "area": "access-management",
+      "category": "access-management",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "admin",
+      "input": {
+        "mode": "entra",
+        "status": "pending",
+        "profile": "pendingUser",
+        "authorizationVersion": 0
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/access-management/users?status=pending"
+      },
+      "expected": {
+        "status": 200,
+        "publicFields": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "capability": "entra_access_management"
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "access-inspect-profile-version-and-defaults",
+      "area": "access-management",
+      "category": "access-management",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "profile": "multiOrganizationUser",
+        "authorizationVersion": 8,
+        "defaultDepartmentIds": {
+          "55555555-5555-4555-8555-555555555555": "88888888-8888-4888-8888-888888888888",
+          "66666666-6666-4666-8666-666666666666": "99999999-9999-4999-8999-999999999999"
+        }
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/access-management/users/44444444-4444-4444-8444-444444444444"
+      },
+      "expected": {
+        "status": 200,
+        "publicFields": [
+          "objectId",
+          "authorizationVersion",
+          "organizations"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "authorizationVersion": 8,
+          "scopesActorFiltered": true
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "access-onboard-pending-profile-atomically",
+      "area": "access-management",
+      "category": "access-management",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "admin",
+      "input": {
+        "mode": "entra",
+        "profile": "pendingUser",
+        "authorizationVersionBefore": 0,
+        "authorizationVersionAfter": 1
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/api/access-management/users/44444444-4444-4444-8444-444444444444/organizations/55555555-5555-4555-8555-555555555555",
+        "body": {
+          "expectedVersion": 0,
+          "profile": {
+            "username": "target@contoso.example",
+            "fullName": "Target User",
+            "email": "target@contoso.example"
+          },
+          "membership": {
+            "status": "active",
+            "departmentIds": [
+              "77777777-7777-4777-8777-777777777777"
+            ],
+            "defaultDepartmentId": "77777777-7777-4777-8777-777777777777"
+          },
+          "roleAssignments": [
+            {
+              "role": "recruiter",
+              "departmentId": "77777777-7777-4777-8777-777777777777"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": 200,
+        "publicFields": [
+          "objectId",
+          "isActive",
+          "authorizationVersion",
+          "organizations"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "stateChanged": true,
+          "authorizationVersion": 1,
+          "defaultDepartmentId": "77777777-7777-4777-8777-777777777777",
+          "auditOutcomes": 1
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "access-admin-disables-profile",
+      "area": "access-management",
+      "category": "access-management",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "admin",
+      "input": {
+        "mode": "entra",
+        "profile": "assignedRecruiter",
+        "authorizationVersionBefore": 0,
+        "authorizationVersionAfter": 1
+      },
+      "request": {
+        "method": "PATCH",
+        "path": "/api/access-management/users/44444444-4444-4444-8444-444444444444",
+        "body": {
+          "expectedVersion": 0,
+          "isActive": false
+        }
+      },
+      "expected": {
+        "status": 200,
+        "publicFields": [
+          "objectId",
+          "isActive",
+          "authorizationVersion",
+          "organizations"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "isActive": false,
+          "authorizationVersion": 1,
+          "auditOutcomes": 1
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "access-invalid-default-rolls-back",
+      "area": "access-management",
+      "category": "access-management",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "admin",
+      "input": {
+        "mode": "entra",
+        "profile": "pendingUser",
+        "authorizationVersion": 0
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/api/access-management/users/44444444-4444-4444-8444-444444444444/organizations/55555555-5555-4555-8555-555555555555",
+        "body": {
+          "expectedVersion": 0,
+          "profile": {
+            "username": "target@contoso.example",
+            "fullName": "Target User",
+            "email": "target@contoso.example"
+          },
+          "membership": {
+            "status": "active",
+            "departmentIds": [
+              "77777777-7777-4777-8777-777777777777"
+            ],
+            "defaultDepartmentId": "88888888-8888-4888-8888-888888888888"
+          },
+          "roleAssignments": [
+            {
+              "role": "recruiter",
+              "departmentId": "77777777-7777-4777-8777-777777777777"
+            }
+          ]
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "invalid_scope",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 400,
+          "error": "invalid_scope",
+          "stateChanged": false,
+          "authorizationVersion": 0
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "access-stale-authorization-version",
+      "area": "access-management",
+      "category": "access-management",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "admin",
+      "repositoryError": {
+        "code": "version_conflict"
+      },
+      "input": {
+        "mode": "entra",
+        "profile": "multiOrganizationUser",
+        "expectedVersion": 7,
+        "authorizationVersion": 8
+      },
+      "request": {
+        "method": "PUT",
+        "path": "/api/access-management/users/44444444-4444-4444-8444-444444444444/organizations/55555555-5555-4555-8555-555555555555",
+        "body": {
+          "expectedVersion": 7,
+          "profile": {
+            "username": "target@contoso.example",
+            "fullName": "Target User",
+            "email": "target@contoso.example"
+          },
+          "membership": {
+            "status": "active",
+            "departmentIds": [
+              "77777777-7777-4777-8777-777777777777"
+            ],
+            "defaultDepartmentId": "77777777-7777-4777-8777-777777777777"
+          },
+          "roleAssignments": []
+        }
+      },
+      "expected": {
+        "status": 409,
+        "error": "version_conflict",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 409,
+          "error": "version_conflict",
+          "stateChanged": false,
+          "authorizationVersion": 8
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "access-organization-admin-foreign-scope-denied",
+      "area": "access-management",
+      "category": "access-management",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "profile": "multiOrganizationUser",
+        "organizationId": "66666666-6666-4666-8666-666666666666",
+        "authorizationVersion": 8
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/api/access-management/users/44444444-4444-4444-8444-444444444444/organizations/66666666-6666-4666-8666-666666666666/role-assignments/99999999-9999-4999-8999-999999999999?expectedVersion=8"
+      },
+      "expected": {
+        "status": 403,
+        "error": "forbidden",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 403,
+          "error": "forbidden",
+          "stateChanged": false,
+          "authorizationVersion": 8
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "organization-admin-registers-explicit-default",
+      "area": "organization-administration",
+      "category": "organization-administration",
+      "operationFromCase": "request",
+      "host": "organization",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "authorizationVersionBefore": 0,
+        "authorizationVersionAfter": 1
+      },
+      "request": {
+        "method": "POST",
+        "path": "/api/organizations/55555555-5555-4555-8555-555555555555/memberships",
+        "body": {
+          "userObjectId": "44444444-4444-4444-8444-444444444444",
+          "departmentIds": [
+            "77777777-7777-4777-8777-777777777777",
+            "88888888-8888-4888-8888-888888888888"
+          ],
+          "defaultDepartmentId": "88888888-8888-4888-8888-888888888888"
+        }
+      },
+      "expected": {
+        "status": 200,
+        "publicFields": [
+          "userObjectId",
+          "organizationId",
+          "departmentIds",
+          "defaultDepartmentId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "defaultDepartmentId": "88888888-8888-4888-8888-888888888888",
+          "authorizationVersion": 1,
+          "auditOutcomes": 1
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "organization-admin-foreign-scope-denied",
+      "area": "organization-administration",
+      "category": "organization-administration",
+      "operationFromCase": "request",
+      "host": "organization",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "organizationId": "66666666-6666-4666-8666-666666666666"
+      },
+      "request": {
+        "method": "POST",
+        "path": "/api/organizations/66666666-6666-4666-8666-666666666666/departments",
+        "body": {
+          "name": "Unauthorized"
+        }
+      },
+      "expected": {
+        "status": 403,
+        "error": "forbidden",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 403,
+          "error": "forbidden",
+          "stateChanged": false,
+          "auditFailureOutcomes": 1
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "organization-admin-global-admin-escalation-denied",
+      "area": "organization-administration",
+      "category": "organization-administration",
+      "operationFromCase": "request",
+      "host": "organization",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "targetObjectId": "44444444-4444-4444-8444-444444444444"
+      },
+      "request": {
+        "method": "POST",
+        "path": "/api/organizations/55555555-5555-4555-8555-555555555555/role-assignments",
+        "body": {
+          "userObjectId": "44444444-4444-4444-8444-444444444444",
+          "role": "admin",
+          "departmentId": null
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "invalid_scope",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 400,
+          "error": "invalid_scope",
+          "stateChanged": false,
+          "auditFailureOutcomes": 1
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "jobs-invalid-organization-department-pair",
+      "area": "jobs",
+      "category": "job-validation",
+      "operationFromCase": "request",
+      "host": "organization",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "organizationId": "55555555-5555-4555-8555-555555555555",
+        "departmentId": "99999999-9999-4999-8999-999999999999"
+      },
+      "request": {
+        "method": "POST",
+        "path": "/api/jobs",
+        "body": {
+          "title": "Mismatched scope",
+          "organization": "Contoso",
+          "department": "Finance",
+          "organizationId": "55555555-5555-4555-8555-555555555555",
+          "departmentId": "99999999-9999-4999-8999-999999999999"
+        }
+      },
+      "expected": {
+        "status": 400,
+        "error": "invalid_job_scope",
+        "publicFields": [
+          "error",
+          "message"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 400,
+          "error": "invalid_job_scope",
+          "stateChanged": false
+        },
+        "simple": {
+          "status": 400,
+          "error": "invalid_job_scope",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "jobs-pending-profile-denied-before-data",
+      "area": "jobs",
+      "category": "job-authorization",
+      "operationFromCase": "request",
+      "host": "auth",
+      "authScenario": "unassigned",
+      "input": {
+        "mode": "entra",
+        "profile": "pendingUser",
+        "authorizationVersion": 0
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/jobs"
+      },
+      "expected": {
+        "status": 403,
+        "error": "assignment_missing",
+        "publicFields": [
+          "error",
+          "message",
+          "correlationId"
+        ],
+        "absentFields": [
+          "jobs"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 403,
+          "error": "assignment_missing",
+          "jobDataReturned": false
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "revocation-access-role-preserves-unrelated-scope",
+      "area": "revocation",
+      "category": "revocation",
+      "operationFromCase": "request",
+      "host": "access",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "profile": "multiOrganizationUser",
+        "authorizationVersionBefore": 8,
+        "authorizationVersionAfter": 9,
+        "revokedAssignmentId": "99999999-9999-4999-8999-999999999999",
+        "preservedOrganizationId": "66666666-6666-4666-8666-666666666666"
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/api/access-management/users/44444444-4444-4444-8444-444444444444/organizations/55555555-5555-4555-8555-555555555555/role-assignments/99999999-9999-4999-8999-999999999999?expectedVersion=8"
+      },
+      "expected": {
+        "status": 200,
+        "publicFields": [
+          "objectId",
+          "authorizationVersion",
+          "organizations"
+        ]
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "authorizationVersion": 9,
+          "unrelatedScopesPreserved": true,
+          "auditOutcomes": 1
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "revocation-organization-role-targeted-only",
+      "area": "revocation",
+      "category": "revocation",
+      "operationFromCase": "request",
+      "host": "organization",
+      "authScenario": "organization-admin",
+      "input": {
+        "mode": "entra",
+        "revokedAssignmentId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "preservedAssignmentId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+      },
+      "request": {
+        "method": "DELETE",
+        "path": "/api/organizations/55555555-5555-4555-8555-555555555555/role-assignments/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+      },
+      "expected": {
+        "status": 204
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 204,
+          "targetRevoked": true,
+          "unrelatedScopesPreserved": true,
+          "auditOutcomes": 1
+        },
+        "simple": {
+          "applicable": false,
+          "capability": "local_password_user_management",
+          "entraStateChanged": false
+        }
+      }
+    },
+    {
+      "id": "simple-mode-access-management-is-unavailable",
+      "area": "simple-mode-isolation",
+      "category": "mode-isolation",
+      "operationFromCase": "request",
+      "host": "simple",
+      "mode": "simple",
+      "input": {
+        "mode": "simple",
+        "capability": "local_password_user_management",
+        "entraAccessManagementAvailable": false
+      },
+      "request": {
+        "method": "GET",
+        "path": "/api/access-management/users"
+      },
+      "expected": {
+        "status": 404
+      },
+      "expectedByMode": {
+        "entra": {
+          "status": 200,
+          "capability": "entra_access_management",
+          "passwordControlsVisible": false
+        },
+        "simple": {
+          "status": 404,
+          "capability": "local_password_user_management",
+          "entraAccessManagementAvailable": false,
+          "entraStateChanged": false
+        }
+      }
+    }
+  ]
+}

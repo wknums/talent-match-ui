@@ -1,0 +1,60 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Application\TalentMatch.Application.csproj" />
+    <ProjectReference Include="..\Infrastructure\TalentMatch.Infrastructure.csproj" />
+    <ProjectReference Include="..\Web.Client\TalentMatch.Web.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.10.0" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(DotNetPatchVersion)">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="$(DotNetPatchVersion)" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="$(DotNetPatchVersion)" NoWarn="NU1510" />
+    <PackageReference Include="Microsoft.Identity.Web" Version="4.7.0" />
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.19.1" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="$(DotNetPatchVersion)" NoWarn="NU1510" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\..\server\storage\schema.sql">
+      <Link>server\storage\schema.sql</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\..\server\storage\schema-pre-batch-upgrades.sql">
+      <Link>server\storage\schema-pre-batch-upgrades.sql</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\..\server\storage\schema-bulk-v3-upgrades.sql">
+      <Link>server\storage\schema-bulk-v3-upgrades.sql</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\..\server\storage\schema-sqlite.sql">
+      <Link>server\storage\schema-sqlite.sql</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeFrameworkVersion>$(DotNetPatchVersion)</RuntimeFrameworkVersion>
+    <RollForward>LatestPatch</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PackageStackB)' == 'true'">
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+  </PropertyGroup>
+
+</Project>

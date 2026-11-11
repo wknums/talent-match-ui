@@ -1,0 +1,9 @@
+{
+  "name": "s5-long-running-obo-node",
+  "private": true,
+  "type": "module",
+  "description": "Spike S5 (T008A) Node half. Not part of the product; stores token material in plain files under ~/.talent-match/s5. Delete when the spike is closed.",
+  "dependencies": {
+    "@azure/msal-node": "^5.0.0"
+  }
+}

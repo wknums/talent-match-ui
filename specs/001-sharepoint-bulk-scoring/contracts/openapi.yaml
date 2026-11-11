@@ -1,0 +1,1452 @@
+openapi: 3.1.0
+info:
+  title: Delegated Microsoft 365 Bulk Scoring API
+  version: 3.1.0
+  x-runtime-status: planned-until-old-runtime-removal
+  x-revision: principle-I-complete-lifecycle-audit-refresh
+  description: |
+    PLANNED TARGET CONTRACT: operational current-state documentation must not present this
+    connector as active until the sequenced old-runtime removal and activation tasks pass.
+
+    Product authentication authorizes jobs. A separate confidential, multi-tenant Microsoft 365
+    connector authorizes one pasted work/school SharePoint or OneDrive folder journey using
+    authorization code + PKCE + state and delegated read access. No operation returns source
+    authorization material. No app-only, Sites.Selected, host/root allow-list, or fallback identity
+    exists. This release accepts organizational accounts in Microsoft commercial cloud only.
+
+    Publisher gating is based only on the product deployment environment and the connector
+    registration assertion. Production requires an explicit publisher-verified assertion and
+    fails closed before source-connection activation when it is absent or false. An unverified
+    connector may run only in controlled Development or QA product deployments under normal product
+    authorization. Source tenant is never an input to this gate.
+
+    A successful raster conversion first passes configured output-type, PDF magic/signature,
+    structural document, positive/configured-size page-set, and page-invariant validation before
+    any scoring handoff. It then preserves exact page count/order, page dimensions within one
+    point, per-page SSIM >= 0.95 at the conversion DPI, and no blank/cropped page. It retains
+    original and converted content, presents the scored converted version by default, and permits a
+    separately authorized original download. Authorized request detail exposes submit/cancel actor
+    and time with actor-identifier fallback. First-terminal notification is submitter-only, has
+    frozen outcome counts plus an authorization-enforcing detail link, contains no item names, and
+    has one retained idempotent acknowledgment. Duplicate
+    identity is one canonical SHA-256 of original raw bytes across all upload/import paths and both
+    stacks, including compatible pre-change fingerprints; fingerprints are never public. Request
+    and item outcomes live for the owning job's lifetime. Job deletion removes their relational and
+    staged content in SQLite and Azure SQL while immutable non-secret audit events survive.
+x-requirement-coverage:
+  FR-002N:
+    - product-environment-only publisher gate
+    - Production explicit assertion and fail-closed activation
+    - no source-tenant inspection or allow-list
+  FR-010C:
+    - retained original and converted content
+    - scored converted version is the default view
+    - job-authorized original download
+    - original/converted page-count equality
+  FR-010B-SC-030:
+    - exact page count and order
+    - source/output dimensions within one point
+    - every page pair SSIM at least 0.95 at conversion DPI
+    - blank and cropped output rejected without original fallback
+  FR-010G:
+    - configured output type and PDF magic/signature validation
+    - structural document validity and positive page set
+    - configured size and page invariants before scoring handoff
+    - invalid converted output never reaches scoring in either stack
+  FR-019-SC-031:
+    - submit and cancellation actor/time only on authorized detail
+    - display name resolved from user record with recorded actor identifier fallback
+  FR-020-SC-032:
+    - exactly one notification to the request submitter on first terminal transition
+    - terminal outcome and accurate completed/failed/skipped/cancelled counts
+    - job-authorized relative detail link and no item-name field
+    - one retained idempotent acknowledgment
+  FR-010H-SC-015:
+    - canonical raw-byte SHA-256 across legacy, optional, bulk, Stack A, and Stack B
+    - compatible pre-change fingerprints
+  FR-021:
+    - job-lifetime request and item outcomes
+    - SQLite and Azure SQL cascade plus staged-content cleanup
+    - immutable audit retention
+  SC-002:
+    - one timer from confirmation action
+    - confirmation acknowledgment within 60 seconds in each stack
+    - returned request successfully queryable within the same 60-second budget
+  Constitution-Principle-I:
+    - complete immutable control-plane, request, item, and content lifecycle event matrix
+    - atomic state/event or durable outbox/reconciliation emission for every mutation
+    - required correlation ID, user or explicit service actor, UTC timestamp, detached immutable retention, and safe facts
+    - no token, raw URL, source/item name, fingerprint, item content, or provider payload leakage
+    - Stack A and Stack B parity on SQLite and Azure SQL
+x-endpoint-map:
+  connection-and-consent:
+    requirements: [FR-002, FR-002F, FR-002N]
+    operations:
+      - getBulkScoringCapabilities
+      - beginSourceConnection
+      - completeSourceConnectionCallback
+      - completeSourceAdminConsentCallback
+      - getSourceConnection
+      - abandonSourceConnection
+  discovery-review-and-confirmation:
+    requirements: [FR-001, FR-003, FR-004, FR-006, FR-008, FR-010, SC-002]
+    operations:
+      - previewBulkScoringRequest
+      - discoverMoreBulkScoringRequest
+      - listBulkScoringDraftItems
+      - confirmBulkScoringRequest
+  monitoring-cancellation-and-retry:
+    requirements: [FR-011, FR-012, FR-013, FR-014, FR-019, FR-020]
+    operations:
+      - listJobBulkScoringRequests
+      - getBulkScoringRequest
+      - listBulkScoringRequestItems
+      - cancelBulkScoringRequest
+      - beginRetrySourceConnection
+      - listBulkScoringNotifications
+      - acknowledgeBulkScoringRequest
+  retained-content-and-settings:
+    requirements: [FR-010B, FR-010C, FR-010G, FR-010H, FR-021]
+    operations:
+      - downloadBulkScoringOriginal
+      - getBulkScoringSettings
+      - updateBulkScoringSettings
+x-immutable-audit-contract:
+  requiredFields:
+    - auditEventId
+    - eventType
+    - correlationId
+    - actorType
+    - actorId
+    - occurredAt
+    - subjectType
+    - subjectId
+    - safeFacts
+    - schemaVersion
+  actor:
+    userAction:
+      actorType: user
+      actorId: authenticated product user identifier
+    backgroundAction:
+      actorType: service
+      actorId: stable non-secret worker, timer, cleanup, or reconciliation service identifier
+      initiatedByActorId: optional initiating product user; never substitutes for the service actor
+  atomicity:
+    relational: state mutation and every applicable event commit in one SQLite or Azure SQL transaction
+    scoringQueue: durable handoff or outbox mutation and bulk_item_scoring_handoff_queued commit before delivery
+    externalContent: durable intent, outcome, or reconciliation correction and its event commit around idempotent external I/O
+    multiMutation: one transaction emits every applicable typed event; an aggregate event cannot replace another required row
+  retention: append-only and detached from job/request/content/authorization cascades
+  disclosure:
+    allowed:
+      - opaque subject references
+      - safe state, reason, outcome, and content-kind codes
+      - counts, byte counts, and configuration versions
+      - actor type plus non-secret user or service actor identifier
+    prohibited:
+      - source, folder, or item names and URLs
+      - raw source account identity or email
+      - document content or fingerprints
+      - authorization codes, tokens, verifiers, caches, keys, or provider payloads
+      - environment-specific identifiers or secrets
+  providerParity: [stack-a-sqlite, stack-a-azure-sql, stack-b-sqlite, stack-b-azure-sql]
+  stackGates: [US1-B-GATE, US2-B-GATE, US3-B-GATE, STACK-B-LIVE-GATE, B-GATE, US1-A-GATE, US2-A-GATE, US3-A-GATE, STACK-A-LIVE-GATE, A-GATE, PARITY-GATE, RELEASE-GATE]
+  events:
+    sourceConnectionCreation:
+      eventType: source_connection_created
+      publicOperations: [beginSourceConnection]
+    sourceConnectionCompletion:
+      eventType: source_connection_completed
+      publicOperations: [completeSourceConnectionCallback, completeSourceAdminConsentCallback]
+    sourceConnectionFailure:
+      eventType: source_connection_failed
+      triggers: [start-failure, callback-failure, consent-failure]
+    sourceConnectionExpiry:
+      eventType: source_connection_expired
+      triggers: [idle-expiry, absolute-expiry]
+    sourceConnectionConsume:
+      eventType: source_connection_consumed
+      publicOperations: [confirmBulkScoringRequest]
+    previewDraftCreate:
+      eventType: preview_draft_created
+      publicOperations: [previewBulkScoringRequest]
+    previewDraftDiscover:
+      eventType: preview_discovery_committed
+      publicOperations: [previewBulkScoringRequest, discoverMoreBulkScoringRequest]
+    previewDraftAbandon:
+      eventType: preview_draft_abandoned
+      publicOperations: [abandonSourceConnection]
+    confirmation:
+      eventType: bulk_request_confirmed
+      publicOperations: [confirmBulkScoringRequest]
+    cancellation:
+      eventType: bulk_request_cancellation_requested
+      publicOperations: [cancelBulkScoringRequest]
+    retryRequest:
+      eventType: bulk_request_retry_created
+      publicOperations: [beginRetrySourceConnection]
+    discoveredItem:
+      eventType: bulk_item_discovered
+      triggers: [included-item-created-by-discovery]
+    itemClaim:
+      eventType: bulk_item_claimed
+      triggers: [worker-claim-acquired]
+    itemLeaseRenewal:
+      eventType: bulk_item_lease_renewed
+      triggers: [active-claim-renewed]
+    itemLeaseRecovery:
+      eventType: bulk_item_lease_recovered
+      triggers: [expired-claim-recovered]
+    itemLeaseRelease:
+      eventType: bulk_item_lease_released
+      triggers: [claim-released-without-terminal-transition]
+    importStart:
+      eventType: bulk_item_import_started
+      triggers: [waiting-to-importing]
+    sourceMetadataRecheckSuccess:
+      eventType: bulk_item_source_metadata_recheck_succeeded
+      triggers: [etag-size-type-and-subtree-recheck-passed]
+    sourceMetadataRecheckFailure:
+      eventType: bulk_item_source_metadata_recheck_failed
+      triggers: [etag-size-type-or-subtree-recheck-failed]
+    originalContentStage:
+      eventType: bulk_original_content_staged
+      triggers: [original-content-metadata-committed]
+    convertedContentStage:
+      eventType: bulk_converted_content_staged
+      triggers: [validated-converted-content-metadata-committed]
+    fingerprintRecord:
+      eventType: bulk_item_fingerprint_recorded
+      triggers: [canonical-original-byte-fingerprint-state-committed]
+    duplicateClaim:
+      eventType: bulk_item_duplicate_claimed
+      triggers: [unique-fingerprint-claim-committed]
+    duplicateSkip:
+      eventType: bulk_item_duplicate_skipped
+      triggers: [duplicate-terminal-skip-committed]
+    conversionStart:
+      eventType: bulk_item_conversion_started
+      triggers: [importing-to-converting]
+    conversionComplete:
+      eventType: bulk_item_conversion_completed
+      triggers: [conversion-and-admission-passed]
+    conversionFailure:
+      eventType: bulk_item_conversion_failed
+      triggers: [conversion-or-output-admission-failed]
+    convertedOutputQuarantine:
+      eventType: bulk_converted_output_quarantined
+      triggers: [invalid-output-quarantine-decision-committed]
+    convertedOutputRemoval:
+      eventType: bulk_converted_output_removed
+      triggers: [invalid-output-removal-outcome-committed]
+    applicationCreate:
+      eventType: bulk_item_application_created
+      triggers: [deterministic-application-created]
+    documentCreate:
+      eventType: bulk_item_document_created
+      triggers: [scored-document-created]
+    scoringHandoff:
+      eventType: bulk_item_scoring_handoff_queued
+      triggers: [durable-scoring-handoff-or-outbox-committed]
+    scoringStart:
+      eventType: bulk_item_scoring_started
+      conditionalOwnership: required only when this feature owns the scoring-start transition
+    itemComplete:
+      eventType: bulk_item_completed
+      triggers: [item-terminal-completed]
+    itemFailure:
+      eventType: bulk_item_failed
+      triggers: [item-terminal-failed]
+    itemSkip:
+      eventType: bulk_item_skipped
+      triggers: [item-terminal-skipped]
+    itemCancel:
+      eventType: bulk_item_cancelled
+      triggers: [item-terminal-cancelled]
+    retryItemCreate:
+      eventType: bulk_retry_item_created
+      triggers: [retry-item-row-created]
+    requestCountReconciliation:
+      eventType: bulk_request_counts_reconciled
+      triggers: [authoritative-item-counts-committed]
+    requestTerminalFinalization:
+      eventType: bulk_request_terminal_finalized
+      triggers: [first-request-terminal-outcome-committed]
+    notificationCreation:
+      eventType: bulk_notification_created
+      triggers: [first-terminal-transition]
+    notificationAcknowledgment:
+      eventType: bulk_notification_acknowledged
+      publicOperations: [acknowledgeBulkScoringRequest]
+    authorizationEstablish:
+      eventType: request_authorization_established
+      publicOperations: [confirmBulkScoringRequest, beginRetrySourceConnection]
+    authorizationUse:
+      eventType: request_authorization_used
+      triggers: [bound-source-read, silent-cache-rotation]
+    authorizationLapse:
+      eventType: request_authorization_lapsed
+      triggers: [interaction-required, revoked, access-lost]
+    authorizationDiscard:
+      eventType: request_authorization_discarded
+      triggers: [terminal-cleanup, cancel-settled-cleanup, unusable-authorization]
+    originalContentDeletion:
+      eventType: bulk_original_content_deleted
+      triggers: [durable-original-content-deletion-outcome]
+    convertedContentDeletion:
+      eventType: bulk_converted_content_deleted
+      triggers: [durable-converted-content-deletion-outcome]
+    transientContentDeletion:
+      eventType: bulk_transient_content_deleted
+      triggers: [durable-transient-content-deletion-outcome]
+    itemReconciliationCorrection:
+      eventType: bulk_item_reconciliation_corrected
+      triggers: [item-state-correction-committed]
+    requestReconciliationCorrection:
+      eventType: bulk_request_reconciliation_corrected
+      triggers: [request-state-or-count-correction-committed]
+    contentCleanupReconciliationPending:
+      eventType: bulk_content_cleanup_reconciliation_pending
+      triggers: [cleanup-retry-decision-committed]
+    contentCleanupReconciliationCompleted:
+      eventType: bulk_content_cleanup_reconciliation_completed
+      triggers: [cleanup-reconciliation-outcome-committed]
+    settingsMutation:
+      eventType: bulk_settings_changed
+      publicOperations: [updateBulkScoringSettings]
+    jobDeletionCleanup:
+      eventTypes: [bulk_job_cleanup_completed, bulk_job_cleanup_pending]
+      existingOperation: authorized-job-deletion
+servers:
+  - url: /api
+security:
+  - productBearer: []
+tags:
+  - name: SourceConnections
+  - name: BulkScoring
+  - name: Settings
+
+paths:
+  /bulk-scoring-capabilities:
+    get:
+      tags: [BulkScoring]
+      operationId: getBulkScoringCapabilities
+      summary: Get safe feature capabilities
+      responses:
+        '200':
+          description: Feature and source capabilities; no tenant, host, root, or access-mode configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringCapabilities'
+
+  /jobs/{jobId}/source-connections:
+    post:
+      tags: [SourceConnections]
+      operationId: beginSourceConnection
+      summary: Begin a Microsoft 365 source connection for an exact pasted folder
+      x-activation-precondition: |
+        This operation is not activated until the product-environment publisher gate passes.
+        Production requires an explicit true publisher-verified assertion; missing or false fails
+        closed before this operation can create state. Controlled Development/QA may activate an
+        unverified connector under normal product authorization. Source tenant is never evaluated
+        by this gate.
+      description: |
+        Product/job authorization, request-shape checks, the 10-pending-connection actor quota, and
+        actor/source-IP start rate limits are enforced before connection state is created and before
+        any authorization-code, token, Microsoft Graph, or source work.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BeginSourceConnectionRequest'
+      responses:
+        '201':
+          description: Pending connection created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeginSourceConnectionResponse'
+        '404':
+          $ref: '#/components/responses/JobNotFound'
+        '422':
+          $ref: '#/components/responses/UnsupportedSource'
+        '429':
+          $ref: '#/components/responses/ConnectionAdmissionRejected'
+        '503':
+          $ref: '#/components/responses/ConnectorUnavailable'
+
+  /source-connections/callback:
+    get:
+      tags: [SourceConnections]
+      operationId: completeSourceConnectionCallback
+      summary: Redeem the Microsoft identity authorization code and resume the product journey
+      security: []
+      description: |
+        Validates state, one-time callback use, PKCE verifier, exact registered redirect URI, and
+        organizational tenant. The authorization code and token response are never returned to the
+        browser. Success and safe error results redirect to the stored local product route.
+      parameters:
+        - name: code
+          in: query
+          schema: { type: string }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+        - name: error
+          in: query
+          schema: { type: string }
+        - name: error_description
+          in: query
+          schema: { type: string }
+      responses:
+        '302':
+          description: Redirect to the stored local job journey
+          headers:
+            Location:
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/CallbackRateLimited'
+
+  /source-connections/admin-consent-callback:
+    get:
+      tags: [SourceConnections]
+      operationId: completeSourceAdminConsentCallback
+      summary: Resume a pending connection after tenant administrator consent
+      security: []
+      parameters:
+        - name: tenant
+          in: query
+          schema: { type: string }
+        - name: admin_consent
+          in: query
+          schema: { type: boolean }
+        - name: state
+          in: query
+          required: true
+          schema: { type: string }
+        - name: error
+          in: query
+          schema: { type: string }
+      responses:
+        '302':
+          description: Redirect to the stored local job journey; returned tenant is not trusted for authorization
+          headers:
+            Location:
+              schema: { type: string }
+        '400':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/CallbackRateLimited'
+
+  /source-connections/{connectionId}:
+    get:
+      tags: [SourceConnections]
+      operationId: getSourceConnection
+      summary: Get safe pending-connection status
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      responses:
+        '200':
+          description: Safe status; never includes cache, token, code, PKCE, or key material
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceConnectionStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/ConnectionExpired'
+    delete:
+      tags: [SourceConnections]
+      operationId: abandonSourceConnection
+      summary: Abandon and cryptographically discard a pending source connection
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      responses:
+        '204': { description: Discarded or already terminal }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /source-connections/{connectionId}/preview:
+    post:
+      tags: [BulkScoring]
+      operationId: previewBulkScoringRequest
+      summary: Verify the exact folder as the connected user and run the first discovery step
+      parameters:
+        - $ref: '#/components/parameters/ConnectionId'
+      responses:
+        '201':
+          description: Draft request and first discovery step
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringPreview'
+        '401':
+          $ref: '#/components/responses/SourceAuthorizationRequired'
+        '403':
+          $ref: '#/components/responses/SourceAccessDenied'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/ConnectionExpired'
+        '422':
+          $ref: '#/components/responses/Problem'
+
+  /bulk-scoring-requests/{requestId}/discover-more:
+    post:
+      tags: [BulkScoring]
+      operationId: discoverMoreBulkScoringRequest
+      summary: Continue bounded discovery with the draft connection
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Updated preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringPreview'
+        '401':
+          $ref: '#/components/responses/SourceAuthorizationRequired'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '410':
+          $ref: '#/components/responses/ConnectionExpired'
+
+  /bulk-scoring-requests/{requestId}/draft-items:
+    get:
+      tags: [BulkScoring]
+      operationId: listBulkScoringDraftItems
+      summary: Page through already-included draft items without advancing discovery
+      description: |
+        This operation never calls Microsoft Graph and never changes discovery state. The opaque
+        review cursor is bound to reviewSnapshotVersion and is independent of the encrypted
+        discovery continuation. If an explicit discover-more action advances the snapshot, an old
+        review cursor returns draft_review_changed.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/ReviewCursor'
+        - name: pageSize
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+      responses:
+        '200':
+          description: Stable page from the current draft review snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DraftItemPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/DraftReviewChanged'
+
+  /bulk-scoring-requests/{requestId}/confirm:
+    post:
+      tags: [BulkScoring]
+      operationId: confirmBulkScoringRequest
+      summary: Bind authorization to the accepted request and start background processing
+      description: |
+        Rechecks job and exact-folder access, atomically moves the encrypted MSAL cache from the
+        pending connection into request-specific authorization, captures the scoring configuration
+        version current at confirmation, activates the request, and consumes the pending connection
+        before returning acceptance. SC-002 is measured from the user's confirm action: both this
+        acknowledgment and a successful authorized GET of the returned request must occur within
+        one 60-second budget in Stack A and Stack B.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmBulkScoringRequest'
+      responses:
+        '201':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringRequestDetail'
+        '200':
+          description: Idempotent repeat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringRequestDetail'
+        '401':
+          $ref: '#/components/responses/SourceAuthorizationRequired'
+        '403':
+          $ref: '#/components/responses/SourceAccessDenied'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '410':
+          $ref: '#/components/responses/ConnectionExpired'
+
+  /jobs/{jobId}/bulk-scoring-requests:
+    get:
+      tags: [BulkScoring]
+      operationId: listJobBulkScoringRequests
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Authorized job request page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringRequestPage'
+        '404':
+          $ref: '#/components/responses/JobNotFound'
+
+  /bulk-scoring-requests/{requestId}:
+    get:
+      tags: [BulkScoring]
+      operationId: getBulkScoringRequest
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Request detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringRequestDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /bulk-scoring-requests/{requestId}/items:
+    get:
+      tags: [BulkScoring]
+      operationId: listBulkScoringRequestItems
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ItemStatus' }
+        - name: name
+          in: query
+          schema: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: Server-paginated included items
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringItemPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /bulk-scoring-requests/{requestId}/items/{itemId}/original:
+    get:
+      tags: [BulkScoring]
+      operationId: downloadBulkScoringOriginal
+      summary: Download a retained original after raster conversion
+      description: |
+        Re-authorizes access through the request's associated job on every call. The normal document
+        view uses scoredVersion (converted after successful rasterization); this operation is the
+        explicit original-byte escape hatch. Missing content and unauthorized request/job/item
+        access use the same non-disclosing not-found response. No blob URI or reusable credential is
+        returned.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Original bytes, authorized through the request's job
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+          content:
+            application/octet-stream:
+              schema: { type: string, contentEncoding: binary }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /bulk-scoring-requests/notifications:
+    get:
+      tags: [BulkScoring]
+      operationId: listBulkScoringNotifications
+      summary: List the current product user's unacknowledged terminal request notifications
+      description: |
+        Returns only terminal requests submitted by the authenticated product actor and not yet
+        acknowledged. Each request appears at most once. The dedicated response shape contains the
+        frozen terminal outcome/counts and a server-generated relative request-detail link, but no
+        item collection or item-name field. Following the link performs normal job authorization.
+      responses:
+        '200':
+          description: Submitter-only, name-free in-product notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BulkScoringNotification'
+
+  /bulk-scoring-requests/{requestId}/cancel:
+    post:
+      tags: [BulkScoring]
+      operationId: cancelBulkScoringRequest
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '202':
+          description: Cancellation requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringRequestDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /bulk-scoring-requests/{requestId}/retry-failed:
+    post:
+      tags: [BulkScoring]
+      operationId: beginRetrySourceConnection
+      summary: Begin a new source connection for retryable items
+      description: |
+        A retry never reuses the old authorization. It starts a new connection bound to the retrying
+        product user, job, and exact source folder. After callback and verification, confirmation
+        creates a new request containing only retryable pre-scoring items.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '201':
+          description: Pending retry connection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BeginSourceConnectionResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/ConnectionAdmissionRejected'
+
+  /bulk-scoring-requests/{requestId}/acknowledge:
+    post:
+      tags: [BulkScoring]
+      operationId: acknowledgeBulkScoringRequest
+      summary: Retain one submitter acknowledgment for a terminal notification
+      description: |
+        Only the request submitter may acknowledge. The first call atomically records the submitter
+        actor and acknowledgment time. Repeated calls by that submitter are successful idempotent
+        no-ops: they preserve the original acknowledgment and create no notification.
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '204': { description: Acknowledged now or already acknowledged by this submitter }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /bulk-scoring-settings:
+    get:
+      tags: [Settings]
+      operationId: getBulkScoringSettings
+      responses:
+        '200':
+          description: Current settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringSettings'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      tags: [Settings]
+      operationId: updateBulkScoringSettings
+      description: |
+        The successful mutation and its immutable bulk_settings_changed audit event commit
+        atomically with the same correlation ID, administrator actor, and timestamp.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBulkScoringSettings'
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkScoringSettings'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+
+components:
+  securitySchemes:
+    productBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema: { type: string }
+    ConnectionId:
+      name: connectionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    ReviewCursor:
+      name: reviewCursor
+      in: query
+      description: Opaque cursor bound to one draft review snapshot; never advances discovery
+      schema: { type: string }
+
+  responses:
+    Problem:
+      description: Safe problem response
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: Resource not found or not visible to caller
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    JobNotFound:
+      description: Job not found or not visible to caller
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    Forbidden:
+      description: Product role is not permitted
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+    UnsupportedSource:
+      description: Source URL, account type, or cloud is unsupported before source access
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code:
+                    enum:
+                      - source_unsupported_account
+                      - source_unsupported_cloud
+                      - source_folder_invalid_or_unavailable
+    ConnectionExpired:
+      description: Pending connection expired or was discarded
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code: { const: source_connection_invalid_or_expired }
+    SourceAuthorizationRequired:
+      description: Interactive source connection or reconnection is required
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code:
+                    enum:
+                      - source_authorization_required
+                      - source_admin_consent_required
+                      - source_authorization_expired
+                      - source_authorization_revoked
+                  adminConsentUrl:
+                    type: [string, 'null']
+                    format: uri
+    SourceAccessDenied:
+      description: Connected user cannot access the exact folder; no restricted names are returned
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code: { const: source_access_denied }
+    ConnectionAdmissionRejected:
+      description: Pending quota or start rate limit rejected before token or Graph work
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code:
+                    enum: [source_connection_limit_reached, source_connection_rate_limited]
+    CallbackRateLimited:
+      description: Callback rate limit rejected before state lookup or authorization-code redemption
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code: { const: source_callback_rate_limited }
+    ConnectorUnavailable:
+      description: Product-environment publisher activation gate did not pass
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code: { const: source_connector_unavailable }
+    DraftReviewChanged:
+      description: Explicit discovery advanced the draft after this review cursor was issued
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - type: object
+                required: [code]
+                properties:
+                  code: { const: draft_review_changed }
+
+  schemas:
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, correlationId]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        correlationId: { type: string }
+        adminConsentUrl: { type: [string, 'null'], format: uri }
+    ErrorCode:
+      type: string
+      enum:
+        - source_authorization_required
+        - source_admin_consent_required
+        - source_authorization_expired
+        - source_authorization_revoked
+        - source_access_denied
+        - source_connection_invalid_or_expired
+        - source_connection_limit_reached
+        - source_connection_rate_limited
+        - source_callback_rate_limited
+        - source_unsupported_account
+        - source_unsupported_cloud
+        - source_folder_invalid_or_unavailable
+        - source_connector_unavailable
+        - draft_review_changed
+        - invalid_request_state
+        - concurrency_conflict
+        - validation_failed
+        - not_found
+        - forbidden
+
+    BeginSourceConnectionRequest:
+      type: object
+      additionalProperties: false
+      required: [folderUrl]
+      properties:
+        folderUrl: { type: string, format: uri, maxLength: 4096 }
+        retryOfRequestId: { type: [string, 'null'], format: uuid }
+
+    BulkScoringCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - enabled
+        - supportedSources
+        - supportedCloud
+        - maxDiscoveryStepFiles
+        - rasterizationAvailable
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            False when the product-environment activation gate has not passed. This value does not
+            depend on a selected source tenant.
+        supportedSources:
+          type: array
+          items: { $ref: '#/components/schemas/SourceKind' }
+        supportedCloud: { const: microsoftCommercial }
+        maxDiscoveryStepFiles: { type: integer, minimum: 1, maximum: 1000 }
+        rasterizationAvailable: { type: boolean }
+
+    BeginSourceConnectionResponse:
+      type: object
+      required: [connectionId, status, authorizationUrl, expiresAt]
+      properties:
+        connectionId: { type: string, format: uuid }
+        status: { const: authorizing }
+        authorizationUrl:
+          type: string
+          format: uri
+          description: organizations authorize URL containing state and S256 challenge; no source secret
+        expiresAt: { type: string, format: date-time }
+
+    SourceConnectionStatus:
+      type: object
+      required: [connectionId, status, expiresAt]
+      properties:
+        connectionId: { type: string, format: uuid }
+        status:
+          enum: [authorizing, authorized, verified, consumed, expired, abandoned, failed]
+        expiresAt: { type: string, format: date-time }
+        sourceKind: { $ref: '#/components/schemas/SourceKind' }
+        sourceAccountDisplay: { type: [string, 'null'] }
+        folderName: { type: [string, 'null'] }
+        adminConsentRequired: { type: boolean, default: false }
+        adminConsentUrl: { type: [string, 'null'], format: uri }
+        safeFailureCode:
+          anyOf:
+            - $ref: '#/components/schemas/ErrorCode'
+            - type: 'null'
+
+    SourceKind:
+      type: string
+      enum: [sharepoint, onedrive_business]
+
+    AuthorizationState:
+      type: string
+      enum: [pending, active, lapsed, revoked, accessLost, discarded, unavailableHistorical]
+
+    DiscoveryStatus:
+      type: string
+      enum: [more_available, complete, limit_reached]
+
+    RequestStatus:
+      type: string
+      enum: [draft, active, completed]
+
+    RequestOutcome:
+      type: [string, 'null']
+      enum: [all_succeeded, partial, failed, cancelled, null]
+
+    ItemStatus:
+      type: string
+      enum: [waiting, importing, converting, scoring, completed, failed, skipped, cancelled]
+
+    ReasonCode:
+      type: [string, 'null']
+      enum:
+        - unsupported_type
+        - file_too_large
+        - limit_exceeded
+        - empty_file
+        - not_convertible
+        - access_denied
+        - authorization_lapsed
+        - source_missing
+        - source_changed
+        - duplicate_in_request
+        - duplicate_in_job
+        - conversion_failed
+        - conversion_timeout
+        - converted_too_large
+        - conversion_page_mismatch
+        - conversion_dimension_mismatch
+        - conversion_ssim_below_threshold
+        - conversion_blank_page
+        - conversion_cropped_page
+        - scoring_failed
+        - cancelled_by_user
+        - transient_exhausted
+        - null
+
+    Counts:
+      type: object
+      additionalProperties: false
+      required: [discovered, excluded, inaccessible, waiting, importing, converting, scoring, completed, failed, skipped, cancelled]
+      properties:
+        discovered: { type: integer, minimum: 0 }
+        excluded: { type: integer, minimum: 0 }
+        inaccessible: { type: integer, minimum: 0 }
+        waiting: { type: integer, minimum: 0 }
+        importing: { type: integer, minimum: 0 }
+        converting: { type: integer, minimum: 0 }
+        scoring: { type: integer, minimum: 0 }
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        cancelled: { type: integer, minimum: 0 }
+
+    TerminalCounts:
+      type: object
+      additionalProperties: false
+      required: [completed, failed, skipped, cancelled]
+      properties:
+        completed: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        cancelled: { type: integer, minimum: 0 }
+
+    IncludedFile:
+      type: object
+      additionalProperties: false
+      required: [itemId, name, relativePath, sizeBytes]
+      properties:
+        itemId: { type: string, format: uuid }
+        name: { type: string }
+        relativePath: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        excludedWhenRasterized: { type: boolean }
+
+    FrozenLimits:
+      type: object
+      additionalProperties: false
+      required:
+        - maxFilesPerRequest
+        - maxBytesPerFile
+        - maxTotalBytes
+        - discoveryStepMaxFiles
+      properties:
+        maxFilesPerRequest:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          default: 30000
+        maxBytesPerFile:
+          type: integer
+          format: int64
+          minimum: 1
+          default: 8388608
+          description: Frozen byte value; MiB is presentation only
+        maxTotalBytes:
+          type: integer
+          format: int64
+          minimum: 1048576
+          maximum: 1099511627776
+          default: 53687091200
+        discoveryStepMaxFiles:
+          type: integer
+          minimum: 1
+          maximum: 1000
+
+    BulkScoringPreview:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - connectionId
+        - sourceKind
+        - folderName
+        - authorizationState
+        - discoveryStatus
+        - reviewSnapshotVersion
+        - counts
+        - totalEligibleBytes
+        - limits
+      properties:
+        requestId: { type: string, format: uuid }
+        connectionId: { type: string, format: uuid }
+        sourceKind: { $ref: '#/components/schemas/SourceKind' }
+        sourceAccountDisplay: { type: string }
+        folderName: { type: string }
+        authorizationState:
+          allOf:
+            - $ref: '#/components/schemas/AuthorizationState'
+            - const: pending
+        discoveryStatus: { $ref: '#/components/schemas/DiscoveryStatus' }
+        reviewSnapshotVersion: { type: integer, minimum: 1 }
+        counts: { $ref: '#/components/schemas/Counts' }
+        excludedByReason:
+          type: object
+          additionalProperties: { type: integer, minimum: 0 }
+        entriesScanned: { type: integer, minimum: 0 }
+        totalEligibleBytes: { type: integer, format: int64, minimum: 0 }
+        limits: { $ref: '#/components/schemas/FrozenLimits' }
+        draftItemsPath:
+          type: string
+          description: Relative product API path; never a source URL
+
+    DraftItemPage:
+      type: object
+      additionalProperties: false
+      required: [items, totalItems, reviewSnapshotVersion, nextReviewCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/IncludedFile' }
+        totalItems: { type: integer, minimum: 0 }
+        reviewSnapshotVersion: { type: integer, minimum: 1 }
+        nextReviewCursor: { type: [string, 'null'] }
+
+    ConfirmBulkScoringRequest:
+      type: object
+      additionalProperties: false
+      required: [convertToRasterPdf, allowDuplicates, expectedConcurrencyVersion]
+      properties:
+        convertToRasterPdf: { type: boolean, default: false }
+        allowDuplicates:
+          type: boolean
+          default: false
+          description: |
+            Preserves the existing intentional-duplicate option. When false, duplicate lookup uses
+            one internal canonical SHA-256 of original raw bytes across legacy upload, optional
+            parallel upload, bulk source import, both stacks, and compatible pre-change records.
+            The fingerprint is never returned.
+        expectedConcurrencyVersion: { type: integer, minimum: 0 }
+
+    BulkScoringRequestSummary:
+      type: object
+      description: |
+        Retained with item outcomes for the lifetime of the associated job. Job deletion removes
+        request/item/content/authorization operational rows and staged content but preserves
+        immutable non-secret audit events.
+      required:
+        - requestId
+        - jobId
+        - status
+        - sourceKind
+        - folderName
+        - convertToRasterPdf
+        - counts
+        - authorizationState
+        - capturedScoringConfigVersionId
+        - currentScoringConfigVersionId
+        - configChangedSinceAcceptance
+        - createdAt
+      properties:
+        requestId: { type: string, format: uuid }
+        jobId: { type: string }
+        status: { $ref: '#/components/schemas/RequestStatus' }
+        outcome: { $ref: '#/components/schemas/RequestOutcome' }
+        sourceKind: { $ref: '#/components/schemas/SourceKind' }
+        sourceAccountDisplay: { type: string }
+        folderName: { type: string }
+        convertToRasterPdf: { type: boolean }
+        counts: { $ref: '#/components/schemas/Counts' }
+        authorizationState:
+          $ref: '#/components/schemas/AuthorizationState'
+        capturedScoringConfigVersionId:
+          type: [string, 'null']
+          description: Required field; null only for history that predates trustworthy capture
+        currentScoringConfigVersionId: { type: [string, 'null'] }
+        configChangedSinceAcceptance: { type: boolean }
+        retryOfRequestId: { type: [string, 'null'], format: uuid }
+        createdAt: { type: string, format: date-time }
+        terminalAt: { type: [string, 'null'], format: date-time }
+
+    BulkScoringRequestDetail:
+      allOf:
+        - $ref: '#/components/schemas/BulkScoringRequestSummary'
+        - type: object
+          required:
+            - submittedBy
+            - submittedAt
+            - cancelledBy
+            - cancelledAt
+            - limits
+            - concurrencyVersion
+          properties:
+            submittedBy:
+              type: string
+              description: |
+                Current display name resolved from the submit actor's user record; when that record
+                or display name is unavailable, the recorded submit actor identifier.
+            submittedAt:
+              type: string
+              format: date-time
+              description: Accepted-request confirmation time.
+            cancelledBy:
+              type: [string, 'null']
+              description: |
+                Current display name resolved from the cancel actor's user record; when unavailable,
+                the recorded cancel actor identifier. Null when cancellation was never requested.
+            cancelledAt:
+              type: [string, 'null']
+              format: date-time
+              description: Time cancellation was first requested; null when never requested.
+            sourceWebUrl: { type: string, format: uri }
+            excludedByReason:
+              type: object
+              additionalProperties: { type: integer, minimum: 0 }
+            totalEligibleBytes: { type: integer, format: int64 }
+            allowDuplicates: { type: boolean }
+            limits: { $ref: '#/components/schemas/FrozenLimits' }
+            concurrencyVersion: { type: integer }
+
+    BulkScoringNotification:
+      type: object
+      additionalProperties: false
+      description: |
+        One projection of the authenticated submitter's first-terminal request transition. The
+        recipient is the authenticated product actor and must equal the request owner. This schema
+        intentionally cannot carry item names or an item collection.
+      required:
+        - requestId
+        - outcome
+        - counts
+        - requestDetailPath
+        - terminalAt
+      properties:
+        requestId: { type: string, format: uuid }
+        outcome:
+          type: string
+          enum: [all_succeeded, partial, failed, cancelled]
+        counts: { $ref: '#/components/schemas/TerminalCounts' }
+        requestDetailPath:
+          type: string
+          format: uri-reference
+          pattern: '^/'
+          description: Server-generated relative link; target re-authorizes access through the job.
+        terminalAt: { type: string, format: date-time }
+
+    BulkScoringItem:
+      type: object
+      required:
+        - itemId
+        - name
+        - relativePath
+        - status
+        - sizeBytes
+        - scoringConfigVersionId
+        - pageCount
+        - hasRetainedOriginal
+      properties:
+        itemId: { type: string, format: uuid }
+        name: { type: string }
+        relativePath: { type: string }
+        sizeBytes: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/ItemStatus' }
+        reasonCode: { $ref: '#/components/schemas/ReasonCode' }
+        reasonMessage: { type: [string, 'null'] }
+        scoredVersion:
+          type: [string, 'null']
+          enum: [original, converted, null]
+          description: |
+            The version handed to scoring and presented by default wherever the document is viewed.
+            Successful raster conversion uses converted; TXT and conversion-disabled success use
+            original. Conversion failure never silently falls back to original.
+        pageCount:
+          type: [integer, 'null']
+          minimum: 1
+          description: |
+            Page count of the scored/default-view document. For a successful conversion this equals
+            the retained original's page count; provider and rasterizer tests enforce the equality.
+        scoringConfigVersionId:
+          type: [string, 'null']
+          description: Configuration current when the item was handed to scoring
+        applicationId: { type: [string, 'null'] }
+        hasRetainedOriginal:
+          type: boolean
+          description: |
+            True when a separate original is retained alongside converted scored content and can be
+            downloaded through the authorized original operation.
+
+    BulkScoringRequestPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/BulkScoringRequestSummary' }
+        nextCursor: { type: [string, 'null'] }
+
+    BulkScoringItemPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/BulkScoringItem' }
+        nextCursor: { type: [string, 'null'] }
+
+    BulkScoringSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - maxIndividualFileBytes
+        - maxInFlightUploadBytes
+        - displayUnit
+        - maxFilesPerRequest
+        - concurrencyVersion
+      properties:
+        maxIndividualFileBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          default: 8388608
+          description: Existing saved byte values are returned unchanged
+        maxInFlightUploadBytes:
+          type: integer
+          format: int64
+          minimum: 1
+          default: 104857600
+        displayUnit:
+          const: MiB
+          description: Both stacks divide/multiply by exactly 1048576 for UI presentation
+        maxFilesPerRequest:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          default: 30000
+        concurrencyVersion: { type: integer, minimum: 0 }
+
+    UpdateBulkScoringSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - maxIndividualFileBytes
+        - maxInFlightUploadBytes
+        - maxFilesPerRequest
+        - expectedConcurrencyVersion
+      properties:
+        maxIndividualFileBytes: { type: integer, format: int64, minimum: 1 }
+        maxInFlightUploadBytes: { type: integer, format: int64, minimum: 1 }
+        maxFilesPerRequest: { type: integer, minimum: 1, maximum: 100000 }
+        expectedConcurrencyVersion: { type: integer, minimum: 0 }

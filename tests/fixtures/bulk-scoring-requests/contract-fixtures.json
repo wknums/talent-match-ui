@@ -1,0 +1,150 @@
+{
+  "$comment": "Shared contract fixtures for bulk scoring requests (specs/001-sharepoint-bulk-scoring). Replayed by both stacks. Synthetic data only.",
+  "requestStatuses": ["draft", "active", "completed"],
+  "requestOutcomes": ["all_succeeded", "partial", "failed", "cancelled"],
+  "discoveryStatuses": ["more_available", "complete", "limit_reached"],
+  "itemStatuses": ["waiting", "importing", "converting", "scoring", "completed", "failed", "skipped", "cancelled"],
+  "reasonCodes": [
+    "unsupported_type", "file_too_large", "limit_exceeded", "empty_file", "not_convertible",
+    "access_denied", "authorization_lapsed", "source_missing", "source_changed",
+    "duplicate_in_request", "duplicate_in_job", "conversion_failed", "conversion_timeout",
+    "converted_type_invalid", "converted_magic_invalid", "converted_document_invalid",
+    "converted_too_large", "conversion_page_mismatch", "conversion_page_invalid",
+    "conversion_dimension_mismatch", "conversion_ssim_below_threshold", "conversion_blank_page",
+    "conversion_cropped_page", "scoring_failed", "cancelled_by_user", "transient_exhausted"
+  ],
+  "sourceKinds": ["sharepoint", "onedrive_business"],
+  "sourceConnectionStatuses": ["authorizing", "authorized", "verified", "consumed", "expired", "abandoned", "failed"],
+  "authorizationStatuses": ["active", "lapsed", "revoked", "accessLost", "discarded", "unavailableHistorical"],
+  "authorizationStates": ["pending", "active", "lapsed", "revoked", "accessLost", "discarded", "unavailableHistorical"],
+  "exclusionCategories": ["unsupported_type", "file_too_large", "empty_file", "not_convertible"],
+  "defaults": {
+    "maxFilesPerRequest": 30000,
+    "maxBytesPerFile": 8388608,
+    "maxTotalBytes": 53687091200,
+    "maxPagesPerDocument": 30,
+    "discoveryStepFiles": 1000,
+    "discoveryStepMaxEntries": 10000,
+    "discoveryStepMaxSeconds": 45,
+    "maxAttempts": 5,
+    "connectionIdleTtlMinutes": 30,
+    "connectionAbsoluteTtlMinutes": 120,
+    "pendingConnectionsPerActor": 10,
+    "connectionStartsPerActorPerMinute": 10,
+    "connectionStartsPerIpPerMinute": 30,
+    "callbacksPerIpPerMinute": 60
+  },
+  "itemTransitions": {
+    "waiting": ["importing", "cancelled", "failed"],
+    "importing": ["converting", "scoring", "skipped", "waiting", "failed", "cancelled"],
+    "converting": ["scoring", "waiting", "failed", "cancelled"],
+    "scoring": ["completed", "failed"],
+    "completed": [],
+    "failed": [],
+    "skipped": [],
+    "cancelled": []
+  },
+  "requestTransitions": {
+    "draft": ["active"],
+    "active": ["completed"],
+    "completed": []
+  },
+  "authorizationTransitions": {
+    "active": ["lapsed", "revoked", "accessLost", "discarded"],
+    "lapsed": ["discarded"],
+    "revoked": ["discarded"],
+    "accessLost": ["discarded"],
+    "discarded": [],
+    "unavailableHistorical": []
+  },
+  "retryableReasons": [
+    "transient_exhausted", "source_changed", "conversion_timeout", "authorization_lapsed",
+    "cancelled_by_user", "source_missing", "access_denied"
+  ],
+  "retryableOnlyWhenResolved": ["source_missing", "access_denied"],
+  "notRetryableReasons": [
+    "unsupported_type", "file_too_large", "limit_exceeded", "empty_file", "not_convertible",
+    "conversion_failed", "converted_type_invalid", "converted_magic_invalid",
+    "converted_document_invalid", "converted_too_large", "conversion_page_mismatch",
+    "conversion_page_invalid", "conversion_dimension_mismatch", "conversion_ssim_below_threshold",
+    "conversion_blank_page", "conversion_cropped_page", "duplicate_in_request",
+    "duplicate_in_job", "scoring_failed"
+  ],
+  "delegatedConnection": {
+    "authorityClass": "organizations",
+    "scopes": ["openid", "profile", "offline_access", "Files.Read.All", "Sites.Read.All"],
+    "tenants": [
+      { "id": "fixture-tenant-primary", "cloud": "microsoftCommercial", "accountType": "organizational", "expect": "accepted" },
+      { "id": "fixture-tenant-secondary", "cloud": "microsoftCommercial", "accountType": "organizational", "expect": "accepted" },
+      { "id": "fixture-tenant-noncommercial", "cloud": "microsoftGovernment", "accountType": "organizational", "expect": "source_unsupported_cloud" },
+      { "id": "fixture-personal-account", "cloud": "microsoftCommercial", "accountType": "personal", "expect": "source_unsupported_account" }
+    ],
+    "consentCases": [
+      { "name": "user consent succeeds", "result": "authorized" },
+      { "name": "administrator consent required", "result": "source_admin_consent_required", "resumable": true },
+      { "name": "consent denied", "result": "source_authorization_required", "resumable": false },
+      { "name": "state mismatch", "result": "source_connection_invalid_or_expired", "externalWork": 0 },
+      { "name": "callback replay", "result": "source_connection_invalid_or_expired", "externalWork": 0 },
+      { "name": "expired code", "result": "source_authorization_expired" },
+      { "name": "PKCE failure", "result": "source_connection_invalid_or_expired" }
+    ]
+  },
+  "linkClassification": {
+    "cases": [
+      { "name": "organizational sharepoint folder", "url": "https://tenant-a.sharepoint.com/sites/hr/Shared Documents/Candidates", "sourceTenant": "fixture-tenant-primary", "expect": "sharepoint" },
+      { "name": "organizational work onedrive folder", "url": "https://tenant-a-my.sharepoint.com/personal/alex_tenant_a/Documents/Candidates", "sourceTenant": "fixture-tenant-primary", "expect": "onedrive_business" },
+      { "name": "another organizational tenant", "url": "https://tenant-b.sharepoint.com/sites/recruiting/Shared Documents/Candidates", "sourceTenant": "fixture-tenant-secondary", "expect": "sharepoint" },
+      { "name": "personal onedrive short link", "url": "https://1drv.ms/f/s!AbCdEf", "expect": "source_unsupported_account" },
+      { "name": "personal onedrive live", "url": "https://onedrive.live.com/?id=ABC", "expect": "source_unsupported_account" },
+      { "name": "unknown host", "url": "https://files.example.com/Candidates", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "look-alike suffix host", "url": "https://tenant-a.sharepoint.com.evil.example/sites/hr", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "invalid tenant label", "url": "https://eviltenant-a.sharepoint.com/sites/hr", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "plain http", "url": "http://tenant-a.sharepoint.com/sites/hr", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "credentialed URL", "url": "https://user@tenant-a.sharepoint.com/sites/hr", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "non-default port", "url": "https://tenant-a.sharepoint.com:444/sites/hr", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "fragment", "url": "https://tenant-a.sharepoint.com/sites/hr#fragment", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "IP literal", "url": "https://192.0.2.10/sites/hr", "expect": "source_folder_invalid_or_unavailable" },
+      { "name": "not a url", "url": "tenant-a.sharepoint.com/sites/hr", "expect": "source_folder_invalid_or_unavailable" }
+    ]
+  },
+  "settingsValidation": [
+    { "maxFilesPerRequest": 30000, "valid": true },
+    { "maxFilesPerRequest": 1, "valid": true },
+    { "maxFilesPerRequest": 0, "valid": false },
+    { "maxFilesPerRequest": -5, "valid": false }
+  ],
+  "eligibility": {
+    "perFileLimit": 8388608,
+    "cases": [
+      { "name": "exact limit", "fileName": "a.pdf", "sizeBytes": 8388608, "rasterize": false, "expect": "included" },
+      { "name": "one byte over", "fileName": "a.pdf", "sizeBytes": 8388609, "rasterize": false, "expect": "excluded:file_too_large" },
+      { "name": "zero byte", "fileName": "a.pdf", "sizeBytes": 0, "rasterize": false, "expect": "excluded:empty_file" },
+      { "name": "unsupported zip", "fileName": "a.zip", "sizeBytes": 100, "rasterize": false, "expect": "excluded:unsupported_type" },
+      { "name": "uppercase extension", "fileName": "CV.PDF", "sizeBytes": 100, "rasterize": false, "expect": "included" },
+      { "name": "txt without rasterize", "fileName": "a.txt", "sizeBytes": 100, "rasterize": false, "expect": "included" },
+      { "name": "txt exempt when rasterized", "fileName": "a.txt", "sizeBytes": 100, "rasterize": true, "expect": "included" },
+      { "name": "docx rasterized", "fileName": "a.docx", "sizeBytes": 100, "rasterize": true, "docxConvertible": true, "expect": "included" },
+      { "name": "docx rasterized not convertible", "fileName": "a.docx", "sizeBytes": 100, "rasterize": true, "docxConvertible": false, "expect": "excluded:not_convertible" },
+      { "name": "no extension", "fileName": "README", "sizeBytes": 100, "rasterize": false, "expect": "excluded:unsupported_type" },
+      { "name": "nested same name", "fileName": "cv.pdf", "sizeBytes": 100, "rasterize": false, "expect": "included" }
+    ]
+  },
+  "discoveryBoundaries": {
+    "largeFolderEligibleFiles": 2500,
+    "expectedStepTotals": [1000, 2000, 2500],
+    "inaccessibleDescendants": 1,
+    "duplicateOriginalByteFiles": 2,
+    "fileCountCases": [
+      { "configuredLimit": 1, "eligibleSeen": 1, "included": 1, "expect": "limit_reached" },
+      { "configuredLimit": 1, "eligibleSeen": 2, "included": 1, "expect": "stop_before_exceed" },
+      { "configuredLimit": 100000, "eligibleSeen": 100000, "included": 100000, "expect": "limit_reached" },
+      { "configuredLimit": 100000, "eligibleSeen": 100001, "included": 100000, "expect": "stop_before_exceed" }
+    ],
+    "aggregateByteCases": [
+      { "configuredLimitBytes": 1048576, "candidateBytes": [1048576], "includedBytes": 1048576, "expect": "limit_reached" },
+      { "configuredLimitBytes": 1048576, "candidateBytes": [1048576, 1], "includedBytes": 1048576, "expect": "stop_before_exceed" },
+      { "configuredLimitBytes": 53687091200, "candidateBytes": [53687091199, 1], "includedBytes": 53687091200, "expect": "limit_reached" },
+      { "configuredLimitBytes": 53687091200, "candidateBytes": [53687091200, 1], "includedBytes": 53687091200, "expect": "stop_before_exceed" }
+    ]
+  }
+}

@@ -1,0 +1,415 @@
+using System.Text.Json;
+using MediatR;
+using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Rubrics.Models;
+using TalentMatch.Domain.Entities;
+using TalentMatch.Domain.Interfaces;
+
+namespace TalentMatch.Application.Prompts.Commands;
+
+public record GeneratePromptCommand(
+    string JobId,
+    string Author,
+    string ModelId = "o3",
+    string ReasoningLevel = "high"
+) : IRequest<ScoringPrompt>;
+
+public class GeneratePromptCommandHandler : IRequestHandler<GeneratePromptCommand, ScoringPrompt>
+{
+    private readonly IScoringPromptRepository _promptRepo;
+    private readonly IJobRepository _jobRepo;
+    private readonly ILlmProxyService? _llmService;
+    private readonly IPromptGenerationInstructionRepository? _instructionRepo;
+    private readonly IScoringProfileProvider? _profileProvider;
+    private readonly IReasoningModelCatalog? _reasoningModels;
+
+    // Identical to Stack A system prompt in server/routes/prompts.ts
+    public const string DefaultGenerationInstruction = """
+        You are an expert at creating scoring prompts for candidate evaluation.
+        Given an approved job rubric and a target scoring JSON template derived from that rubric, create a structured scoring prompt that an AI model can use to evaluate candidate applications.
+        The prompt should:
+        1. Evaluate candidates across all rubric categories with the specified weights
+        2. Check all must-have criteria
+        3. Consider desired qualifications
+        4. Consider all other categories and criteria provided in the rubric and job config
+        5. Produce scores from 0-100 for each category
+        6. Provide evidence citations from the candidate's documents
+        7. Include improvement recommendations
+        8. Include all eligibility gate details regardless if they are met or not.
+        9. Require the scorer to return JSON that matches the provided target template shape exactly.
+        10. Extract the candidate's full name from the application documents and include it in the output JSON.
+        Return ONLY the scoring prompt text, ready for use.
+        At the end of the prompt, include the instruction to return all output as complete and valid JSON corresponding exactly to the provided rubric-derived template, with no missing keys or partial arrays.
+        """;
+
+    public GeneratePromptCommandHandler(
+        IScoringPromptRepository promptRepo,
+        IJobRepository jobRepo,
+        ILlmProxyService? llmService = null,
+        IPromptGenerationInstructionRepository? instructionRepo = null,
+        IScoringProfileProvider? profileProvider = null,
+        IReasoningModelCatalog? reasoningModels = null)
+    {
+        _promptRepo = promptRepo;
+        _jobRepo = jobRepo;
+        _llmService = llmService;
+        _instructionRepo = instructionRepo;
+        _profileProvider = profileProvider;
+        _reasoningModels = reasoningModels;
+    }
+
+    public async Task<ScoringPrompt> Handle(GeneratePromptCommand request, CancellationToken ct)
+    {
+        var job = await _jobRepo.GetByIdAsync(request.JobId, ct)
+            ?? throw new InvalidOperationException("Job not found");
+
+        // Prefer the latest approved rubric config. For backward compatibility with
+        // older jobs that predate approval status, fall back to the latest config
+        // that still contains rubric categories.
+        var approvedConfig = job.ConfigVersions
+            .Where(v => string.Equals(v.RubricApprovalStatus, "approved", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(v => v.VersionNumber)
+            .FirstOrDefault();
+
+        var config = approvedConfig ?? job.ConfigVersions
+            .Where(v => ContainsRubricCategories(v.RubricJson))
+            .OrderByDescending(v => v.VersionNumber)
+            .FirstOrDefault();
+
+        if (config == null)
+            throw new InvalidOperationException("Job must have a rubric to generate a prompt");
+
+        var rubricCategories = ReadRubricCategories(config.RubricJson);
+
+        if (rubricCategories.Count == 0)
+            throw new InvalidOperationException("Job must have an approved rubric to generate a prompt");
+
+        var mustHaves = new List<MustHaveDto>();
+        if (!string.IsNullOrEmpty(config.MustHavesJson))
+        {
+            var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            using var doc = JsonDocument.Parse(config.MustHavesJson);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() > 0)
+            {
+                var first = doc.RootElement[0];
+                if (first.ValueKind == JsonValueKind.String)
+                {
+                    // Flat string array: ["criterion1", "criterion2"]
+                    mustHaves = doc.RootElement.EnumerateArray()
+                        .Select(el => new MustHaveDto { Criterion = el.GetString() ?? "", Description = "" })
+                        .ToList();
+                }
+                else
+                {
+                    // Object array: [{ criterion, description }]
+                    mustHaves = JsonSerializer.Deserialize<List<MustHaveDto>>(config.MustHavesJson, jsonOpts) ?? [];
+                }
+            }
+        }
+
+        var desiredCriteria = JsonSerializer.Deserialize<List<DesiredCriteriaDto>>(config.DesiredCriteriaJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? [];
+
+        var targetScoringJson = BuildTargetScoringJsonTemplate(rubricCategories, mustHaves, desiredCriteria);
+
+        // Build rubric context — identical structure to Stack A
+        var rubricContext = new
+        {
+            jobTitle = job.Title,
+            department = job.Department,
+            organization = job.Organisation,
+            rubricCategories = rubricCategories.Select(c => new
+            {
+                name = c.Name,
+                weight = c.Weight,
+                description = c.Description
+            }),
+            mustHaves = mustHaves.Select(mh => new
+            {
+                criterion = mh.Criterion,
+                description = mh.Description
+            }),
+            desiredCriteria = desiredCriteria.Select(dc => new
+            {
+                qualification = dc.Qualification,
+                description = dc.Description
+            }),
+            targetScoringJson
+        };
+
+        string promptText;
+        string? metadataJson = null;
+        var profile = _reasoningModels is null
+            ? _profileProvider?.Current
+              ?? new ScoringProfile(request.ModelId.Trim(), request.ReasoningLevel.Trim())
+            : await _reasoningModels.ValidateAsync(
+                request.ModelId,
+                request.ReasoningLevel,
+                ct);
+        var instruction = _instructionRepo is null
+            ? null
+            : await _instructionRepo.GetActiveAsync(request.JobId, ct)
+              ?? await _instructionRepo.GetActiveAsync(null, ct);
+        var generationInstruction = instruction?.InstructionText
+            ?? DefaultGenerationInstruction;
+        var generationProfile = instruction is null
+            ? profile
+            : _reasoningModels is null
+                ? string.IsNullOrWhiteSpace(instruction.ModelId)
+                    || string.IsNullOrWhiteSpace(instruction.ReasoningLevel)
+                    ? profile
+                    : new ScoringProfile(instruction.ModelId, instruction.ReasoningLevel)
+                : await _reasoningModels.ResolveForExecutionAsync(
+                    instruction.ModelId,
+                    instruction.ReasoningLevel,
+                    ct);
+
+        if (_llmService != null)
+        {
+            // FR-034: Generate prompt from rubric using LLM
+            var userPrompt = JsonSerializer.Serialize(rubricContext, new JsonSerializerOptions { WriteIndented = true });
+
+            promptText = await _llmService.SendPromptAsync(
+                generationInstruction,
+                userPrompt,
+                generationProfile,
+                ct);
+            if (promptText is null)
+                promptText = await _llmService.SendPromptAsync(
+                    generationInstruction,
+                    userPrompt,
+                    ct);
+            metadataJson = JsonSerializer.Serialize(new
+            {
+                GeneratedBy = "llm",
+                Source = "AWR_SEQ_API",
+                GeneratedAt = DateTime.UtcNow,
+                GenerationInstructionVersionId = instruction?.Id,
+                GenerationInstructionScope = instruction?.JobId is null ? "system" : "job",
+                ModelId = generationProfile.ModelId,
+                ReasoningLevel = generationProfile.ReasoningLevel
+            });
+        }
+        else
+        {
+            // Fallback — matches Stack A generateFallbackPrompt()
+            promptText = GenerateFallbackPrompt(job, rubricCategories, mustHaves, desiredCriteria);
+            metadataJson = JsonSerializer.Serialize(new
+            {
+                GeneratedBy = "fallback",
+                Reason = "LLM service not available",
+                GeneratedAt = DateTime.UtcNow,
+                GenerationInstructionVersionId = instruction?.Id,
+                GenerationInstructionScope = instruction?.JobId is null ? "system" : "job",
+                ModelId = generationProfile.ModelId,
+                ReasoningLevel = generationProfile.ReasoningLevel
+            });
+        }
+
+        promptText = AppendStableOutputContract(promptText, targetScoringJson);
+
+        var existing = await _promptRepo.GetByJobIdAsync(request.JobId, ct);
+        var maxVersion = existing.Any() ? existing.Max(p => p.VersionNumber) : 0;
+
+        var prompt = new ScoringPrompt
+        {
+            JobId = request.JobId,
+            VersionNumber = maxVersion + 1,
+            PromptText = promptText,
+            Status = "draft",
+            Author = request.Author,
+            Source = "generated",
+            GenerationMetadataJson = metadataJson,
+            GenerationInstructionVersionId = instruction?.Id,
+            ModelId = profile.ModelId,
+            ReasoningLevel = profile.ReasoningLevel
+        };
+
+        await _promptRepo.AddAsync(prompt, ct);
+        return prompt;
+    }
+
+    // Matches Stack A generateFallbackPrompt() in server/routes/prompts.ts
+    private static string GenerateFallbackPrompt(
+        Job job,
+        List<RubricCategoryDto> rubricCategories,
+        List<MustHaveDto> mustHaves,
+        List<DesiredCriteriaDto> desiredCriteria)
+    {
+        var categories = string.Join("\n",
+            rubricCategories.Select(c => $"- {c.Name} (weight: {c.Weight * 100:F0}%): {c.Description}"));
+
+        var mustHaveLines = mustHaves.Count > 0
+            ? string.Join("\n", mustHaves.Select(mh => $"- {mh.Criterion}: {mh.Description}"))
+            : "None specified";
+
+        var desiredLines = desiredCriteria.Count > 0
+            ? string.Join("\n", desiredCriteria.Select(dc => $"- {dc.Qualification}: {dc.Description}"))
+            : "None specified";
+
+        return $"""
+            You are evaluating a candidate for the position of "{job.Title}" in the {job.Department} department at {job.Organisation}.
+
+            ## Scoring Categories
+            {categories}
+
+            ## Must-Have Criteria (Pass/Fail)
+            {mustHaveLines}
+
+            ## Desired Qualifications
+            {desiredLines}
+
+            ## Instructions
+            1. Extract the candidate's full name from the application documents and include it in candidate_name
+            2. Score each category from 0-100 based on evidence from the candidate's documents
+            3. For each must-have criterion, determine PASS or FAIL with justification
+            4. Note any desired qualifications that are met
+            5. Provide specific evidence citations from the documents
+            6. Calculate a weighted overall score
+            7. Provide improvement recommendations
+
+            Respond with your evaluation as complete and valid JSON.
+            """;
+    }
+
+    private static string BuildTargetScoringJsonTemplate(
+        List<RubricCategoryDto> rubricCategories,
+        List<MustHaveDto> mustHaves,
+        List<DesiredCriteriaDto> desiredCriteria)
+    {
+        var template = new
+        {
+            candidate_name = "",
+            overall_score = 0,
+            category_scores = rubricCategories.Select(c => new
+            {
+                name = c.Name,
+                weight = c.Weight,
+                description = c.Description,
+                score = 0,
+                evidence = Array.Empty<string>()
+            }),
+            must_have_requirements = new
+            {
+                passed = false,
+                recommendation = "",
+                missing_criteria = Array.Empty<string>(),
+                details = new
+                {
+                    entries = mustHaves.Select(mh => new
+                    {
+                        criterion = mh.Criterion,
+                        description = mh.Description,
+                        passed = false,
+                        evidence = ""
+                    })
+                }
+            },
+            desired_criteria = desiredCriteria.Select(dc => new
+            {
+                qualification = dc.Qualification,
+                description = dc.Description,
+                met = false,
+                evidence = ""
+            }),
+            summary_notes = "",
+            improvement_tips = Array.Empty<string>()
+        };
+
+        return JsonSerializer.Serialize(template, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static string AppendStableOutputContract(string promptText, string targetScoringJson)
+    {
+        return $"""
+            {promptText.TrimEnd()}
+
+            ## Output Contract (Mandatory)
+            Return exactly one JSON object that matches the target template below.
+            - Keep all top-level keys and nested keys exactly as provided.
+            - Keep rubric category names and weights exactly as provided.
+            - Set candidate_name to the candidate's full name when it can be identified from the documents.
+            - Populate score, evidence, pass/fail flags, notes, and tips from candidate evidence.
+            - Do not add, remove, or rename keys.
+            - Do not wrap the JSON in markdown code fences.
+
+            ### Target JSON Template
+            {targetScoringJson}
+            """;
+    }
+
+    private static bool ContainsRubricCategories(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return false;
+
+        try
+        {
+            return ReadRubricCategories(rubricJson).Count > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static List<RubricCategoryDto> ReadRubricCategories(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return [];
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+
+        try
+        {
+            using var doc = JsonDocument.Parse(rubricJson);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && TryGetPropertyIgnoreCase(doc.RootElement, "categories", out var categoriesElement)
+                && (!TryGetPropertyIgnoreCase(doc.RootElement, "schemaVersion", out var schemaVersion)
+                    || string.Equals(schemaVersion.GetString(), RubricSchemaVersions.RubricV2, StringComparison.OrdinalIgnoreCase)))
+            {
+                return JsonSerializer.Deserialize<List<RubricCategoryDto>>(categoriesElement.GetRawText(), options) ?? [];
+            }
+        }
+        catch
+        {
+        }
+
+        return JsonSerializer.Deserialize<List<RubricCategoryDto>>(rubricJson, options) ?? [];
+    }
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+            {
+                value = property.Value;
+                return true;
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    // DTOs for deserializing JSON stored in JobConfigVersion
+    // Use classes (not positional records) so System.Text.Json ignores extra fields like "id"
+    private class RubricCategoryDto
+    {
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public double Weight { get; set; }
+    }
+
+    private class MustHaveDto
+    {
+        public string Criterion { get; set; } = "";
+        public string Description { get; set; } = "";
+    }
+
+    private class DesiredCriteriaDto
+    {
+        public string Qualification { get; set; } = "";
+        public string Description { get; set; } = "";
+    }
+}

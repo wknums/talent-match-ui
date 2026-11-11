@@ -1,0 +1,189 @@
+.throughput-panel {
+    margin-bottom: 2rem;
+    padding: 1.25rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    color: #1e293b;
+}
+
+.throughput-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    flex-wrap: wrap;
+    gap: .75rem;
+}
+
+.throughput-title {
+    display: flex;
+    align-items: start;
+    gap: .35rem;
+}
+
+.throughput-toggle {
+    flex: 0 0 auto;
+    margin-top: .1rem;
+    border: 0;
+    background: transparent;
+    color: #1d4ed8;
+    cursor: pointer;
+}
+
+.throughput-header h4,
+.throughput-header p {
+    margin: 0 0 .25rem;
+}
+
+.throughput-help,
+.throughput-updated,
+.throughput-total,
+.throughput-legend {
+    color: #475569;
+    font-size: .875rem;
+}
+
+.throughput-metric {
+    font-size: 2.5rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.throughput-updated {
+    margin-top: .25rem;
+}
+
+.throughput-error {
+    display: grid;
+    gap: .25rem;
+    padding: .75rem;
+    margin: .75rem 0;
+    border: 1px solid #fca5a5;
+    border-radius: 4px;
+    background: #fef2f2;
+    color: #991b1b;
+}
+
+.throughput-chart {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 24rem;
+    overflow: visible;
+}
+
+.throughput-chart text {
+    fill: #475569;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+
+.throughput-chart .axis-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.grid-line {
+    stroke: #e2e8f0;
+}
+
+.axis-line {
+    stroke: #64748b;
+}
+
+.throughput-line {
+    fill: none;
+    stroke: #64748b;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 3px;
+    pointer-events: none;
+}
+
+.throughput-point {
+    fill: #fff;
+    stroke: #64748b;
+    stroke-width: 3px;
+    pointer-events: none;
+}
+
+.current-point {
+    fill: #1d4ed8;
+    stroke: #1d4ed8;
+}
+
+.bucket-hit-area {
+    fill: transparent;
+}
+
+.throughput-bucket:focus {
+    outline: none;
+}
+
+.throughput-bucket:hover .bucket-hit-area,
+.throughput-bucket:focus .bucket-hit-area {
+    stroke: #1e293b;
+    stroke-width: 2px;
+}
+
+.throughput-bucket:hover .throughput-point,
+.throughput-bucket:focus .throughput-point {
+    fill: #1e293b;
+    stroke: #1e293b;
+}
+
+.throughput-legend span {
+    display: inline-block;
+    width: .75rem;
+    height: .75rem;
+    margin-right: .3rem;
+    background: #1d4ed8;
+    border-radius: 50%;
+}
+
+.throughput-table summary {
+    width: fit-content;
+    cursor: pointer;
+    color: #1d4ed8;
+}
+
+.table-scroll {
+    overflow-x: auto;
+    margin-top: .75rem;
+}
+
+.throughput-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .875rem;
+}
+
+.throughput-table th,
+.throughput-table td {
+    padding: .5rem;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.throughput-table caption {
+    color: #475569;
+    text-align: left;
+}
+
+.throughput-scope {
+    margin: 1rem 0 0;
+}
+
+@media (max-width: 600px) {
+    .throughput-panel {
+        padding: .75rem;
+    }
+
+    .throughput-chart text {
+        font-size: 20px;
+    }
+
+    .throughput-chart .axis-title {
+        font-size: 20px;
+    }
+}

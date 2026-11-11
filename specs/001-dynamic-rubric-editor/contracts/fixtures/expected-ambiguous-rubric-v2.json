@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "rubric-v2",
+  "legacySourceVersionId": null,
+  "categories": [
+    {
+      "id": "cat-delivery",
+      "name": "Delivery and Quality",
+      "weight": 0.5,
+      "description": "Execution and quality of deliverables.",
+      "order": 0
+    },
+    {
+      "id": "cat-collaboration",
+      "name": "Collaboration and Communication",
+      "weight": 0.5,
+      "description": "Cross-functional collaboration and communication.",
+      "order": 1
+    }
+  ],
+  "items": [
+    {
+      "id": "req-ambiguous-001",
+      "categoryId": "cat-needs-review",
+      "text": "Translate business requirements into maintainable scoring rubrics",
+      "requirementType": "responsibility",
+      "order": 0,
+      "sourceText": "Partner with recruiters and hiring managers to translate business requirements into maintainable scoring rubrics.",
+      "sourceLocation": "Responsibilities",
+      "sourceRequirementId": "req-ambiguous-001",
+      "reviewStatus": "needs_review",
+      "createdFrom": "extracted"
+    }
+  ]
+}

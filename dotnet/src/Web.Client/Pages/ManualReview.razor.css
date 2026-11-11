@@ -1,0 +1,49 @@
+.review-surface {
+    container-type: inline-size;
+    container-name: manual-review;
+}
+
+.review-panels {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+    min-width: 0;
+}
+
+.review-panel {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    min-width: 0;
+    overflow: auto;
+}
+
+.review-panel-document {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 24rem;
+}
+
+.review-panel-padded {
+    padding: 1rem;
+}
+
+@container manual-review (min-width: 48rem) {
+    .review-panels {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@container manual-review (min-width: 75rem) {
+    .review-panels {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .review-panel {
+        max-height: calc(100vh - 12rem);
+    }
+
+    .review-panel-document {
+        min-height: 0;
+    }
+}

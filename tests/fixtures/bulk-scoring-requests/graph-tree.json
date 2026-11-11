@@ -1,0 +1,63 @@
+{
+  "$comment": "Deterministic delegated Graph tree. Items inherit their parent's ACL. File paths are relative to ./files and declaredSize overrides the reported size. All identities are synthetic fixtures.",
+  "defaultConnectedAccount": "fixture-account-recruiter",
+  "drives": [
+    { "id": "drv-sp-hr", "tenantId": "fixture-tenant-primary", "kind": "sharepoint", "driveType": "documentLibrary", "webRoot": "https://tenant-a.sharepoint.com/sites/hr/Shared Documents", "rootItemId": "sp-root" },
+    { "id": "drv-sp-other", "tenantId": "fixture-tenant-secondary", "kind": "sharepoint", "driveType": "documentLibrary", "webRoot": "https://tenant-b.sharepoint.com/sites/recruiting/Shared Documents", "rootItemId": "other-root" },
+    { "id": "drv-od-alex", "tenantId": "fixture-tenant-primary", "kind": "onedrive_business", "driveType": "business", "webRoot": "https://tenant-a-my.sharepoint.com/personal/alex_tenant_a/Documents", "rootItemId": "od-alex-root" },
+    { "id": "drv-od-sam", "tenantId": "fixture-tenant-primary", "kind": "onedrive_business", "driveType": "business", "webRoot": "https://tenant-a-my.sharepoint.com/personal/sam_tenant_a/Documents", "rootItemId": "od-sam-root" }
+  ],
+  "items": [
+    { "id": "sp-root", "driveId": "drv-sp-hr", "parentId": null, "name": "Shared Documents", "folder": true },
+    { "id": "sp-candidates", "driveId": "drv-sp-hr", "parentId": "sp-root", "name": "Candidates", "folder": true },
+    { "id": "sp-pdf1", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "alice-1page.pdf", "file": "pdf-1page.pdf" },
+    { "id": "sp-pdf2", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "bob-2page.pdf", "file": "pdf-2page.pdf" },
+    { "id": "sp-docx", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "carla.docx", "file": "cv.docx" },
+    { "id": "sp-md", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "dana.md", "file": "cv.md" },
+    { "id": "sp-png", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "scan.png", "file": "cv.png" },
+    { "id": "sp-jpg", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "scan.jpg", "file": "cv.jpg" },
+    { "id": "sp-txt", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "eli.txt", "file": "cv.txt" },
+    { "id": "sp-zip", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "archive.zip", "file": "archive.zip" },
+    { "id": "sp-corrupt", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "corrupt.pdf", "file": "corrupt.pdf" },
+    { "id": "sp-encrypted", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "encrypted.pdf", "file": "encrypted.pdf" },
+    { "id": "sp-oversized", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "oversized.pdf", "file": "pdf-1page.pdf", "declaredSize": 9437184 },
+    { "id": "sp-duplicate", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "bob-copy.pdf", "file": "pdf-2page.pdf" },
+    { "id": "sp-nested", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "Archive", "folder": true },
+    { "id": "sp-nested-pdf1", "driveId": "drv-sp-hr", "parentId": "sp-nested", "name": "alice-1page.pdf", "file": "pdf-1page.pdf" },
+    { "id": "sp-restricted", "driveId": "drv-sp-hr", "parentId": "sp-candidates", "name": "Confidential", "folder": true, "acl": ["fixture-account-director"] },
+    { "id": "sp-restricted-pdf", "driveId": "drv-sp-hr", "parentId": "sp-restricted", "name": "secret.pdf", "file": "pdf-1page.pdf" },
+    { "id": "sp-sibling", "driveId": "drv-sp-hr", "parentId": "sp-root", "name": "Other", "folder": true },
+    { "id": "sp-sibling-pdf", "driveId": "drv-sp-hr", "parentId": "sp-sibling", "name": "other.pdf", "file": "pdf-1page.pdf" },
+
+    { "id": "other-root", "driveId": "drv-sp-other", "parentId": null, "name": "Shared Documents", "folder": true, "acl": ["fixture-account-recruiter"] },
+    { "id": "other-candidates", "driveId": "drv-sp-other", "parentId": "other-root", "name": "Candidates", "folder": true },
+    { "id": "other-pdf", "driveId": "drv-sp-other", "parentId": "other-candidates", "name": "other-tenant.pdf", "file": "pdf-1page.pdf" },
+
+    { "id": "od-alex-root", "driveId": "drv-od-alex", "parentId": null, "name": "Documents", "folder": true, "acl": ["fixture-account-alex", "fixture-account-recruiter"] },
+    { "id": "od-alex-candidates", "driveId": "drv-od-alex", "parentId": "od-alex-root", "name": "Candidates", "folder": true },
+    { "id": "od-alex-pdf1", "driveId": "drv-od-alex", "parentId": "od-alex-candidates", "name": "frank.pdf", "file": "pdf-1page.pdf" },
+    { "id": "od-alex-docx", "driveId": "drv-od-alex", "parentId": "od-alex-candidates", "name": "gina.docx", "file": "cv.docx" },
+    { "id": "od-alex-txt", "driveId": "drv-od-alex", "parentId": "od-alex-candidates", "name": "hugo.txt", "file": "cv.txt" },
+    { "id": "od-alex-zip", "driveId": "drv-od-alex", "parentId": "od-alex-candidates", "name": "misc.zip", "file": "archive.zip" },
+
+    { "id": "od-sam-root", "driveId": "drv-od-sam", "parentId": null, "name": "Documents", "folder": true, "acl": ["fixture-account-sam"] },
+    { "id": "od-sam-shared", "driveId": "drv-od-sam", "parentId": "od-sam-root", "name": "SharedWithRecruiter", "folder": true, "acl": ["fixture-account-sam", "fixture-account-recruiter"] },
+    { "id": "od-sam-shared-pdf", "driveId": "drv-od-sam", "parentId": "od-sam-shared", "name": "ines.pdf", "file": "pdf-2page.pdf" },
+    { "id": "od-sam-private", "driveId": "drv-od-sam", "parentId": "od-sam-root", "name": "Private", "folder": true },
+    { "id": "od-sam-private-pdf", "driveId": "drv-od-sam", "parentId": "od-sam-private", "name": "jon.pdf", "file": "pdf-1page.pdf" }
+  ],
+  "generated": [
+    {
+      "folderItemId": "sp-large",
+      "driveId": "drv-sp-hr",
+      "parentId": "sp-root",
+      "name": "Large",
+      "eligible": 2500,
+      "nonCandidate": 20000,
+      "subfolders": 25,
+      "inaccessibleDescendants": 1,
+      "duplicateEvery": 250,
+      "pageSizes": [1000, 1000, 500]
+    }
+  ]
+}

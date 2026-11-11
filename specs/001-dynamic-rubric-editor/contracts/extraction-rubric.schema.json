@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://talentmatch.local/contracts/extraction-rubric-v1.schema.json",
+  "title": "Job specification extraction result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_title",
+    "job_description",
+    "department",
+    "organization",
+    "requirements",
+    "rubric"
+  ],
+  "properties": {
+    "job_title": {
+      "type": ["string", "null"]
+    },
+    "job_description": {
+      "type": ["string", "null"]
+    },
+    "department": {
+      "type": ["string", "null"]
+    },
+    "organization": {
+      "type": ["string", "null"]
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/requirement"
+      }
+    },
+    "rubric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "has_rubric_in_doc",
+        "categories",
+        "weights_sum_to_1_0"
+      ],
+      "properties": {
+        "has_rubric_in_doc": {
+          "type": "boolean"
+        },
+        "categories": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/category"
+          }
+        },
+        "weights_sum_to_1_0": {
+          "const": true
+        }
+      }
+    }
+  },
+  "$defs": {
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "text",
+        "requirement_type",
+        "category_id",
+        "source_text",
+        "needs_review"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requirement_type": {
+          "enum": [
+            "must_have",
+            "desired",
+            "experience",
+            "responsibility",
+            "other"
+          ]
+        },
+        "category_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_location": {
+          "type": ["string", "null"]
+        },
+        "duplicate_of": {
+          "type": ["string", "null"]
+        },
+        "needs_review": {
+          "type": "boolean"
+        }
+      }
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "weight",
+        "description",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "doc",
+            "generated"
+          ]
+        }
+      }
+    }
+  }
+}

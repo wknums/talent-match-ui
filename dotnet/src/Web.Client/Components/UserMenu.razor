@@ -1,0 +1,194 @@
+@using TalentMatch.Web.Client.Services
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@inject ApiClient Api
+@inject PublicAuthConfiguration AuthConfiguration
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div style="display: flex; align-items: center; gap: 0.75rem;">
+    @if (currentUser != null)
+    {
+        <span style="font-size: 0.9rem;">@currentUser.FullName</span>
+        <span style="background: @(currentUser.Role == "admin" ? "#c53030" : "#2b6cb0"); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; text-transform: uppercase;">@currentUser.Role</span>
+        <span style="font-size: 0.8rem; color: #666;">@currentUser.Department</span>
+
+        <div style="position: relative;">
+            <button @onclick="ToggleMenu" style="padding: 0.25rem 0.5rem; background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">☰</button>
+            @if (showMenu)
+            {
+                <div style="position: absolute; right: 0; top: 100%; background: white; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 100; min-width: 180px;">
+                    @if (AuthConfiguration.IsSimple)
+                    {
+                        <button @onclick="OpenChangePassword" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Change Password</button>
+                        @if (currentUser.Role != "admin")
+                        {
+                            <button @onclick="OpenRequestReset" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Request Password Reset</button>
+                        }
+                    }
+                    @if (currentUser.Role == "admin")
+                    {
+                        <button @onclick="NavigateToUsers" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer;">Manage Users</button>
+                    }
+                    <hr style="margin: 0;" />
+                    <button @onclick="HandleLogout" style="display: block; width: 100%; text-align: left; padding: 0.5rem 1rem; border: none; background: none; cursor: pointer; color: red;">Logout</button>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@if (AuthConfiguration.IsSimple && showChangePassword)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="CloseChangePassword">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 350px;" @onclick:stopPropagation>
+            <ChangePasswordDialog OnClose="CloseChangePassword" />
+        </div>
+    </div>
+}
+
+@if (AuthConfiguration.IsSimple && showRequestReset)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;" @onclick="CloseRequestReset">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; width: 100%; max-width: 420px;" @onclick:stopPropagation>
+            <h4 style="margin-top: 0;">Confirm Password Reset Request</h4>
+            <p style="color: #334155; margin-bottom: 1rem;">This will submit a password reset request to your admin. Would you like to proceed?</p>
+            @if (!string.IsNullOrEmpty(resetMessage))
+            {
+                <div style="color: @(resetSuccess ? "#166534" : "#b91c1c"); margin-bottom: 0.75rem; padding: 0.5rem; border-radius: 4px; background: @(resetSuccess ? "#dcfce7" : "#fee2e2");">@resetMessage</div>
+            }
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button @onclick="CloseRequestReset" disabled="@isSubmittingReset" style="padding: 0.5rem 0.75rem; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 4px;">Cancel</button>
+                <button @onclick="ConfirmRequestReset" disabled="@isSubmittingReset" style="padding: 0.5rem 0.75rem; background: #1d4ed8; color: white; border: none; border-radius: 4px;">
+                    @(isSubmittingReset ? "Submitting..." : "Confirm")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private UserInfo? currentUser;
+    private bool disposed;
+    private bool showMenu;
+    private bool showChangePassword;
+    private bool showRequestReset;
+    private bool isSubmittingReset;
+    private string? resetMessage;
+    private bool resetSuccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Api.AuthorizationChanged += AuthorizationChanged;
+        Navigation.LocationChanged += LocationChanged;
+        currentUser = await Api.GetCurrentUserAsync();
+    }
+
+    private void AuthorizationChanged()
+    {
+        if (AuthConfiguration.IsEntra) currentUser = Api.CurrentAuthorizationContext?.ToUserInfo();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void LocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+    {
+        if (AuthConfiguration.IsSimple)
+            _ = InvokeAsync(async () =>
+            {
+                currentUser = await Api.GetCurrentUserAsync();
+                if (!disposed) StateHasChanged();
+            });
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Api.AuthorizationChanged -= AuthorizationChanged;
+        Navigation.LocationChanged -= LocationChanged;
+    }
+
+    private void ToggleMenu() => showMenu = !showMenu;
+
+    private void OpenChangePassword()
+    {
+        showMenu = false;
+        showChangePassword = true;
+    }
+
+    private void CloseChangePassword() => showChangePassword = false;
+
+    private void OpenRequestReset()
+    {
+        showMenu = false;
+        resetMessage = null;
+        resetSuccess = false;
+        showRequestReset = true;
+    }
+
+    private void CloseRequestReset()
+    {
+        showRequestReset = false;
+        resetMessage = null;
+    }
+
+    private async Task ConfirmRequestReset()
+    {
+        isSubmittingReset = true;
+        resetMessage = null;
+        try
+        {
+            var success = await Api.SubmitResetRequestAsync("Requested from user menu");
+            resetSuccess = success;
+            resetMessage = success
+                ? "Your password reset request has been submitted. An admin will review it shortly."
+                : "Failed to submit the request. Please try again.";
+            if (success)
+                await Task.Delay(2000);
+            if (success)
+                showRequestReset = false;
+        }
+        catch (Exception ex)
+        {
+            resetSuccess = false;
+            resetMessage = ex.Message;
+        }
+        finally
+        {
+            isSubmittingReset = false;
+        }
+    }
+
+    private void NavigateToUsers()
+    {
+        showMenu = false;
+        Navigation.NavigateTo("/users");
+    }
+
+    private async Task HandleLogout()
+    {
+        showMenu = false;
+        if (AuthConfiguration.IsEntra)
+        {
+            try
+            {
+                await Api.LogoutAsync();
+            }
+            finally
+            {
+                Navigation.NavigateToLogout("authentication/logout");
+            }
+        }
+        else
+        {
+            await Api.LogoutAsync();
+            Navigation.NavigateTo("/login", forceLoad: true);
+        }
+    }
+
+    [Parameter] public EventCallback<UserInfo?> OnUserLoaded { get; set; }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && currentUser != null)
+            await OnUserLoaded.InvokeAsync(currentUser);
+    }
+}

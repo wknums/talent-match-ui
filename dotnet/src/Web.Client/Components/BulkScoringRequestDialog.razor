@@ -1,0 +1,692 @@
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.AspNetCore.Components.WebAssembly.Authentication
+@using Microsoft.JSInterop
+@using System.Text.Json
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<div class="bulk-dialog"
+     data-testid="source-connection-region"
+     aria-busy="@busy.ToString().ToLowerInvariant()">
+    @if (step == Step.Accepted && accepted is not null)
+    {
+        <div class="bulk-started" role="status" data-testid="bulk-scoring-accepted">
+            <h4>Bulk scoring has started</h4>
+            <p>
+                The frozen choices were accepted with configuration version
+                <strong>@(accepted.JobConfigVersionId ?? "unknown")</strong>.
+                Scoring continues in the background, so you can close this page.
+            </p>
+            <button type="button" class="bulk-primary" @onclick="CloseAcceptedAsync">Close</button>
+        </div>
+    }
+    else
+    {
+        <h4>Start bulk scoring from SharePoint or OneDrive</h4>
+
+        @if (step == Step.Connect)
+        {
+            <div class="bulk-consent" data-testid="source-consent-message">
+                <p>
+                    Connecting a source is separate from your product sign-in. Microsoft will ask you to use a
+                    work or school account from the Microsoft 365 tenant that hosts the pasted folder and grant
+                    read-only access to files you can already open.
+                </p>
+                <p>No folder content is read until you return and review the request.</p>
+            </div>
+
+            <div class="bulk-field">
+                <label for="bulk-folder-url">Folder link</label>
+                @if (SourceTenantHost is { } sourceTenantHost)
+                {
+                    <div class="bulk-warning"
+                         role="note"
+                         data-testid="source-tenant-guidance">
+                        <h5>Use your normal account from @sourceTenantHost</h5>
+                        <p>
+                            When Microsoft opens, sign in with the work account that can open this folder in
+                            <strong>@sourceTenantHost</strong>. Administrator permissions are not required for
+                            normal folder connections. Do not use your TalentMatch sign-in account unless it
+                            is also your account in that source tenant.
+                        </p>
+                    </div>
+                }
+                <div class="bulk-row">
+                    <input id="bulk-folder-url"
+                           type="url"
+                           @bind="folderUrl"
+                           @bind:event="oninput"
+                           @onkeydown="OnUrlKeyDown"
+                           disabled="@busy"
+                           placeholder="https://contoso.sharepoint.com/sites/hr/Shared Documents/Candidates" />
+                    <button type="button"
+                            class="bulk-primary"
+                            data-testid="connect-source"
+                            @onclick="ConnectAsync"
+                            disabled="@(busy || sessionRefreshRequired || string.IsNullOrWhiteSpace(folderUrl))">
+                        Continue with source account
+                    </button>
+                </div>
+            </div>
+        }
+
+        @if (busy)
+        {
+            <div class="bulk-loading" role="status" data-testid="source-loading">
+                Loading source connection…
+            </div>
+        }
+
+        @if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <div class="bulk-error"
+                 role="alert"
+                 tabindex="-1"
+                 data-testid="source-error"
+                 @ref="errorElement">
+                @errorMessage
+                 @if (sessionRefreshRequired)
+                 {
+                     <div class="bulk-row">
+                         <button type="button"
+                                 class="bulk-primary"
+                                 data-testid="refresh-product-session"
+                                 @onclick="SignInAgainAsync"
+                                 disabled="@busy">
+                             Sign in again
+                         </button>
+                         <button type="button"
+                                 @onclick="() => OnClose.InvokeAsync()"
+                                 disabled="@busy">
+                             Cancel
+                         </button>
+                     </div>
+                 }
+            </div>
+        }
+
+        @if (step == Step.AdminConsent && connection is not null)
+        {
+            <section class="bulk-warning"
+                     role="status"
+                     data-testid="admin-consent-required">
+                <h5>administrator consent is required</h5>
+                <p>
+                    The Microsoft 365 organization that hosts the source folder must approve this read-only
+                    connection before you can continue. Use a source-tenant administrator, not the TalentMatch
+                    sign-in account unless both belong to the same tenant.
+                    No folder content has been read.
+                </p>
+                @if (!string.IsNullOrWhiteSpace(connection.AdminConsentUrl))
+                {
+                    <a class="bulk-link-button"
+                       data-testid="request-admin-consent"
+                       href="@connection.AdminConsentUrl">
+                        Request administrator consent
+                    </a>
+                }
+                <button type="button" @onclick="AbandonAsync" disabled="@busy">Cancel</button>
+            </section>
+        }
+
+        @if (step == Step.Review && preview is not null && draftPage is not null)
+        {
+            <section class="bulk-summary" data-testid="draft-review" aria-label="Frozen request review">
+                <p class="bulk-folder">
+                    <strong>@preview.FolderName</strong>
+                    <span class="bulk-muted">Connected as @preview.SourceAccountDisplay</span>
+                </p>
+
+                <div class="bulk-frozen" data-testid="frozen-request-configuration">
+                    <strong>Frozen for this request</strong>
+                    <ul>
+                        <li>@preview.Limits.MaxFilesPerRequest.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) files</li>
+                        <li>@FormatBinaryLimit(preview.Limits.MaxBytesPerFile) per file</li>
+                        <li>@FormatBinaryLimit(preview.Limits.MaxTotalBytes) total</li>
+                        <li>@preview.Limits.DiscoveryStepMaxFiles.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) files per discovery step</li>
+                    </ul>
+                </div>
+
+                <p class="bulk-headline">
+                    <strong data-testid="review-total">@reviewTotal.ToString("N0")</strong>
+                    eligible files in this frozen review
+                </p>
+
+                @if (preview.DiscoveryStatus == "more_available")
+                {
+                    <div class="bulk-warning" role="status">
+                        <p>
+                            More files may be available. Paging only reviews the frozen results below; it never
+                            discovers additional files.
+                        </p>
+                        <button type="button"
+                                data-testid="discover-more"
+                                @onclick="DiscoverMoreAsync"
+                                disabled="@busy">
+                            Discover more
+                        </button>
+                    </div>
+                }
+
+                <div class="bulk-options">
+                    <label>
+                        <input type="checkbox"
+                               data-testid="convert-raster"
+                               @bind="convertToRasterPdf"
+                               disabled="@busy" />
+                        <span>
+                            <strong>Convert files to image-based PDFs before scoring</strong>
+                            <span class="bulk-muted">The confirmed value is recorded with this request.</span>
+                        </span>
+                    </label>
+                    <label>
+                        <input type="checkbox"
+                               data-testid="allow-duplicates"
+                               @bind="allowDuplicates"
+                               disabled="@busy" />
+                        <span>
+                            <strong>Allow duplicate documents</strong>
+                            <span class="bulk-muted">The confirmed value is recorded with this request.</span>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="bulk-files">
+                    <h5>Files to import</h5>
+                    <table>
+                        <thead>
+                            <tr><th>File</th><th>Folder</th><th>Size</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var item in draftPage.Items)
+                            {
+                                <tr>
+                                    <td>@item.FileName</td>
+                                    <td>@item.RelativePath</td>
+                                    <td>@FormatBytes(item.SizeBytes)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div class="bulk-pager">
+                        <span>Review page @(reviewPageIndex + 1) of the frozen snapshot</span>
+                        <button type="button"
+                                data-testid="review-previous"
+                                @onclick="PreviousReviewPageAsync"
+                                disabled="@(busy || reviewPageIndex == 0)">
+                            Previous
+                        </button>
+                        <button type="button"
+                                data-testid="review-next"
+                                @onclick="NextReviewPageAsync"
+                                disabled="@(busy || string.IsNullOrWhiteSpace(draftPage.NextReviewCursor))">
+                            Next
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bulk-actions">
+                    <button type="button"
+                            class="bulk-primary"
+                            data-testid="confirm-bulk-scoring"
+                            @onclick="ConfirmAsync"
+                            disabled="@(busy || reviewTotal == 0)">
+                        Confirm and start scoring
+                    </button>
+                    <button type="button"
+                            data-testid="abandon-source-journey"
+                            @onclick="AbandonAsync"
+                            disabled="@busy">
+                        Abandon
+                    </button>
+                </div>
+            </section>
+        }
+    }
+</div>
+
+@code {
+    private const int ReviewPageSize = 100;
+
+    [Parameter, EditorRequired] public string JobId { get; set; } = "";
+    [Parameter] public string? RetryOfRequestId { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnStarted { get; set; }
+
+    private enum Step { Connect, AdminConsent, Review, Accepted }
+
+    private Step step;
+    private string folderUrl = "";
+    private bool busy;
+    private string? errorMessage;
+    private ElementReference errorElement;
+    private SourceConnectionStatusDto? connection;
+    private SourceConnectionPreviewDto? preview;
+    private BulkDraftItemPageDto? draftPage;
+    private BulkRequestDetailDto? accepted;
+    private int reviewTotal;
+    private int reviewPageIndex;
+    private readonly List<string?> reviewCursors = [null];
+    private bool convertToRasterPdf;
+    private bool allowDuplicates;
+    private bool sessionRefreshRequired;
+    private string? resumeConnectionId;
+    private string? resumeRequestId;
+    private string ResumeStorageKey => $"talentMatch.bulkSource.resume.{JobId}";
+
+    private sealed record SessionResumeState(
+        string FolderUrl,
+        string? ConnectionId,
+        string? RequestId,
+        bool ConvertToRasterPdf,
+        bool AllowDuplicates);
+
+    private string? SourceTenantHost
+    {
+        get
+        {
+            if (!Uri.TryCreate(folderUrl.Trim(), UriKind.Absolute, out var uri)
+                || !uri.Host.EndsWith(".sharepoint.com", StringComparison.OrdinalIgnoreCase))
+                return null;
+            return uri.Host;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (GetQueryValue("resumeBulkScoring") == "1")
+        {
+            await RestoreSessionAsync();
+            return;
+        }
+
+        resumeConnectionId = GetQueryValue("sourceConnectionId");
+        if (!string.IsNullOrWhiteSpace(resumeConnectionId))
+            await ResumeAsync(resumeConnectionId);
+    }
+
+    private async Task OnUrlKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter" && !busy && !sessionRefreshRequired && !string.IsNullOrWhiteSpace(folderUrl))
+            await ConnectAsync();
+    }
+
+    private async Task ConnectAsync()
+    {
+        busy = true;
+        errorMessage = null;
+        try
+        {
+            var result = await Api.BeginSourceConnectionAsync(
+                JobId,
+                folderUrl.Trim(),
+                RetryOfRequestId);
+            Navigation.NavigateTo(result.AuthorizationUrl, forceLoad: true);
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private async Task ResumeAsync(string connectionId)
+    {
+        busy = true;
+        errorMessage = null;
+        try
+        {
+            connection = await Api.GetSourceConnectionAsync(connectionId);
+            if (connection.AdminConsentRequired)
+            {
+                step = Step.AdminConsent;
+                return;
+            }
+
+            if (!string.Equals(connection.Status, "authorized", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(connection.Status, "verified", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("The source connection is not ready. Try the connection again.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(RetryOfRequestId))
+            {
+                accepted = await Api.RetryFailedBulkScoringRequestItemsAsync(
+                    RetryOfRequestId,
+                    connectionId);
+                step = Step.Accepted;
+                RemoveResumeQuery();
+                await OnStarted.InvokeAsync();
+                return;
+            }
+
+            preview = await Api.PreviewSourceConnectionAsync(connectionId);
+            draftPage = await Api.GetBulkScoringDraftItemsAsync(preview.RequestId, pageSize: ReviewPageSize);
+            reviewTotal = draftPage.TotalItems;
+            reviewPageIndex = 0;
+            reviewCursors.Clear();
+            reviewCursors.Add(null);
+            step = Step.Review;
+            RemoveResumeQuery();
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            step = Step.Connect;
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private async Task NextReviewPageAsync()
+    {
+        if (preview is null || draftPage is null || string.IsNullOrWhiteSpace(draftPage.NextReviewCursor))
+            return;
+
+        var cursor = draftPage.NextReviewCursor;
+        if (reviewCursors.Count == reviewPageIndex + 1)
+            reviewCursors.Add(cursor);
+        await LoadReviewPageAsync(reviewPageIndex + 1, cursor);
+    }
+
+    private async Task PreviousReviewPageAsync()
+    {
+        if (reviewPageIndex == 0)
+            return;
+        await LoadReviewPageAsync(reviewPageIndex - 1, reviewCursors[reviewPageIndex - 1]);
+    }
+
+    private async Task LoadReviewPageAsync(int targetIndex, string? cursor)
+    {
+        if (preview is null)
+            return;
+
+        busy = true;
+        errorMessage = null;
+        try
+        {
+            draftPage = await Api.GetBulkScoringDraftItemsAsync(
+                preview.RequestId,
+                cursor,
+                ReviewPageSize);
+            reviewPageIndex = targetIndex;
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private async Task DiscoverMoreAsync()
+    {
+        if (preview is null)
+            return;
+
+        busy = true;
+        errorMessage = null;
+        try
+        {
+            preview = await Api.DiscoverMoreSourceItemsAsync(preview.RequestId);
+            reviewTotal = preview.Counts.Discovered;
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (preview is null)
+            return;
+
+        busy = true;
+        errorMessage = null;
+        try
+        {
+            accepted = await Api.ConfirmBulkScoringRequestAsync(
+                preview.RequestId,
+                convertToRasterPdf,
+                allowDuplicates,
+                preview.ConcurrencyVersion);
+            step = Step.Accepted;
+            preview = null;
+            draftPage = null;
+            folderUrl = "";
+            connection = null;
+            await OnStarted.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private async Task AbandonAsync()
+    {
+        busy = true;
+        errorMessage = null;
+        var requestId = preview?.RequestId;
+        var connectionId = connection?.ConnectionId;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(requestId))
+                await Api.AbandonBulkScoringRequestDraftAsync(requestId);
+            else if (!string.IsNullOrWhiteSpace(connectionId))
+                await Api.AbandonSourceConnectionAsync(connectionId);
+            preview = null;
+            draftPage = null;
+            connection = null;
+            folderUrl = "";
+            await OnClose.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private Task CloseAcceptedAsync() => OnClose.InvokeAsync();
+
+    private void SetError(Exception exception)
+    {
+        sessionRefreshRequired = exception is AccessTokenNotAvailableException
+            || exception is ApiException
+            {
+                StatusCode: 401,
+                ErrorCode: "token_stale" or "auth_required" or "invalid_token",
+            };
+        errorMessage = sessionRefreshRequired
+            ? "Your TalentMatch session needs to be renewed. Select Sign in again to continue. Your folder link and review choices will be kept."
+            : Describe(exception);
+    }
+
+    private async Task SignInAgainAsync()
+    {
+        if (busy)
+            return;
+
+        busy = true;
+        try
+        {
+            var state = new SessionResumeState(
+                folderUrl,
+                connection?.ConnectionId ?? resumeConnectionId,
+                preview?.RequestId ?? resumeRequestId,
+                convertToRasterPdf,
+                allowDuplicates);
+            await JS.InvokeVoidAsync("sessionStorage.setItem", ResumeStorageKey, JsonSerializer.Serialize(state));
+            var returnUrl = Navigation.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                ["resumeBulkScoring"] = "1",
+                ["retryBulkRequestId"] = RetryOfRequestId,
+            });
+
+            var options = new InteractiveRequestOptions
+            {
+                Interaction = InteractionType.SignIn,
+                ReturnUrl = returnUrl,
+            };
+            options.TryAddAdditionalParameter("prompt", "login");
+            Navigation.NavigateToLogin("authentication/login", options);
+        }
+        catch (JSException)
+        {
+            errorMessage = "Your browser could not save this form for sign-in. Copy the folder link, then sign out of TalentMatch and sign in again.";
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private async Task RestoreSessionAsync()
+    {
+        SessionResumeState? state;
+        try
+        {
+            var json = await JS.InvokeAsync<string?>("sessionStorage.getItem", ResumeStorageKey);
+            await JS.InvokeVoidAsync("sessionStorage.removeItem", ResumeStorageKey);
+            state = string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<SessionResumeState>(json);
+        }
+        catch (Exception exception) when (exception is JSException or JsonException)
+        {
+            state = null;
+        }
+
+        RemoveResumeQuery();
+        if (state is null || state.FolderUrl is null)
+        {
+            errorMessage = "The saved form could not be restored. Paste the folder link again to continue.";
+            return;
+        }
+
+        folderUrl = state.FolderUrl;
+        convertToRasterPdf = state.ConvertToRasterPdf;
+        allowDuplicates = state.AllowDuplicates;
+        resumeConnectionId = state.ConnectionId;
+        resumeRequestId = state.RequestId;
+        if (!string.IsNullOrWhiteSpace(state.RequestId) && !string.IsNullOrWhiteSpace(state.ConnectionId))
+            await ResumeReviewAsync(state.RequestId, state.ConnectionId);
+        else if (!string.IsNullOrWhiteSpace(state.ConnectionId))
+            await ResumeAsync(state.ConnectionId);
+    }
+
+    private async Task ResumeReviewAsync(string requestId, string connectionId)
+    {
+        busy = true;
+        try
+        {
+            var request = await Api.GetBulkScoringRequestAsync(requestId);
+            if (request.JobId != JobId || request.Status != "draft" || request.Discovery is not { } discovery)
+                throw new InvalidOperationException("This preview is no longer available. Close this dialog and check the bulk request status.");
+
+            connection = await Api.GetSourceConnectionAsync(connectionId);
+            draftPage = await Api.GetBulkScoringDraftItemsAsync(requestId, pageSize: ReviewPageSize);
+            preview = new SourceConnectionPreviewDto(
+                requestId, connectionId, request.SourceKind, connection.SourceAccountDisplay ?? "",
+                request.FolderName, request.AuthorizationState, discovery.DiscoveryStatus,
+                draftPage.ReviewSnapshotVersion, request.ConcurrencyVersion, request.Counts,
+                discovery.ExcludedByReason, discovery.EntriesScanned, discovery.IncludedBytes,
+                new SourceConnectionLimitsDto(
+                    request.Limits.MaxFilesPerRequest, request.Limits.MaxBytesPerFile,
+                    request.Limits.MaxTotalBytes, request.Limits.DiscoveryStepFiles),
+                $"/api/bulk-scoring-requests/{Uri.EscapeDataString(requestId)}/draft-items");
+            reviewTotal = draftPage.TotalItems;
+            step = Step.Review;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception);
+        }
+        finally
+        {
+            busy = false;
+        }
+
+        await FocusErrorAsync();
+    }
+
+    private async Task FocusErrorAsync()
+    {
+        if (string.IsNullOrWhiteSpace(errorMessage))
+            return;
+        await InvokeAsync(StateHasChanged);
+        if (errorElement.Context is not null)
+            await errorElement.FocusAsync();
+    }
+
+    private string? GetQueryValue(string name)
+    {
+        var query = Navigation.ToAbsoluteUri(Navigation.Uri).Query.TrimStart('?');
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            if (Uri.UnescapeDataString(parts[0]).Equals(name, StringComparison.OrdinalIgnoreCase))
+                return parts.Length == 2 ? Uri.UnescapeDataString(parts[1].Replace("+", " ")) : "";
+        }
+        return null;
+    }
+
+    private void RemoveResumeQuery()
+    {
+        var uri = Navigation.ToAbsoluteUri(Navigation.Uri);
+        Navigation.NavigateTo(uri.GetLeftPart(UriPartial.Path), replace: true);
+    }
+
+    private static string Describe(Exception ex) => ex switch
+    {
+        ApiException api => api.Message,
+        InvalidOperationException invalid => invalid.Message,
+        _ => "Something went wrong. Try again.",
+    };
+
+    private static string FormatBinaryLimit(long bytes) =>
+        bytes % 1_073_741_824 == 0
+            ? $"{bytes / 1_073_741_824:N0} GiB"
+            : $"{bytes / 1_048_576:N0} MiB";
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1_048_576 => $"{bytes / 1_048_576d:0.#} MiB",
+        >= 1_024 => $"{bytes / 1_024d:0.#} KiB",
+        _ => $"{bytes} B",
+    };
+}

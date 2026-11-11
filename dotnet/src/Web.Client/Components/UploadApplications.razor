@@ -1,0 +1,207 @@
+@using TalentMatch.Web.Client.Services
+@using Microsoft.AspNetCore.Components.Forms
+@inject ApiClient Api
+@inject UploadCoordinator UploadCoordinator
+
+<div style="border: 1px solid #ccc; padding: 1.5rem; border-radius: 8px; background: white; min-width: 400px;">
+    <h4>Upload Applications</h4>
+    <p>
+        Select PDF, MD, DOCX, TXT, JPG, or PNG files to upload
+        (@(useParallelUpload ? "configured per-file limit" : "max 15 MB each")).
+    </p>
+
+    <div style="border: 2px dashed @(isDragOver ? "#2b6cb0" : "#ccc"); border-radius: 8px; padding: 2rem; text-align: center; margin-bottom: 1rem; background: @(isDragOver ? "#ebf8ff" : "transparent"); transition: all 0.2s;"
+         @ondragenter="() => isDragOver = true"
+         @ondragleave="() => isDragOver = false"
+         @ondragover:preventDefault>
+        <p style="margin: 0 0 0.5rem 0; font-size: 1.25rem;">📄</p>
+        <p style="margin: 0;">Drag & drop files here, or click to browse</p>
+        <InputFile OnChange="HandleFileSelection" multiple style="margin-top: 0.5rem;" accept=".pdf,.md,.docx,.txt,.jpg,.png" />
+    </div>
+
+    @if (fileEntries.Any())
+    {
+        <div style="margin-bottom: 1rem;">
+            @foreach (var entry in fileEntries)
+            {
+                <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; border-bottom: 1px solid #eee;">
+                    <span style="flex: 1;">@entry.File.Name</span>
+                    <span style="font-size: 0.8rem; color: #666;">@(entry.File.Size / 1024) KB</span>
+                    @if (!string.IsNullOrEmpty(entry.Error))
+                    {
+                        <span style="color: red; font-size: 0.8rem;">@entry.Error</span>
+                    }
+                    else if (entry.Uploaded)
+                    {
+                        <span style="color: green;">✓</span>
+                    }
+                    else if (isUploading)
+                    {
+                        <span style="color: #2b6cb0;">⏳</span>
+                    }
+                    <button @onclick="() => fileEntries.Remove(entry)" style="color: red; border: none; background: none; cursor: pointer;">✕</button>
+                </div>
+            }
+        </div>
+        <button @onclick="SubmitFiles" disabled="@(isUploading || !ValidFiles.Any())">
+            @(isUploading ? "Uploading..." : $"Upload {ValidFiles.Count()} file(s)")
+        </button>
+    }
+
+    <label style="display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 1rem; cursor: pointer;">
+        <input type="checkbox" @bind="allowDuplicates" disabled="@isUploading" />
+        <span>
+            <strong>Allow duplicate documents</strong>
+            <span style="display: block; color: #666; font-size: 0.8rem;">
+                Upload and score files even when their contents match an application already added to this job.
+            </span>
+        </span>
+    </label>
+
+    <label style="display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 1rem; cursor: pointer;">
+        <input type="checkbox" checked="@useParallelUpload" @onchange="HandleUploadModeChanged" disabled="@isUploading" />
+        <span>
+            <strong>Upload files individually in the background</strong>
+            <span style="display: block; color: #666; font-size: 0.8rem;">
+                Continue uploading while you navigate elsewhere in this browser tab.
+            </span>
+        </span>
+    </label>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <p style="color: @(uploadSuccess ? "green" : "red"); margin-top: 1rem;">@statusMessage</p>
+    }
+</div>
+
+@code {
+    [Parameter] public string JobId { get; set; } = "";
+    [Parameter] public EventCallback OnUploaded { get; set; }
+    [Parameter] public EventCallback OnOptionalUploadStarted { get; set; }
+
+    private List<FileEntry> fileEntries = new();
+    private bool isUploading;
+    private bool isDragOver;
+    private string? statusMessage;
+    private bool uploadSuccess;
+    private bool allowDuplicates;
+    private bool useParallelUpload;
+
+    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase) { ".pdf", ".md", ".docx", ".txt", ".jpg", ".png" };
+    private const long MaxFileSize = 15 * 1024 * 1024;
+
+    private IEnumerable<FileEntry> ValidFiles => fileEntries.Where(f => string.IsNullOrEmpty(f.Error));
+
+    private void HandleFileSelection(InputFileChangeEventArgs e)
+    {
+        isDragOver = false;
+        foreach (var file in e.GetMultipleFiles(100))
+        {
+            var entry = new FileEntry { File = file };
+            ValidateEntry(entry);
+            fileEntries.Add(entry);
+        }
+    }
+
+    private void HandleUploadModeChanged(ChangeEventArgs args)
+    {
+        useParallelUpload = args.Value is true
+            || string.Equals(args.Value?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        foreach (var entry in fileEntries)
+            ValidateEntry(entry);
+    }
+
+    private void ValidateEntry(FileEntry entry)
+    {
+        var ext = Path.GetExtension(entry.File.Name);
+        entry.Error = !AllowedExtensions.Contains(ext)
+            ? $"Invalid type: {ext}"
+            : !useParallelUpload && entry.File.Size > MaxFileSize
+                ? "File exceeds 15 MB limit"
+                : null;
+    }
+
+    private Task SubmitFiles() => useParallelUpload ? StartOptionalUpload() : UploadFiles();
+
+    private async Task StartOptionalUpload()
+    {
+        if (isUploading)
+            return;
+        isUploading = true;
+        statusMessage = null;
+        try
+        {
+            await UploadCoordinator.StartAsync(
+                JobId,
+                allowDuplicates,
+                ValidFiles.Select(x => x.File).ToArray());
+            uploadSuccess = true;
+            statusMessage = "Background upload started. Progress remains available while you navigate.";
+            fileEntries.Clear();
+            allowDuplicates = false;
+            useParallelUpload = false;
+            await OnOptionalUploadStarted.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            uploadSuccess = false;
+            statusMessage = ex.Message;
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+
+    private async Task UploadFiles()
+    {
+        isUploading = true;
+        statusMessage = null;
+        var content = new MultipartFormDataContent();
+        foreach (var entry in ValidFiles)
+        {
+            var stream = entry.File.OpenReadStream(maxAllowedSize: MaxFileSize);
+            var streamContent = new StreamContent(stream);
+            streamContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(
+                entry.File.ContentType is { Length: > 0 } ct ? ct : InferMimeType(entry.File.Name));
+            content.Add(streamContent, "files", entry.File.Name);
+        }
+        var selectedFileCount = ValidFiles.Count();
+        var uploadedCount = await Api.UploadApplicationsAsync(JobId, content, allowDuplicates);
+        uploadSuccess = uploadedCount.HasValue;
+        if (uploadSuccess)
+        {
+            if (uploadedCount == selectedFileCount)
+                foreach (var entry in ValidFiles) entry.Uploaded = true;
+            var skippedCount = selectedFileCount - uploadedCount!.Value;
+            statusMessage = skippedCount == 0
+                ? $"{uploadedCount} files uploaded successfully."
+                : $"{uploadedCount} files uploaded; {skippedCount} duplicate files skipped.";
+            await OnUploaded.InvokeAsync();
+        }
+        else
+        {
+            statusMessage = "Upload failed.";
+        }
+        isUploading = false;
+    }
+
+    private class FileEntry
+    {
+        public IBrowserFile File { get; set; } = default!;
+        public string? Error { get; set; }
+        public bool Uploaded { get; set; }
+    }
+
+    private static string InferMimeType(string fileName) => Path.GetExtension(fileName).ToLowerInvariant() switch
+    {
+        ".pdf" => "application/pdf",
+        ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".doc" => "application/msword",
+        ".md" => "text/markdown",
+        ".txt" => "text/plain",
+        ".jpg" => "image/jpeg",
+        ".png" => "image/png",
+        _ => "application/octet-stream"
+    };
+}

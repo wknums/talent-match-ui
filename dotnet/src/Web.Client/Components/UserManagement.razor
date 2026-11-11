@@ -1,0 +1,513 @@
+@using TalentMatch.Web.Client.Services
+@using Microsoft.AspNetCore.Components.Web
+@inject ApiClient Api
+
+<h4>User Management</h4>
+
+@if (!string.IsNullOrEmpty(successMessage))
+{
+    <div style="background: #c6f6d5; color: #22543d; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        @successMessage
+    </div>
+}
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div style="background: #fed7d7; color: #9b2c2c; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem;">
+        @errorMessage
+    </div>
+}
+
+<div class="tab-row">
+    <button @onclick="ShowUsersTab" style="@UsersTabStyle">Users</button>
+    <button @onclick="LoadResetRequests" style="@RequestsTabStyle">Reset Requests (@resetRequests.Count)</button>
+</div>
+
+@if (activeTab == "users")
+{
+<button @onclick="() => showCreateForm = true" style="margin-bottom: 1rem; padding: 0.5rem 1rem;">Create User</button>
+
+@if (showCreateForm)
+{
+    <div style="border: 1px solid #ccc; padding: 1rem; margin-bottom: 1rem; border-radius: 8px;">
+        <h5>Create New User</h5>
+        <div style="display: grid; gap: 0.5rem; max-width: 400px;">
+            <input placeholder="Username" @bind="newUsername" />
+            <input placeholder="Full Name" @bind="newFullName" />
+            <input placeholder="Email" @bind="newEmail" />
+            <select @bind="newRole"><option value="recruiter">Recruiter</option><option value="admin">Admin</option></select>
+            <input placeholder="Department" @bind="newDepartment" />
+            <input type="password" placeholder="Password" @bind="newPassword" />
+            <div><button @onclick="CreateUser">Create</button> <button @onclick="() => showCreateForm = false">Cancel</button></div>
+        </div>
+    </div>
+}
+
+<div class="table-scroll" role="region" aria-label="Users" tabindex="0">
+<table style="width: 100%; border-collapse: collapse;">
+    <thead>
+        <tr style="border-bottom: 2px solid #ccc;">
+            <th style="text-align: left; padding: 0.5rem;">Username</th>
+            <th style="text-align: left; padding: 0.5rem;">Full Name</th>
+            <th style="text-align: left; padding: 0.5rem;">Email</th>
+            <th style="text-align: left; padding: 0.5rem;">Role</th>
+            <th style="text-align: left; padding: 0.5rem;">Department</th>
+            <th style="text-align: left; padding: 0.5rem;">Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var user in users)
+        {
+            <tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 0.5rem;">@user.Username</td>
+                <td style="padding: 0.5rem;">@user.FullName</td>
+                <td style="padding: 0.5rem;">@user.Email</td>
+                <td style="padding: 0.5rem;">@user.Role</td>
+                <td style="padding: 0.5rem;">
+                    @{ var departments = GetDepartmentTags(user.Department); }
+                    @if (departments.Count == 0)
+                    {
+                        <span>—</span>
+                    }
+                    else if (departments.Count == 1)
+                    {
+                        <span>@departments[0]</span>
+                    }
+                    else
+                    {
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.35rem;">
+                            @foreach (var department in departments)
+                            {
+                                <span style="background: #edf2f7; color: #2d3748; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.8rem;">@department</span>
+                            }
+                        </div>
+                    }
+                </td>
+                <td class="row-actions">
+                    @if (CanManageUsers)
+                    {
+                        <button @onclick="() => ShowEditDialog(user)" disabled="@isSavingEdit">Edit</button>
+                    }
+                    <button @onclick="() => ConfirmDelete(user)">Delete</button>
+                    <button @onclick="() => ShowResetDialog(user)">Reset Password</button>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+</div>
+
+@if (userToDelete != null)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 300px;">
+            <p>Are you sure you want to delete user <strong>@userToDelete.Username</strong>?</p>
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button @onclick="() => userToDelete = null">Cancel</button>
+                <button @onclick="ConfirmDeleteUser" style="background: red; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">Delete</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (userToReset != null)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 300px;">
+            <h5>Reset Password for @userToReset.Username</h5>
+            <input type="password" placeholder="New Password" @bind="resetNewPassword" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem;" />
+            <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                <button @onclick="() => userToReset = null">Cancel</button>
+                <button @onclick="ConfirmResetPassword" style="background: #2b6cb0; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">Reset</button>
+            </div>
+        </div>
+    </div>
+}
+}
+
+@if (activeTab == "users" && editingUser != null)
+{
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 380px; max-width: 520px; width: 100%;">
+            <h5 style="margin-top: 0;">Edit User: @editingUser.Username</h5>
+            <div style="display: grid; gap: 0.75rem;">
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Full Name</label>
+                    <input value="@editFullName" @oninput="OnEditFullNameChanged" style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Email</label>
+                    <input value="@editEmail" @oninput="OnEditEmailChanged" style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Role</label>
+                    <select @bind="editRole" disabled="@IsEditingCurrentUser" style="width: 100%; padding: 0.5rem;">
+                        <option value="recruiter">Recruiter</option>
+                        <option value="admin">Admin</option>
+                        <option value="business_panel">Business Panel</option>
+                    </select>
+                    @if (IsEditingCurrentUser)
+                    {
+                        <div style="margin-top: 0.35rem; font-size: 0.85rem; color: #744210;">You cannot change your own role.</div>
+                    }
+                </div>
+                <div>
+                    <label style="display: block; font-weight: 600; margin-bottom: 0.25rem;">Departments</label>
+                    @if (editDepartments.Any())
+                    {
+                        <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.5rem;">
+                            @foreach (var department in editDepartments)
+                            {
+                                <span style="display: inline-flex; align-items: center; gap: 0.35rem; background: #edf2f7; color: #2d3748; padding: 0.25rem 0.5rem; border-radius: 999px; font-size: 0.85rem;">
+                                    @department
+                                    <button @onclick="() => RemoveEditDepartment(department)" style="background: none; border: none; color: #4a5568; cursor: pointer; padding: 0;">×</button>
+                                </span>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="margin-bottom: 0.5rem; font-size: 0.85rem; color: #666;">No departments assigned.</div>
+                    }
+                    <input
+                        value="@editDepartmentInput"
+                        @oninput="OnEditDepartmentInputChanged"
+                        @onkeydown="HandleEditDepartmentKeyDown"
+                        placeholder="Type a department and press Enter"
+                        style="width: 100%; padding: 0.5rem;" />
+                </div>
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button @onclick="CancelEdit">Cancel</button>
+                    <button @onclick="SaveEditUser" disabled="@isSavingEdit" style="background: #2b6cb0; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">
+                        @(isSavingEdit ? "Saving..." : "Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (activeTab != "users")
+{
+    @if (resetRequests.Any())
+    {
+        <div class="table-scroll" role="region" aria-label="Password reset requests" tabindex="0">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="border-bottom: 2px solid #ccc;">
+                    <th style="text-align: left; padding: 0.5rem;">User</th>
+                    <th style="text-align: left; padding: 0.5rem;">Reason</th>
+                    <th style="text-align: left; padding: 0.5rem;">Date</th>
+                    <th style="text-align: left; padding: 0.5rem;">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var req in resetRequests)
+                {
+                    <tr style="border-bottom: 1px solid #eee;">
+                        <td style="padding: 0.5rem;">@req.Username</td>
+                        <td style="padding: 0.5rem;">@req.Reason</td>
+                        <td style="padding: 0.5rem;">@req.CreatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                        <td class="row-actions">
+                            <button @onclick="() => ShowApproveDialog(req)" style="background: #276749; color: white; border: none; padding: 0.25rem 0.5rem; border-radius: 4px;">Approve</button>
+                            <button @onclick="() => RejectRequest(req.Id)" style="background: #c53030; color: white; border: none; padding: 0.25rem 0.5rem; border-radius: 4px;">Reject</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+    }
+    else
+    {
+        <p>No pending reset requests.</p>
+    }
+
+    @if (requestToApprove != null)
+    {
+        <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: flex; align-items: center; justify-content: center;">
+            <div style="background: white; padding: 1.5rem; border-radius: 8px; min-width: 300px;">
+                <h5>Approve Reset for @requestToApprove.Username</h5>
+                <input type="password" placeholder="New Password" @bind="approveNewPassword" style="width: 100%; padding: 0.5rem; margin-bottom: 0.5rem;" />
+                <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                    <button @onclick="() => requestToApprove = null">Cancel</button>
+                    <button @onclick="ApproveRequest" style="background: #276749; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px;">Approve</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private List<UserInfo> users = new();
+    private List<ResetRequestDto> resetRequests = new();
+    private bool showCreateForm;
+    private string activeTab = "users";
+    private string newUsername = "", newFullName = "", newEmail = "", newRole = "recruiter", newDepartment = "", newPassword = "";
+    private UserInfo? currentUser;
+    private UserInfo? editingUser;
+    private string editFullName = "";
+    private string editEmail = "";
+    private string editRole = "recruiter";
+    private List<string> editDepartments = new();
+    private string editDepartmentInput = "";
+    private bool isSavingEdit;
+    private UserInfo? userToDelete;
+    private UserInfo? userToReset;
+    private string resetNewPassword = "";
+    private ResetRequestDto? requestToApprove;
+    private string approveNewPassword = "";
+    private string? errorMessage;
+    private string? successMessage;
+
+    private bool CanManageUsers => currentUser?.Role == "admin";
+    private bool IsEditingCurrentUser => editingUser != null && currentUser?.Id == editingUser.Id;
+
+    private string UsersTabStyle => activeTab == "users" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
+    private string RequestsTabStyle => activeTab == "requests" ? "font-weight: bold; border-bottom: 2px solid #333; padding: 0.5rem 1rem;" : "padding: 0.5rem 1rem;";
+
+    private void ShowUsersTab() => activeTab = "users";
+
+    private void ClearMessages()
+    {
+        errorMessage = null;
+        successMessage = null;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUser = await Api.GetCurrentUserAsync();
+        users = await Api.GetUsersAsync();
+        resetRequests = await Api.GetResetRequestsAsync();
+    }
+
+    private async Task CreateUser()
+    {
+        ClearMessages();
+        try
+        {
+            await Api.CreateUserAsync(newUsername, newRole, newDepartment, newPassword, newFullName, newEmail);
+            showCreateForm = false;
+            newUsername = ""; newFullName = ""; newEmail = ""; newRole = "recruiter"; newDepartment = ""; newPassword = "";
+            users = await Api.GetUsersAsync();
+            successMessage = "User created successfully.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private void ConfirmDelete(UserInfo user) => userToDelete = user;
+
+    private void ShowEditDialog(UserInfo user)
+    {
+        editingUser = user;
+        editFullName = user.FullName;
+        editEmail = user.Email;
+        editRole = user.Role;
+        editDepartments = GetDepartmentTags(user.Department);
+        editDepartmentInput = "";
+    }
+
+    private void CancelEdit()
+    {
+        editingUser = null;
+        editFullName = "";
+        editEmail = "";
+        editRole = "recruiter";
+        editDepartments = new();
+        editDepartmentInput = "";
+        isSavingEdit = false;
+    }
+
+    private void OnEditFullNameChanged(ChangeEventArgs args)
+        => editFullName = args.Value?.ToString() ?? "";
+
+    private void OnEditEmailChanged(ChangeEventArgs args)
+        => editEmail = args.Value?.ToString() ?? "";
+
+    private void OnEditDepartmentInputChanged(ChangeEventArgs args)
+        => editDepartmentInput = args.Value?.ToString() ?? "";
+
+    private void HandleEditDepartmentKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            AddEditDepartment();
+        }
+    }
+
+    private void AddEditDepartment()
+    {
+        var department = editDepartmentInput.Trim();
+        if (string.IsNullOrWhiteSpace(department))
+            return;
+
+        ClearMessages();
+
+        if (department.Contains(','))
+        {
+            errorMessage = "Department names cannot contain commas.";
+            return;
+        }
+
+        if (editDepartments.Any(existing => string.Equals(existing, department, StringComparison.OrdinalIgnoreCase)))
+        {
+            errorMessage = $"Department '{department}' has already been added.";
+            editDepartmentInput = "";
+            return;
+        }
+
+        editDepartments.Add(department);
+        editDepartmentInput = "";
+    }
+
+    private void RemoveEditDepartment(string department)
+    {
+        editDepartments = editDepartments
+            .Where(existing => !string.Equals(existing, department, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    private async Task SaveEditUser()
+    {
+        if (editingUser == null)
+            return;
+
+        ClearMessages();
+        isSavingEdit = true;
+
+        var roleToSave = IsEditingCurrentUser ? editingUser.Role : editRole;
+        var departmentValue = string.Join(",", editDepartments
+            .Select(department => department.Trim())
+            .Where(department => !string.IsNullOrWhiteSpace(department)));
+
+        try
+        {
+            await Api.UpdateUserAsync(editingUser.Id, editFullName, editEmail, roleToSave, departmentValue);
+            users = await Api.GetUsersAsync();
+            currentUser = await Api.GetCurrentUserAsync();
+            CancelEdit();
+            successMessage = "User updated successfully.";
+        }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            users = await Api.GetUsersAsync();
+            CancelEdit();
+            errorMessage = "User not found.";
+        }
+        catch (ApiException ex) when (ex.StatusCode == 409 || ex.StatusCode == 400)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            isSavingEdit = false;
+        }
+    }
+
+    private async Task ConfirmDeleteUser()
+    {
+        if (userToDelete != null)
+        {
+            ClearMessages();
+            try
+            {
+                await Api.DeleteUserAsync(userToDelete.Id);
+                userToDelete = null;
+                users = await Api.GetUsersAsync();
+                successMessage = "User deleted successfully.";
+            }
+            catch (Exception ex)
+            {
+                userToDelete = null;
+                errorMessage = ex.Message;
+            }
+        }
+    }
+
+    private void ShowResetDialog(UserInfo user)
+    {
+        userToReset = user;
+        resetNewPassword = "";
+    }
+
+    private async Task ConfirmResetPassword()
+    {
+        if (userToReset != null && !string.IsNullOrWhiteSpace(resetNewPassword))
+        {
+            ClearMessages();
+            try
+            {
+                await Api.ResetUserPasswordAsync(userToReset.Id, resetNewPassword);
+                userToReset = null;
+                resetNewPassword = "";
+                successMessage = "Password reset successfully.";
+            }
+            catch (Exception ex)
+            {
+                userToReset = null;
+                resetNewPassword = "";
+                errorMessage = ex.Message;
+            }
+        }
+    }
+
+    private async Task LoadResetRequests()
+    {
+        activeTab = "requests";
+        resetRequests = await Api.GetResetRequestsAsync();
+    }
+
+    private void ShowApproveDialog(ResetRequestDto req)
+    {
+        requestToApprove = req;
+        approveNewPassword = "";
+    }
+
+    private async Task ApproveRequest()
+    {
+        if (requestToApprove != null && !string.IsNullOrWhiteSpace(approveNewPassword))
+        {
+            ClearMessages();
+            try
+            {
+                await Api.ResolveResetRequestAsync(requestToApprove.Id, "approve", approveNewPassword);
+                requestToApprove = null;
+                resetRequests = await Api.GetResetRequestsAsync();
+                successMessage = "Reset request approved.";
+            }
+            catch (Exception ex)
+            {
+                requestToApprove = null;
+                errorMessage = ex.Message;
+            }
+        }
+    }
+
+    private async Task RejectRequest(string requestId)
+    {
+        ClearMessages();
+        try
+        {
+            await Api.ResolveResetRequestAsync(requestId, "reject");
+            resetRequests = await Api.GetResetRequestsAsync();
+            successMessage = "Reset request rejected.";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+    }
+
+    private static List<string> GetDepartmentTags(string? department)
+        => (department ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .ToList();
+}

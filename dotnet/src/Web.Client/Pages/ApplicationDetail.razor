@@ -1,0 +1,725 @@
+@page "/applications/{ApplicationId}"
+@using TalentMatch.Web.Client.Services
+@using System.Text.Json
+@inject ApiClient Api
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<div class="detail-header">
+    <div class="detail-heading">
+        <h3 style="margin: 0;">Application Detail</h3>
+        @if (application != null)
+        {
+            <span style="background: @StatusColor; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem;">@application.Status</span>
+            @if (application.FinalScore.HasValue)
+            {
+                <span style="font-weight: bold; font-size: 1.1rem;">Score: @application.FinalScore.Value.ToString("F3")</span>
+            }
+            @if (application.FinalDecision != null)
+            {
+                <span style="color: #555;">@application.FinalDecision</span>
+            }
+        }
+    </div>
+    <div class="detail-actions">
+        @if (application?.FinalDecision is "NeedsManualReview" or "Eligible" or "Excluded")
+        {
+            <button @onclick="NavigateToManualReview" style="padding: 0.4rem 0.8rem; background: #805ad5; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                ✍️ Manual Review
+            </button>
+        }
+        <button @onclick="NavigateToJob" style="padding: 0.4rem 0.8rem; background: #4a5568; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            ← Back to Job
+        </button>
+    </div>
+</div>
+
+@if (application != null)
+{
+    <div style="margin-bottom: 0.75rem; font-size: 0.9rem; color: #4a5568;">
+        <strong>Applicant:</strong> @GetApplicantLabel(application)
+        @if (!string.IsNullOrWhiteSpace(application.CandidateEmail))
+        {
+            <span> · @application.CandidateEmail</span>
+        }
+    </div>
+}
+
+@if (application != null)
+{
+    <div class="detail-surface">
+    <div class="detail-panels">
+
+        @* Panel 1: Original Document (FR-058) - uses DocumentViewer component (T183) *@
+        <div class="detail-panel">
+            <h5 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">📄 Candidate Document</h5>
+            @if (bulkOriginal is not null)
+            {
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; margin-bottom:0.75rem;">
+                    <span style="font-size:0.85rem; color:#4a5568;">Scored version: converted PDF</span>
+                    <button type="button" data-testid="download-application-original" @onclick="DownloadOriginalAsync"
+                            style="padding:0.35rem 0.7rem; background:#edf2f7; color:#2d3748; border:1px solid #cbd5e0; border-radius:4px; cursor:pointer;">
+                        Download original
+                    </button>
+                </div>
+            }
+            @if (originalDownloadError is not null)
+            {
+                <div role="alert" style="color:#c53030; font-size:0.85rem; margin-bottom:0.75rem;">@originalDownloadError</div>
+            }
+            <DocumentViewer Documents="@MapToDocumentDtos()" ApplicationId="@ApplicationId" />
+        </div>
+
+
+        @* Panel 2: Job Rubric & Configuration *@
+        <div class="detail-panel">
+            <h5 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">📋 Job Rubric</h5>
+            @if (job != null)
+            {
+                <div style="margin-bottom: 1rem;">
+                    <strong>@job.Title</strong>
+                    <div style="font-size: 0.85rem; color: #666;">@job.Department — @job.Organisation</div>
+                </div>
+            }
+            @if (rubricCategories.Any())
+            {
+                <h6 style="margin-bottom: 0.25rem;">Scoring Categories</h6>
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 1rem;">
+                    <thead>
+                        <tr style="border-bottom: 2px solid #ccc;">
+                            <th style="text-align: left; padding: 0.3rem;">Category</th>
+                            <th style="text-align: right; padding: 0.3rem;">Weight</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var cat in rubricCategories)
+                        {
+                            <tr style="border-bottom: 1px solid #eee;">
+                                <td style="padding: 0.3rem;">@cat.Name</td>
+                                <td style="text-align: right; padding: 0.3rem;">@cat.Weight.ToString("F2")</td>
+                            </tr>
+                            @if (!string.IsNullOrEmpty(cat.Description))
+                            {
+                                <tr><td colspan="2" style="padding: 0.1rem 0.3rem; font-size: 0.8rem; color: #888;">@cat.Description</td></tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+            @if (mustHaveCriteria.Any())
+            {
+                <h6 style="margin-bottom: 0.25rem;">Must-Have Criteria</h6>
+                <ul style="padding-left: 1.25rem; font-size: 0.85rem; margin-bottom: 1rem;">
+                    @foreach (var crit in mustHaveCriteria)
+                    {
+                        <li style="margin-bottom: 0.2rem;">@crit</li>
+                    }
+                </ul>
+            }
+            @if (config != null)
+            {
+                @if (config.Extraction is not null)
+                {
+                    <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:0.75rem; margin-bottom:1rem; font-size:0.85rem;">
+                        <div><strong>Instruction version:</strong> @config.Extraction.InstructionVersionId</div>
+                        <div><strong>Extracted at:</strong> @config.Extraction.CompletedAt.ToString("u")</div>
+                        @if (config.Extraction.ValidationFindings.Count > 0)
+                        {
+                            <ul style="margin-top:0.4rem;">
+                                @foreach (var finding in config.Extraction.ValidationFindings)
+                                {
+                                    <li>@finding.Code — @finding.Message</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+                }
+                <h6 style="margin-bottom: 0.25rem;">Thresholds</h6>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem; font-size: 0.85rem;">
+                    <div>Shortlist: <strong>@config.ShortlistThreshold</strong></div>
+                    <div>Longlist: <strong>@config.LonglistThreshold</strong></div>
+                    <div>Variance: <strong>@config.VarianceThreshold</strong></div>
+                    <div>Runs: <strong>@config.ScoringRunCount</strong></div>
+                </div>
+            }
+            @if (rubricEnvelope is not null)
+            {
+                <div style="margin-top:1rem;">
+                    <h6 style="margin-bottom:0.5rem;">Itemized rubric source trace</h6>
+                    <RubricEditor Value="rubricEnvelope" />
+                </div>
+            }
+            @if (!rubricCategories.Any() && !mustHaveCriteria.Any() && config == null)
+            {
+                <p style="color: #999;">No rubric configuration available.</p>
+            }
+        </div>
+
+        @* Panel 3: Scoring Results *@
+        <div class="detail-panel">
+            <h5 style="margin-top: 0; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem;">🎯 Scoring Results</h5>
+
+            @* Aggregated summary at top *@
+            @if (aggregatedResult != null)
+            {
+                <div style="background: #edf2f7; border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.5rem; font-size: 0.9rem;">
+                        <div><strong>Final Score:</strong> @aggregatedResult.FinalScore.ToString("F3")</div>
+                        <div><strong>Decision:</strong> @aggregatedResult.Decision</div>
+                        <div><strong>Confidence:</strong> @aggregatedResult.Confidence.ToString("P0")</div>
+                        <div><strong>Variance:</strong> @aggregatedResult.Variance.ToString("F3")</div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(aggregatedResult.ConsolidatedRationale))
+                    {
+                        <div style="margin-top: 0.5rem; font-size: 0.85rem;">
+                            <strong>Rationale:</strong> @aggregatedResult.ConsolidatedRationale
+                        </div>
+                    }
+                </div>
+            }
+
+            @* Aggregated Must-Have Requirements summary *@
+            @{
+                var aggregateGate = ScoringGateSummary.Build(
+                    scoringRuns.Select(run => run.MustHaveEvaluationJson),
+                    mustHaveCriteria);
+            }
+            @if (aggregateGate != null && mustHaveCriteria.Any())
+            {
+                <div style="background: @(aggregateGate.Passed ? "#f0fff4" : "#fff5f5"); border: 1px solid @(aggregateGate.Passed ? "#c6f6d5" : "#fed7d7"); border-radius: 6px; padding: 0.75rem; margin-bottom: 1rem;">
+                    <h6 style="margin: 0 0 0.5rem;">
+                        Must-Have Requirements — @(aggregateGate.Passed ? "✅ Passed" : "❌ Failed")
+                        (@aggregateGate.PassedVotes passed / @aggregateGate.FailedVotes failed runs)
+                    </h6>
+                    @if (aggregateGate.Entries.Count > 0)
+                    {
+                        @foreach (var entry in aggregateGate.Entries)
+                        {
+                            <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                <span style="color: @(entry.Passed ? "#276749" : "#c53030"); flex-shrink: 0;">@(entry.Passed ? "✅" : "❌")</span>
+                                <div>
+                                    <span style="font-size: 0.85rem;">@entry.Criterion</span>
+                                    <span style="font-size: 0.75rem; color: #718096;">
+                                        (@entry.PassedVotes passed / @entry.FailedVotes failed)
+                                    </span>
+                                    @if (!string.IsNullOrEmpty(entry.Evidence))
+                                    {
+                                        <div style="font-size: 0.8rem; color: #718096; font-style: italic; margin-top: 0.15rem;">@entry.Evidence</div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            }
+
+            @* Individual scoring runs *@
+            @if (scoringRuns.Any())
+            {
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                    <span style="font-size: 0.8rem; color: #718096;">Sort by:</span>
+                    <button @onclick='() => SetRunSort("index")' style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: 1px solid @(runSortField == "index" ? "#2b6cb0" : "#cbd5e0"); background: @(runSortField == "index" ? "#ebf8ff" : "white"); border-radius: 4px; cursor: pointer;">Run #</button>
+                    <button @onclick='() => SetRunSort("score")' style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: 1px solid @(runSortField == "score" ? "#2b6cb0" : "#cbd5e0"); background: @(runSortField == "score" ? "#ebf8ff" : "white"); border-radius: 4px; cursor: pointer;">Score</button>
+                    <button @onclick='() => SetRunSort("date")' style="padding: 0.2rem 0.5rem; font-size: 0.8rem; border: 1px solid @(runSortField == "date" ? "#2b6cb0" : "#cbd5e0"); background: @(runSortField == "date" ? "#ebf8ff" : "white"); border-radius: 4px; cursor: pointer;">Date</button>
+                    <button @onclick="ToggleRunSortDir" style="padding: 0.2rem 0.4rem; font-size: 0.8rem; border: 1px solid #cbd5e0; background: white; border-radius: 4px; cursor: pointer;">@(runSortAsc ? "↑" : "↓")</button>
+                </div>
+                @foreach (var run in SortedRuns())
+                {
+                    <details open style="border: 1px solid @(HasError(run.MustHaveEvaluationJson) ? "#feb2b2" : "#e2e8f0"); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.5rem; background: @(HasError(run.MustHaveEvaluationJson) ? "#fff5f5" : "white");">
+                        <summary style="cursor: pointer; font-weight: bold; font-size: 0.9rem;">
+                            Run #@(run.RunIndex) — Score: @run.TotalScore.ToString("F3")
+                            @if (run.CreatedAt != default)
+                            {
+                                <span style="font-weight: normal; font-size: 0.8rem; color: #718096; margin-left: 0.5rem;">@run.CreatedAt.ToString("yyyy-MM-dd HH:mm")</span>
+                            }
+                            @(HasError(run.MustHaveEvaluationJson) ? " ⚠️" : "")
+                        </summary>
+                        <div style="margin-top: 0.5rem; font-size: 0.85rem;">
+                            <ScoringRunDetails Run="run" />
+
+                            @if (false && HasError(run.MustHaveEvaluationJson))
+                            {
+                                <div style="padding: 0.5rem; background: #fed7d7; border-radius: 4px; border: 1px solid #feb2b2; margin-bottom: 0.5rem;">
+                                    <div style="font-weight: 600; color: #822727; font-size: 0.85rem; margin-bottom: 0.25rem;">⚠️ Scoring Error</div>
+                                    <div style="color: #822727; font-size: 0.85rem;">@GetErrorMessage(run.MustHaveEvaluationJson)</div>
+                                    @{ var rawResp = GetRawResponse(run.MustHaveEvaluationJson); }
+                                    @if (!string.IsNullOrEmpty(rawResp))
+                                    {
+                                        <details style="margin-top: 0.5rem;">
+                                            <summary style="cursor: pointer; font-size: 0.8rem; color: #822727;">Show raw LLM response</summary>
+                                            <pre style="margin-top: 0.25rem; padding: 0.5rem; background: #1a202c; color: #e2e8f0; border-radius: 4px; font-size: 0.75rem; white-space: pre-wrap; max-height: 400px; overflow-y: auto;">@rawResp</pre>
+                                        </details>
+                                    }
+                                </div>
+                            }
+                            @{ var catScores = ParseDict(run.CategoryScoresJson); }
+                            @if (false && catScores?.Any() == true)
+                            {
+                                <h6 style="margin: 0.5rem 0 0.25rem;">Category Scores</h6>
+                                <div style="display: grid; grid-template-columns: 1fr auto; gap: 0.1rem 1rem;">
+                                    @foreach (var kv in catScores)
+                                    {
+                                        <span style="color: #4a5568;">@kv.Key</span>
+                                        <span style="font-weight: bold; text-align: right;">@kv.Value.ToString("F3")</span>
+                                    }
+                                </div>
+                            }
+
+                            @{ var gate = ParseGate(run.MustHaveEvaluationJson); var gateEntries = ParseGateEntries(run.MustHaveEvaluationJson); }
+                            @if (false && gate != null)
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
+                                @if (gate.Passed)
+                                {
+                                    <span style="color: #276749;">✅ Passed</span>
+                                }
+                                else
+                                {
+                                    <span style="color: #c53030;">❌ Failed</span>
+                                }
+                                @if (!string.IsNullOrEmpty(gate.Recommendation))
+                                {
+                                    <span style="font-size: 0.8rem; color: #718096; margin-left: 0.5rem;">— @gate.Recommendation</span>
+                                }
+
+                                @if (gateEntries?.Any() == true)
+                                {
+                                    <div style="margin-top: 0.5rem;">
+                                        @foreach (var entry in gateEntries)
+                                        {
+                                            <div style="display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.35rem;">
+                                                <span style="color: @(entry.Passed ? "#276749" : "#c53030"); flex-shrink: 0;">@(entry.Passed ? "✅" : "❌")</span>
+                                                <div>
+                                                    <span style="font-size: 0.85rem;">@entry.Criterion</span>
+                                                    @if (!string.IsNullOrEmpty(entry.Evidence))
+                                                    {
+                                                        <div style="font-size: 0.8rem; color: #718096; font-style: italic; margin-top: 0.15rem;">@entry.Evidence</div>
+                                                    }
+                                                </div>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            }
+                            else if (false && HasError(run.MustHaveEvaluationJson))
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Eligibility Gate</h6>
+                                <div style="color: #c53030; font-size: 0.8rem;">
+                                    ⚠️ @GetErrorMessage(run.MustHaveEvaluationJson)
+                                </div>
+                            }
+
+                            @{ var evidence = ParseEvidenceList(run.EvidenceCitationsJson); }
+                            @if (false && evidence?.Any() == true)
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Evidence Citations</h6>
+                                @foreach (var ev in evidence)
+                                {
+                                    <div style="margin-bottom: 0.25rem;">
+                                        <span style="font-weight: 600; color: #4a5568;">@(ev.Category ?? "—"):</span>
+                                        <span style="color: #718096;"> @(ev.Snippet ?? "")</span>
+                                    </div>
+                                }
+                            }
+
+                            @{ var tips = ParseList(run.ImprovementTipsJson); }
+                            @if (false && tips?.Any() == true)
+                            {
+                                <h6 style="margin: 0.75rem 0 0.25rem;">Improvement Tips</h6>
+                                <ul style="margin: 0; padding-left: 1.25rem;">
+                                    @foreach (var tip in tips)
+                                    {
+                                        <li>@tip</li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    </details>
+                }
+            }
+            else
+            {
+                <p style="color: #666;">No scoring runs available yet.</p>
+            }
+        </div>
+    </div>
+    </div>
+}
+else
+{
+    <p>Loading...</p>
+}
+
+@code {
+    [Parameter] public string ApplicationId { get; set; } = "";
+
+    private ApplicationDto? application;
+    private JobDto? job;
+    private JobConfigDto? config;
+    private List<DocumentDto> documents = new();
+    private BulkOriginalReference? bulkOriginal;
+    private string? originalDownloadError;
+
+    private List<DocumentViewer.DocumentDto> MapToDocumentDtos()
+    {
+        return documents.Select(d => new DocumentViewer.DocumentDto
+        {
+            Id = d.Id,
+            FileName = d.FileName,
+            FileType = d.FileType,
+            ContentBase64 = d.ContentBase64
+        }).ToList();
+    }
+    private List<ScoringRunDto> scoringRuns = new();
+    private AggregatedResultDto? aggregatedResult;
+    private List<RubricCategoryItem> rubricCategories = new();
+    private RubricEnvelopeDto? rubricEnvelope;
+    private List<string> mustHaveCriteria = new();
+    private string runSortField = "index";
+    private bool runSortAsc = true;
+
+    private IEnumerable<ScoringRunDto> SortedRuns() => (runSortField, runSortAsc) switch
+    {
+        ("score", true) => scoringRuns.OrderBy(r => Math.Round(r.TotalScore, 3)),
+        ("score", false) => scoringRuns.OrderByDescending(r => Math.Round(r.TotalScore, 3)),
+        ("date", true) => scoringRuns.OrderBy(r => r.CreatedAt),
+        ("date", false) => scoringRuns.OrderByDescending(r => r.CreatedAt),
+        (_, true) => scoringRuns.OrderBy(r => r.RunIndex),
+        _ => scoringRuns.OrderByDescending(r => r.RunIndex),
+    };
+
+    private void SetRunSort(string field)
+    {
+        if (runSortField == field)
+            runSortAsc = !runSortAsc;
+        else
+        {
+            runSortField = field;
+            runSortAsc = true;
+        }
+    }
+
+    private void ToggleRunSortDir() => runSortAsc = !runSortAsc;
+
+    private string StatusColor => application?.Status switch
+    {
+        "Completed" => "#276749",
+        "Failed" => "#c53030",
+        "NeedsManualReview" => "#ed8936",
+        "Scoring" or "Aggregating" => "#2b6cb0",
+        _ => "#718096"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        application = await Api.GetApplicationAsync(ApplicationId);
+        documents = await Api.GetDocumentsAsync(ApplicationId);
+        scoringRuns = await Api.GetScoringRunsAsync(ApplicationId);
+        aggregatedResult = await Api.GetAggregatedResultAsync(ApplicationId);
+
+        if (application != null)
+        {
+            job = await Api.GetJobAsync(application.JobId);
+            config = await Api.GetJobConfigAsync(application.JobId);
+            bulkOriginal = await FindRetainedOriginalAsync(application.JobId);
+            if (config != null)
+            {
+                if (!string.IsNullOrEmpty(config.RubricJson))
+                {
+                    rubricCategories = ReadRubricCategories(config.RubricJson);
+                    rubricEnvelope = TryParseRubricEnvelope(config.RubricJson);
+                }
+                if (!string.IsNullOrEmpty(config.MustHavesJson))
+                {
+                    try
+                    {
+                        var items = JsonSerializer.Deserialize<List<MustHaveItem>>(config.MustHavesJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        mustHaveCriteria = items?.Select(i => i.Criterion).ToList() ?? new();
+                    }
+                    catch
+                    {
+                        try { mustHaveCriteria = JsonSerializer.Deserialize<List<string>>(config.MustHavesJson) ?? new(); }
+                        catch { }
+                    }
+                }
+            }
+        }
+    }
+
+    private async Task<BulkOriginalReference?> FindRetainedOriginalAsync(string jobId)
+    {
+        const int pageSize = 100;
+        try
+        {
+            for (var requestPage = 1; ; requestPage++)
+            {
+                var requests = await Api.ListBulkScoringRequestsAsync(jobId, requestPage, pageSize);
+                foreach (var request in requests.Items)
+                {
+                    for (var itemPage = 1; ; itemPage++)
+                    {
+                        var itemsPage = await Api.GetBulkScoringRequestItemsAsync(
+                            request.RequestId, itemPage, pageSize);
+                        var item = itemsPage.Items.FirstOrDefault(candidate =>
+                            candidate.ApplicationId == ApplicationId
+                            && candidate.ScoredVersion == "converted"
+                            && candidate.HasRetainedOriginal);
+                        if (item is not null)
+                            return new(request.RequestId, item.ItemId, item.FileName);
+                        if (itemPage * pageSize >= itemsPage.Total) break;
+                    }
+                }
+                if (requestPage * pageSize >= requests.Total) break;
+            }
+        }
+        catch
+        {
+            // Application viewing remains available when bulk history is unavailable.
+        }
+        return null;
+    }
+
+    private async Task DownloadOriginalAsync()
+    {
+        if (bulkOriginal is null) return;
+        try
+        {
+            var bytes = await Api.DownloadBulkScoringOriginalAsync(
+                bulkOriginal.RequestId, bulkOriginal.ItemId);
+            await JS.InvokeVoidAsync(
+                "talentMatchDownloadBase64",
+                bulkOriginal.FileName,
+                "application/octet-stream",
+                Convert.ToBase64String(bytes));
+            originalDownloadError = null;
+        }
+        catch
+        {
+            originalDownloadError = "The original file could not be downloaded.";
+        }
+    }
+
+    private sealed record BulkOriginalReference(string RequestId, string ItemId, string FileName);
+
+    private Dictionary<string, double>? ParseDict(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<Dictionary<string, double>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private static List<RubricCategoryItem> ReadRubricCategories(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return new();
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<RubricEnvelopeDto>(rubricJson, options);
+            if (envelope is not null
+                && string.Equals(envelope.SchemaVersion, "rubric-v2", StringComparison.Ordinal))
+            {
+                return envelope.Categories
+                    .OrderBy(category => category.Order)
+                    .Select(category => new RubricCategoryItem(category.Name, category.Weight, category.Description))
+                    .ToList();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<RubricCategoryItem>>(rubricJson, options) ?? new();
+        }
+        catch (JsonException)
+        {
+            return new();
+        }
+    }
+
+    private static RubricEnvelopeDto? TryParseRubricEnvelope(string? rubricJson)
+    {
+        if (string.IsNullOrWhiteSpace(rubricJson))
+            return null;
+
+        try
+        {
+            var envelope = JsonSerializer.Deserialize<RubricEnvelopeDto>(rubricJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return string.Equals(envelope?.SchemaVersion, "rubric-v2", StringComparison.Ordinal) ? envelope : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private List<EvidenceItem>? ParseEvidenceList(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<List<EvidenceItem>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private GateResult? ParseGate(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "{}") return null;
+        try
+        {
+            var result = JsonSerializer.Deserialize<GateResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            // Return null if gate has no meaningful data (all defaults)
+            if (result != null && !result.Passed && result.Recommendation == null && result.MissingCriteria == null && result.Details == null)
+                return null;
+            return result;
+        }
+        catch { return null; }
+    }
+
+    private List<string>? ParseList(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<List<string>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch { return null; }
+    }
+
+    private bool HasError(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("error", out _);
+        }
+        catch { return false; }
+    }
+
+    private string GetErrorMessage(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("error", out var err))
+                return err.GetString() ?? "";
+        }
+        catch { }
+        return "";
+    }
+
+    private string GetRawResponse(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return "";
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("rawResponse", out var raw))
+                return raw.GetString() ?? "";
+        }
+        catch { }
+        return "";
+    }
+
+    private void NavigateToManualReview() => Navigation.NavigateTo($"/manual-review/{ApplicationId}");
+    private void NavigateToJob() => Navigation.NavigateTo($"/jobs/{application?.JobId}");
+
+    private static string GetApplicantLabel(ApplicationDto app)
+    {
+        if (!string.IsNullOrWhiteSpace(app.CandidateName))
+            return app.CandidateName!;
+
+        if (!string.IsNullOrWhiteSpace(app.CandidateRef))
+            return app.CandidateRef;
+
+        var id = app.Id ?? string.Empty;
+        return id.Length > 8 ? $"{id[..8]}..." : id;
+    }
+
+    // Class (not positional record) so System.Text.Json handles extra/mismatched properties
+    private class GateResult
+    {
+        public bool Passed { get; set; }
+        [System.Text.Json.Serialization.JsonPropertyName("missing_criteria")]
+        public List<string>? MissingCriteria { get; set; }
+        public string? Recommendation { get; set; }
+        public GateDetails? Details { get; set; }
+    }
+
+    private class GateDetails
+    {
+        public List<GateEntry>? Entries { get; set; }
+    }
+
+    private class GateEntry
+    {
+        public string? Criterion { get; set; }
+        public bool Passed { get; set; }
+        public string? Evidence { get; set; }
+    }
+
+    /// <summary>
+    /// Parse MustHaveEvaluationJson flexibly — handles multiple LLM output formats:
+    /// 1. { passed, details: { entries: [{criterion, passed, evidence}] } }
+    /// 2. { passed, details: { "criterion1": true, "criterion2": false } }
+    /// 3. { passed, missing_criteria: [...] }
+    /// Returns a GateResult with Entries populated when possible.
+    /// </summary>
+    private List<GateEntry>? ParseGateEntries(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // Try details.entries array first (preferred format)
+            if (root.TryGetProperty("details", out var details))
+            {
+                if (details.TryGetProperty("entries", out var entriesArr) && entriesArr.ValueKind == JsonValueKind.Array)
+                {
+                    var entries = new List<GateEntry>();
+                    foreach (var item in entriesArr.EnumerateArray())
+                    {
+                        entries.Add(new GateEntry
+                        {
+                            Criterion = item.TryGetProperty("criterion", out var c) ? c.GetString() : null,
+                            Passed = item.TryGetProperty("passed", out var p) && p.ValueKind == JsonValueKind.True,
+                            Evidence = item.TryGetProperty("evidence", out var e) ? e.GetString() : null
+                        });
+                    }
+                    if (entries.Any()) return entries;
+                }
+
+                // Fallback: details is a flat {criterion: bool} map
+                if (details.ValueKind == JsonValueKind.Object)
+                {
+                    var entries = new List<GateEntry>();
+                    foreach (var prop in details.EnumerateObject())
+                    {
+                        if (prop.Name == "source" || prop.Name == "entries") continue;
+                        if (prop.Value.ValueKind == JsonValueKind.True || prop.Value.ValueKind == JsonValueKind.False)
+                        {
+                            entries.Add(new GateEntry
+                            {
+                                Criterion = prop.Name,
+                                Passed = prop.Value.ValueKind == JsonValueKind.True,
+                                Evidence = null
+                            });
+                        }
+                    }
+                    if (entries.Any()) return entries;
+                }
+            }
+
+            return null;
+        }
+        catch { return null; }
+    }
+
+    private class EvidenceItem
+    {
+        public string? Category { get; set; }
+        public string? Snippet { get; set; }
+    }
+}

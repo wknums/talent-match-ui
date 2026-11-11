@@ -1,0 +1,138 @@
+@using TalentMatch.Web.Client.Services
+@inject ApiClient Api
+@inject NavigationManager Navigation
+
+@if (visible.Count > 0)
+{
+    <div class="bulk-notifications" data-testid="bulk-notifications">
+        @foreach (var request in visible)
+        {
+            <div class="bulk-notification" role="status" data-testid="bulk-notification" data-request-id="@request.RequestId">
+                <div>
+                    @if (AuthorizationState(request) == "lapsed")
+                    {
+                        <strong>Bulk scoring request @Verdict(request).</strong>
+                    }
+                    else
+                    {
+                        <strong>@NotificationSubject(request) @Verdict(request).</strong>
+                    }
+                    <span data-testid="notification-counts">@Summary(request.Counts)</span>
+                    @if (AuthorizationState(request) == "lapsed")
+                    {
+                        <p class="bulk-notification-lapsed" data-testid="notification-lapsed">
+                            Your sign-in expired before it finished, so the remaining files were not imported.
+                            Sign in again, then open the job and use <strong>Retry failed</strong>.
+                        </p>
+                    }
+                    @if (errors.TryGetValue(request.RequestId, out var error))
+                    {
+                        <p class="bulk-notification-error" role="alert">@error</p>
+                    }
+                </div>
+                <div class="bulk-notification-actions">
+                    <a href="@DetailsHref(request)" data-testid="notification-details">View details</a>
+                    <button type="button" data-testid="notification-dismiss" @onclick="() => DismissAsync(request)">Dismiss</button>
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@code {
+    // Limit the banner to one job (job page), or leave it empty to show every job (dashboard).
+    [Parameter] public string? JobId { get; set; }
+
+    private List<BulkRequestSummaryDto> requests = [];
+    private readonly Dictionary<string, BulkRequestDetailDto> requestDetails = [];
+    private readonly Dictionary<string, string> errors = [];
+
+    private IReadOnlyList<BulkRequestSummaryDto> visible =>
+        requests.Where(r => JobId is null || EffectiveJobId(r) == JobId).ToList();
+
+    // Never gets in the way of the page: when the feature is off or the call fails, nothing is shown.
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            requests = await Api.GetBulkScoringNotificationsAsync();
+            foreach (var request in requests)
+            {
+                try
+                {
+                    var detail = await Api.GetBulkScoringRequestAsync(request.RequestId);
+                    if (detail.RequestId == request.RequestId)
+                        requestDetails[request.RequestId] = detail;
+                }
+                catch
+                {
+                    requestDetails.Remove(request.RequestId);
+                }
+            }
+        }
+        catch
+        {
+            requests = [];
+        }
+    }
+
+    private async Task DismissAsync(BulkRequestSummaryDto request)
+    {
+        try
+        {
+            await Api.AcknowledgeBulkScoringRequestAsync(request.RequestId);
+            requests.Remove(request);
+            errors.Remove(request.RequestId);
+        }
+        catch (Exception exception)
+        {
+            errors[request.RequestId] = exception is ApiException { Message.Length: > 0 } api ? api.Message : "The notification could not be dismissed.";
+        }
+    }
+
+    private string DetailsHref(BulkRequestSummaryDto request) =>
+        Navigation.ToAbsoluteUri(
+            $"jobs/{Uri.EscapeDataString(EffectiveJobId(request))}"
+            + $"?bulkRequestId={Uri.EscapeDataString(request.RequestId)}")
+        .ToString();
+
+    private string NotificationSubject(BulkRequestSummaryDto request)
+    {
+        var folderName = requestDetails.TryGetValue(request.RequestId, out var detail)
+            ? detail.FolderName
+            : request.FolderName;
+        return string.IsNullOrWhiteSpace(folderName)
+            ? "Bulk scoring"
+            : $"Bulk scoring from {folderName}";
+    }
+
+    private string EffectiveJobId(BulkRequestSummaryDto request) =>
+        requestDetails.TryGetValue(request.RequestId, out var detail)
+            ? detail.JobId
+            : request.JobId;
+
+    private string AuthorizationState(BulkRequestSummaryDto request) =>
+        request.AuthorizationState == "lapsed"
+            ? request.AuthorizationState
+            : requestDetails.TryGetValue(request.RequestId, out var detail)
+            ? detail.AuthorizationState
+            : request.AuthorizationState;
+
+    private static string Verdict(BulkRequestSummaryDto request) => request.Outcome switch
+    {
+        "all_succeeded" => "finished",
+        "partial" => "finished with some files not scored",
+        "failed" => "finished without scoring any files",
+        "cancelled" => "was cancelled",
+        _ => "finished",
+    };
+
+    private static string Summary(BulkCountsDto counts)
+    {
+        var parts = new List<string> { $"{counts.Completed:N0} scored" };
+        if (counts.Failed > 0) parts.Add($"{counts.Failed:N0} failed");
+        if (counts.Skipped > 0) parts.Add($"{counts.Skipped:N0} skipped");
+        if (counts.Cancelled > 0) parts.Add($"{counts.Cancelled:N0} cancelled");
+        return string.Join(", ", parts) + ".";
+    }
+}

@@ -1,0 +1,17 @@
+<span style="background: @Color; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem;">@Status</span>
+
+@code {
+    [Parameter] public string Status { get; set; } = "";
+
+    private string Color => Status switch
+    {
+        "Queued" => "#2196f3",
+        "Extracting" or "Scoring" or "Aggregating" => "#ff9800",
+        "Completed" => "#4caf50",
+        "NeedsManualReview" => "#ff5722",
+        "Failed" => "#f44336",
+        "active" => "#4caf50",
+        "closed" => "#999",
+        _ => "#607d8b"
+    };
+}

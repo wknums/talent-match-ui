@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "rubric-v2",
+  "legacySourceVersionId": "legacy-config-v1",
+  "categories": [
+    {
+      "id": "cat-technical-platform-skills",
+      "name": "Technical Platform Skills",
+      "weight": 0.6,
+      "description": "Expert SQL experience; Expert Python experience",
+      "order": 0
+    },
+    {
+      "id": "cat-collaboration-and-communication",
+      "name": "Collaboration and Communication",
+      "weight": 0.4,
+      "description": "Excellent written and verbal communication skills",
+      "order": 1
+    }
+  ],
+  "items": [
+    {
+      "id": "legacy-item-cat-technical-platform-skills-1",
+      "categoryId": "cat-technical-platform-skills",
+      "text": "Expert SQL experience",
+      "requirementType": "must_have",
+      "order": 0,
+      "sourceText": "Expert SQL experience",
+      "sourceLocation": null,
+      "sourceRequirementId": null,
+      "reviewStatus": "confirmed",
+      "createdFrom": "legacy_conversion"
+    },
+    {
+      "id": "legacy-item-cat-technical-platform-skills-2",
+      "categoryId": "cat-technical-platform-skills",
+      "text": "Expert Python experience",
+      "requirementType": "must_have",
+      "order": 1,
+      "sourceText": "Expert Python experience",
+      "sourceLocation": null,
+      "sourceRequirementId": null,
+      "reviewStatus": "confirmed",
+      "createdFrom": "legacy_conversion"
+    },
+    {
+      "id": "legacy-item-cat-collaboration-and-communication-3",
+      "categoryId": "cat-collaboration-and-communication",
+      "text": "Excellent written and verbal communication skills",
+      "requirementType": "must_have",
+      "order": 0,
+      "sourceText": "Excellent written and verbal communication skills",
+      "sourceLocation": null,
+      "sourceRequirementId": null,
+      "reviewStatus": "confirmed",
+      "createdFrom": "legacy_conversion"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+@baseUrl = http://localhost:5000
+@accessToken = replace-with-local-test-access-token
+
+### Rolling-hour metric and 24 rolling hourly buckets, scoped to the signed-in user
+GET {{baseUrl}}/api/stats/scoring-throughput
+Authorization: Bearer {{accessToken}}
+Accept: application/json
+
+### Anonymous requests are rejected (401)
+GET {{baseUrl}}/api/stats/scoring-throughput
+Accept: application/json

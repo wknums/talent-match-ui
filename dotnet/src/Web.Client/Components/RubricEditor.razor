@@ -1,0 +1,506 @@
+@using System.Globalization
+@using TalentMatch.Web.Client.Services
+
+@if (Value is null)
+{
+    <div style="padding: 0.75rem; border: 1px dashed #cbd5e1; border-radius: 8px; color: #64748b;">
+        No itemized rubric available yet.
+    </div>
+}
+else
+{
+    <div aria-live="polite" style="position: absolute; left: -9999px;">@announcement</div>
+    <div style="display: grid; gap: 1rem;">
+        @foreach (var category in OrderedCategories)
+        {
+            var categoryId = category.Id;
+            var items = OrderedItems.Where(item => item.CategoryId == categoryId).ToList();
+
+            <section style="border: 1px solid #e2e8f0; border-radius: 10px; padding: 1rem; background: @(dropCategoryId == categoryId ? "#eff6ff" : "#f8fafc");"
+                     data-drop-category="@category.Id"
+                     @ondragover:preventDefault
+                     @ondrop="@(() => OnDropToCategory(category.Id))">
+                <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; margin-bottom: 0.5rem; flex-wrap: wrap;">
+                    <div style="min-width: 12rem; flex: 1;">
+                        <h6 style="margin: 0; font-size: 1rem;">@category.Name</h6>
+                        @if (!string.IsNullOrWhiteSpace(category.Description))
+                        {
+                            <div style="margin-top: 0.25rem; font-size: 0.85rem; color: #64748b;">@category.Description</div>
+                        }
+                        <div style="margin-top: 0.25rem; font-size: 0.8rem; color: #64748b;">@items.Count requirement@(items.Count == 1 ? string.Empty : "s")</div>
+                    </div>
+                    @if (Editable)
+                    {
+                        <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; justify-content: flex-end;">
+                            <label style="display: flex; gap: 0.35rem; align-items: center; font-size: 0.85rem; color: #1e3a8a; font-weight: 600;">
+                                Weight
+                                <input type="number"
+                                       min="0"
+                                       max="1"
+                                       step="0.01"
+                                       value="@category.Weight.ToString("0.##", CultureInfo.InvariantCulture)"
+                                       data-category-weight="@category.Id"
+                                       aria-label="Weight for @category.Name"
+                                       @onchange="args => ChangeCategoryWeight(category.Id, args.Value?.ToString())"
+                                       style="width: 5rem;" />
+                            </label>
+                            <button type="button"
+                                    data-category-move-up="@category.Id"
+                                    @onclick="@(() => MoveCategory(category.Id, -1))"
+                                    disabled="@(category.Order == OrderedCategories.First().Order)">
+                                Move up
+                            </button>
+                            <button type="button"
+                                    data-category-move-down="@category.Id"
+                                    @onclick="@(() => MoveCategory(category.Id, 1))"
+                                    disabled="@(category.Order == OrderedCategories.Last().Order)">
+                                Move down
+                            </button>
+                            <button type="button"
+                                    class="disclosure-toggle disclosure-toggle-icon-only"
+                                    data-category-toggle="@category.Id"
+                                    aria-label="@CategoryToggleLabel(category)"
+                                    title="@CategoryToggleLabel(category)"
+                                    aria-expanded="@(!collapsedCategoryIds.Contains(category.Id) ? "true" : "false")"
+                                    @onclick="@(() => ToggleCategory(category.Id))">
+                                <span class="disclosure-chevron" aria-hidden="true"></span>
+                            </button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="font-size: 0.85rem; color: #1e3a8a; font-weight: 600;">Weight @category.Weight.ToString("F2")</div>
+                    }
+                </div>
+
+                @if (!collapsedCategoryIds.Contains(category.Id))
+                {
+                    @if (items.Count == 0)
+                    {
+                        <div style="padding: 0.75rem; border: 1px dashed #cbd5e1; border-radius: 8px; color: #64748b;">
+                            No rubric items are assigned to this category.
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="display: grid; gap: 0.75rem;">
+                            @for (var index = 0; index < items.Count; index++)
+                            {
+                                var item = items[index];
+                                <div style="display: grid; gap: 0.35rem;">
+                                    @if (Editable)
+                                    {
+                                        <div style="height: 0.5rem; border-radius: 999px; background: @(dropBeforeItemId == item.Id ? "#93c5fd" : "transparent");"
+                                             data-drop-before="@item.Id"
+                                             @ondragover:preventDefault
+                                             @ondrop="@(() => OnDropBefore(item.Id))"></div>
+                                    }
+
+                                    <div draggable="@Editable"
+                                         @ondragstart="@(() => OnDragStart(item.Id))"
+                                         @ondragend="OnDragEnd">
+                                        @if (Editable && editingItemId == item.Id)
+                                        {
+                                            <div style="display: grid; gap: 0.5rem; padding: 0.75rem; border: 1px solid #93c5fd; border-radius: 8px; background: #ffffff;">
+                                                <input value="@editText" @oninput="args => editText = args.Value?.ToString() ?? string.Empty" />
+                                                <select value="@editRequirementType" @onchange="args => editRequirementType = args.Value?.ToString() ?? item.RequirementType">
+                                                    <option value="must_have">must_have</option>
+                                                    <option value="desired">desired</option>
+                                                    <option value="experience">experience</option>
+                                                    <option value="responsibility">responsibility</option>
+                                                    <option value="other">other</option>
+                                                </select>
+                                                <div style="display:flex; gap:0.5rem;">
+                                                    <button type="button" data-save-edit="@item.Id" @onclick="@(() => SaveEdit(item.Id))">Save item</button>
+                                                    <button type="button" data-cancel-edit="@item.Id" @onclick="CancelEdit">Cancel</button>
+                                                </div>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <RubricItemCard Item="item" />
+                                        }
+                                    </div>
+
+                                    @if (Editable)
+                                    {
+                                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+                                            <button type="button" data-action="move-up" @onclick="@(() => MoveWithinCategory(item.Id, -1))" disabled="@(index == 0)">Move up</button>
+                                            <button type="button" data-action="move-down" @onclick="@(() => MoveWithinCategory(item.Id, 1))" disabled="@(index == items.Count - 1)">Move down</button>
+                                            <label style="font-size: 0.8rem;">Move to</label>
+                                            <select data-move-select="@item.Id" value="@GetSelectedCategory(item.Id)" @onchange="args => SetSelectedCategory(item.Id, args.Value?.ToString())">
+                                                @foreach (var option in OrderedCategories)
+                                                {
+                                                    <option value="@option.Id">@option.Name</option>
+                                                }
+                                            </select>
+                                            <button type="button" data-move-apply="@item.Id" @onclick="@(() => MoveToCategory(item.Id))">Apply</button>
+                                            <button type="button" data-edit-item="@item.Id" @onclick="@(() => BeginEdit(item))">Edit</button>
+                                            <button type="button" data-remove-item="@item.Id" @onclick="@(() => RemoveItem(item.Id))">Remove</button>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (Editable)
+                    {
+                        <div style="height: 0.5rem; border-radius: 999px; background: @(dropAtEndCategoryId == category.Id ? "#93c5fd" : "transparent");"
+                             data-drop-end="@category.Id"
+                             @ondragover:preventDefault
+                             @ondrop="@(() => OnDropToCategory(category.Id))"></div>
+
+                        <div style="display:grid; gap:0.5rem; margin-top:0.5rem; padding-top:0.5rem; border-top:1px dashed #cbd5e1;">
+                            <input placeholder="Add item text" value="@GetNewItemText(category.Id)" @oninput="args => SetNewItemText(category.Id, args.Value?.ToString())" />
+                            <select value="@GetNewItemType(category.Id)" @onchange="args => SetNewItemType(category.Id, args.Value?.ToString())">
+                                <option value="must_have">must_have</option>
+                                <option value="desired">desired</option>
+                                <option value="experience">experience</option>
+                                <option value="responsibility">responsibility</option>
+                                <option value="other">other</option>
+                            </select>
+                            <button type="button" data-add-item="@category.Id" @onclick="@(() => AddItem(category.Id))">Add item</button>
+                        </div>
+                    }
+                }
+            </section>
+        }
+        @if (Editable)
+        {
+            <div style="font-size: 0.85rem; color: @(Math.Abs(CategoryWeightTotal - 1.0) <= 0.01 ? "#166534" : "#b91c1c"); font-weight: 600;">
+                Total category weight: @CategoryWeightTotal.ToString("0.##", CultureInfo.InvariantCulture)
+                @if (Math.Abs(CategoryWeightTotal - 1.0) > 0.01)
+                {
+                    <span> (must equal 1.0)</span>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public RubricEnvelopeDto? Value { get; set; }
+    [Parameter] public bool Editable { get; set; }
+    [Parameter] public EventCallback<RubricEnvelopeDto> OnChange { get; set; }
+
+    private string? draggedItemId;
+    private string? dropCategoryId;
+    private string? dropBeforeItemId;
+    private string? dropAtEndCategoryId;
+    private string? announcement;
+    private string? editingItemId;
+    private string editText = string.Empty;
+    private string editRequirementType = "other";
+    private readonly Dictionary<string, string> selectedCategoryByItemId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> newItemTextByCategoryId = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> newItemTypeByCategoryId = new(StringComparer.Ordinal);
+    private readonly HashSet<string> collapsedCategoryIds = new(StringComparer.Ordinal);
+
+    private IReadOnlyList<RubricCategoryV2Dto> OrderedCategories => Value?.Categories.OrderBy(category => category.Order).ToList()
+        ?? [];
+    private double CategoryWeightTotal => Value?.Categories.Sum(category => category.Weight) ?? 0;
+
+    private IReadOnlyList<RubricItemDto> OrderedItems => Value?.Items
+        .OrderBy(item => OrderedCategories.ToList().FindIndex(category => category.Id == item.CategoryId))
+        .ThenBy(item => item.Order)
+        .ToList() ?? [];
+
+    private void OnDragStart(string itemId)
+    {
+        draggedItemId = itemId;
+        dropCategoryId = null;
+        dropBeforeItemId = null;
+        dropAtEndCategoryId = null;
+    }
+
+    private void OnDragEnd(DragEventArgs _)
+    {
+        draggedItemId = null;
+        dropCategoryId = null;
+        dropBeforeItemId = null;
+        dropAtEndCategoryId = null;
+    }
+
+    private async Task OnDropToCategory(string categoryId)
+    {
+        if (!Editable || Value is null || string.IsNullOrWhiteSpace(draggedItemId))
+            return;
+
+        dropCategoryId = categoryId;
+        dropBeforeItemId = null;
+        dropAtEndCategoryId = categoryId;
+        await ApplyChangeAsync(MoveItem(Value, draggedItemId!, categoryId, null), draggedItemId);
+    }
+
+    private async Task OnDropBefore(string beforeItemId)
+    {
+        if (!Editable || Value is null || string.IsNullOrWhiteSpace(draggedItemId))
+            return;
+
+        dropBeforeItemId = beforeItemId;
+        var beforeItem = Value.Items.First(item => item.Id == beforeItemId);
+        await ApplyChangeAsync(MoveItem(Value, draggedItemId!, beforeItem.CategoryId, beforeItemId), draggedItemId);
+    }
+
+    private async Task MoveWithinCategory(string itemId, int delta)
+    {
+        if (!Editable || Value is null)
+            return;
+
+        var item = Value.Items.Single(candidate => candidate.Id == itemId);
+        var siblings = Value.Items
+            .Where(candidate => candidate.CategoryId == item.CategoryId)
+            .OrderBy(candidate => candidate.Order)
+            .ToList();
+        var currentIndex = siblings.FindIndex(candidate => candidate.Id == itemId);
+        var targetIndex = Math.Clamp(currentIndex + delta, 0, siblings.Count - 1);
+        if (currentIndex == targetIndex)
+            return;
+
+        var anchorId = delta > 0
+            ? siblings[targetIndex].Id
+            : siblings[targetIndex].Id;
+        await ApplyChangeAsync(MoveItem(Value, itemId, item.CategoryId, anchorId, delta > 0), itemId);
+    }
+
+    private void ToggleCategory(string categoryId)
+    {
+        if (!collapsedCategoryIds.Add(categoryId))
+            collapsedCategoryIds.Remove(categoryId);
+    }
+
+    private string CategoryToggleLabel(RubricCategoryV2Dto category)
+        => $"{(collapsedCategoryIds.Contains(category.Id) ? "Expand" : "Collapse")} {category.Name}";
+
+    private async Task MoveCategory(string categoryId, int delta)
+    {
+        if (!Editable || Value is null)
+            return;
+
+        var categories = OrderedCategories.ToList();
+        var currentIndex = categories.FindIndex(category => category.Id == categoryId);
+        var targetIndex = currentIndex + delta;
+        if (currentIndex < 0 || targetIndex < 0 || targetIndex >= categories.Count)
+            return;
+
+        var moving = categories[currentIndex];
+        categories.RemoveAt(currentIndex);
+        categories.Insert(targetIndex, moving);
+        categories = categories
+            .Select((category, index) => category with { Order = index })
+            .ToList();
+
+        announcement = $"Moved {moving.Name} to position {targetIndex + 1}";
+        await ApplyRubricChangeAsync(Value with { Categories = categories });
+    }
+
+    private async Task ChangeCategoryWeight(string categoryId, string? rawWeight)
+    {
+        if (!Editable || Value is null)
+            return;
+
+        if (!double.TryParse(rawWeight, NumberStyles.Float, CultureInfo.InvariantCulture, out var weight)
+            || weight < 0
+            || weight > 1)
+            return;
+
+        var categories = Value.Categories
+            .Select(category => category.Id == categoryId ? category with { Weight = weight } : category)
+            .ToList();
+        var changedCategory = categories.Single(category => category.Id == categoryId);
+        announcement = $"Changed {changedCategory.Name} weight to {weight:0.##}";
+        await ApplyRubricChangeAsync(Value with { Categories = categories });
+    }
+
+    private void SetSelectedCategory(string itemId, string? categoryId)
+        => selectedCategoryByItemId[itemId] = string.IsNullOrWhiteSpace(categoryId)
+            ? Value?.Items.FirstOrDefault(item => item.Id == itemId)?.CategoryId ?? string.Empty
+            : categoryId;
+
+    private string GetSelectedCategory(string itemId)
+        => selectedCategoryByItemId.TryGetValue(itemId, out var categoryId)
+            ? categoryId
+            : Value?.Items.FirstOrDefault(item => item.Id == itemId)?.CategoryId ?? string.Empty;
+
+    private async Task MoveToCategory(string itemId)
+    {
+        if (!Editable || Value is null)
+            return;
+
+        var categoryId = GetSelectedCategory(itemId);
+        await ApplyChangeAsync(MoveItem(Value, itemId, categoryId, null), itemId);
+    }
+
+    private void BeginEdit(RubricItemDto item)
+    {
+        editingItemId = item.Id;
+        editText = item.Text;
+        editRequirementType = item.RequirementType;
+    }
+
+    private void CancelEdit()
+    {
+        editingItemId = null;
+        editText = string.Empty;
+        editRequirementType = "other";
+    }
+
+    private async Task SaveEdit(string itemId)
+    {
+        if (Value is null || string.IsNullOrWhiteSpace(editText))
+            return;
+
+        var items = Value.Items.Select(item => item.Id == itemId
+            ? item with { Text = editText.Trim(), RequirementType = editRequirementType, SourceText = string.IsNullOrWhiteSpace(item.SourceText) ? editText.Trim() : item.SourceText }
+            : item).ToList();
+
+        CancelEdit();
+        await ApplyChangeAsync(Value with { Items = items }, itemId);
+    }
+
+    private async Task RemoveItem(string itemId)
+    {
+        if (Value is null)
+            return;
+
+        var removed = Value.Items.Single(item => item.Id == itemId);
+        var items = Value.Items.Where(item => item.Id != itemId).ToList();
+        var reordered = Reindex(items, Value.Categories);
+        announcement = $"Removed {removed.Text}";
+        await ApplyChangeAsync(Value with { Items = reordered }, removed.Id);
+    }
+
+    private string GetNewItemText(string categoryId)
+        => newItemTextByCategoryId.TryGetValue(categoryId, out var text) ? text : string.Empty;
+
+    private void SetNewItemText(string categoryId, string? text)
+        => newItemTextByCategoryId[categoryId] = text ?? string.Empty;
+
+    private string GetNewItemType(string categoryId)
+        => newItemTypeByCategoryId.TryGetValue(categoryId, out var type) ? type : "other";
+
+    private void SetNewItemType(string categoryId, string? type)
+        => newItemTypeByCategoryId[categoryId] = string.IsNullOrWhiteSpace(type) ? "other" : type!;
+
+    private async Task AddItem(string categoryId)
+    {
+        if (Value is null)
+            return;
+
+        var text = GetNewItemText(categoryId).Trim();
+        if (text.Length == 0)
+            return;
+
+        var type = GetNewItemType(categoryId);
+        var nextOrder = Value.Items.Count(item => item.CategoryId == categoryId);
+        var items = Value.Items.ToList();
+        items.Add(new RubricItemDto(
+            Guid.NewGuid().ToString(),
+            categoryId,
+            text,
+            type,
+            nextOrder,
+            text,
+            null,
+            null,
+            "confirmed",
+            "manual"));
+
+        newItemTextByCategoryId[categoryId] = string.Empty;
+        await ApplyChangeAsync(Value with { Items = items }, items.Last().Id);
+    }
+
+    private async Task ApplyChangeAsync(RubricEnvelopeDto updated, string? changedItemId)
+    {
+        Value = updated;
+        var changedItem = updated.Items.FirstOrDefault(item => item.Id == changedItemId);
+        if (changedItem is null && string.IsNullOrWhiteSpace(changedItemId))
+            changedItem = updated.Items.FirstOrDefault();
+        if (changedItem is not null)
+        {
+            var category = updated.Categories.FirstOrDefault(option => option.Id == changedItem.CategoryId);
+            announcement = $"Moved {changedItem.Text} to {category?.Name ?? changedItem.CategoryId}";
+        }
+
+        if (OnChange.HasDelegate)
+            await OnChange.InvokeAsync(updated);
+
+        draggedItemId = null;
+        dropCategoryId = null;
+        dropBeforeItemId = null;
+        dropAtEndCategoryId = null;
+        StateHasChanged();
+    }
+
+    private async Task ApplyRubricChangeAsync(RubricEnvelopeDto updated)
+    {
+        Value = updated;
+        if (OnChange.HasDelegate)
+            await OnChange.InvokeAsync(updated);
+
+        StateHasChanged();
+    }
+
+    private static RubricEnvelopeDto MoveItem(
+        RubricEnvelopeDto rubric,
+        string itemId,
+        string targetCategoryId,
+        string? beforeItemId,
+        bool placeAfterAnchor = false)
+    {
+        var items = rubric.Items
+            .Select(item => item with { })
+            .ToList();
+        var moving = items.Single(item => item.Id == itemId);
+        items.Remove(moving);
+
+        var targetItems = items
+            .Where(item => item.CategoryId == targetCategoryId)
+            .OrderBy(item => item.Order)
+            .ToList();
+
+        var insertIndex = targetItems.Count;
+        if (!string.IsNullOrWhiteSpace(beforeItemId))
+        {
+            var anchorIndex = targetItems.FindIndex(item => item.Id == beforeItemId);
+            if (anchorIndex >= 0)
+                insertIndex = placeAfterAnchor ? anchorIndex + 1 : anchorIndex;
+        }
+
+        moving = moving with { CategoryId = targetCategoryId, Order = insertIndex };
+        targetItems.Insert(insertIndex, moving);
+
+        foreach (var category in rubric.Categories)
+        {
+            var ordered = category.Id == targetCategoryId
+                ? targetItems
+                : items.Where(item => item.CategoryId == category.Id).OrderBy(item => item.Order).ToList();
+
+            for (var index = 0; index < ordered.Count; index++)
+            {
+                var updated = ordered[index] with { Order = index };
+                var existingIndex = items.FindIndex(item => item.Id == updated.Id);
+                if (existingIndex >= 0)
+                    items[existingIndex] = updated;
+                else
+                    items.Add(updated);
+            }
+        }
+
+        return rubric with { Items = Reindex(items, rubric.Categories) };
+    }
+
+    private static List<RubricItemDto> Reindex(IReadOnlyList<RubricItemDto> items, IReadOnlyList<RubricCategoryV2Dto> categories)
+    {
+        var result = new List<RubricItemDto>();
+        foreach (var category in categories.OrderBy(item => item.Order))
+        {
+            var ordered = items.Where(item => item.CategoryId == category.Id).OrderBy(item => item.Order).ToList();
+            for (var index = 0; index < ordered.Count; index++)
+                result.Add(ordered[index] with { Order = index });
+        }
+
+        return result;
+    }
+}

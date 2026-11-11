@@ -1,0 +1,119 @@
+@using Microsoft.AspNetCore.Components.Web
+
+<div class="floating-panel-backdrop"
+     @onmousemove="OnMouseMove"
+     @onmouseup="StopDragging">
+    <section class="floating-panel"
+             role="dialog"
+             aria-modal="true"
+             aria-label="@Title"
+             style="left: @(positionX)px; top: @(positionY)px; width: min(@(InitialWidth)px, calc(100vw - 2rem)); height: min(@(InitialHeight)px, calc(100vh - 2rem));"
+             @onclick:stopPropagation="true">
+        <header class="floating-panel-header" @onmousedown="StartDragging">
+            <h4>@Title</h4>
+            <button type="button" class="floating-panel-close" aria-label="Close @Title" @onclick="OnClose">X</button>
+        </header>
+        <div class="floating-panel-body">
+            @ChildContent
+        </div>
+    </section>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = string.Empty;
+    [Parameter, EditorRequired] public RenderFragment ChildContent { get; set; } = default!;
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public int InitialWidth { get; set; } = 900;
+    [Parameter] public int InitialHeight { get; set; } = 700;
+
+    private int positionX = 64;
+    private int positionY = 48;
+    private bool isDragging;
+    private double pointerStartX;
+    private double pointerStartY;
+    private int positionStartX;
+    private int positionStartY;
+
+    private void StartDragging(MouseEventArgs args)
+    {
+        isDragging = true;
+        pointerStartX = args.ClientX;
+        pointerStartY = args.ClientY;
+        positionStartX = positionX;
+        positionStartY = positionY;
+    }
+
+    private void OnMouseMove(MouseEventArgs args)
+    {
+        if (!isDragging)
+            return;
+
+        positionX = Math.Max(0, positionStartX + (int)(args.ClientX - pointerStartX));
+        positionY = Math.Max(0, positionStartY + (int)(args.ClientY - pointerStartY));
+    }
+
+    private void StopDragging()
+    {
+        isDragging = false;
+    }
+}
+
+<style>
+    .floating-panel-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        background: rgba(15, 23, 42, 0.48);
+    }
+
+    .floating-panel {
+        position: fixed;
+        display: flex;
+        flex-direction: column;
+        min-width: min(24rem, calc(100vw - 2rem));
+        min-height: min(18rem, calc(100vh - 2rem));
+        max-width: calc(100vw - 1rem);
+        max-height: calc(100vh - 1rem);
+        resize: both;
+        overflow: hidden;
+        border: 1px solid #cbd5e1;
+        border-radius: 0.65rem;
+        background: white;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.28);
+    }
+
+    .floating-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #e2e8f0;
+        background: #f8fafc;
+        cursor: move;
+        user-select: none;
+    }
+
+    .floating-panel-header h4 {
+        margin: 0;
+    }
+
+    .floating-panel-close {
+        border: 0;
+        border-radius: 0.35rem;
+        background: transparent;
+        padding: 0.3rem 0.55rem;
+        cursor: pointer;
+    }
+
+    .floating-panel-close:hover {
+        background: #e2e8f0;
+    }
+
+    .floating-panel-body {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 1rem;
+    }
+</style>

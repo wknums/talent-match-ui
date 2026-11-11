@@ -1,0 +1,68 @@
+{
+  "currentStep": "tasks",
+  "status": "implemented",
+  "specName": "Selective Azure Deploy",
+  "workflow": "speckit",
+  "branch": "",
+  "history": [
+    {
+      "step": "plan",
+      "substep": null,
+      "from": null,
+      "by": "extension",
+      "at": "2026-04-15T19:44:50.680Z",
+      "kind": "start"
+    },
+    {
+      "step": "specify",
+      "substep": null,
+      "from": {
+        "step": "plan",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-16T07:35:43.377Z",
+      "kind": "start"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "from": {
+        "step": "specify",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-16T15:34:24.015Z",
+      "kind": "start"
+    },
+    {
+      "step": "plan",
+      "substep": null,
+      "from": {
+        "step": "tasks",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-16T16:12:44.671Z",
+      "kind": "start"
+    },
+    {
+      "step": "tasks",
+      "substep": null,
+      "from": {
+        "step": "plan",
+        "substep": null
+      },
+      "by": "extension",
+      "at": "2026-04-16T19:49:25.652Z",
+      "kind": "start"
+    },
+    {
+      "step": "implement",
+      "substep": null,
+      "kind": "complete",
+      "by": "extension",
+      "at": "2026-07-20T07:54:04.775Z"
+    }
+  ]
+}

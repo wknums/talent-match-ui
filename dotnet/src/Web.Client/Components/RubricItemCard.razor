@@ -1,0 +1,32 @@
+@using TalentMatch.Web.Client.Services
+
+<div style="border: 1px solid #dbe2f0; border-radius: 8px; padding: 0.75rem; background: @(Item.ReviewStatus == "needs_review" ? "#fff7ed" : "#ffffff");">
+    <div style="display: flex; justify-content: space-between; gap: 0.5rem; align-items: flex-start;">
+        <div style="font-weight: 600;">@Item.Text</div>
+        <div style="display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: flex-end;">
+            <span style="font-size: 0.75rem; padding: 0.15rem 0.45rem; border-radius: 999px; background: #eff6ff; color: #1d4ed8;">@Item.RequirementType</span>
+            @if (Item.ReviewStatus == "needs_review")
+            {
+                <span style="font-size: 0.75rem; padding: 0.15rem 0.45rem; border-radius: 999px; background: #ffedd5; color: #c2410c;">needs review</span>
+            }
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(Item.SourceText))
+    {
+        <div style="margin-top: 0.5rem; font-size: 0.82rem; color: #475569;">
+            <strong>Source:</strong> @Item.SourceText
+        </div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Item.SourceLocation))
+    {
+        <div style="margin-top: 0.25rem; font-size: 0.78rem; color: #64748b;">
+            @Item.SourceLocation
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public RubricItemDto Item { get; set; } = default!;
+}

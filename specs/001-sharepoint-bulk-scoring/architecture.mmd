@@ -1,0 +1,70 @@
+---
+title: Bulk scoring from SharePoint / OneDrive - architecture after this feature
+---
+flowchart LR
+    classDef new fill:#d4f4dd,stroke:#2e7d32,stroke-width:2px,color:#000
+    classDef changed fill:#fff3cd,stroke:#b58900,stroke-width:2px,color:#000
+    classDef existing fill:#eef2f7,stroke:#6b7a90,color:#000
+    classDef ext fill:#f3e5f5,stroke:#7b1fa2,color:#000
+
+    REC["Recruiter browser<br/>React SPA or Blazor WASM<br/>+ bulk dialog, progress panel,<br/>notifications, Settings"]:::changed
+
+    subgraph PROD["Product tenant - Azure"]
+        direction TB
+        subgraph HOST["Stack A or Stack B host - App Service, identical API contract"]
+            API["API<br/>+ bulk-scoring-requests endpoints:<br/>preview, discover-more, confirm,<br/>cancel, retry, list"]:::changed
+            SRC["SharePoint source<br/>Graph, or mock in dev/CI"]:::new
+            BW["Bulk worker<br/>hosted service, leased items,<br/>survives browser close and restarts"]:::new
+            RZ["Rasterizer<br/>PDFium to image-only PDF"]:::new
+            SCORE["Existing upload and scoring pipeline<br/>queue, extraction, scoring,<br/>reconciler"]:::existing
+        end
+        SQL[("Azure SQL<br/>existing tables<br/>+ BulkScoringRequests, Items,<br/>Authorizations, Notifications")]:::changed
+        BLOB[("Blob Storage<br/>CVs<br/>+ staged originals and converted PDFs")]:::changed
+        KV["Key Vault<br/>+ wrap key, Crypto User only"]:::new
+        MI["Managed identity<br/>no Graph application roles"]:::changed
+        ENTRA["Entra ID<br/>API app registration<br/>+ delegated Files.Read.All, Sites.Read.All<br/>+ federated credential"]:::changed
+    end
+
+    PLATFORM["AWReason platform<br/>scoring"]:::existing
+
+    subgraph M365["Microsoft 365 - same tenant, production"]
+        GRAPH["Microsoft Graph"]:::ext
+        SPO["SharePoint sites"]:::ext
+        OD["OneDrive, work or school"]:::ext
+    end
+
+    subgraph XT["Other tenant - dev/QA testing only"]
+        XAPP["App registration<br/>Sites.Selected, read on one site"]:::new
+        XSP["Test SharePoint site<br/>synthetic CVs only"]:::ext
+    end
+
+    REC -->|"paste folder link, preview, confirm, poll progress"| API
+    API --> SRC
+    BW --> SRC
+    API -->|"OBO exchange of the recruiter token"| ENTRA
+    BW -->|"long-running OBO token, as the recruiter"| ENTRA
+    SRC -->|"delegated read, as the recruiter"| GRAPH
+    GRAPH --> SPO
+    GRAPH --> OD
+    SRC -.->|"cross-tenant: app-only read"| XAPP
+    XAPP --> XSP
+    API -->|"store encrypted authorization"| SQL
+    API -->|"wrap data key"| KV
+    BW -->|"unwrap data key"| KV
+    BW -->|"claim items, progress, outcome"| SQL
+    BW -->|"stage original and converted"| BLOB
+    BW --> RZ
+    BW -->|"create application and document, then queue"| SCORE
+    SCORE --> SQL
+    SCORE --> BLOB
+    SCORE --> PLATFORM
+    MI -.->|"federated credential, no secret"| ENTRA
+    MI -.->|"key access"| KV
+
+    subgraph LEGEND["Legend"]
+        direction LR
+        L1["New"]:::new
+        L2["Changed"]:::changed
+        L3["Unchanged"]:::existing
+        L4["External service"]:::ext
+    end
