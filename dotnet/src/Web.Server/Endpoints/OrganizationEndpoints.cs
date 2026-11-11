@@ -125,7 +125,9 @@ public static class OrganizationEndpoints
         }
         catch (OrganizationAdministrationException exception)
         {
-            return AuthorizationErrorResults.Create(httpContext, exception.Code);
+            return AuthorizationErrorResults.Create(httpContext,
+                exception.Code == AuthorizationErrorCodes.Conflict
+                    ? AuthorizationErrorCodes.VersionConflict : exception.Code);
         }
         catch
         {

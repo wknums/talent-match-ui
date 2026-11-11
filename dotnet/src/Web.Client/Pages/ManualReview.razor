@@ -98,8 +98,8 @@
             </div>
 
             <div style="margin-bottom: 1rem;">
-                <label style="font-weight: bold; display: block; margin-bottom: 0.3rem;">Final Decision</label>
-                <select @bind="selectedDecision" style="width: 100%; padding: 0.45rem; border: 1px solid #cbd5e0; border-radius: 4px;">
+                <label for="manual-final-decision" style="font-weight: bold; display: block; margin-bottom: 0.3rem;">Final Decision</label>
+                <select id="manual-final-decision" @bind="selectedDecision" style="width: 100%; padding: 0.45rem; border: 1px solid #cbd5e0; border-radius: 4px;">
                     @foreach (var option in DecisionOptions)
                     {
                         <option value="@option">@option</option>
@@ -111,8 +111,8 @@
             </div>
 
             <div style="margin-bottom: 1rem;">
-                <label style="font-weight: bold; display: block;">Overall Comment</label>
-                <textarea @bind="overallComment" @bind:event="oninput" style="width: 100%; min-height: 100px;"></textarea>
+                <label for="manual-overall-comment" style="font-weight: bold; display: block;">Overall Comment</label>
+                <textarea id="manual-overall-comment" @bind="overallComment" @bind:event="oninput" style="width: 100%; min-height: 100px;"></textarea>
             </div>
             <button @onclick="SaveReview" disabled="@isSaving" style="padding: 0.5rem 1rem; background: #2b6cb0; color: white; border: none; border-radius: 4px;">
                 @(isSaving ? "Saving..." : "Save Review")

@@ -15,6 +15,10 @@ public static class AuthorizationErrorCodes
     public const string ScopeUnmapped = "scope_unmapped";
     public const string MembershipMissing = "membership_missing";
     public const string IdentityDisabled = "identity_disabled";
+    public const string AdminConfigurationInvalid = "admin_configuration_invalid";
+    public const string AdminGroupInvalid = "admin_group_invalid";
+    public const string GroupEvidenceUnavailable = "group_evidence_unavailable";
+    public const string AdministrationTransitionConflict = "administration_transition_conflict";
     public const string InvalidScope = "invalid_scope";
     public const string Forbidden = "forbidden";
     public const string NotFound = "not_found";
@@ -41,6 +45,10 @@ public static class AuthorizationErrorCodes
         ScopeUnmapped => new(code, 403, "The assigned application scope could not be verified."),
         MembershipMissing => new(code, 403, "An active organization and department membership is required."),
         IdentityDisabled => new(code, 403, "This application identity is disabled."),
+        AdminConfigurationInvalid => new(code, 403, "Administration configuration is not ready. Contact the deployment operator."),
+        AdminGroupInvalid => new(code, 403, "Administration group validation failed. Contact the deployment operator."),
+        GroupEvidenceUnavailable => new(code, 403, "Current directory access could not be verified. Retry or contact the deployment operator."),
+        AdministrationTransitionConflict => new(code, 409, "Administration state changed. Refresh and retry the current transition."),
         InvalidScope => new(code, 400, "The request has an invalid scope."),
         Forbidden => new(code, 403, "You do not have permission to perform this operation."),
         NotFound => new(code, 404, "The requested resource was not found."),

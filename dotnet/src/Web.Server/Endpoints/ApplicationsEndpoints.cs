@@ -15,6 +15,7 @@ public static class ApplicationsEndpoints
     public static void MapApplicationsEndpoints(this WebApplication app)
     {
         var jobAppsGroup = app.MapGroup("/api/jobs/{jobId}/applications").WithTags("Applications").RequireAuthorization();
+        jobAppsGroup.AddEndpointFilter<JobResourceAuthorizationFilter>();
 
         jobAppsGroup.MapPost("/upload", async (string jobId, bool? allowDuplicates, HttpRequest request, ISender mediator, CancellationToken ct) =>
         {

@@ -42,6 +42,15 @@ public sealed class BulkSourceConnectionMigrationTests
         audit.Should().NotBeNull();
         audit!.GetForeignKeys().Should().NotContain(foreignKey =>
             foreignKey.PrincipalEntityType.ClrType == typeof(BulkScoringRequest));
+
+        // Pre-v3 CLR history/wire names must not reintroduce a runtime access
+        // selector or owning-stack shortcut in either provider's actual v3 model.
+        foreach (var context in new[] { sqlite, sqlServer })
+        {
+            var request = context.Model.FindEntityType(typeof(BulkScoringRequest))!;
+            request.FindProperty("AccessModel").Should().BeNull();
+            request.FindProperty("OwningStack").Should().BeNull();
+        }
     }
 
     [Fact]

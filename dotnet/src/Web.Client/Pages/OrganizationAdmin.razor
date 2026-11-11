@@ -1,4 +1,5 @@
 @page "/organizations"
+@implements IDisposable
 @using TalentMatch.Web.Client.Services
 @inject ApiClient Api
 @inject PublicAuthConfiguration AuthConfiguration
@@ -275,7 +276,7 @@
     private readonly List<EntraAccessUser> authorizedUsers = [];
     private bool isLoading = true;
     private bool isBusy;
-    private bool isGlobalAdmin;
+    private bool isGlobalAdmin => Api.CurrentAuthorizationContext?.GlobalRole == "admin";
     private string selectedOrganizationId = "";
     private string newOrganizationName = "";
     private string initialDepartmentName = "";
@@ -301,11 +302,14 @@
             return;
         }
 
-        var currentUser = await Api.GetCurrentUserAsync();
-        isGlobalAdmin = string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
+        Api.AuthorizationChanged += AuthorizationChanged;
+        await Api.GetCurrentUserAsync();
         roleName = isGlobalAdmin ? "organization_admin" : "recruiter";
         await LoadOrganizationsAsync();
     }
+
+    private void AuthorizationChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Api.AuthorizationChanged -= AuthorizationChanged;
 
     private async Task LoadOrganizationsAsync()
     {

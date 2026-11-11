@@ -21,7 +21,7 @@ using static TalentMatch.Infrastructure.Tests.BulkScoring.BulkScoringPersistence
 
 namespace TalentMatch.Infrastructure.Tests.BulkScoring;
 
-public sealed class BulkScoringSqlServerConcurrencyTests
+public sealed partial class BulkScoringSqlServerConcurrencyTests
 {
     private const string ConnectionVariable = "BULK_SCORING_TEST_SQLSERVER";
 

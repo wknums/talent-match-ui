@@ -31,7 +31,7 @@
 
     <section style="border:1px solid #e2e8f0; border-radius:10px; padding:1rem; background:#fff;">
         <h4 style="margin-top:0;">Create draft</h4>
-        <textarea rows="8" style="width:100%;" @bind="draftInstructionText"></textarea>
+        <textarea aria-label="Extraction instruction text" rows="8" style="width:100%;" @bind="draftInstructionText"></textarea>
         <input placeholder="Change note (optional)" style="width:100%; margin-top:0.5rem;" @bind="draftChangeNote" />
         <div style="margin-top:0.75rem;">
             <ReasoningProfileFields Catalog="reasoningCatalog"

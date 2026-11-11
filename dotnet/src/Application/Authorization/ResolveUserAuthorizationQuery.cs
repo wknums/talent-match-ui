@@ -5,7 +5,7 @@ using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Application.Authorization;
 
-public sealed record ResolveUserAuthorizationQuery : IRequest<AuthorizationResolutionResult>;
+public sealed record ResolveUserAuthorizationQuery(string? CandidateTransitionId = null) : IRequest<AuthorizationResolutionResult>;
 
 public sealed record AuthorizationResolutionResult(
     AuthorizationContextResponse? Context,
@@ -38,7 +38,12 @@ public sealed record AuthorizationContextResponse(
     IReadOnlyList<OrganizationMembershipResponse> Memberships,
     IReadOnlyList<ScopedAuthorizationResponse> Authorizations,
     DateTimeOffset TokenIssuedAt,
-    DateTimeOffset RefreshRequiredAt);
+    DateTimeOffset RefreshRequiredAt,
+    string AdministrationMode = "individual",
+    int AuthorityVersion = 0,
+    AdminEntitlementResponse? AdminEntitlement = null);
+
+public sealed record AdminEntitlementResponse(string Source, DateTimeOffset EvaluatedAt, DateTimeOffset ValidUntil);
 
 public sealed record OrganizationMembershipResponse(
     string OrganizationId,
@@ -57,7 +62,9 @@ public sealed record ScopedAuthorizationResponse(
 
 public sealed class ResolveUserAuthorizationQueryHandler(
     ICurrentUserService currentUser,
-    IUserRepository userRepository)
+    IUserRepository userRepository,
+    IEntraAccessManagementRepository? accessRepository = null,
+    TimeProvider? clock = null)
     : IRequestHandler<ResolveUserAuthorizationQuery, AuthorizationResolutionResult>
 {
     private static readonly HashSet<string> SupportedRoles =
@@ -72,19 +79,84 @@ public sealed class ResolveUserAuthorizationQueryHandler(
         ResolveUserAuthorizationQuery request,
         CancellationToken cancellationToken)
     {
-        var state = await currentUser.GetAuthorizationStateAsync(cancellationToken);
+        CurrentAuthorizationState? state;
+        try { state = await currentUser.GetAuthorizationStateAsync(cancellationToken); }
+        catch (DirectoryAdministrationEvidenceException exception) { return Failure(exception.Code, "", 403); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        { return Failure("group_evidence_unavailable", "", 403); }
         if (state is null)
             return Failure("auth_required", "Sign in is required to access this application.", 401);
 
         if (!string.Equals(state.Claims.TenantId, state.ExpectedTenantId, StringComparison.OrdinalIgnoreCase))
             return Failure("wrong_tenant", "Sign in with an account from the configured organization.", 401);
 
-        if (DateTimeOffset.UtcNow - state.Claims.TokenIssuedAt > TimeSpan.FromMinutes(15))
+        var resolutionTime = (clock ?? TimeProvider.System).GetUtcNow();
+        if (resolutionTime - state.Claims.TokenIssuedAt > TimeSpan.FromMinutes(15))
             return Failure("token_stale", "Your session must be refreshed before continuing.", 401);
+        if (state.Claims.TokenIssuedAt > resolutionTime.AddSeconds(30))
+            return Failure("invalid_token", "Your session could not be validated.", 401);
+        if (state.Claims.TokenExpiresAt <= resolutionTime)
+            return Failure("invalid_token", "Your session has expired.", 401);
 
         if (state.Claims.Roles.Any(role => !SupportedRoles.Contains(role)))
             return Failure("role_conflict", "Your assigned access could not be verified.", 403);
 
+        var administration = state.AdministrationConfiguration;
+        var evidence = state.AdministrationEvidence;
+        var computedAdmin = false;
+        if (state.User is { IsActive: false })
+            return Failure("identity_disabled", "", 403);
+        if (state.DirectoryActorEvidence is { } actorEvidence)
+        {
+            if (!actorEvidence.AccountEnabled) return Failure("identity_disabled", "", 403);
+            if (actorEvidence.UserType != "Member" || actorEvidence.TenantId != state.Claims.TenantId
+                || actorEvidence.ObjectId != state.Claims.ObjectId || actorEvidence.AuthorityVersion != administration?.AuthorityVersion
+                || actorEvidence.CollectionStartedAt > actorEvidence.CollectedAt || actorEvidence.CollectedAt > resolutionTime.UtcDateTime
+                || actorEvidence.ExpiresAt <= resolutionTime.UtcDateTime || actorEvidence.ExpiresAt > actorEvidence.CollectionStartedAt.AddMinutes(5))
+                return Failure("group_evidence_unavailable", "", 403);
+        }
+        if (administration?.Mode == "group")
+        {
+            var now = resolutionTime.UtcDateTime;
+            if (evidence?.AccountEnabled == false) return Failure("identity_disabled", "", 403);
+            if (evidence is null || !evidence.Complete || !evidence.CompositionValidated
+                || evidence.AccountEnabled != true || evidence.UserType != "Member"
+                || evidence.TenantId != state.Claims.TenantId || evidence.ActorObjectId != state.Claims.ObjectId
+                || evidence.GroupObjectId != administration.GroupObjectId || evidence.AuthorityVersion != administration.AuthorityVersion
+                || evidence.CollectionStartedAt > evidence.CollectedAt || evidence.CollectedAt > now
+                || evidence.ExpiresAt <= now || evidence.ExpiresAt > evidence.CollectionStartedAt.AddMinutes(5))
+                return Failure("group_evidence_unavailable", "", 403);
+            computedAdmin = evidence.DirectMemberObjectIds.Contains(state.Claims.ObjectId)
+                && evidence.EligibleUserObjectIds.Contains(state.Claims.ObjectId);
+            if (computedAdmin)
+            {
+                if (accessRepository is null) return Failure("admin_configuration_invalid", "", 403);
+                try
+                {
+                    await accessRepository.ConvergeSystemAdministratorContextAsync(new(
+                        state.Claims.TenantId, state.Claims.ObjectId,
+                        new(state.Claims.Username, state.Claims.FullName, state.Claims.Email),
+                        state.User?.AuthorizationVersion, administration.AuthorityVersion,
+                        currentUser.CorrelationId ?? Guid.NewGuid().ToString(), evidence, administration.Id,
+                        request.CandidateTransitionId), cancellationToken);
+                }
+                catch (EntraAccessManagementException exception) { return Failure(exception.Code, "", 403); }
+                try { state = await currentUser.GetAuthorizationStateAsync(cancellationToken); }
+                catch (DirectoryAdministrationEvidenceException exception) { return Failure(exception.Code, "", 403); }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                { return Failure("group_evidence_unavailable", "", 403); }
+                if (state?.AdministrationConfiguration?.Id != administration.Id
+                    || state.AdministrationConfiguration.AuthorityVersion != administration.AuthorityVersion)
+                    return Failure("administration_transition_conflict", "", 409);
+                if (state.User is { IsActive: false } || state.AdministrationEvidence?.AccountEnabled == false)
+                    return Failure("identity_disabled", "", 403);
+                evidence = state.AdministrationEvidence;
+                if (!SystemAdministrationAuthority.HasFreshGroupEvidence(state, (clock ?? TimeProvider.System).GetUtcNow()))
+                    return Failure("group_evidence_unavailable", "", 403);
+                computedAdmin = evidence!.DirectMemberObjectIds.Contains(state.Claims.ObjectId)
+                    && evidence.EligibleUserObjectIds.Contains(state.Claims.ObjectId);
+            }
+        }
         var user = state.User;
         if (user is null)
         {
@@ -134,7 +206,10 @@ public sealed class ResolveUserAuthorizationQueryHandler(
         if (!user.IsActive)
             return Failure("identity_disabled", "This application identity is disabled.", 403);
 
-        if (state.Assignments.Count == 0)
+        var assignments = administration is null ? state.Assignments.ToList()
+            : state.Assignments.Where(x => x.Role != "admin" || (administration.Mode == "individual"
+                && administration.LegacyIndividualObjectId == state.Claims.ObjectId && x.Source == "bootstrap")).ToList();
+        if (assignments.Count == 0 && !computedAdmin)
             return Failure("assignment_missing", "No active application access is assigned to this identity.", 403);
 
         var memberships = BuildMemberships(state);
@@ -148,16 +223,19 @@ public sealed class ResolveUserAuthorizationQueryHandler(
         var mappings = state.GroupMappings.ToDictionary(mapping => mapping.Id, StringComparer.OrdinalIgnoreCase);
         var authorizations = new List<ScopedAuthorizationResponse>();
 
-        foreach (var assignment in state.Assignments)
+        foreach (var assignment in assignments)
         {
             var validationError = ValidateAssignment(
                 assignment,
                 state,
                 organizationIds,
                 departmentScopes,
-                mappings);
+                mappings, resolutionTime.UtcDateTime);
             if (validationError is not null)
+            {
+                if (computedAdmin) continue;
                 return validationError;
+            }
 
             authorizations.Add(new ScopedAuthorizationResponse(
                 assignment.Role,
@@ -167,6 +245,20 @@ public sealed class ResolveUserAuthorizationQueryHandler(
                 assignment.Source));
         }
 
+        if (computedAdmin)
+            authorizations.Add(new("admin", "Admin", null, null, "system_group"));
+        if (evidence is not null && evidence.ExpiresAt <= (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime)
+            return Failure("group_evidence_unavailable", "", 403);
+        var refresh = state.Claims.TokenIssuedAt.AddMinutes(15);
+        if (state.Claims.TokenExpiresAt is { } tokenExpiry && tokenExpiry < refresh)
+            refresh = tokenExpiry;
+        if (evidence is not null && new DateTimeOffset(evidence.ExpiresAt) < refresh)
+            refresh = new DateTimeOffset(evidence.ExpiresAt);
+        var individualEvidence = state.AdministrationIndividualEvidence;
+        if (individualEvidence is not null && new DateTimeOffset(individualEvidence.ExpiresAt) < refresh)
+            refresh = new DateTimeOffset(individualEvidence.ExpiresAt);
+        if (state.DirectoryActorEvidence is { } directoryActor && new DateTimeOffset(directoryActor.ExpiresAt) < refresh)
+            refresh = new DateTimeOffset(directoryActor.ExpiresAt);
         return AuthorizationResolutionResult.Success(new AuthorizationContextResponse(
             user.Id,
             state.Claims.TenantId,
@@ -179,7 +271,12 @@ public sealed class ResolveUserAuthorizationQueryHandler(
             memberships,
             authorizations,
             state.Claims.TokenIssuedAt,
-            state.Claims.TokenIssuedAt.AddMinutes(15)));
+            refresh,
+            administration?.Mode ?? "individual",
+            administration?.AuthorityVersion ?? 0,
+            computedAdmin ? new("system_group", new DateTimeOffset(evidence!.CollectedAt), new DateTimeOffset(evidence.ExpiresAt))
+                : authorizations.Any(x => x.Role == "admin") && individualEvidence is not null
+                    ? new("legacy_individual", new DateTimeOffset(individualEvidence.CollectedAt), new DateTimeOffset(individualEvidence.ExpiresAt)) : null));
     }
 
     private static IReadOnlyList<OrganizationMembershipResponse>? BuildMemberships(CurrentAuthorizationState state)
@@ -218,7 +315,8 @@ public sealed class ResolveUserAuthorizationQueryHandler(
         CurrentAuthorizationState state,
         IReadOnlySet<string> organizationIds,
         IReadOnlySet<(string OrganizationId, string DepartmentId)> departmentScopes,
-        IReadOnlyDictionary<string, RoleGroupMapping> mappings)
+        IReadOnlyDictionary<string, RoleGroupMapping> mappings,
+        DateTime now)
     {
         if (assignment.Status != "active"
             || !string.Equals(assignment.UserId, state.User!.Id, StringComparison.OrdinalIgnoreCase)
@@ -245,7 +343,7 @@ public sealed class ResolveUserAuthorizationQueryHandler(
         return assignment.Source switch
         {
             "delegated" => ValidateDelegatedAssignment(assignment),
-            "bootstrap" => ValidateBootstrapAssignment(assignment, state),
+            "bootstrap" => ValidateBootstrapAssignment(assignment, state, now),
             "group" => ValidateGroupAssignment(assignment, state, mappings),
             _ => Failure("role_conflict", "Your assigned access could not be verified.", 403),
         };
@@ -258,11 +356,23 @@ public sealed class ResolveUserAuthorizationQueryHandler(
 
     private static AuthorizationResolutionResult? ValidateBootstrapAssignment(
         RoleAssignment assignment,
-        CurrentAuthorizationState state)
+        CurrentAuthorizationState state, DateTime now)
     {
+        if (state.AdministrationConfiguration is { } configured)
+        {
+            var proof = state.AdministrationIndividualEvidence;
+            if (configured.Mode != "individual" || configured.LegacyIndividualObjectId != state.Claims.ObjectId
+                || proof is null || !proof.DirectAdminRoleBinding || proof.AccountEnabled != true || proof.UserType != "Member"
+                || proof.ObjectId != state.Claims.ObjectId || proof.TenantId != state.Claims.TenantId
+                || proof.AuthorityVersion != configured.AuthorityVersion || proof.ExpiresAt <= now
+                || proof.CollectionStartedAt > proof.CollectedAt || proof.CollectedAt > now
+                || proof.ExpiresAt > proof.CollectionStartedAt.AddMinutes(5))
+                return Failure("assignment_missing", "", 403);
+        }
         return assignment.Role == "admin"
             && assignment.RoleGroupMappingId is null
-            && string.Equals(state.BootstrapObjectId, state.Claims.ObjectId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(state.AdministrationConfiguration?.LegacyIndividualObjectId ?? state.BootstrapObjectId,
+                state.Claims.ObjectId, StringComparison.OrdinalIgnoreCase)
             && state.Claims.Roles.Contains("admin")
                 ? null
                 : Failure("role_conflict", "Your bootstrap access could not be verified.", 403);

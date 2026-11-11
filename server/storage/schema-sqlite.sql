@@ -448,10 +448,12 @@ CREATE TABLE IF NOT EXISTS RoleGroupMappings (
     OrganizationId TEXT NULL,
     DepartmentId TEXT NULL,
     Enabled INTEGER NOT NULL DEFAULT 1,
+    Purpose TEXT NOT NULL DEFAULT 'scoped' CHECK (Purpose IN ('scoped', 'system_admin')),
     CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UpdatedBy TEXT NOT NULL,
     UNIQUE (TenantId, GroupObjectId),
+    UNIQUE (Id, TenantId, GroupObjectId),
     CHECK ((Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL))
 );
 
@@ -465,16 +467,122 @@ CREATE TABLE IF NOT EXISTS RoleAssignments (
     DepartmentId TEXT NULL,
     RoleGroupMappingId TEXT NULL REFERENCES RoleGroupMappings(Id),
     Source TEXT NOT NULL,
+    ManagementSource TEXT NOT NULL DEFAULT 'independent' CHECK (ManagementSource IN ('deployment', 'application', 'independent')),
+    ManagedTransitionId TEXT NULL REFERENCES AdministrationTransitions(Id) ON DELETE RESTRICT,
     Status TEXT NOT NULL DEFAULT 'active',
     EffectiveAt TEXT NOT NULL DEFAULT (datetime('now')),
     RevokedAt TEXT NULL,
     CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UpdatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UpdatedBy TEXT NOT NULL,
-    CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+    CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)),
+    CHECK (Source IN ('group', 'delegated', 'bootstrap')),
+    CHECK ((Source = 'group' AND RoleGroupMappingId IS NOT NULL) OR (Source IN ('delegated', 'bootstrap') AND RoleGroupMappingId IS NULL))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveGroup ON RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveGroup ON RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND Source = 'group' AND RoleGroupMappingId IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveDelegated ON RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
+CREATE UNIQUE INDEX IF NOT EXISTS UX_RoleAssignments_ActiveDelegatedOrganization ON RoleAssignments (TenantId, UserObjectId, Role, OrganizationId) WHERE Status = 'active' AND Source = 'delegated' AND DepartmentId IS NULL;
+
+-- 20. SYSTEM ADMINISTRATION (shared with Azure SQL and EF)
+CREATE TABLE IF NOT EXISTS AdministrationTransitions (
+    Id TEXT NOT NULL PRIMARY KEY,
+    TargetKey TEXT NOT NULL,
+    DesiredFingerprint TEXT NOT NULL,
+    PriorConfiguration TEXT NULL,
+    CandidateConfiguration TEXT NOT NULL,
+    Phase TEXT NOT NULL CHECK (Phase IN ('preflight','prepared','sql_switched','replacement_verified','authority_committed','retiring','complete','failed','rollback_pending','rolled_back')),
+    CommittedVersion INTEGER NOT NULL CHECK (CommittedVersion >= 0),
+    CandidateVersion INTEGER NOT NULL CHECK (CandidateVersion > CommittedVersion),
+    LeaseOwner TEXT NOT NULL,
+    LeaseExpiresAt TEXT NOT NULL,
+    FencingToken INTEGER NOT NULL CHECK (FencingToken > 0),
+    ExternalOperations TEXT NOT NULL DEFAULT '[]',
+    PriorSqlAdministrator TEXT NULL,
+    GrantInventory TEXT NOT NULL DEFAULT '[]',
+    StartedAt TEXT NOT NULL,
+    UpdatedAt TEXT NOT NULL,
+    ActorId TEXT NOT NULL,
+    CorrelationId TEXT NOT NULL,
+    FailureCode TEXT NULL,
+    SupersedesTransitionId TEXT NULL,
+    SupersededByTransitionId TEXT NULL,
+    SupersededAt TEXT NULL,
+    UNIQUE (Id, CandidateVersion)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_AdministrationTransitions_Fingerprint ON AdministrationTransitions (TargetKey, DesiredFingerprint, CandidateVersion);
+CREATE UNIQUE INDEX IF NOT EXISTS UX_AdministrationTransitions_LiveTarget ON AdministrationTransitions (TargetKey) WHERE Phase NOT IN ('complete','rolled_back') AND SupersededByTransitionId IS NULL;
+
+CREATE TABLE IF NOT EXISTS SystemAdministrationConfigurations (
+    Id TEXT NOT NULL PRIMARY KEY,
+    EnvironmentKey TEXT NOT NULL,
+    TenantId TEXT NOT NULL,
+    SqlTargetKey TEXT NOT NULL,
+    Mode TEXT NOT NULL,
+    GroupObjectId TEXT NULL,
+    LegacyIndividualObjectId TEXT NULL,
+    SystemRoleGroupMappingId TEXT NULL,
+    InitialOrganizationId TEXT NOT NULL REFERENCES Organizations(Id) ON DELETE RESTRICT,
+    InitialDepartmentId TEXT NOT NULL,
+    AuthorityVersion INTEGER NOT NULL CHECK (AuthorityVersion >= 0),
+    CommittedTransitionId TEXT NULL REFERENCES AdministrationTransitions(Id) ON DELETE RESTRICT,
+    CommittedAt TEXT NOT NULL,
+    CommittedBy TEXT NOT NULL,
+    UNIQUE (EnvironmentKey, TenantId, SqlTargetKey),
+    FOREIGN KEY (InitialDepartmentId, InitialOrganizationId) REFERENCES Departments(Id, OrganizationId) ON DELETE RESTRICT,
+    FOREIGN KEY (SystemRoleGroupMappingId, TenantId, GroupObjectId) REFERENCES RoleGroupMappings(Id, TenantId, GroupObjectId) ON DELETE RESTRICT,
+    CHECK ((Mode = 'group' AND GroupObjectId IS NOT NULL AND LegacyIndividualObjectId IS NULL AND SystemRoleGroupMappingId IS NOT NULL)
+      OR (Mode = 'individual' AND GroupObjectId IS NULL AND LegacyIndividualObjectId IS NOT NULL AND SystemRoleGroupMappingId IS NULL))
+);
+
+CREATE TABLE IF NOT EXISTS VerificationReceipts (
+    Id TEXT NOT NULL PRIMARY KEY,
+    TransitionId TEXT NOT NULL,
+    CandidateVersion INTEGER NOT NULL,
+    Mode TEXT NOT NULL CHECK (Mode IN ('group','individual')),
+    PrincipalObjectId TEXT NOT NULL,
+    TenantId TEXT NOT NULL,
+    MemberObjectId TEXT NOT NULL,
+    CollectionStartedAt TEXT NOT NULL,
+    CollectedAt TEXT NOT NULL,
+    EvidenceExpiresAt TEXT NOT NULL,
+    Complete INTEGER NOT NULL,
+    CompositionValidated INTEGER NOT NULL,
+    AccountEnabled INTEGER NOT NULL,
+    UserType TEXT NOT NULL,
+    IsActive INTEGER NOT NULL,
+    Stack TEXT NOT NULL CHECK (Stack IN ('stack-a','stack-b','sql')),
+    RuntimeVersion TEXT NOT NULL,
+    CapabilityInventoryVersion TEXT NOT NULL,
+    CapabilityInventoryPassed INTEGER NOT NULL,
+    SqlTargetKey TEXT NOT NULL,
+    SqlAdministratorObjectId TEXT NOT NULL,
+    SqlBootstrapPassed INTEGER NOT NULL,
+    VerifiedAt TEXT NOT NULL,
+    ExpiresAt TEXT NOT NULL,
+    AuditEventId TEXT NOT NULL REFERENCES ProcessingEvents(Id) ON DELETE RESTRICT,
+    CorrelationId TEXT NOT NULL,
+    FOREIGN KEY (TransitionId, CandidateVersion) REFERENCES AdministrationTransitions(Id, CandidateVersion) ON DELETE RESTRICT,
+    CHECK (Complete = 1 AND CompositionValidated = 1 AND AccountEnabled = 1 AND UserType = 'Member' AND IsActive = 1),
+    CHECK (CapabilityInventoryPassed = 1 AND (Stack <> 'sql' OR SqlBootstrapPassed = 1)),
+    CHECK (CollectionStartedAt <= CollectedAt AND CollectedAt <= VerifiedAt AND VerifiedAt < ExpiresAt AND ExpiresAt <= EvidenceExpiresAt),
+    CHECK (julianday(EvidenceExpiresAt) <= julianday(CollectionStartedAt) + 5.0 / 1440)
+);
+
+CREATE TABLE IF NOT EXISTS ManagedGrantProvenance (
+    Id TEXT NOT NULL PRIMARY KEY,
+    PrincipalObjectId TEXT NOT NULL,
+    PrincipalSid TEXT NULL,
+    Resource TEXT NOT NULL,
+    Permission TEXT NOT NULL,
+    ManagementSource TEXT NOT NULL CHECK (ManagementSource IN ('deployment','application','independent')),
+    OriginatingTransitionId TEXT NULL REFERENCES AdministrationTransitions(Id) ON DELETE RESTRICT,
+    AdoptingTransitionId TEXT NULL REFERENCES AdministrationTransitions(Id) ON DELETE RESTRICT,
+    RetiringTransitionId TEXT NULL REFERENCES AdministrationTransitions(Id) ON DELETE RESTRICT,
+    BeforeState TEXT NOT NULL,
+    AfterState TEXT NOT NULL,
+    CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UpdatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- 19. OPTIONAL PARALLEL UPLOADS
 CREATE TABLE IF NOT EXISTS UploadSettings (

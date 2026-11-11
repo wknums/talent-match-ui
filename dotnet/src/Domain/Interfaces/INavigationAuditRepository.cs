@@ -8,5 +8,7 @@ public sealed record NavigationAuditEntry(
 
 public interface INavigationAuditRepository
 {
-    Task RecordAsync(NavigationAuditEntry entry, CancellationToken cancellationToken = default);
+    Task<NavigationAuditOutcome> RecordAsync(NavigationAuditEntry entry, CancellationToken cancellationToken = default);
 }
+
+public sealed record NavigationAuditOutcome(string ActorObjectId, string Action, string CorrelationId, DateTimeOffset RecordedAt);

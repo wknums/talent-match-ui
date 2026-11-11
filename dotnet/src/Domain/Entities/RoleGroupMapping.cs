@@ -9,6 +9,7 @@ public class RoleGroupMapping
     public string? OrganizationId { get; set; }
     public string? DepartmentId { get; set; }
     public bool Enabled { get; set; } = true;
+    public string Purpose { get; set; } = "scoped";
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string UpdatedBy { get; set; } = string.Empty;

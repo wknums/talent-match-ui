@@ -15,19 +15,28 @@ public class CurrentUserService : ICurrentUserService
     private readonly IOrganizationRepository _organizationRepository;
     private readonly IRoleAssignmentRepository _roleAssignmentRepository;
     private readonly IConfiguration _configuration;
+    private readonly IAdministrationRepository? _administrationRepository;
+    private readonly IDirectoryAdministrationEvidenceProvider? _directoryProvider;
+    private readonly TimeProvider _clock;
 
     public CurrentUserService(
         IHttpContextAccessor httpContextAccessor,
         IUserRepository userRepository,
         IOrganizationRepository organizationRepository,
         IRoleAssignmentRepository roleAssignmentRepository,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IAdministrationRepository? administrationRepository = null,
+        IDirectoryAdministrationEvidenceProvider? directoryProvider = null,
+        TimeProvider? clock = null)
     {
         _httpContextAccessor = httpContextAccessor;
         _userRepository = userRepository;
         _organizationRepository = organizationRepository;
         _roleAssignmentRepository = roleAssignmentRepository;
         _configuration = configuration;
+        _administrationRepository = administrationRepository;
+        _directoryProvider = directoryProvider;
+        _clock = clock ?? TimeProvider.System;
     }
 
     private AuthorizationContextResponse? ResolvedContext =>
@@ -51,9 +60,9 @@ public class CurrentUserService : ICurrentUserService
         ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Name)
         ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue("preferred_username")
         ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue("name");
-    public string? Role => ResolvedContext?.GlobalRole
-        ?? PrimaryAuthorization?.Role
-        ?? _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
+    public string? Role => string.Equals(_configuration["APP_AUTH_MODE"], "entra", StringComparison.OrdinalIgnoreCase)
+        ? ResolvedContext?.GlobalRole ?? PrimaryAuthorization?.Role
+        : _httpContextAccessor.HttpContext?.User?.FindFirstValue(ClaimTypes.Role);
     public string? Department
     {
         get
@@ -68,8 +77,17 @@ public class CurrentUserService : ICurrentUserService
         }
     }
     public bool IsAdmin => Role?.Equals("admin", StringComparison.OrdinalIgnoreCase) == true;
+    public string? CorrelationId => _httpContextAccessor.HttpContext?.Response.Headers["X-Correlation-ID"].FirstOrDefault();
 
     public async Task<CurrentAuthorizationState?> GetAuthorizationStateAsync(CancellationToken cancellationToken = default)
+        => await ReadStateAsync(null, cancellationToken);
+
+    public Task<CurrentAuthorizationState?> GetCandidateAuthorizationStateAsync(
+        TalentMatch.Domain.Entities.SystemAdministrationConfiguration candidate, CancellationToken cancellationToken = default)
+        => ReadStateAsync(candidate, cancellationToken);
+
+    private async Task<CurrentAuthorizationState?> ReadStateAsync(
+        TalentMatch.Domain.Entities.SystemAdministrationConfiguration? candidate, CancellationToken cancellationToken)
     {
         var principal = _httpContextAccessor.HttpContext?.User;
         if (principal?.Identity?.IsAuthenticated != true)
@@ -107,9 +125,58 @@ public class CurrentUserService : ICurrentUserService
                 ?? string.Empty,
             DateTimeOffset.FromUnixTimeSeconds(issuedAtSeconds),
             roles,
-            groups);
+            groups,
+            principal.HasClaim(claim => claim.Type == "hasgroups" && claim.Value == "true")
+                || principal.FindAll("_claim_names").Any(claim => claim.Value.Contains("\"groups\"", StringComparison.Ordinal)),
+            long.TryParse(principal.FindFirstValue("exp"), out var expiresAtSeconds)
+                ? DateTimeOffset.FromUnixTimeSeconds(expiresAtSeconds) : null);
 
+        var expectedTenant = _configuration["AZURE_TENANT_ID"] ?? string.Empty;
+        if (!string.Equals(tenantId, expectedTenant, StringComparison.OrdinalIgnoreCase)
+            || claims.TokenIssuedAt > _clock.GetUtcNow().AddSeconds(30)
+            || _clock.GetUtcNow() - claims.TokenIssuedAt > TimeSpan.FromMinutes(15))
+            return new(claims, null, [], [], [], [], expectedTenant, _configuration["ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID"]);
         var user = await _userRepository.GetByEntraIdentityAsync(tenantId, objectId, cancellationToken);
+        TalentMatch.Domain.Entities.SystemAdministrationConfiguration? administration = null;
+        DirectoryAdministrationEvidence? evidence = null;
+        IndividualDirectoryAdministrationEvidence? individual = null;
+        DirectoryUserEligibilityEvidence? actorEvidence = null;
+        if (_administrationRepository is not null)
+        {
+            var environment = _configuration["ENTRA_ADMIN_ENVIRONMENT_KEY"];
+            var target = _configuration["ENTRA_ADMIN_SQL_TARGET_KEY"];
+            if (string.IsNullOrWhiteSpace(environment) || string.IsNullOrWhiteSpace(target))
+                throw new DirectoryAdministrationEvidenceException("admin_configuration_invalid",
+                    AuthorizationErrorCodes.Resolve("admin_configuration_invalid").Message);
+            if (candidate is not null && (candidate.EnvironmentKey != environment || candidate.TenantId != tenantId
+                || candidate.SqlTargetKey != target))
+                throw new DirectoryAdministrationEvidenceException("administration_transition_conflict", "Candidate target changed.");
+            administration = candidate ?? await _administrationRepository.GetCommittedAsync(new(environment, tenantId, target), cancellationToken);
+            if (candidate?.Mode == "individual" && candidate.LegacyIndividualObjectId != objectId)
+                throw new DirectoryAdministrationEvidenceException("assignment_missing", "The token actor is not the selected candidate individual.");
+            if (administration is null || _directoryProvider is null)
+                throw new DirectoryAdministrationEvidenceException("admin_configuration_invalid",
+                    AuthorizationErrorCodes.Resolve("admin_configuration_invalid").Message);
+            if (_httpContextAccessor.HttpContext is { } http)
+                http.Items["TalentMatch.AdministrationAudit"] = new Dictionary<string, object?>
+                {
+                    ["principalObjectId"] = administration.GroupObjectId ?? administration.LegacyIndividualObjectId,
+                    ["targetKey"] = administration.SqlTargetKey,
+                    ["authorityVersion"] = administration.AuthorityVersion,
+                    ["subjectObjectId"] = objectId,
+                };
+            if (user?.IsActive != false)
+            {
+                if (administration.Mode == "group")
+                    evidence = await _directoryProvider.GetGroupEvidenceAsync(new(tenantId,
+                        administration.GroupObjectId!, administration.AuthorityVersion, objectId, user?.AuthorizationVersion ?? 0,
+                        candidate is not null), cancellationToken);
+                else if (administration.LegacyIndividualObjectId == objectId)
+                    individual = await _directoryProvider.GetIndividualEvidenceAsync(new(tenantId, objectId, administration.AuthorityVersion), cancellationToken);
+                else
+                    actorEvidence = await _directoryProvider.GetUserEvidenceAsync(new(tenantId, objectId, administration.AuthorityVersion), cancellationToken);
+            }
+        }
         if (user is null)
         {
             return new CurrentAuthorizationState(
@@ -120,7 +187,7 @@ public class CurrentUserService : ICurrentUserService
                 [],
                 [],
                 _configuration["AZURE_TENANT_ID"] ?? string.Empty,
-                _configuration["ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID"]);
+                _configuration["ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID"], administration, evidence, individual, actorEvidence);
         }
 
         var organizationMemberships = await _organizationRepository.GetActiveMembershipsAsync(user.Id, cancellationToken);
@@ -136,6 +203,6 @@ public class CurrentUserService : ICurrentUserService
             assignments,
             mappings,
             _configuration["AZURE_TENANT_ID"] ?? string.Empty,
-            _configuration["ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID"]);
+            _configuration["ENTRA_BOOTSTRAP_ADMIN_OBJECT_ID"], administration, evidence, individual, actorEvidence);
     }
 }

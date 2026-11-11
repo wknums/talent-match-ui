@@ -16,6 +16,13 @@ public class ProcessingEvent
         public const string GroupMappingUpdated = "auth.group_mapping.updated";
         public const string ScopeDenied = "auth.scope.denied";
         public const string NavigationShellChanged = "auth.navigation.changed";
+        public const string AdminGroupDenied = "auth.admin.group.denied";
+        public const string AdminContextProvisioned = "auth.admin.context.provisioned";
+        public const string AdminConfigurationChanged = "auth.admin.configuration.changed";
+        public const string AdminTransitionCheckpoint = "auth.admin.transition.checkpoint";
+        public const string AdminTransitionFailed = "auth.admin.transition.failed";
+        public const string AdminAuthorityRetired = "auth.admin.authority.retired";
+        public const string AdminRecovery = "auth.admin.recovery";
     }
 
     public string Id { get; set; } = Guid.NewGuid().ToString();

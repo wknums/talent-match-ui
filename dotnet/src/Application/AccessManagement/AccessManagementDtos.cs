@@ -5,7 +5,8 @@ public sealed record AccessManagementActorDto(
     string ObjectId,
     bool GlobalAdmin,
     IReadOnlyList<string> OrganizationAdminIds,
-    string CorrelationId);
+    string CorrelationId,
+    TalentMatch.Domain.Interfaces.AdministrationActorProof? AdministrationProof = null);
 
 public sealed record EntraAccessProfileDto(
     string Username,

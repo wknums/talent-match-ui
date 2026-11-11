@@ -61,6 +61,21 @@ public static class DependencyInjection
         services.AddScoped<IOrganizationRepository, OrganizationRepository>();
         services.AddScoped<IRoleAssignmentRepository, RoleAssignmentRepository>();
         services.AddScoped<IEntraAccessManagementRepository, EntraAccessManagementRepository>();
+        services.AddSingleton(TimeProvider.System);
+        services.AddHttpClient("AdministrationGraph", client => client.Timeout = TimeSpan.FromSeconds(15))
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+        services.AddSingleton<IDirectoryAdministrationEvidenceProvider>(sp =>
+        {
+            var clientId = configuration["ENTRA_RUNTIME_READER_CLIENT_ID"] ?? configuration["AZURE_CLIENT_ID"];
+            Azure.Core.TokenCredential credential = string.IsNullOrWhiteSpace(clientId)
+                ? new Azure.Identity.ManagedIdentityCredential(Azure.Identity.ManagedIdentityId.SystemAssigned)
+                : new Azure.Identity.ManagedIdentityCredential(Azure.Identity.ManagedIdentityId.FromUserAssignedClientId(clientId));
+            return new GraphAdministrationEvidenceProvider(
+                sp.GetRequiredService<IHttpClientFactory>().CreateClient("AdministrationGraph"),
+                credential, sp.GetRequiredService<TimeProvider>(), configuration["AZURE_TENANT_ID"] ?? "",
+                configuration["ENTRA_API_SERVICE_PRINCIPAL_OBJECT_ID"] ?? "", configuration["ENTRA_ADMIN_APP_ROLE_ID"] ?? "");
+        });
+        services.AddScoped<IAdministrationRepository, AdministrationRepository>();
         services.AddScoped<IProcessingEventRepository, ProcessingEventRepository>();
         services.AddScoped<INavigationAuditRepository, NavigationAuditRepository>();
         services.AddScoped<IFailureQueueRepository, FailureQueueRepository>();

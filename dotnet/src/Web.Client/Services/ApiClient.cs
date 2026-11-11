@@ -23,24 +23,37 @@ public class ApiException : Exception
     }
 }
 
-public class ApiClient : INavigationAuditClient
+public class ApiClient : INavigationAuditClient, IDisposable
 {
     private readonly HttpClient _http;
     private readonly PublicAuthConfiguration _authConfiguration;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly TimeProvider _clock;
+    private ITimer? _authorizationTimer;
+    private AuthorizationContextResponse? _authorizationContext;
+    private long _authorizationEpoch;
+    private long _authorizationRequestSequence;
+    private bool _refreshingAuthorization;
+    private bool _disposed;
+    public event Action? AuthorizationChanged;
+    public AuthorizationContextResponse? CurrentAuthorizationContext =>
+        _authorizationContext is { } context && context.RefreshRequiredAt > _clock.GetUtcNow() ? context : null;
 
     public ApiClient(HttpClient http)
         : this(http, PublicAuthConfiguration.Simple(http.BaseAddress?.ToString() ?? "http://localhost/"))
     {
     }
 
-    public ApiClient(HttpClient http, PublicAuthConfiguration authConfiguration)
+    public ApiClient(HttpClient http, PublicAuthConfiguration authConfiguration) : this(http, authConfiguration, TimeProvider.System) { }
+
+    public ApiClient(HttpClient http, PublicAuthConfiguration authConfiguration, TimeProvider clock)
     {
         _http = http;
         _authConfiguration = authConfiguration;
+        _clock = clock;
     }
 
-    private static async Task EnsureSuccessOrThrowAsync(HttpResponseMessage response, string fallbackMessage)
+    private async Task EnsureSuccessOrThrowAsync(HttpResponseMessage response, string fallbackMessage)
     {
         if (response.IsSuccessStatusCode) return;
 
@@ -56,7 +69,49 @@ public class ApiClient : INavigationAuditClient
         }
         catch { /* use fallback */ }
 
+        if (_authConfiguration.IsEntra && (int)response.StatusCode is 401 or 403)
+            InvalidateAuthorization(refresh: true);
         throw new ApiException(details.Message, (int)response.StatusCode, details.ErrorCode, details.CorrelationId);
+    }
+
+    private void SetAuthorizationContext(AuthorizationContextResponse context)
+    {
+        _authorizationTimer?.Dispose();
+        _authorizationContext = context;
+        var delay = context.RefreshRequiredAt - _clock.GetUtcNow();
+        if (delay <= TimeSpan.Zero) { InvalidateAuthorization(refresh: false); return; }
+        _authorizationTimer = _clock.CreateTimer(_ => InvalidateAuthorization(refresh: true), null, delay, Timeout.InfiniteTimeSpan);
+        NotifyAuthorizationChanged();
+    }
+
+    private void InvalidateAuthorization(bool refresh)
+    {
+        if (_disposed || _authorizationContext is null) return;
+        Interlocked.Increment(ref _authorizationEpoch);
+        _authorizationContext = null;
+        _authorizationTimer?.Dispose();
+        _authorizationTimer = null;
+        NotifyAuthorizationChanged();
+        if (refresh && !_refreshingAuthorization) _ = RefreshAuthorizationAsync();
+    }
+    private async Task RefreshAuthorizationAsync()
+    {
+        _refreshingAuthorization = true;
+        try { await GetCurrentUserResultAsync(); }
+        catch { /* Remain without authority on network/provider failure. */ }
+        finally { _refreshingAuthorization = false; }
+    }
+    private void NotifyAuthorizationChanged()
+    {
+        foreach (var listener in AuthorizationChanged?.GetInvocationList() ?? [])
+            try { ((Action)listener)(); } catch { /* A UI listener cannot turn denial into success. */ }
+    }
+    public void Dispose()
+    {
+        _disposed = true;
+        _authorizationTimer?.Dispose();
+        _authorizationContext = null;
+        AuthorizationChanged = null;
     }
 
     private static ApiErrorDetails ExtractErrorDetails(
@@ -161,6 +216,8 @@ public class ApiClient : INavigationAuditClient
 
     public async Task<CurrentUserResult> GetCurrentUserResultAsync()
     {
+        var epoch = Interlocked.Read(ref _authorizationEpoch);
+        var sequence = Interlocked.Increment(ref _authorizationRequestSequence);
         var response = await _http.GetAsync("/api/auth/me");
         var headerCorrelationId = response.Headers.TryGetValues("X-Correlation-ID", out var values)
             ? values.FirstOrDefault()
@@ -168,6 +225,7 @@ public class ApiClient : INavigationAuditClient
 
         if (!response.IsSuccessStatusCode)
         {
+            if (_authConfiguration.IsEntra) InvalidateAuthorization(refresh: false);
             var body = await response.Content.ReadAsStringAsync();
             var details = string.IsNullOrWhiteSpace(body)
                 ? new ApiErrorDetails("Sign in is required.", null, headerCorrelationId)
@@ -181,6 +239,14 @@ public class ApiClient : INavigationAuditClient
             if (context is null)
                 throw new ApiException("The authorization context response was empty.", 200, correlationId: headerCorrelationId);
 
+            if (_disposed || epoch != Interlocked.Read(ref _authorizationEpoch) || sequence != Interlocked.Read(ref _authorizationRequestSequence))
+                return new(null, 409, "administration_transition_conflict", "Current access changed. Retry.", headerCorrelationId);
+            if (context.RefreshRequiredAt <= _clock.GetUtcNow())
+            {
+                InvalidateAuthorization(refresh: false);
+                return new(null, 403, "group_evidence_unavailable", "Current access has expired. Retry.", headerCorrelationId);
+            }
+            SetAuthorizationContext(context);
             return new(context.ToUserInfo(), 200, null, null, headerCorrelationId);
         }
 
@@ -403,7 +469,7 @@ public class ApiClient : INavigationAuditClient
             query.Add($"{name}={Uri.EscapeDataString(value)}");
     }
 
-    private static async Task<T> ReadRequiredResponseAsync<T>(
+    private async Task<T> ReadRequiredResponseAsync<T>(
         HttpResponseMessage response,
         string fallbackMessage)
     {
@@ -1027,7 +1093,7 @@ public class ApiClient : INavigationAuditClient
         return await _http.SendAsync(request, cancellationToken);
     }
 
-    private static async Task<T> SendBulkAsync<T>(
+    private async Task<T> SendBulkAsync<T>(
         Func<Task<HttpResponseMessage>> send, string fallbackMessage, CancellationToken cancellationToken)
     {
         using var response = await send();
@@ -1402,8 +1468,9 @@ public class ApiClient : INavigationAuditClient
 
         var result = await response.Content.ReadFromJsonAsync<NavigationAuditResponse>(
             JsonOptions, cancellationToken);
-        return new NavigationAuditResult(
-            Guid.TryParse(result?.CorrelationId, out var correlationId) ? correlationId : request.CorrelationId);
+        if (!Guid.TryParse(result?.CorrelationId, out var correlationId) || correlationId != request.CorrelationId)
+            throw new InvalidOperationException("The navigation outcome did not match the request.");
+        return new NavigationAuditResult(correlationId);
     }
 
     public async Task<List<DocumentDto>> GetDocumentsAsync(string applicationId)
@@ -1478,11 +1545,15 @@ public sealed record AuthorizationContextResponse(
     IReadOnlyList<OrganizationMembershipResponse> Memberships,
     IReadOnlyList<ScopedAuthorizationResponse> Authorizations,
     DateTimeOffset TokenIssuedAt,
-    DateTimeOffset RefreshRequiredAt)
+    DateTimeOffset RefreshRequiredAt,
+    string AdministrationMode = "individual",
+    int AuthorityVersion = 0,
+    AdminEntitlementResponse? AdminEntitlement = null)
 {
     public UserInfo ToUserInfo()
     {
         var primaryAuthorization = Authorizations
+            .Where(authorization => authorization.Role != "admin")
             .OrderByDescending(authorization => GetRoleRank(authorization.Role))
             .FirstOrDefault();
         var role = GlobalRole ?? primaryAuthorization?.Role ?? "business_panel";
@@ -1505,6 +1576,8 @@ public sealed record AuthorizationContextResponse(
         _ => 0,
     };
 }
+
+public sealed record AdminEntitlementResponse(string Source, DateTimeOffset EvaluatedAt, DateTimeOffset ValidUntil);
 
 public sealed record OrganizationMembershipResponse(
     string OrganizationId,

@@ -16,6 +16,79 @@
 --
 -- Batches are separated by a line containing only GO.
 
+IF OBJECT_ID('talentmatch.AdministrationTransitions','U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.AdministrationTransitions','SupersedesTransitionId') IS NULL
+        ALTER TABLE [talentmatch].AdministrationTransitions ADD SupersedesTransitionId NVARCHAR(36) NULL;
+    IF COL_LENGTH('talentmatch.AdministrationTransitions','SupersededByTransitionId') IS NULL
+        ALTER TABLE [talentmatch].AdministrationTransitions ADD SupersededByTransitionId NVARCHAR(36) NULL;
+    IF COL_LENGTH('talentmatch.AdministrationTransitions','SupersededAt') IS NULL
+        ALTER TABLE [talentmatch].AdministrationTransitions ADD SupersededAt DATETIME2 NULL;
+END;
+GO
+
+IF OBJECT_ID('talentmatch.AdministrationTransitions','U') IS NOT NULL
+BEGIN
+    SET XACT_ABORT ON;
+    BEGIN TRANSACTION;
+    BEGIN TRY
+    IF EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('talentmatch.AdministrationTransitions')
+      AND name='UX_AdministrationTransitions_LiveTarget' AND filter_definition NOT LIKE '%SupersededByTransitionId%')
+    BEGIN
+        DROP INDEX UX_AdministrationTransitions_LiveTarget ON [talentmatch].AdministrationTransitions;
+        EXEC(N'CREATE UNIQUE INDEX UX_AdministrationTransitions_LiveTarget ON [talentmatch].AdministrationTransitions(TargetKey)
+          WHERE Phase IN (''preflight'',''prepared'',''sql_switched'',''replacement_verified'',''authority_committed'',''retiring'',''failed'',''rollback_pending'') AND SupersededByTransitionId IS NULL');
+    END;
+    IF EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID('talentmatch.AdministrationTransitions')
+      AND name='IX_AdministrationTransitions_TargetKey' AND filter_definition NOT LIKE '%SupersededByTransitionId%')
+    BEGIN
+        DROP INDEX IX_AdministrationTransitions_TargetKey ON [talentmatch].AdministrationTransitions;
+        EXEC(N'CREATE UNIQUE INDEX IX_AdministrationTransitions_TargetKey ON [talentmatch].AdministrationTransitions(TargetKey)
+          WHERE Phase IN (''preflight'',''prepared'',''sql_switched'',''replacement_verified'',''authority_committed'',''retiring'',''failed'',''rollback_pending'') AND SupersededByTransitionId IS NULL');
+    END;
+    COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT>0 ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH;
+END;
+GO
+
+IF OBJECT_ID('talentmatch.RoleGroupMappings', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.RoleGroupMappings', 'Purpose') IS NULL
+        ALTER TABLE [talentmatch].RoleGroupMappings ADD Purpose NVARCHAR(20) NOT NULL CONSTRAINT DF_RoleGroupMappings_Purpose DEFAULT 'scoped';
+    IF NOT EXISTS (SELECT 1 FROM sys.key_constraints WHERE name = 'UQ_RoleGroupMappings_IdTenantGroup')
+        ALTER TABLE [talentmatch].RoleGroupMappings ADD CONSTRAINT UQ_RoleGroupMappings_IdTenantGroup UNIQUE (Id, TenantId, GroupObjectId);
+END;
+GO
+
+IF OBJECT_ID('talentmatch.RoleAssignments', 'U') IS NOT NULL
+BEGIN
+    IF COL_LENGTH('talentmatch.RoleAssignments', 'ManagementSource') IS NULL
+        ALTER TABLE [talentmatch].RoleAssignments ADD ManagementSource NVARCHAR(20) NOT NULL CONSTRAINT DF_RoleAssignments_ManagementSource DEFAULT 'independent';
+    IF COL_LENGTH('talentmatch.RoleAssignments', 'ManagedTransitionId') IS NULL
+        ALTER TABLE [talentmatch].RoleAssignments ADD ManagedTransitionId NVARCHAR(36) NULL;
+    IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveGroup' AND object_id = OBJECT_ID('talentmatch.RoleAssignments'))
+        DROP INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments;
+END;
+GO
+
+IF OBJECT_ID('talentmatch.RoleAssignments', 'U') IS NOT NULL
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_RoleAssignments_Source')
+        ALTER TABLE [talentmatch].RoleAssignments WITH CHECK ADD CONSTRAINT CK_RoleAssignments_Source
+            CHECK (Source IN ('group', 'delegated', 'bootstrap'));
+    IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_RoleAssignments_SourceMapping')
+        ALTER TABLE [talentmatch].RoleAssignments WITH CHECK ADD CONSTRAINT CK_RoleAssignments_SourceMapping
+            CHECK ((Source = 'group' AND RoleGroupMappingId IS NOT NULL) OR (Source IN ('delegated', 'bootstrap') AND RoleGroupMappingId IS NULL));
+    IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = 'CK_RoleAssignments_ManagementSource')
+        ALTER TABLE [talentmatch].RoleAssignments WITH CHECK ADD CONSTRAINT CK_RoleAssignments_ManagementSource
+            CHECK (ManagementSource IN ('deployment', 'application', 'independent'));
+END;
+GO
+
 IF OBJECT_ID('talentmatch.Users', 'U') IS NOT NULL
 BEGIN
     IF COL_LENGTH('talentmatch.Users', 'AuthenticationProvider') IS NULL
@@ -135,6 +208,29 @@ IF OBJECT_ID('talentmatch.DepartmentMemberships', 'U') IS NOT NULL
 GO
 
 -- Jobs created before organizations existed carry NULL scope. JobAuthorization rejects unscoped
+-- Application receipts do not certify SQL. Preserve old rows, but writers/promotion
+-- require app SQL flags to be false and a distinct self-SQL receipt to be true.
+IF OBJECT_ID('talentmatch.VerificationReceipts', 'U') IS NOT NULL
+BEGIN
+    IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name='CK_VerificationReceipts_Eligibility'
+        AND parent_object_id=OBJECT_ID('talentmatch.VerificationReceipts') AND definition NOT LIKE '%Stack%')
+    BEGIN
+        ALTER TABLE [talentmatch].VerificationReceipts DROP CONSTRAINT CK_VerificationReceipts_Eligibility;
+        ALTER TABLE [talentmatch].VerificationReceipts WITH CHECK ADD CONSTRAINT CK_VerificationReceipts_Eligibility
+          CHECK (Complete = 1 AND CompositionValidated = 1 AND AccountEnabled = 1 AND UserType = 'Member'
+            AND IsActive = 1 AND CapabilityInventoryPassed = 1 AND (Stack <> 'sql' OR SqlBootstrapPassed = 1));
+    END;
+    IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name='CK_VerificationReceipts_Capability'
+        AND parent_object_id=OBJECT_ID('talentmatch.VerificationReceipts') AND definition NOT LIKE '%Stack%')
+    BEGIN
+        ALTER TABLE [talentmatch].VerificationReceipts DROP CONSTRAINT CK_VerificationReceipts_Capability;
+        ALTER TABLE [talentmatch].VerificationReceipts WITH CHECK ADD CONSTRAINT CK_VerificationReceipts_Capability
+          CHECK (CapabilityInventoryPassed = 1 AND (Stack <> 'sql' OR SqlBootstrapPassed = 1));
+    END;
+END;
+GO
+
+-- Jobs created before organizations existed carry NULL scope. JobAuthorization rejects unscoped
 -- jobs outright, so these rows are invisible to every caller including global admins. Adopt them
 -- into an organization/department matching the free-text Organisation/Department already on the row.
 IF OBJECT_ID('talentmatch.Jobs', 'U') IS NOT NULL
@@ -144,6 +240,16 @@ IF OBJECT_ID('talentmatch.Jobs', 'U') IS NOT NULL
    AND COL_LENGTH('talentmatch.Jobs', 'DepartmentId') IS NOT NULL
 BEGIN
     DECLARE @backfillActor NVARCHAR(100) = 'system:schema-backfill';
+
+    IF EXISTS (
+        SELECT 1 FROM [talentmatch].Jobs
+        WHERE (OrganizationId IS NULL OR DepartmentId IS NULL)
+          AND (NULLIF(LTRIM(RTRIM(Organisation)), '') IS NULL
+            OR NULLIF(LTRIM(RTRIM(Department)), '') IS NULL
+            OR (OrganizationId IS NULL AND DepartmentId IS NOT NULL)
+            OR (OrganizationId IS NOT NULL AND DepartmentId IS NULL))
+    )
+        THROW 51000, 'A legacy job requires explicit unambiguous organization/department scope before readiness.', 1;
 
     INSERT INTO [talentmatch].Organizations (Id, Name, Status, UpdatedBy)
     SELECT LOWER(CONVERT(NVARCHAR(36), NEWID())), source.Name, 'active', @backfillActor
@@ -185,5 +291,22 @@ BEGIN
     INNER JOIN [talentmatch].Departments d
         ON d.Status = 'active' AND d.OrganizationId = o.Id AND d.Name = LTRIM(RTRIM(j.Department))
     WHERE j.OrganizationId IS NULL OR j.DepartmentId IS NULL;
+
+    IF EXISTS (
+        SELECT 1 FROM [talentmatch].Jobs j
+        LEFT JOIN [talentmatch].Departments d ON d.Id=j.DepartmentId AND d.OrganizationId=j.OrganizationId
+        WHERE j.OrganizationId IS NULL OR j.DepartmentId IS NULL OR d.Id IS NULL
+    )
+        THROW 51000, 'An existing job requires explicit valid organization/department scope before readiness.', 1;
+
+    IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE name='CK_Jobs_AuthorizationScope'
+        AND parent_object_id=OBJECT_ID('talentmatch.Jobs'))
+        ALTER TABLE [talentmatch].Jobs WITH CHECK ADD CONSTRAINT CK_Jobs_AuthorizationScope
+          CHECK (OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name='FK_Jobs_AuthorizationScope'
+        AND parent_object_id=OBJECT_ID('talentmatch.Jobs'))
+        ALTER TABLE [talentmatch].Jobs WITH CHECK ADD CONSTRAINT FK_Jobs_AuthorizationScope
+          FOREIGN KEY (DepartmentId, OrganizationId) REFERENCES [talentmatch].Departments (Id, OrganizationId);
 END;
 GO

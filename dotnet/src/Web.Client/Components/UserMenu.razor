@@ -3,6 +3,7 @@
 @inject ApiClient Api
 @inject PublicAuthConfiguration AuthConfiguration
 @inject NavigationManager Navigation
+@implements IDisposable
 
 <div style="display: flex; align-items: center; gap: 0.75rem;">
     @if (currentUser != null)
@@ -67,6 +68,7 @@
 
 @code {
     private UserInfo? currentUser;
+    private bool disposed;
     private bool showMenu;
     private bool showChangePassword;
     private bool showRequestReset;
@@ -76,7 +78,32 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Api.AuthorizationChanged += AuthorizationChanged;
+        Navigation.LocationChanged += LocationChanged;
         currentUser = await Api.GetCurrentUserAsync();
+    }
+
+    private void AuthorizationChanged()
+    {
+        if (AuthConfiguration.IsEntra) currentUser = Api.CurrentAuthorizationContext?.ToUserInfo();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void LocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+    {
+        if (AuthConfiguration.IsSimple)
+            _ = InvokeAsync(async () =>
+            {
+                currentUser = await Api.GetCurrentUserAsync();
+                if (!disposed) StateHasChanged();
+            });
+    }
+
+    public void Dispose()
+    {
+        disposed = true;
+        Api.AuthorizationChanged -= AuthorizationChanged;
+        Navigation.LocationChanged -= LocationChanged;
     }
 
     private void ToggleMenu() => showMenu = !showMenu;

@@ -6,7 +6,7 @@ using TalentMatch.Domain.Entities.BulkScoringRequests;
 
 namespace TalentMatch.Infrastructure.Persistence;
 
-public class AppDbContext : DbContext
+public partial class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
@@ -36,6 +36,10 @@ public class AppDbContext : DbContext
     public DbSet<DepartmentMembership> DepartmentMemberships => Set<DepartmentMembership>();
     public DbSet<RoleGroupMapping> RoleGroupMappings => Set<RoleGroupMapping>();
     public DbSet<RoleAssignment> RoleAssignments => Set<RoleAssignment>();
+    public DbSet<AdministrationTransition> AdministrationTransitions => Set<AdministrationTransition>();
+    public DbSet<SystemAdministrationConfiguration> SystemAdministrationConfigurations => Set<SystemAdministrationConfiguration>();
+    public DbSet<VerificationReceipt> VerificationReceipts => Set<VerificationReceipt>();
+    public DbSet<ManagedGrantProvenance> ManagedGrantProvenance => Set<ManagedGrantProvenance>();
     public DbSet<UploadSettings> UploadSettings => Set<UploadSettings>();
     public DbSet<UploadSession> UploadSessions => Set<UploadSession>();
     public DbSet<UploadItem> UploadItems => Set<UploadItem>();
@@ -64,6 +68,10 @@ public class AppDbContext : DbContext
 
     private void ValidateBulkAuditChanges()
     {
+        if (ChangeTracker.Entries().Any(entry =>
+            entry.Entity is VerificationReceipt or TalentMatch.Domain.Entities.ManagedGrantProvenance
+            && entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Administration receipts and grant provenance are append-only.");
         foreach (var entry in ChangeTracker.Entries<BulkAuditEvent>())
         {
             if (entry.State is EntityState.Modified or EntityState.Deleted)
@@ -161,6 +169,9 @@ public class AppDbContext : DbContext
             e.Property(x => x.GroupObjectId).HasMaxLength(36).IsRequired();
             e.Property(x => x.Role).HasMaxLength(30).IsRequired();
             e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Purpose).HasMaxLength(20).HasDefaultValue("scoped").IsRequired();
+            e.HasAlternateKey(x => new { x.Id, x.TenantId, x.GroupObjectId });
+            e.ToTable(t => t.HasCheckConstraint("CK_RoleGroupMappings_Purpose", "Purpose IN ('scoped','system_admin')"));
             e.HasIndex(x => new { x.TenantId, x.GroupObjectId }).IsUnique();
             e.ToTable(t => t.HasCheckConstraint("CK_RoleGroupMappings_Scope", "(Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL)"));
         });
@@ -174,13 +185,22 @@ public class AppDbContext : DbContext
             e.Property(x => x.Source).HasMaxLength(20).IsRequired();
             e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue("active").IsRequired();
             e.Property(x => x.UpdatedBy).HasMaxLength(100).IsRequired();
+            e.Property(x => x.ManagementSource).HasMaxLength(20).HasDefaultValue("independent").IsRequired();
+            e.Property(x => x.ManagedTransitionId).HasMaxLength(36);
+            e.HasOne<AdministrationTransition>().WithMany().HasForeignKey(x => x.ManagedTransitionId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(x => x.User).WithMany(x => x.RoleAssignments).HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(x => x.RoleGroupMapping).WithMany().HasForeignKey(x => x.RoleGroupMappingId).OnDelete(DeleteBehavior.Restrict);
-            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.RoleGroupMappingId }).IsUnique().HasFilter("[Status] = 'active' AND [RoleGroupMappingId] IS NOT NULL");
+            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.RoleGroupMappingId }).IsUnique().HasFilter("[Status] = 'active' AND [Source] = 'group' AND [RoleGroupMappingId] IS NOT NULL");
             e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.Role, x.OrganizationId, x.DepartmentId }).IsUnique()
                 .HasFilter("[Status] = 'active' AND [Source] = 'delegated'");
+            e.HasIndex(x => new { x.TenantId, x.UserObjectId, x.Role, x.OrganizationId }).IsUnique()
+                .HasFilter("[Status] = 'active' AND [Source] = 'delegated' AND [DepartmentId] IS NULL");
             e.ToTable(t => t.HasCheckConstraint("CK_RoleAssignments_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)"));
+            e.ToTable(t => t.HasCheckConstraint("CK_RoleAssignments_Source", "(Source = 'group' AND RoleGroupMappingId IS NOT NULL) OR (Source IN ('delegated','bootstrap') AND RoleGroupMappingId IS NULL)"));
+            e.ToTable(t => t.HasCheckConstraint("CK_RoleAssignments_Management", "ManagementSource IN ('deployment','application','independent')"));
         });
+
+        ConfigureAdministration(modelBuilder);
 
         // Job
         modelBuilder.Entity<Job>(e =>

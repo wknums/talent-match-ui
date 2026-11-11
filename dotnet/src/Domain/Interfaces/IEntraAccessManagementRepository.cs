@@ -1,11 +1,16 @@
 namespace TalentMatch.Domain.Interfaces;
 
+/// <summary>Trusted server context metadata, never a client role/SQL boolean or operator attestation.</summary>
+public sealed record AdministrationActorProof(string EnvironmentKey, string SqlTargetKey, int AuthorityVersion,
+    int AuthorizationVersion, string Mode, string Source, DateTime ValidUntil);
+
 public sealed record AccessManagementActor(
     string TenantId,
     string ObjectId,
     bool GlobalAdmin,
     IReadOnlyList<string> OrganizationAdminIds,
-    string CorrelationId);
+    string CorrelationId,
+    AdministrationActorProof? AdministrationProof = null);
 
 public sealed record EntraAccessSearch(
     string? Search,
@@ -15,6 +20,12 @@ public sealed record EntraAccessSearch(
     int Limit);
 
 public sealed record EntraAccessProfile(string Username, string FullName, string? Email);
+
+public sealed record ConvergeSystemAdministratorContext(
+    string TenantId, string ObjectId, EntraAccessProfile Profile,
+    int? ExpectedAuthorizationVersion, int ExpectedAuthorityVersion,
+    string CorrelationId, DirectoryAdministrationEvidence Evidence, string? ConfigurationId = null,
+    string? CandidateTransitionId = null);
 
 public sealed record EntraAccessMembership(
     string Status,
@@ -75,6 +86,10 @@ public sealed class EntraAccessManagementException : Exception
 
 public interface IEntraAccessManagementRepository
 {
+    Task<EntraAccessAggregate> ConvergeSystemAdministratorContextAsync(
+        ConvergeSystemAdministratorContext request, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("Automatic administration context is not supported by this repository.");
+
     Task<EntraAccessPage> ListAsync(
         AccessManagementActor actor,
         EntraAccessSearch search,

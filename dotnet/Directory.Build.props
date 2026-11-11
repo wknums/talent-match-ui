@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <DotNetPatchVersion>10.0.13</DotNetPatchVersion>
+    <DotNetPatchVersion>10.0.14</DotNetPatchVersion>
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
     <NuGetAuditLevel>low</NuGetAuditLevel>

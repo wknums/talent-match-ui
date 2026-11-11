@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using TalentMatch.Application.Authorization;
 using MediatR;
 using Microsoft.AspNetCore.Authentication;
@@ -10,6 +11,9 @@ using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
 namespace TalentMatch.Web.Server.Endpoints;
+
+/// <summary>Marks only the token-authenticated candidate POST, never an auth-path prefix.</summary>
+public sealed record AdministrationCandidateEndpoint;
 
 public static class AuthEndpoints
 {
@@ -69,10 +73,37 @@ public static class AuthEndpoints
 
         if (useEntraAuthentication)
         {
+            group.MapPost("/admin-transition/verify", async (
+                JsonElement body, ISender mediator, HttpContext httpContext, CancellationToken cancellationToken) =>
+            {
+                AuthorizationErrorResults.EnsureCorrelationId(httpContext);
+                if (body.ValueKind != JsonValueKind.Object || body.EnumerateObject().Count() != 2
+                    || body.EnumerateObject().Any(x => x.Name is not ("transitionId" or "candidateVersion"))
+                    || !body.TryGetProperty("transitionId", out var id) || id.ValueKind != JsonValueKind.String
+                    || !Guid.TryParseExact(id.GetString(), "D", out _)
+                    || !body.TryGetProperty("candidateVersion", out var version) || version.ValueKind != JsonValueKind.Number
+                    || !version.TryGetInt32(out var number) || number < 1)
+                    return Results.BadRequest(new { code = "invalid_scope", correlationId = AuthorizationErrorResults.EnsureCorrelationId(httpContext) });
+                try
+                {
+                    var receipt = await mediator.Send(new VerifyAdministrationCandidateCommand(id.GetString()!, number), cancellationToken);
+                    return Results.Json(receipt, statusCode: 201);
+                }
+                catch (EntraAccessManagementException exception)
+                {
+                    return AuthorizationErrorResults.Create(httpContext, exception.Code);
+                }
+                catch (TalentMatch.Application.Common.Interfaces.DirectoryAdministrationEvidenceException exception)
+                {
+                    return AuthorizationErrorResults.Create(httpContext, exception.Code);
+                }
+            }).RequireAuthorization("AccessAsUser").WithMetadata(new AdministrationCandidateEndpoint());
+
             group.MapGet("/me", async (
                 ISender mediator,
                 IUserRepository userRepository,
                 IProcessingEventRepository eventRepository,
+                TalentMatch.Domain.Interfaces.IAdministrationRepository administration,
                 HttpContext httpContext,
                 CancellationToken cancellationToken) =>
             {
@@ -101,28 +132,47 @@ public static class AuthEndpoints
                             ? ProcessingEvent.AuthorizationActions.TokenStale
                             : ProcessingEvent.AuthorizationActions.LoginDenied,
                         GetActor(httpContext),
-                        new Dictionary<string, object?>
+                        AdministrationAuditDetails.WithCurrent(httpContext, new Dictionary<string, object?>
                         {
                             ["result"] = error.Code,
                             ["tenantId"] = httpContext.User.FindFirstValue("tid"),
-                        },
+                        }),
                         correlationId,
                         cancellationToken);
                     return AuthorizationErrorResults.Create(httpContext, error.Code);
                 }
 
                 var context = result.Context!;
+                var committed = await administration.GetCommittedAsync(new(
+                    app.Configuration["ENTRA_ADMIN_ENVIRONMENT_KEY"] ?? "",
+                    app.Configuration["AZURE_TENANT_ID"] ?? "",
+                    app.Configuration["ENTRA_ADMIN_SQL_TARGET_KEY"] ?? ""), cancellationToken);
                 await userRepository.UpdateLastLoginAsync(context.UserId, DateTime.UtcNow, cancellationToken);
+                var details = new Dictionary<string, object?>
+                {
+                    ["result"] = "success", ["tenantId"] = context.TenantId,
+                    ["authorizationCount"] = context.Authorizations.Count,
+                };
+                if (committed is not null && committed.AuthorityVersion == context.AuthorityVersion
+                    && committed.Mode == context.AdministrationMode)
+                {
+                    details["committedTransitionId"] = committed.CommittedTransitionId;
+                    details["authorityVersion"] = context.AuthorityVersion;
+                    details["administrationMode"] = context.AdministrationMode;
+                    details["globalRole"] = context.GlobalRole;
+                    details["principalObjectId"] = committed.GroupObjectId ?? committed.LegacyIndividualObjectId;
+                    details["environmentKey"] = committed.EnvironmentKey;
+                    details["sqlTargetKey"] = committed.SqlTargetKey;
+                    details["stack"] = "stack-b";
+                    details["runtimeVersion"] = VerifyAdministrationCandidateCommandHandler.RuntimeVersion;
+                    details["capabilityInventoryVersion"] = VerifyAdministrationCandidateCommandHandler.InventoryVersion;
+                    details["proofValidUntil"] = context.AdminEntitlement?.ValidUntil;
+                }
                 await eventRepository.AddAuthorizationEventAsync(
                     context.ObjectId,
                     ProcessingEvent.AuthorizationActions.LoginSucceeded,
                     context.UserId,
-                    new Dictionary<string, object?>
-                    {
-                        ["result"] = "success",
-                        ["tenantId"] = context.TenantId,
-                        ["authorizationCount"] = context.Authorizations.Count,
-                    },
+                    details,
                     correlationId,
                     cancellationToken);
                 return Results.Ok(context);

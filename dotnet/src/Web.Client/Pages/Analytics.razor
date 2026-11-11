@@ -68,7 +68,7 @@ else
     {
         @* Department Filter *@
         <div style="margin-bottom: 1rem;">
-            <select @bind="selectedDepartment" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
+            <select aria-label="Filter by department" @bind="selectedDepartment" style="padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
                 <option value="">All Departments</option>
                 @foreach (var dept in departments)
                 {
@@ -111,7 +111,7 @@ else
         }
         else
         {
-            <p style="color: #888; font-style: italic; padding: 2rem; text-align: center;">No recruiters found.</p>
+            <p style="color: #666; font-style: italic; padding: 2rem; text-align: center;">No recruiters found.</p>
         }
     }
     else

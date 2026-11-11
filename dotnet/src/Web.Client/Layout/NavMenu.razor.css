@@ -55,10 +55,13 @@
     .nav-item ::deep a {
         color: #d7d7d7;
         border-radius: 4px;
-        height: 3rem;
+        min-height: 3rem;
+        height: auto;
         display: flex;
         align-items: center;
-        line-height: 3rem;
+        line-height: 1.4;
+        white-space: normal;
+        overflow-wrap: anywhere;
     }
 
 .nav-item ::deep a.active {
@@ -89,6 +92,7 @@
     align-items: center;
     min-height: 3rem;
     padding: 0 1rem;
+    overflow-wrap: anywhere;
 }
 
 .nav-group-label:hover {

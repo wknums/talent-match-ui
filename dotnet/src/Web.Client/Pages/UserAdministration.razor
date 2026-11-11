@@ -3,6 +3,7 @@
 @using TalentMatch.Web.Client.Services
 @inject ApiClient Api
 @inject PublicAuthConfiguration AuthConfiguration
+@implements IDisposable
 
 @if (AuthConfiguration.IsSimple)
 {
@@ -29,25 +30,26 @@ else
 
 @code {
     private bool isLoading;
-    private bool canManageAccess;
-    private bool isGlobalAdmin;
+    private bool isGlobalAdmin => Api.CurrentAuthorizationContext?.GlobalRole == "admin";
+    private bool canManageAccess => isGlobalAdmin
+        || Api.CurrentAuthorizationContext?.Authorizations.Any(x => x.Role == "organization_admin") == true;
 
     protected override async Task OnInitializedAsync()
     {
         if (!AuthConfiguration.IsEntra)
             return;
 
+        Api.AuthorizationChanged += AuthorizationChanged;
         isLoading = true;
         try
         {
-            var currentUser = await Api.GetCurrentUserAsync();
-            isGlobalAdmin = string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
-            canManageAccess = isGlobalAdmin
-                || string.Equals(currentUser?.Role, "organization_admin", StringComparison.OrdinalIgnoreCase);
+            await Api.GetCurrentUserAsync();
         }
         finally
         {
             isLoading = false;
         }
     }
+    private void AuthorizationChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Api.AuthorizationChanged -= AuthorizationChanged;
 }

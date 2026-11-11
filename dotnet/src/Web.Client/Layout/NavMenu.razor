@@ -1,6 +1,8 @@
 ﻿@using TalentMatch.Web.Client.Services
 @inject ApiClient Api
 @inject PublicAuthConfiguration AuthConfiguration
+@inject NavigationManager Navigation
+@implements IDisposable
 
 <div class="top-row ps-3 navbar navbar-dark">
     <div class="container-fluid">
@@ -81,8 +83,11 @@
 
 @code {
     private UserInfo? currentUser;
+    private bool disposed;
 
-    private bool IsGlobalAdmin => string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
+    private bool IsGlobalAdmin => AuthConfiguration.IsEntra
+        ? Api.CurrentAuthorizationContext?.GlobalRole == "admin"
+        : string.Equals(currentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase);
     private bool CanManageUsers => IsGlobalAdmin
         || (AuthConfiguration.IsEntra
             && string.Equals(currentUser?.Role, "organization_admin", StringComparison.OrdinalIgnoreCase));
@@ -90,6 +95,28 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Api.AuthorizationChanged += AuthorizationChanged;
+        Navigation.LocationChanged += LocationChanged;
         currentUser = await Api.GetCurrentUserAsync();
+    }
+    private void AuthorizationChanged()
+    {
+        if (AuthConfiguration.IsEntra) currentUser = Api.CurrentAuthorizationContext?.ToUserInfo();
+        _ = InvokeAsync(StateHasChanged);
+    }
+    private void LocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+    {
+        if (AuthConfiguration.IsSimple)
+            _ = InvokeAsync(async () =>
+            {
+                currentUser = await Api.GetCurrentUserAsync();
+                if (!disposed) StateHasChanged();
+            });
+    }
+    public void Dispose()
+    {
+        disposed = true;
+        Api.AuthorizationChanged -= AuthorizationChanged;
+        Navigation.LocationChanged -= LocationChanged;
     }
 }

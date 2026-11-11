@@ -34,18 +34,35 @@ public sealed class EntraApplicationAuthorizationMiddleware(RequestDelegate next
         var isAuthenticatedApiRequest = httpContext.User.Identity?.IsAuthenticated == true
             && httpContext.Request.Path.StartsWithSegments("/api");
         var allowsAnonymous = endpoint?.Metadata.GetMetadata<IAllowAnonymous>() is not null;
-        var isAuthenticationOperation = httpContext.Request.Path.StartsWithSegments("/api/auth");
+        var isAuthenticationOperation = httpContext.Request.Path.Equals("/api/auth/me", StringComparison.OrdinalIgnoreCase)
+            || httpContext.Request.Path.Equals("/api/auth/logout", StringComparison.OrdinalIgnoreCase);
+        var isCandidateVerification = endpoint?.Metadata.GetMetadata<AdministrationCandidateEndpoint>() is not null
+            && HttpMethods.IsPost(httpContext.Request.Method)
+            && httpContext.Request.Path.Equals("/api/auth/admin-transition/verify", StringComparison.OrdinalIgnoreCase);
 
-        if ((!requiresAuthorization && !isAuthenticatedApiRequest) || allowsAnonymous || isAuthenticationOperation)
+        if ((!requiresAuthorization && !isAuthenticatedApiRequest) || allowsAnonymous || isAuthenticationOperation || isCandidateVerification)
         {
             await next(httpContext);
             return;
         }
 
+        AuthorizationErrorResults.EnsureCorrelationId(httpContext);
         var result = await mediator.Send(new ResolveUserAuthorizationQuery(), httpContext.RequestAborted);
         if (result.IsSuccess)
         {
             httpContext.Items[ContextItemKey] = result.Context;
+            // Literal compatibility role checks see only current resolved authority,
+            // never the stale JWT Admin claim after removal or a committed cutover.
+            if (httpContext.User.Identity is ClaimsIdentity authenticatedIdentity)
+            {
+                var projected = new ClaimsIdentity(authenticatedIdentity);
+                foreach (var roleClaim in projected.Claims.Where(claim =>
+                    claim.Type == "roles" || claim.Type == ClaimTypes.Role || claim.Type == projected.RoleClaimType).ToArray())
+                    projected.RemoveClaim(roleClaim);
+                foreach (var role in result.Context!.Authorizations.Select(x => x.Role).Distinct())
+                    projected.AddClaim(new Claim(projected.RoleClaimType, role));
+                httpContext.User = new ClaimsPrincipal(projected);
+            }
             await next(httpContext);
             return;
         }
@@ -88,11 +105,11 @@ public sealed class EntraApplicationAuthorizationMiddleware(RequestDelegate next
                 ? ProcessingEvent.AuthorizationActions.TokenStale
                 : ProcessingEvent.AuthorizationActions.LoginDenied,
             actor,
-            new Dictionary<string, object?>
+            AdministrationAuditDetails.WithCurrent(httpContext, new Dictionary<string, object?>
             {
                 ["result"] = errorCode,
                 ["tenantId"] = tenantId,
-            },
+            }),
             correlationId,
             httpContext.RequestAborted);
 

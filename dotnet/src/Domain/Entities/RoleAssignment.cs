@@ -13,6 +13,8 @@ public class RoleAssignment : IValidatableObject
     public string? DepartmentId { get; set; }
     public string? RoleGroupMappingId { get; set; }
     public string Source { get; set; } = string.Empty;
+    public string ManagementSource { get; set; } = "independent";
+    public string? ManagedTransitionId { get; set; }
     public string Status { get; set; } = "active";
     public DateTime EffectiveAt { get; set; } = DateTime.UtcNow;
     public DateTime? RevokedAt { get; set; }

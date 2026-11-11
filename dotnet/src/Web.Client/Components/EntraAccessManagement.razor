@@ -298,14 +298,24 @@
             <p class="entra-access__eyebrow">Confirmation required</p>
             <h2 id="entra-confirmation-title">@ConfirmationTitle</h2>
             <p>@ConfirmationDescription</p>
+            @if (selected is not null)
+            {
+                <p>@selected.FullName — @selected.Username <code>@selected.ObjectId</code></p>
+            }
             @if (confirmationKind == "organization")
             {
                 <dl class="entra-access__summary">
-                    <div><dt>Organization</dt><dd>@organizationId</dd></div>
+                    <div><dt>Organization</dt><dd>@SelectedAvailableOrganization?.Name (@organizationId)</dd></div>
                     <div><dt>Membership</dt><dd>@membershipStatus</dd></div>
-                    <div><dt>Default</dt><dd>@(defaultDepartmentId.Length == 0 ? "None" : defaultDepartmentId)</dd></div>
-                    <div><dt>Delegated roles</dt><dd>@desiredRoles.Count</dd></div>
+                    <div><dt>Departments</dt><dd>@(selectedDepartmentIds.Count == 0 ? "None" : string.Join(", ", selectedDepartmentIds.Select(DepartmentName)))</dd></div>
+                    <div><dt>Default</dt><dd>@(defaultDepartmentId.Length == 0 ? "None" : DepartmentName(defaultDepartmentId))</dd></div>
+                    <div><dt>Delegated roles</dt><dd>@(desiredRoles.Count == 0 ? "None" : string.Join(", ", desiredRoles.Select(role => $"{RoleLabel(role.Role)} / {DepartmentName(role.DepartmentId)}")))</dd></div>
                 </dl>
+            }
+            @if (confirmationKind == "revoke" && pendingRole is not null)
+            {
+                <p>@RoleLabel(pendingRole.Role) — @(organizations.FirstOrDefault(item => item.Id == pendingRole.OrganizationId)?.Name ?? pendingRole.OrganizationId)
+                    / @(pendingRole.DepartmentId is null ? "Organization-wide" : organizations.SelectMany(item => item.Departments).FirstOrDefault(item => item.Id == pendingRole.DepartmentId)?.Name ?? pendingRole.DepartmentId)</p>
             }
             <div class="entra-access__dialog-actions">
                 <button type="button" class="entra-access__secondary" disabled="@isSaving" @onclick="CancelConfirmation">Cancel</button>

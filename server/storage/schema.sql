@@ -545,10 +545,13 @@ CREATE TABLE [talentmatch].RoleGroupMappings (
     OrganizationId NVARCHAR(36) NULL,
     DepartmentId NVARCHAR(36) NULL,
     Enabled BIT NOT NULL DEFAULT 1,
+    Purpose NVARCHAR(20) NOT NULL DEFAULT 'scoped',
     CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedBy NVARCHAR(100) NOT NULL,
     CONSTRAINT UQ_RoleGroupMappings_TenantGroup UNIQUE (TenantId, GroupObjectId),
+    CONSTRAINT UQ_RoleGroupMappings_IdTenantGroup UNIQUE (Id, TenantId, GroupObjectId),
+    CONSTRAINT CK_RoleGroupMappings_Purpose CHECK (Purpose IN ('scoped', 'system_admin')),
     CONSTRAINT CK_RoleGroupMappings_Scope CHECK ((Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL))
 );
 
@@ -563,18 +566,135 @@ CREATE TABLE [talentmatch].RoleAssignments (
     DepartmentId NVARCHAR(36) NULL,
     RoleGroupMappingId NVARCHAR(36) NULL REFERENCES [talentmatch].RoleGroupMappings(Id),
     Source NVARCHAR(20) NOT NULL,
+    ManagementSource NVARCHAR(20) NOT NULL DEFAULT 'independent',
+    ManagedTransitionId NVARCHAR(36) NULL,
     Status NVARCHAR(20) NOT NULL DEFAULT 'active',
     EffectiveAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     RevokedAt DATETIME2 NULL,
     CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
     UpdatedBy NVARCHAR(100) NOT NULL,
-    CONSTRAINT CK_RoleAssignments_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL))
+    CONSTRAINT CK_RoleAssignments_Status CHECK ((Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)),
+    CONSTRAINT CK_RoleAssignments_Source CHECK (Source IN ('group', 'delegated', 'bootstrap')),
+    CONSTRAINT CK_RoleAssignments_SourceMapping CHECK ((Source = 'group' AND RoleGroupMappingId IS NOT NULL) OR (Source IN ('delegated', 'bootstrap') AND RoleGroupMappingId IS NULL)),
+    CONSTRAINT CK_RoleAssignments_ManagementSource CHECK (ManagementSource IN ('deployment', 'application', 'independent'))
 );
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveGroup')
-    CREATE UNIQUE INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND RoleGroupMappingId IS NOT NULL;
+    CREATE UNIQUE INDEX UX_RoleAssignments_ActiveGroup ON [talentmatch].RoleAssignments (TenantId, UserObjectId, RoleGroupMappingId) WHERE Status = 'active' AND Source = 'group' AND RoleGroupMappingId IS NOT NULL;
 IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_RoleAssignments_ActiveDelegated')
     CREATE UNIQUE INDEX UX_RoleAssignments_ActiveDelegated ON [talentmatch].RoleAssignments (TenantId, UserObjectId, Role, OrganizationId, DepartmentId) WHERE Status = 'active' AND Source = 'delegated';
+
+-- 20. SYSTEM ADMINISTRATION
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'AdministrationTransitions' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].AdministrationTransitions (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    TargetKey NVARCHAR(300) NOT NULL,
+    DesiredFingerprint NVARCHAR(64) NOT NULL,
+    PriorConfiguration NVARCHAR(MAX) NULL,
+    CandidateConfiguration NVARCHAR(MAX) NOT NULL,
+    Phase NVARCHAR(32) NOT NULL,
+    CommittedVersion INT NOT NULL,
+    CandidateVersion INT NOT NULL,
+    LeaseOwner NVARCHAR(128) NOT NULL,
+    LeaseExpiresAt DATETIME2 NOT NULL,
+    FencingToken BIGINT NOT NULL,
+    ExternalOperations NVARCHAR(MAX) NOT NULL DEFAULT '[]',
+    PriorSqlAdministrator NVARCHAR(MAX) NULL,
+    GrantInventory NVARCHAR(MAX) NOT NULL DEFAULT '[]',
+    StartedAt DATETIME2 NOT NULL,
+    UpdatedAt DATETIME2 NOT NULL,
+    ActorId NVARCHAR(128) NOT NULL,
+    CorrelationId NVARCHAR(64) NOT NULL,
+    FailureCode NVARCHAR(100) NULL,
+    SupersedesTransitionId NVARCHAR(36) NULL,
+    SupersededByTransitionId NVARCHAR(36) NULL,
+    SupersededAt DATETIME2 NULL,
+    CONSTRAINT UQ_AdministrationTransitions_IdCandidate UNIQUE (Id, CandidateVersion),
+    CONSTRAINT CK_AdministrationTransitions_Version CHECK (CommittedVersion >= 0 AND CandidateVersion > CommittedVersion AND FencingToken > 0),
+    CONSTRAINT CK_AdministrationTransitions_Phase CHECK (Phase IN ('preflight','prepared','sql_switched','replacement_verified','authority_committed','retiring','complete','failed','rollback_pending','rolled_back'))
+);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_AdministrationTransitions_Fingerprint')
+    CREATE UNIQUE INDEX UX_AdministrationTransitions_Fingerprint ON [talentmatch].AdministrationTransitions (TargetKey, DesiredFingerprint, CandidateVersion);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'UX_AdministrationTransitions_LiveTarget')
+    CREATE UNIQUE INDEX UX_AdministrationTransitions_LiveTarget ON [talentmatch].AdministrationTransitions (TargetKey)
+    WHERE Phase IN ('preflight','prepared','sql_switched','replacement_verified','authority_committed','retiring','failed','rollback_pending') AND SupersededByTransitionId IS NULL;
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'SystemAdministrationConfigurations' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].SystemAdministrationConfigurations (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    EnvironmentKey NVARCHAR(100) NOT NULL,
+    TenantId NVARCHAR(36) NOT NULL,
+    SqlTargetKey NVARCHAR(300) NOT NULL,
+    Mode NVARCHAR(20) NOT NULL,
+    GroupObjectId NVARCHAR(36) NULL,
+    LegacyIndividualObjectId NVARCHAR(36) NULL,
+    SystemRoleGroupMappingId NVARCHAR(36) NULL,
+    InitialOrganizationId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].Organizations(Id),
+    InitialDepartmentId NVARCHAR(36) NOT NULL,
+    AuthorityVersion INT NOT NULL,
+    CommittedTransitionId NVARCHAR(36) NULL REFERENCES [talentmatch].AdministrationTransitions(Id),
+    CommittedAt DATETIME2 NOT NULL,
+    CommittedBy NVARCHAR(128) NOT NULL,
+    CONSTRAINT UQ_SystemAdministrationConfigurations_Target UNIQUE (EnvironmentKey, TenantId, SqlTargetKey),
+    CONSTRAINT FK_SystemAdministrationConfigurations_InitialDepartment FOREIGN KEY (InitialDepartmentId, InitialOrganizationId) REFERENCES [talentmatch].Departments(Id, OrganizationId),
+    CONSTRAINT FK_SystemAdministrationConfigurations_Mapping FOREIGN KEY (SystemRoleGroupMappingId, TenantId, GroupObjectId) REFERENCES [talentmatch].RoleGroupMappings(Id, TenantId, GroupObjectId),
+    CONSTRAINT CK_SystemAdministrationConfigurations_Version CHECK (AuthorityVersion >= 0),
+    CONSTRAINT CK_SystemAdministrationConfigurations_Mode CHECK ((Mode = 'group' AND GroupObjectId IS NOT NULL AND LegacyIndividualObjectId IS NULL AND SystemRoleGroupMappingId IS NOT NULL)
+      OR (Mode = 'individual' AND GroupObjectId IS NULL AND LegacyIndividualObjectId IS NOT NULL AND SystemRoleGroupMappingId IS NULL))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'VerificationReceipts' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].VerificationReceipts (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    TransitionId NVARCHAR(36) NOT NULL,
+    CandidateVersion INT NOT NULL,
+    Mode NVARCHAR(20) NOT NULL CHECK (Mode IN ('group','individual')),
+    PrincipalObjectId NVARCHAR(36) NOT NULL,
+    TenantId NVARCHAR(36) NOT NULL,
+    MemberObjectId NVARCHAR(36) NOT NULL,
+    CollectionStartedAt DATETIME2 NOT NULL,
+    CollectedAt DATETIME2 NOT NULL,
+    EvidenceExpiresAt DATETIME2 NOT NULL,
+    Complete BIT NOT NULL,
+    CompositionValidated BIT NOT NULL,
+    AccountEnabled BIT NOT NULL,
+    UserType NVARCHAR(20) NOT NULL,
+    IsActive BIT NOT NULL,
+    Stack NVARCHAR(10) NOT NULL CHECK (Stack IN ('stack-a','stack-b','sql')),
+    RuntimeVersion NVARCHAR(100) NOT NULL,
+    CapabilityInventoryVersion NVARCHAR(100) NOT NULL,
+    CapabilityInventoryPassed BIT NOT NULL,
+    SqlTargetKey NVARCHAR(300) NOT NULL,
+    SqlAdministratorObjectId NVARCHAR(36) NOT NULL,
+    SqlBootstrapPassed BIT NOT NULL,
+    VerifiedAt DATETIME2 NOT NULL,
+    ExpiresAt DATETIME2 NOT NULL,
+    AuditEventId NVARCHAR(36) NOT NULL REFERENCES [talentmatch].ProcessingEvents(Id),
+    CorrelationId NVARCHAR(64) NOT NULL,
+    CONSTRAINT FK_VerificationReceipts_Transition FOREIGN KEY (TransitionId, CandidateVersion) REFERENCES [talentmatch].AdministrationTransitions(Id, CandidateVersion),
+    CONSTRAINT CK_VerificationReceipts_Eligibility CHECK (Complete = 1 AND CompositionValidated = 1 AND AccountEnabled = 1 AND UserType = 'Member' AND IsActive = 1 AND CapabilityInventoryPassed = 1 AND (Stack <> 'sql' OR SqlBootstrapPassed = 1)),
+    CONSTRAINT CK_VerificationReceipts_Interval CHECK (CollectionStartedAt <= CollectedAt AND CollectedAt <= VerifiedAt AND VerifiedAt < ExpiresAt AND ExpiresAt <= EvidenceExpiresAt AND EvidenceExpiresAt <= DATEADD(MINUTE, 5, CollectionStartedAt))
+);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'ManagedGrantProvenance' AND schema_id = SCHEMA_ID('talentmatch'))
+CREATE TABLE [talentmatch].ManagedGrantProvenance (
+    Id NVARCHAR(36) NOT NULL PRIMARY KEY,
+    PrincipalObjectId NVARCHAR(36) NOT NULL,
+    PrincipalSid NVARCHAR(200) NULL,
+    Resource NVARCHAR(300) NOT NULL,
+    Permission NVARCHAR(100) NOT NULL,
+    ManagementSource NVARCHAR(20) NOT NULL CHECK (ManagementSource IN ('deployment','application','independent')),
+    OriginatingTransitionId NVARCHAR(36) NULL REFERENCES [talentmatch].AdministrationTransitions(Id),
+    AdoptingTransitionId NVARCHAR(36) NULL REFERENCES [talentmatch].AdministrationTransitions(Id),
+    RetiringTransitionId NVARCHAR(36) NULL REFERENCES [talentmatch].AdministrationTransitions(Id),
+    BeforeState NVARCHAR(MAX) NOT NULL,
+    AfterState NVARCHAR(MAX) NOT NULL,
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    UpdatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME()
+);
+IF NOT EXISTS (SELECT * FROM sys.foreign_keys WHERE name = 'FK_RoleAssignments_ManagedTransition')
+    ALTER TABLE [talentmatch].RoleAssignments ADD CONSTRAINT FK_RoleAssignments_ManagedTransition
+    FOREIGN KEY (ManagedTransitionId) REFERENCES [talentmatch].AdministrationTransitions(Id);
 
 -- 19. OPTIONAL PARALLEL UPLOADS
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'UploadSettings' AND schema_id = SCHEMA_ID('talentmatch'))

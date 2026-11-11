@@ -155,7 +155,13 @@ public static class AccessManagementEndpoints
             authorizationContext.ObjectId,
             authorizationContext.GlobalRole == "admin",
             organizationAdminIds,
-            AuthorizationErrorResults.EnsureCorrelationId(httpContext));
+            AuthorizationErrorResults.EnsureCorrelationId(httpContext),
+            authorizationContext.GlobalRole == "admin" && authorizationContext.AdminEntitlement is { } entitlement
+                ? new TalentMatch.Domain.Interfaces.AdministrationActorProof(
+                    httpContext.RequestServices.GetRequiredService<IConfiguration>()["ENTRA_ADMIN_ENVIRONMENT_KEY"] ?? "",
+                    httpContext.RequestServices.GetRequiredService<IConfiguration>()["ENTRA_ADMIN_SQL_TARGET_KEY"] ?? "",
+                    authorizationContext.AuthorityVersion, authorizationContext.AuthorizationVersion,
+                    authorizationContext.AdministrationMode, entitlement.Source, entitlement.ValidUntil.UtcDateTime) : null);
     }
 
     private static bool TryGetExpectedVersion(HttpContext httpContext, out int expectedVersion)

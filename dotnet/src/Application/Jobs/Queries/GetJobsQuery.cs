@@ -1,5 +1,6 @@
 using MediatR;
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Authorization;
 using TalentMatch.Application.Jobs;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
@@ -31,11 +32,7 @@ public class GetJobsQueryHandler : IRequestHandler<GetJobsQuery, IReadOnlyList<J
                 _currentUser.Department ?? "", cancellationToken);
         }
 
-        var hasGlobalAdmin = authorizationState.Assignments.Any(assignment =>
-            assignment.Status == "active"
-            && assignment.Role == "admin"
-            && assignment.OrganizationId is null
-            && assignment.DepartmentId is null);
+        var hasGlobalAdmin = SystemAdministrationAuthority.IsGlobalAdmin(authorizationState);
         var candidates = hasGlobalAdmin
             ? await _jobRepository.GetAllAsync(cancellationToken)
             : await _jobRepository.GetByDepartmentAsync(

@@ -46,6 +46,9 @@ if (!useEntraAuthentication
 
 if (useEntraAuthentication)
 {
+    var desiredAdministrationGroup = builder.Configuration["ENTRA_SYSTEM_ADMIN_GROUP_OBJECT_ID"]?.Trim();
+    if (!string.IsNullOrEmpty(desiredAdministrationGroup) && !Guid.TryParse(desiredAdministrationGroup, out _))
+        throw new InvalidOperationException("ENTRA_SYSTEM_ADMIN_GROUP_OBJECT_ID must be a valid group object ID; no individual fallback is allowed.");
     var tenantId = RequireConfiguration(builder.Configuration, "AZURE_TENANT_ID");
     var apiClientId = RequireConfiguration(builder.Configuration, "ENTRA_API_APP_CLIENT_ID");
     _ = RequireConfiguration(builder.Configuration, "ENTRA_API_IDENTIFIER_URI");
@@ -71,7 +74,7 @@ if (useEntraAuthentication)
                 jwtOptions.TokenValidationParameters.ValidAudience = apiClientId;
                 jwtOptions.TokenValidationParameters.NameClaimType = "preferred_username";
                 jwtOptions.TokenValidationParameters.RoleClaimType = "roles";
-                jwtOptions.TokenValidationParameters.ClockSkew = TimeSpan.FromMinutes(2);
+                jwtOptions.TokenValidationParameters.ClockSkew = TimeSpan.FromSeconds(30);
                 jwtOptions.Events = new JwtBearerEvents
                 {
                     OnTokenValidated = context =>
@@ -181,6 +184,8 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Candidate verification is registered with its exact endpoint marker and AccessAsUser
+// token policy. No prefix-wide exception or production Admin policy is installed.
 var app = builder.Build();
 
 // Validate AWReason API auth configuration at startup
@@ -1214,7 +1219,7 @@ static (string Code, string Message)? ValidateEntraClaims(
     if (!string.Equals(principal.FindFirstValue("tid"), tenantId, StringComparison.OrdinalIgnoreCase))
         return AuthFailure(AuthorizationErrorCodes.WrongTenant);
 
-    if (!Guid.TryParse(principal.FindFirstValue("oid"), out _))
+    if (!Guid.TryParse(principal.FindFirstValue("oid"), out _) || principal.FindFirstValue("idtyp") == "app")
         return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     var authorizedClient = principal.FindFirstValue("azp");
@@ -1227,6 +1232,9 @@ static (string Code, string Message)? ValidateEntraClaims(
         return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     if (!long.TryParse(principal.FindFirstValue("iat"), out var issuedAtSeconds))
+        return AuthFailure(AuthorizationErrorCodes.InvalidToken);
+
+    if (issuedAtSeconds > DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeSeconds())
         return AuthFailure(AuthorizationErrorCodes.InvalidToken);
 
     if (DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeSeconds(issuedAtSeconds) > TimeSpan.FromMinutes(15))

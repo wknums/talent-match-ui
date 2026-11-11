@@ -27,6 +27,7 @@ public static class PromptEndpoints
         var group = app.MapGroup("/api/jobs/{jobId}/prompts")
             .WithTags("Prompts")
             .RequireAuthorization();
+        group.AddEndpointFilter<JobResourceAuthorizationFilter>();
 
         group.MapGet("/", async (string jobId, ISender mediator) =>
         {
@@ -138,6 +139,7 @@ public static class PromptEndpoints
         var jobInstructionGroup = app.MapGroup("/api/jobs/{jobId}/prompt-generation-instructions")
             .WithTags("PromptGenerationInstructions")
             .RequireAuthorization();
+        jobInstructionGroup.AddEndpointFilter<JobResourceAuthorizationFilter>();
 
         jobInstructionGroup.MapGet("/", async (
             string jobId, ISender mediator, CancellationToken cancellationToken) =>
@@ -227,6 +229,7 @@ public static class PromptEndpoints
         var testRunGroup = app.MapGroup("/api/jobs/{jobId}/prompts/{promptId}/test-runs")
             .WithTags("PromptTestRuns")
             .RequireAuthorization();
+        testRunGroup.AddEndpointFilter<JobResourceAuthorizationFilter>();
 
         testRunGroup.MapGet("/", async (string jobId, string promptId, ISender mediator) =>
         {

@@ -15,7 +15,116 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.13");
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.AdministrationTransition", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActorId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CandidateConfiguration")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CandidateVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("CommittedVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DesiredFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalOperations")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FencingToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GrantInventory")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("[]");
+
+                    b.Property<DateTime>("LeaseExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LeaseOwner")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Phase")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PriorConfiguration")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PriorSqlAdministrator")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SupersedesTransitionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SupersededByTransitionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SupersededAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TargetKey")
+                        .IsUnique()
+                        .HasFilter("[Phase] NOT IN ('complete','rolled_back') AND [SupersededByTransitionId] IS NULL");
+
+                    b.HasIndex("TargetKey", "DesiredFingerprint", "CandidateVersion")
+                        .IsUnique();
+
+                    b.ToTable("AdministrationTransitions", t =>
+                        {
+                            t.HasCheckConstraint("CK_AdministrationTransitions_Phase", "Phase IN ('preflight','prepared','sql_switched','replacement_verified','authority_committed','retiring','complete','failed','rollback_pending','rolled_back')");
+
+                            t.HasCheckConstraint("CK_AdministrationTransitions_Version", "CommittedVersion >= 0 AND CandidateVersion > CommittedVersion AND FencingToken > 0");
+                        });
+                });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.AggregatedResult", b =>
                 {
@@ -1497,6 +1606,76 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ManagedGrantProvenance", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AdoptingTransitionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AfterState")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BeforeState")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManagementSource")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginatingTransitionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Permission")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PrincipalObjectId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PrincipalSid")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Resource")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RetiringTransitionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdoptingTransitionId");
+
+                    b.HasIndex("OriginatingTransitionId");
+
+                    b.HasIndex("RetiringTransitionId");
+
+                    b.ToTable("ManagedGrantProvenance", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ManagedGrantProvenance_Source", "ManagementSource IN ('deployment','application','independent')");
+                        });
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.ManualReviewData", b =>
                 {
                     b.Property<string>("Id")
@@ -1833,6 +2012,17 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("EffectiveAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ManagedTransitionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ManagementSource")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("independent");
+
                     b.Property<string>("OrganizationId")
                         .HasColumnType("TEXT");
 
@@ -1883,13 +2073,19 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ManagedTransitionId");
+
                     b.HasIndex("RoleGroupMappingId");
 
                     b.HasIndex("UserId");
 
                     b.HasIndex("TenantId", "UserObjectId", "RoleGroupMappingId")
                         .IsUnique()
-                        .HasFilter("[Status] = 'active' AND [RoleGroupMappingId] IS NOT NULL");
+                        .HasFilter("[Status] = 'active' AND [Source] = 'group' AND [RoleGroupMappingId] IS NOT NULL");
+
+                    b.HasIndex("TenantId", "UserObjectId", "Role", "OrganizationId")
+                        .IsUnique()
+                        .HasFilter("[Status] = 'active' AND [Source] = 'delegated' AND [DepartmentId] IS NULL");
 
                     b.HasIndex("TenantId", "UserObjectId", "Role", "OrganizationId", "DepartmentId")
                         .IsUnique()
@@ -1897,6 +2093,10 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.ToTable("RoleAssignments", t =>
                         {
+                            t.HasCheckConstraint("CK_RoleAssignments_Management", "ManagementSource IN ('deployment','application','independent')");
+
+                            t.HasCheckConstraint("CK_RoleAssignments_Source", "(Source = 'group' AND RoleGroupMappingId IS NOT NULL) OR (Source IN ('delegated','bootstrap') AND RoleGroupMappingId IS NULL)");
+
                             t.HasCheckConstraint("CK_RoleAssignments_Status", "(Status = 'active' AND RevokedAt IS NULL) OR (Status = 'revoked' AND RevokedAt IS NOT NULL)");
                         });
                 });
@@ -1923,6 +2123,13 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Property<string>("OrganizationId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("scoped");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasMaxLength(30)
@@ -1948,6 +2155,8 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
                     b.ToTable("RoleGroupMappings", t =>
                         {
+                            t.HasCheckConstraint("CK_RoleGroupMappings_Purpose", "Purpose IN ('scoped','system_admin')");
+
                             t.HasCheckConstraint("CK_RoleGroupMappings_Scope", "(Role = 'admin' AND OrganizationId IS NULL AND DepartmentId IS NULL) OR (Role = 'organization_admin' AND OrganizationId IS NOT NULL AND DepartmentId IS NULL) OR (Role = 'recruiter' AND OrganizationId IS NOT NULL AND DepartmentId IS NOT NULL) OR (Role = 'business_panel' AND OrganizationId IS NOT NULL)");
                         });
                 });
@@ -2228,6 +2437,91 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.HasIndex("ApplicationId");
 
                     b.ToTable("ScoringRuns");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.SystemAdministrationConfiguration", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AuthorityVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CommittedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CommittedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CommittedTransitionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EnvironmentKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GroupObjectId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InitialDepartmentId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InitialOrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LegacyIndividualObjectId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SqlTargetKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SystemRoleGroupMappingId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CommittedTransitionId");
+
+                    b.HasIndex("InitialOrganizationId");
+
+                    b.HasIndex("InitialDepartmentId", "InitialOrganizationId");
+
+                    b.HasIndex("EnvironmentKey", "TenantId", "SqlTargetKey")
+                        .IsUnique();
+
+                    b.HasIndex("SystemRoleGroupMappingId", "TenantId", "GroupObjectId");
+
+                    b.ToTable("SystemAdministrationConfigurations", t =>
+                        {
+                            t.HasCheckConstraint("CK_SystemAdministrationConfigurations_Mode", "(Mode = 'group' AND GroupObjectId IS NOT NULL AND LegacyIndividualObjectId IS NULL AND SystemRoleGroupMappingId IS NOT NULL) OR (Mode = 'individual' AND GroupObjectId IS NULL AND LegacyIndividualObjectId IS NOT NULL AND SystemRoleGroupMappingId IS NULL)");
+
+                            t.HasCheckConstraint("CK_SystemAdministrationConfigurations_Version", "AuthorityVersion >= 0");
+                        });
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.UploadItem", b =>
@@ -2583,6 +2877,135 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.VerificationReceipt", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("AccountEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AuditEventId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CandidateVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CapabilityInventoryPassed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CapabilityInventoryVersion")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CollectedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CollectionStartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Complete")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("CompositionValidated")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("EvidenceExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MemberObjectId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Mode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PrincipalObjectId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RuntimeVersion")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SqlAdministratorObjectId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("SqlBootstrapPassed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SqlTargetKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Stack")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TenantId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TransitionId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("VerifiedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AuditEventId");
+
+                    b.HasIndex("TransitionId", "CandidateVersion");
+
+                    b.ToTable("VerificationReceipts", t =>
+                        {
+                            t.HasCheckConstraint("CK_VerificationReceipts_Capability", "CapabilityInventoryPassed = 1 AND (Stack <> 'sql' OR SqlBootstrapPassed = 1)");
+
+                            t.HasCheckConstraint("CK_VerificationReceipts_Eligibility", "Complete = 1 AND CompositionValidated = 1 AND AccountEnabled = 1 AND UserType = 'Member' AND IsActive = 1");
+
+                            t.HasCheckConstraint("CK_VerificationReceipts_EvidenceExpiry", "julianday(EvidenceExpiresAt) <= julianday(CollectionStartedAt) + 5.0 / 1440");
+
+                            t.HasCheckConstraint("CK_VerificationReceipts_Interval", "CollectionStartedAt <= CollectedAt AND CollectedAt <= VerifiedAt AND VerifiedAt < ExpiresAt AND ExpiresAt <= EvidenceExpiresAt");
+
+                            t.HasCheckConstraint("CK_VerificationReceipts_Mode", "Mode IN ('group','individual')");
+
+                            t.HasCheckConstraint("CK_VerificationReceipts_Stack", "Stack IN ('stack-a','stack-b','sql')");
+                        });
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.AggregatedResult", b =>
                 {
                     b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
@@ -2785,6 +3208,24 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Job");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.ManagedGrantProvenance", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.AdministrationTransition", null)
+                        .WithMany()
+                        .HasForeignKey("AdoptingTransitionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TalentMatch.Domain.Entities.AdministrationTransition", null)
+                        .WithMany()
+                        .HasForeignKey("OriginatingTransitionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TalentMatch.Domain.Entities.AdministrationTransition", null)
+                        .WithMany()
+                        .HasForeignKey("RetiringTransitionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.ManualReviewData", b =>
                 {
                     b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
@@ -2844,6 +3285,11 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.RoleAssignment", b =>
                 {
+                    b.HasOne("TalentMatch.Domain.Entities.AdministrationTransition", null)
+                        .WithMany()
+                        .HasForeignKey("ManagedTransitionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("TalentMatch.Domain.Entities.RoleGroupMapping", "RoleGroupMapping")
                         .WithMany()
                         .HasForeignKey("RoleGroupMappingId")
@@ -2882,6 +3328,33 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                     b.Navigation("Application");
                 });
 
+            modelBuilder.Entity("TalentMatch.Domain.Entities.SystemAdministrationConfiguration", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.AdministrationTransition", null)
+                        .WithMany()
+                        .HasForeignKey("CommittedTransitionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TalentMatch.Domain.Entities.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("InitialOrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.Department", null)
+                        .WithMany()
+                        .HasForeignKey("InitialDepartmentId", "InitialOrganizationId")
+                        .HasPrincipalKey("Id", "OrganizationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.RoleGroupMapping", null)
+                        .WithMany()
+                        .HasForeignKey("SystemRoleGroupMappingId", "TenantId", "GroupObjectId")
+                        .HasPrincipalKey("Id", "TenantId", "GroupObjectId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("TalentMatch.Domain.Entities.UploadItem", b =>
                 {
                     b.HasOne("TalentMatch.Domain.Entities.Application", "Application")
@@ -2909,6 +3382,22 @@ namespace TalentMatch.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Job");
+                });
+
+            modelBuilder.Entity("TalentMatch.Domain.Entities.VerificationReceipt", b =>
+                {
+                    b.HasOne("TalentMatch.Domain.Entities.ProcessingEvent", null)
+                        .WithMany()
+                        .HasForeignKey("AuditEventId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TalentMatch.Domain.Entities.AdministrationTransition", null)
+                        .WithMany()
+                        .HasForeignKey("TransitionId", "CandidateVersion")
+                        .HasPrincipalKey("Id", "CandidateVersion")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("TalentMatch.Domain.Entities.Application", b =>

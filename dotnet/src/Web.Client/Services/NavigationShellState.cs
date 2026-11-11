@@ -48,6 +48,8 @@ public sealed class NavigationShellState(
 
     private bool _initialized;
     private bool _disposed;
+    private bool _togglePending;
+    private long _reconciliationVersion;
 
     public bool DesktopCollapsed { get; private set; }
     public bool IsCompact { get; private set; }
@@ -76,26 +78,35 @@ public sealed class NavigationShellState(
 
     public async Task ToggleAsync(CancellationToken cancellationToken = default)
     {
-        if (_disposed)
+        if (_disposed || _togglePending)
             return;
 
+        _togglePending = true;
+        var version = _reconciliationVersion;
         var requestedVisible = !NavigationVisible;
         var action = requestedVisible ? NavigationAuditAction.Expand : NavigationAuditAction.Collapse;
         var request = new NavigationAuditRequest(action, Guid.NewGuid(), DateTimeOffset.UtcNow);
 
         try
         {
-            await auditClient.RecordNavigationAsync(request, cancellationToken);
+            var result = await auditClient.RecordNavigationAsync(request, cancellationToken);
+            if (result.CorrelationId != request.CorrelationId)
+                throw new InvalidOperationException("The navigation outcome did not match the request.");
         }
-        catch
+        catch (Exception exception) when (exception is HttpRequestException or ApiException or InvalidOperationException
+            or OperationCanceledException or System.Text.Json.JsonException)
         {
             // The prior state stays visible: an unrecorded change must never appear to have happened.
             Notification = new NavigationShellNotification(AuditFailureMessage, IsRetryable: true);
             Notify();
             return;
         }
+        finally
+        {
+            _togglePending = false;
+        }
 
-        if (_disposed)
+        if (_disposed || version != _reconciliationVersion)
             return;
 
         if (IsCompact)
@@ -114,6 +125,7 @@ public sealed class NavigationShellState(
 
     public void OnRouteChanged()
     {
+        _reconciliationVersion++;
         if (!CompactOverlayOpen)
             return;
 
@@ -129,6 +141,7 @@ public sealed class NavigationShellState(
             return ValueTask.CompletedTask;
 
         IsCompact = isCompact;
+        _reconciliationVersion++;
         CompactOverlayOpen = false;
         Notify();
         return ValueTask.CompletedTask;

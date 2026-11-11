@@ -20,7 +20,7 @@ main {
     border-bottom: 1px solid #d6d5d5;
     justify-content: space-between;
     gap: 1rem;
-    height: 3.5rem;
+    min-height: 3.5rem;
     display: flex;
     align-items: center;
 }
@@ -77,6 +77,18 @@ main {
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.top-row-actions ::deep > div {
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.top-row-actions ::deep span {
+    overflow-wrap: anywhere;
 }
 
 .about-button {
@@ -201,9 +213,14 @@ main {
 
 /* Compact: the sidebar becomes a transient off-canvas overlay above the page. */
 @media (max-width: 991.98px) {
+    .navigation-toggle {
+        position: relative;
+        z-index: 1060;
+    }
+
     .sidebar {
         position: fixed;
-        top: 0;
+        top: 3.5rem;
         bottom: 0;
         left: 0;
         width: min(17.5rem, 85vw);

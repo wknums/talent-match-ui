@@ -35,12 +35,28 @@ public class UserRepository : IUserRepository
             await _context.SaveChangesAsync(ct);
             return user;
         }
-        existing.Username = user.Username;
-        existing.FullName = user.FullName;
-        existing.Email = user.Email;
+        ApplyEntraProfile(existing, new EntraAccessProfile(user.Username, user.FullName, user.Email));
         existing.LastLogin = user.LastLogin;
         await _context.SaveChangesAsync(ct);
         return existing;
+    }
+
+    internal static User CreateEntraProfile(string tenantId, string objectId, EntraAccessProfile profile, DateTime now)
+    {
+        var user = new User
+        {
+            Id = objectId, AuthenticationProvider = "entra", EntraTenantId = tenantId, EntraObjectId = objectId,
+            PasswordHash = null, PasswordResetRequired = false, IsActive = true, CreatedAt = now,
+        };
+        ApplyEntraProfile(user, profile);
+        return user;
+    }
+
+    internal static void ApplyEntraProfile(User user, EntraAccessProfile profile)
+    {
+        user.Username = profile.Username;
+        user.FullName = profile.FullName;
+        user.Email = profile.Email ?? string.Empty;
     }
 
     public async Task<bool> TryAdvanceAuthorizationVersionAsync(string id, int expectedVersion, CancellationToken ct = default)

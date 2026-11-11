@@ -43,7 +43,7 @@
             <button @onclick="() => showPrompts = !showPrompts" style="padding: 0.5rem 1rem; background: #805ad5; color: white; border: none; border-radius: 4px;">
                 @(showPrompts ? "Close Prompt Manager" : "Manage Prompts")
             </button>
-            <button @onclick="ReAggregate" disabled="@isReAggregating" style="padding: 0.5rem 1rem; background: #d69e2e; color: white; border: none; border-radius: 4px;" title="Recompute decisions from existing scoring runs (no API calls)">
+            <button @onclick="ReAggregate" disabled="@isReAggregating" style="padding: 0.5rem 1rem; background: #895d0b; color: white; border: none; border-radius: 4px;" title="Recompute decisions from existing scoring runs (no API calls)">
                 @(isReAggregating ? "Re-aggregating..." : "🔄 Re-aggregate")
             </button>
             <button @onclick="ToggleEditDialog" disabled="@isLoadingEditConfig" aria-label="Edit job configuration" style="padding: 0.5rem 1rem; background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer;">
@@ -153,7 +153,7 @@
         <div role="alert" class="application-export-error">@exportError</div>
     }
 
-    <div class="table-scroll">
+    <div class="table-scroll" role="region" aria-label="Applications" tabindex="0">
     <table style="width: 100%; border-collapse: collapse;">
         <thead>
             <tr style="border-bottom: 2px solid #ccc;">

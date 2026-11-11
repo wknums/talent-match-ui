@@ -21,7 +21,10 @@ export function initialize(dotNetCallbacks) {
   mediaQuery = window.matchMedia(COMPACT_QUERY)
 
   onMediaChange = event => {
-    callbacks?.invokeMethodAsync('OnBreakpointChanged', event.matches)
+    const focusWasInNavigation = document.querySelector('.sidebar')?.contains(document.activeElement)
+    callbacks?.invokeMethodAsync('OnBreakpointChanged', event.matches).then(() => {
+      if (focusWasInNavigation) document.querySelector('[data-testid="navigation-toggle"]')?.focus()
+    })
   }
   if (typeof mediaQuery.addEventListener === 'function') {
     mediaQuery.addEventListener('change', onMediaChange)
@@ -31,7 +34,10 @@ export function initialize(dotNetCallbacks) {
 
   onKeyDown = event => {
     if (event.key === 'Escape' || event.key === 'Esc') {
-      callbacks?.invokeMethodAsync('OnEscapePressed')
+      const focusWasInNavigation = document.querySelector('.sidebar')?.contains(document.activeElement)
+      callbacks?.invokeMethodAsync('OnEscapePressed').then(() => {
+        if (focusWasInNavigation) document.querySelector('[data-testid="navigation-toggle"]')?.focus()
+      })
     }
   }
   window.addEventListener('keydown', onKeyDown)

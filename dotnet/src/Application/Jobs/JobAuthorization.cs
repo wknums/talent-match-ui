@@ -1,4 +1,5 @@
 using TalentMatch.Application.Common.Interfaces;
+using TalentMatch.Application.Authorization;
 using TalentMatch.Domain.Entities;
 using TalentMatch.Domain.Interfaces;
 
@@ -11,11 +12,7 @@ public static class JobAuthorization
             && Guid.TryParse(job.DepartmentId, out _);
 
     private static bool IsGlobalAdmin(CurrentAuthorizationState state)
-        => state.Assignments.Any(assignment =>
-            assignment.Status == "active"
-            && assignment.Role == "admin"
-            && assignment.OrganizationId is null
-            && assignment.DepartmentId is null);
+        => SystemAdministrationAuthority.IsGlobalAdmin(state);
 
     public static bool CanRead(CurrentAuthorizationState state, Job job)
         => HasApplicableAssignment(state, job, allowReadOnly: true);
@@ -39,7 +36,7 @@ public static class JobAuthorization
         if (!CanRead(state, job))
             throw new UnauthorizedAccessException("The current user cannot read this job.");
 
-        if (!HasNormalizedScope(job) && IsGlobalAdmin(state))
+        if (!HasNormalizedScope(job) && state.AdministrationConfiguration is null && IsGlobalAdmin(state))
             return;
 
         await EnsureValidScopeAsync(job, state, organizationRepository, cancellationToken);
@@ -102,7 +99,9 @@ public static class JobAuthorization
         if (!HasNormalizedScope(job))
             // Unscoped rows predate organizations. Keep them reachable for a global admin so the
             // backfill can be observed and repaired, but never mutable until they are scoped.
-            return allowReadOnly && IsGlobalAdmin(state);
+            return allowReadOnly && state.AdministrationConfiguration is null && IsGlobalAdmin(state);
+
+        if (IsGlobalAdmin(state)) return true;
 
         return state.Assignments.Any(assignment =>
         {
@@ -112,7 +111,7 @@ public static class JobAuthorization
             if (assignment.Role == "admin"
                 && assignment.OrganizationId is null
                 && assignment.DepartmentId is null)
-                return true;
+                return false; // All global authority was evaluated above.
 
             if (!string.Equals(
                     assignment.OrganizationId,

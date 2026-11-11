@@ -197,7 +197,7 @@ internal static class AccessManagementHandlers
 internal static class AccessManagementMappings
 {
     public static AccessManagementActor ToDomain(AccessManagementActorDto actor) =>
-        new(actor.TenantId, actor.ObjectId, actor.GlobalAdmin, actor.OrganizationAdminIds, actor.CorrelationId);
+        new(actor.TenantId, actor.ObjectId, actor.GlobalAdmin, actor.OrganizationAdminIds, actor.CorrelationId, actor.AdministrationProof);
 
     public static PutEntraOrganizationAccess ToDomain(PutEntraOrganizationAccessRequestDto request) =>
         new(

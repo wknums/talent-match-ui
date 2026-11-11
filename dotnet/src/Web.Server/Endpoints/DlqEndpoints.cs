@@ -10,7 +10,7 @@ public static class DlqEndpoints
 {
     public static void MapDlqEndpoints(this WebApplication app)
     {
-        var group = app.MapGroup("/api/dlq").WithTags("DLQ").RequireAuthorization();
+        var group = app.MapGroup("/api/dlq").WithTags("DLQ").RequireAuthorization("AdminOnly");
         group.AddEndpointFilter(async (context, next) =>
         {
             try

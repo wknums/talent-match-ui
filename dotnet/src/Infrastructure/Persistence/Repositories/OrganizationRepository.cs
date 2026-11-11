@@ -264,7 +264,13 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
                         && membership.DefaultDepartmentMembership.DepartmentId == departmentId, token);
                     var hasJobs = await context.Jobs.AnyAsync(job =>
                         job.OrganizationId == organizationId && job.DepartmentId == departmentId, token);
-                    if (activeCount <= 1 || isDefault || hasJobs)
+                    var hasMemberships = await context.DepartmentMemberships.AnyAsync(membership =>
+                        membership.OrganizationId == organizationId && membership.DepartmentId == departmentId
+                        && membership.Status == "active", token);
+                    var hasAssignments = await context.RoleAssignments.AnyAsync(assignment =>
+                        assignment.OrganizationId == organizationId && assignment.DepartmentId == departmentId
+                        && assignment.Status == "active", token);
+                    if (activeCount <= 1 || isDefault || hasJobs || hasMemberships || hasAssignments)
                     {
                         throw Conflict(
                             "The department cannot be retired while it is the last active department or remains referenced.",
@@ -306,6 +312,10 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
                     && item.EntraTenantId == actor.TenantId
                     && item.EntraObjectId == userObjectId, token)
                     ?? throw NotFound("The tenant-verified user was not found.", "auth.membership.activated");
+                if (!user.IsActive)
+                    throw Conflict("A disabled identity cannot receive active organization access.", "auth.membership.activated");
+                if (!await context.Organizations.AnyAsync(item => item.Id == organizationId && item.Status == "active", token))
+                    throw NotFound("The active organization was not found.", "auth.membership.activated");
                 var departments = await context.Departments.Where(department =>
                     departmentIds.Contains(department.Id)
                     && department.OrganizationId == organizationId
@@ -320,6 +330,11 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
 
                 var existingDepartmentMemberships = await context.DepartmentMemberships.Where(membership =>
                     membership.UserId == user.Id && membership.OrganizationId == organizationId).ToListAsync(token);
+                if (await context.RoleAssignments.AnyAsync(assignment =>
+                    assignment.UserId == user.Id && assignment.OrganizationId == organizationId
+                    && assignment.Status == "active" && assignment.DepartmentId != null
+                    && !departmentIds.Contains(assignment.DepartmentId), token))
+                    throw Conflict("Revoke roles in removed departments before changing memberships.", "auth.membership.activated");
                 var activeMemberships = new List<DepartmentMembership>();
                 foreach (var department in departments)
                 {
@@ -365,6 +380,7 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
                     membership.RevokedAt = revokedAt;
                     membership.UpdatedBy = actor.ObjectId;
                 }
+                user.AuthorizationVersion++;
                 AppendAudit(actor, "auth.membership.activated", "user", userObjectId, "succeeded");
                 await context.SaveChangesAsync(token);
                 return new OrganizationAdministrationMembership(
@@ -394,6 +410,8 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
                     && item.EntraTenantId == actor.TenantId
                     && item.EntraObjectId == userObjectId, token)
                     ?? throw NotFound("The tenant-verified user was not found.", "auth.assignment.activated");
+                if (!user.IsActive)
+                    throw Conflict("A disabled identity cannot receive active organization access.", "auth.assignment.activated");
                 var hasOrganizationMembership = await context.OrganizationMemberships.AnyAsync(membership =>
                     membership.UserId == user.Id
                     && membership.OrganizationId == organizationId
@@ -414,6 +432,7 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
                     && item.Role == role
                     && item.OrganizationId == organizationId
                     && item.DepartmentId == departmentId, token);
+                var changed = assignment is null || assignment.Status != "active";
                 if (assignment is null)
                 {
                     assignment = new RoleAssignment
@@ -437,6 +456,7 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
                     assignment.UpdatedBy = actor.ObjectId;
                 }
 
+                if (changed) user.AuthorizationVersion++;
                 AppendAudit(actor, "auth.assignment.activated", "role_assignment", assignment.Id, "succeeded");
                 await context.SaveChangesAsync(token);
                 return ToAdministrationRoleAssignment(assignment);
@@ -462,10 +482,14 @@ public class OrganizationRepository(AppDbContext context) : IOrganizationReposit
                 && item.Source == "delegated"
                 && item.Status == "active", token)
                 ?? throw NotFound("The active delegated assignment was not found in this organization.", "auth.assignment.revoked");
+            if (assignment.Role == "organization_admin" && !actor.GlobalAdmin)
+                throw new OrganizationAdministrationException("forbidden", "Only an application Admin may revoke Organization Admin.", "auth.scope.denied");
             assignment.Status = "revoked";
             assignment.RevokedAt = DateTime.UtcNow;
             assignment.UpdatedAt = DateTime.UtcNow;
             assignment.UpdatedBy = actor.ObjectId;
+            var user = await context.Users.SingleAsync(item => item.Id == assignment.UserId, token);
+            user.AuthorizationVersion++;
             AppendAudit(actor, "auth.assignment.revoked", "role_assignment", assignment.Id, "succeeded");
             await context.SaveChangesAsync(token);
         }, ct);

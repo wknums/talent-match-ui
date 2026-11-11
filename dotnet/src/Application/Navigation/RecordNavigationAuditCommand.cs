@@ -14,7 +14,7 @@ public sealed record RecordNavigationAuditRequestDto(
     string? CorrelationId,
     DateTimeOffset? RequestedAt);
 
-public sealed record NavigationAuditResultDto(string CorrelationId);
+public sealed record NavigationAuditResultDto(string CorrelationId, string ActorObjectId, string Action, DateTimeOffset RecordedAt);
 
 /// <summary>Actor identity is resolved from the validated token, never from the request body.</summary>
 public sealed record RecordNavigationAuditCommand(
@@ -42,13 +42,14 @@ public sealed class RecordNavigationAuditCommandHandler(INavigationAuditReposito
 
         try
         {
-            await repository.RecordAsync(
+            var outcome = await repository.RecordAsync(
                 new NavigationAuditEntry(
                     request.ActorObjectId,
                     action.ToString().ToLowerInvariant(),
                     correlationId.ToString(),
                     requestedAt),
                 cancellationToken);
+            return new(outcome.CorrelationId, outcome.ActorObjectId, outcome.Action, outcome.RecordedAt);
         }
         catch (Exception error)
         {
@@ -56,7 +57,6 @@ public sealed class RecordNavigationAuditCommandHandler(INavigationAuditReposito
                 "The navigation audit could not be recorded.", error);
         }
 
-        return new NavigationAuditResultDto(correlationId.ToString());
     }
 
     private static NavigationShellAction ParseAction(string? action) => action?.Trim().ToLowerInvariant() switch
