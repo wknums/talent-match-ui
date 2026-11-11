@@ -429,7 +429,16 @@ public sealed partial class BulkScoringSqlServerConcurrencyTests
                                  @"\r?\n\s*GO\s*(?:\r?\n|$)", RegexOptions.IgnoreCase))
                         if (!string.IsNullOrWhiteSpace(batch))
                             await ExecuteBatchAsync(batch);
-                db.Jobs.Add(new Job { Id = "job", Title = "Job" });
+                db.Organizations.Add(new Organization
+                {
+                    Id = "org", Name = "Fixture", UpdatedBy = "fixture",
+                    Departments = [new Department { Id = "dept", OrganizationId = "org", Name = "Fixture", UpdatedBy = "fixture" }]
+                });
+                db.Jobs.Add(new Job
+                {
+                    Id = "job", Title = "Job", Organisation = "Fixture", Department = "Fixture",
+                    OrganizationId = "org", DepartmentId = "dept"
+                });
                 await db.SaveChangesAsync();
                 return fixture;
             }

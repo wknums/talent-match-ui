@@ -30,8 +30,8 @@ try {
       INSERT INTO talentmatch.JobConfigVersions (Id,JobId,RunsPerApplication)
         VALUES ('compat-config','compat-job',5);
       UPDATE talentmatch.Jobs SET CurrentConfigVersionId='compat-config' WHERE Id='compat-job';
-      INSERT INTO talentmatch.ProcessingEvents (Id,Actor,Action,EntityType,EntityId,DetailsJson)
-        VALUES ('compat-audit','fixture','compatibility.seed','Job','compat-job','{}');
+      INSERT INTO talentmatch.ProcessingEvents (Id,Actor,Action,EntityType,EntityId,DetailsJson,CorrelationId)
+        VALUES ('compat-audit','fixture','compatibility.seed','Job','compat-job','{}','compat-seed');
     `)
     for (const [userId, objectId, isActive] of [
       ['compat-admin', administrator, true],

@@ -1,9 +1,0 @@
-node_modules/
-dist/
-build/
-coverage/
-artifacts/
-*.log
-.env*
-.specify/
-specs/archive/
